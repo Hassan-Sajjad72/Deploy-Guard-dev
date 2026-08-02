@@ -1,0 +1,178 @@
+name: DeployGuard reusable AWS deployment
+
+on:
+  workflow_call:
+    inputs:
+      deployment_operation_id: { required: true, type: string }
+      project_id: { required: true, type: string }
+      aws_region: { required: true, type: string }
+      aws_role_arn: { required: true, type: string }
+      vpc_id: { required: true, type: string }
+      public_subnet_ids: { required: true, type: string }
+      app_port: { required: true, type: number }
+      health_check_path: { required: true, type: string }
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AWS_REGION: ${{ inputs.aws_region }}
+      PROJECT_ID: ${{ inputs.project_id }}
+      OPERATION_ID: ${{ inputs.deployment_operation_id }}
+      APP_PORT: ${{ inputs.app_port }}
+      HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
+      VPC_ID: ${{ inputs.vpc_id }}
+      PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Derive immutable release identity
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::12}"
+          SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
+          REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "repository_name=$REPOSITORY_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure ECR repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr describe-repositories --repository-names "${{ steps.release.outputs.repository_name }}" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "${{ steps.release.outputs.repository_name }}" --image-scanning-configuration scanOnPush=false >/dev/null
+
+      - name: Generate Dockerfile when absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f Dockerfile ]; then
+            cat > Dockerfile <<'DOCKERFILE'
+          FROM python:3.11-slim
+          WORKDIR /app
+          ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+          COPY requirements.txt ./
+          RUN pip install --no-cache-dir -r requirements.txt
+          COPY . .
+          EXPOSE 8501
+          CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+          DOCKERFILE
+          fi
+
+      - name: Build and push immutable image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.short_sha }}"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+          docker build --pull -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Generate deployment Terraform
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          set -euo pipefail
+          mkdir -p .deployguard/terraform
+          cat > .deployguard/terraform/main.tf <<'TERRAFORM'
+          terraform { required_providers { aws = { source = "hashicorp/aws", version = "~> 5.0" } } }
+          provider "aws" { region = var.aws_region }
+          variable "aws_region" { type = string }
+          variable "project_id" { type = string }
+          variable "vpc_id" { type = string }
+          variable "public_subnet_ids" { type = list(string) }
+          variable "app_port" { type = number }
+          variable "health_check_path" { type = string }
+          variable "image_uri" { type = string }
+          locals { name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28) }
+          resource "aws_security_group" "alb" { name = "${local.name}-alb"; vpc_id = var.vpc_id
+            ingress { from_port = 80; to_port = 80; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }
+            egress { from_port = 0; to_port = 0; protocol = "-1"; cidr_blocks = ["0.0.0.0/0"] }
+          }
+          resource "aws_security_group" "service" { name = "${local.name}-svc"; vpc_id = var.vpc_id
+            ingress { from_port = var.app_port; to_port = var.app_port; protocol = "tcp"; security_groups = [aws_security_group.alb.id] }
+            egress { from_port = 0; to_port = 0; protocol = "-1"; cidr_blocks = ["0.0.0.0/0"] }
+          }
+          resource "aws_lb" "app" { name = local.name; internal = false; load_balancer_type = "application"; security_groups = [aws_security_group.alb.id]; subnets = var.public_subnet_ids }
+          resource "aws_lb_target_group" "app" { name = local.name; port = var.app_port; protocol = "HTTP"; vpc_id = var.vpc_id; target_type = "ip"
+            health_check { path = var.health_check_path; matcher = "200-399"; interval = 30; timeout = 10; healthy_threshold = 2; unhealthy_threshold = 3 }
+          }
+          resource "aws_lb_listener" "http" { load_balancer_arn = aws_lb.app.arn; port = 80; protocol = "HTTP"
+            default_action { type = "forward"; target_group_arn = aws_lb_target_group.app.arn }
+          }
+          resource "aws_ecs_cluster" "app" { name = local.name }
+          resource "aws_iam_role" "execution" { name = "${local.name}-execution"; assume_role_policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Principal={Service="ecs-tasks.amazonaws.com"},Action="sts:AssumeRole"}]}) }
+          resource "aws_iam_role_policy" "execution" { name = "ecr-pull"; role = aws_iam_role.execution.id; policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Action=["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],Resource="*"}]}) }
+          resource "aws_ecs_task_definition" "app" { family = local.name; network_mode = "awsvpc"; requires_compatibilities = ["FARGATE"]; cpu = "1024"; memory = "2048"; execution_role_arn = aws_iam_role.execution.arn
+            container_definitions = jsonencode([{name="app",image=var.image_uri,essential=true,portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}]}])
+          }
+          resource "aws_ecs_service" "app" { name = local.name; cluster = aws_ecs_cluster.app.id; task_definition = aws_ecs_task_definition.app.arn; desired_count = 1; launch_type = "FARGATE"; wait_for_steady_state = true
+            network_configuration { subnets = var.public_subnet_ids; security_groups = [aws_security_group.service.id]; assign_public_ip = true }
+            load_balancer { target_group_arn = aws_lb_target_group.app.arn; container_name = "app"; container_port = var.app_port }
+            depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution]
+          }
+          output "deployed_url" { value = "http://${aws_lb.app.dns_name}" }
+          output "cluster_name" { value = aws_ecs_cluster.app.name }
+          output "service_name" { value = aws_ecs_service.app.name }
+          TERRAFORM
+          cat > .deployguard/terraform/terraform.tfvars.json <<EOF
+          {"aws_region":"$AWS_REGION","project_id":"$PROJECT_ID","vpc_id":"$VPC_ID","public_subnet_ids":["${PUBLIC_SUBNET_IDS//,/\",\"}"],"app_port":$APP_PORT,"health_check_path":"$HEALTH_CHECK_PATH","image_uri":"$IMAGE_URI"}
+          EOF
+
+      - name: Terraform plan and apply
+        working-directory: .deployguard/terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init -input=false
+          terraform plan -input=false -out=deployguard.tfplan
+          terraform apply -input=false -auto-approve deployguard.tfplan
+
+      - name: Verify ALB health and write result
+        working-directory: .deployguard/terraform
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          URL="$(terraform output -raw deployed_url)"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then break; fi
+            if [ "$attempt" -eq 30 ]; then echo "ALB health verification failed" >&2; exit 1; fi
+            sleep 10
+          done
+          URL="$URL" CLUSTER_NAME="$(terraform output -raw cluster_name)" SERVICE_NAME="$(terraform output -raw service_name)" \
+            node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"succeeded",deployedUrl:process.env.URL,imageUri:process.env.IMAGE_URI,commitSha:process.env.COMMIT_SHA,clusterName:process.env.CLUSTER_NAME,serviceName:process.env.SERVICE_NAME},null,2))'
+
+      - name: Upload DeployGuard result
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployguard-result-${{ inputs.deployment_operation_id }}
+          path: .deployguard/terraform/deployguard-result.json
+          retention-days: 30
