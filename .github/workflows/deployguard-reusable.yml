@@ -14,6 +14,7 @@ on:
       health_check_path: { required: true, type: string }
       terraform_state_bucket: { required: true, type: string }
       container_profile: { required: true, type: string }
+      output_directory: { required: true, type: string }
 
 permissions:
   contents: read
@@ -34,6 +35,7 @@ jobs:
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
       CONTAINER_PROFILE: ${{ inputs.container_profile }}
+      OUTPUT_DIRECTORY: ${{ inputs.output_directory }}
     steps:
       - name: Checkout application
         uses: actions/checkout@v4
@@ -77,7 +79,8 @@ jobs:
           COPY package*.json ./
           RUN npm ci
           COPY . .
-          RUN npm run build && mkdir -p /static && cp -R build/. /static/
+          ARG STATIC_OUTPUT_DIR=build
+          RUN npm run build && mkdir -p /static && cp -R "$STATIC_OUTPUT_DIR"/. /static/
           FROM nginx:1.27-alpine
           COPY --from=build /static/ /usr/share/nginx/html/
           EXPOSE 80
@@ -111,7 +114,7 @@ jobs:
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
           IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.short_sha }}"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
-          docker build --pull --build-arg APP_PORT="$APP_PORT" -t "$IMAGE_URI" .
+          docker build --pull --build-arg APP_PORT="$APP_PORT" --build-arg STATIC_OUTPUT_DIR="$OUTPUT_DIRECTORY" -t "$IMAGE_URI" .
           docker push "$IMAGE_URI"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
