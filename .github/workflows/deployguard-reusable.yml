@@ -66,12 +66,14 @@ jobs:
             cat > Dockerfile <<'DOCKERFILE'
           FROM python:3.11-slim
           WORKDIR /app
+          ARG APP_PORT=8000
+          ENV PORT=${APP_PORT}
           ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
           COPY requirements.txt ./
           RUN pip install --no-cache-dir -r requirements.txt
           COPY . .
-          EXPOSE 8501
-          CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+          EXPOSE ${APP_PORT}
+          CMD ["sh", "-c", "streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT} --server.headless=true"]
           DOCKERFILE
           fi
 
@@ -84,7 +86,7 @@ jobs:
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
           IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.short_sha }}"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
-          docker build --pull -t "$IMAGE_URI" .
+          docker build --pull --build-arg APP_PORT="$APP_PORT" -t "$IMAGE_URI" .
           docker push "$IMAGE_URI"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
