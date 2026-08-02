@@ -3,6 +3,7 @@ name: DeployGuard reusable AWS deployment
 on:
   workflow_call:
     inputs:
+      deployment_action: { required: true, type: string }
       deployment_operation_id: { required: true, type: string }
       project_id: { required: true, type: string }
       aws_region: { required: true, type: string }
@@ -25,6 +26,7 @@ jobs:
       AWS_REGION: ${{ inputs.aws_region }}
       PROJECT_ID: ${{ inputs.project_id }}
       OPERATION_ID: ${{ inputs.deployment_operation_id }}
+      DEPLOYMENT_ACTION: ${{ inputs.deployment_action }}
       APP_PORT: ${{ inputs.app_port }}
       HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
       VPC_ID: ${{ inputs.vpc_id }}
@@ -41,6 +43,7 @@ jobs:
           aws-region: ${{ inputs.aws_region }}
 
       - name: Derive immutable release identity
+        if: inputs.deployment_action == 'deploy'
         id: release
         shell: bash
         run: |
@@ -52,6 +55,7 @@ jobs:
           echo "repository_name=$REPOSITORY_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Ensure ECR repository
+        if: inputs.deployment_action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
@@ -59,6 +63,7 @@ jobs:
             aws ecr create-repository --repository-name "${{ steps.release.outputs.repository_name }}" --image-scanning-configuration scanOnPush=false >/dev/null
 
       - name: Generate Dockerfile when absent
+        if: inputs.deployment_action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
@@ -78,6 +83,7 @@ jobs:
           fi
 
       - name: Build and push immutable image
+        if: inputs.deployment_action == 'deploy'
         id: image
         shell: bash
         run: |
@@ -99,7 +105,7 @@ jobs:
       - name: Generate deployment Terraform
         shell: bash
         env:
-          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || 'destroy.invalid' }}
         run: |
           set -euo pipefail
           mkdir -p .deployguard/terraform
@@ -239,10 +245,15 @@ jobs:
             -backend-config="key=projects/$PROJECT_ID/dev/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
             -backend-config="encrypt=true"
-          terraform plan -input=false -out=deployguard.tfplan
+          if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
+            terraform plan -destroy -input=false -out=deployguard.tfplan
+          else
+            terraform plan -input=false -out=deployguard.tfplan
+          fi
           terraform apply -input=false -auto-approve deployguard.tfplan
 
       - name: Verify ALB health and write result
+        if: inputs.deployment_action == 'deploy'
         working-directory: .deployguard/terraform
         shell: bash
         env:
@@ -258,6 +269,13 @@ jobs:
           done
           URL="$URL" CLUSTER_NAME="$(terraform output -raw cluster_name)" SERVICE_NAME="$(terraform output -raw service_name)" \
             node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"succeeded",deployedUrl:process.env.URL,imageUri:process.env.IMAGE_URI,commitSha:process.env.COMMIT_SHA,clusterName:process.env.CLUSTER_NAME,serviceName:process.env.SERVICE_NAME},null,2))'
+
+      - name: Write destroy result
+        if: inputs.deployment_action == 'destroy'
+        working-directory: .deployguard/terraform
+        shell: bash
+        run: |
+          node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"destroyed",commitSha:process.env.GITHUB_SHA},null,2))'
 
       - name: Upload DeployGuard result
         uses: actions/upload-artifact@v4
