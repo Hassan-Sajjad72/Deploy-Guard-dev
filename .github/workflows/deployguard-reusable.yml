@@ -252,6 +252,21 @@ jobs:
           fi
           terraform apply -input=false -auto-approve deployguard.tfplan
 
+      - name: Remove immutable image repository after destroy
+        if: inputs.deployment_action == 'destroy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
+          REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
+          if ! ERROR="$(aws ecr delete-repository --repository-name "$REPOSITORY_NAME" --force 2>&1)"; then
+            if printf '%s' "$ERROR" | grep -q 'RepositoryNotFoundException'; then
+              exit 0
+            fi
+            echo "DeployGuard could not remove the project image repository." >&2
+            exit 1
+          fi
+
       - name: Verify ALB health and write result
         if: inputs.deployment_action == 'deploy'
         working-directory: .deployguard/terraform
