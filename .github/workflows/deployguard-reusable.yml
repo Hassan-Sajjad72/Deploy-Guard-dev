@@ -13,6 +13,7 @@ on:
       app_port: { required: true, type: number }
       health_check_path: { required: true, type: string }
       terraform_state_bucket: { required: true, type: string }
+      container_profile: { required: true, type: string }
 
 permissions:
   contents: read
@@ -32,6 +33,7 @@ jobs:
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
+      CONTAINER_PROFILE: ${{ inputs.container_profile }}
     steps:
       - name: Checkout application
         uses: actions/checkout@v4
@@ -68,7 +70,20 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f Dockerfile ]; then
-            cat > Dockerfile <<'DOCKERFILE'
+            if [ "$CONTAINER_PROFILE" = "react-static" ]; then
+              cat > Dockerfile <<'DOCKERFILE'
+          FROM node:20-alpine AS build
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci
+          COPY . .
+          RUN npm run build && mkdir -p /static && cp -R build/. /static/
+          FROM nginx:1.27-alpine
+          COPY --from=build /static/ /usr/share/nginx/html/
+          EXPOSE 80
+          DOCKERFILE
+            elif [ "$CONTAINER_PROFILE" = "streamlit" ] || [ "$CONTAINER_PROFILE" = "generic-python" ]; then
+              cat > Dockerfile <<'DOCKERFILE'
           FROM python:3.11-slim
           WORKDIR /app
           ARG APP_PORT=8000
@@ -80,6 +95,10 @@ jobs:
           EXPOSE ${APP_PORT}
           CMD ["sh", "-c", "streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT} --server.headless=true"]
           DOCKERFILE
+            else
+              echo "DeployGuard has no safe generated container for detected profile: $CONTAINER_PROFILE" >&2
+              exit 1
+            fi
           fi
 
       - name: Build and push immutable image
