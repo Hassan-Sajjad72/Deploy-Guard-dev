@@ -53,9 +53,11 @@ jobs:
         run: |
           set -euo pipefail
           SHORT_SHA="${GITHUB_SHA::12}"
+          OPERATION_SUFFIX="$(printf '%s' "$OPERATION_ID" | tr -cd '[:alnum:]' | cut -c1-12)"
           SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
           REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${SHORT_SHA}-${OPERATION_SUFFIX}" >> "$GITHUB_OUTPUT"
           echo "repository_name=$REPOSITORY_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Ensure ECR repository
@@ -112,7 +114,7 @@ jobs:
           set -euo pipefail
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-          IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.short_sha }}"
+          IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.image_tag }}"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
           docker build --pull --build-arg APP_PORT="$APP_PORT" --build-arg STATIC_OUTPUT_DIR="$OUTPUT_DIRECTORY" -t "$IMAGE_URI" .
           docker push "$IMAGE_URI"
