@@ -13,8 +13,10 @@ on:
       app_port: { required: true, type: number }
       health_check_path: { required: true, type: string }
       terraform_state_bucket: { required: true, type: string }
-      container_profile: { required: true, type: string }
-      output_directory: { required: true, type: string }
+      app_root: { required: true, type: string }
+      docker_strategy: { required: true, type: string }
+      generated_dockerfile_base64: { required: false, type: string, default: "" }
+      managed_database_config_base64: { required: false, type: string, default: "" }
 
 permissions:
   contents: read
@@ -34,8 +36,10 @@ jobs:
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
-      CONTAINER_PROFILE: ${{ inputs.container_profile }}
-      OUTPUT_DIRECTORY: ${{ inputs.output_directory }}
+      APP_ROOT: ${{ inputs.app_root }}
+      DOCKER_STRATEGY: ${{ inputs.docker_strategy }}
+      GENERATED_DOCKERFILE_BASE64: ${{ inputs.generated_dockerfile_base64 }}
+      MANAGED_DATABASE_CONFIG_BASE64: ${{ inputs.managed_database_config_base64 }}
     steps:
       - name: Checkout application
         uses: actions/checkout@v4
@@ -53,9 +57,11 @@ jobs:
         run: |
           set -euo pipefail
           SHORT_SHA="${GITHUB_SHA::12}"
+          OPERATION_SUFFIX="$(printf '%s' "$OPERATION_ID" | tr -cd '[:alnum:]' | cut -c1-12)"
           SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
           REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${SHORT_SHA}-${OPERATION_SUFFIX}" >> "$GITHUB_OUTPUT"
           echo "repository_name=$REPOSITORY_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Ensure ECR repository
@@ -66,42 +72,25 @@ jobs:
           aws ecr describe-repositories --repository-names "${{ steps.release.outputs.repository_name }}" >/dev/null 2>&1 || \
             aws ecr create-repository --repository-name "${{ steps.release.outputs.repository_name }}" --image-scanning-configuration scanOnPush=false >/dev/null
 
-      - name: Generate Dockerfile when absent
+      - name: Materialize contract Dockerfile
         if: inputs.deployment_action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f Dockerfile ]; then
-            if [ "$CONTAINER_PROFILE" = "react-static" ]; then
-              cat > Dockerfile <<'DOCKERFILE'
-          FROM node:20-alpine AS build
-          WORKDIR /app
-          COPY package*.json ./
-          RUN npm ci
-          COPY . .
-          ARG STATIC_OUTPUT_DIR=build
-          RUN npm run build && mkdir -p /static && cp -R "$STATIC_OUTPUT_DIR"/. /static/
-          FROM nginx:1.27-alpine
-          COPY --from=build /static/ /usr/share/nginx/html/
-          EXPOSE 80
-          DOCKERFILE
-            elif [ "$CONTAINER_PROFILE" = "streamlit" ] || [ "$CONTAINER_PROFILE" = "generic-python" ]; then
-              cat > Dockerfile <<'DOCKERFILE'
-          FROM python:3.11-slim
-          WORKDIR /app
-          ARG APP_PORT=8000
-          ENV PORT=${APP_PORT}
-          ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-          COPY requirements.txt ./
-          RUN pip install --no-cache-dir -r requirements.txt
-          COPY . .
-          EXPOSE ${APP_PORT}
-          CMD ["sh", "-c", "streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT} --server.headless=true"]
-          DOCKERFILE
-            else
-              echo "DeployGuard has no safe generated container for detected profile: $CONTAINER_PROFILE" >&2
+          if [[ ! "$APP_ROOT" =~ ^(\.|[A-Za-z0-9._/-]+)$ ]] || [[ "/$APP_ROOT/" == *"/../"* ]]; then
+            echo "DeployGuard received an unsafe application root." >&2
+            exit 1
+          fi
+          if [ "$DOCKER_STRATEGY" = "generated" ]; then
+            if [ -z "$GENERATED_DOCKERFILE_BASE64" ]; then
+              echo "DeployGuard deployment contract is missing a generated Dockerfile." >&2
               exit 1
             fi
+            mkdir -p .deployguard
+            printf '%s' "$GENERATED_DOCKERFILE_BASE64" | base64 --decode > .deployguard/Dockerfile
+          elif [ "$DOCKER_STRATEGY" != "custom" ] || [ ! -f "$APP_ROOT/Dockerfile" ]; then
+            echo "DeployGuard deployment contract does not select a usable Docker strategy." >&2
+            exit 1
           fi
 
       - name: Build and push immutable image
@@ -112,9 +101,11 @@ jobs:
           set -euo pipefail
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-          IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.short_sha }}"
+          IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.image_tag }}"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
-          docker build --pull --build-arg APP_PORT="$APP_PORT" --build-arg STATIC_OUTPUT_DIR="$OUTPUT_DIRECTORY" -t "$IMAGE_URI" .
+          DOCKERFILE_PATH="$APP_ROOT/Dockerfile"
+          if [ "$DOCKER_STRATEGY" = "generated" ]; then DOCKERFILE_PATH="$GITHUB_WORKSPACE/.deployguard/Dockerfile"; fi
+          docker build --pull --file "$DOCKERFILE_PATH" -t "$IMAGE_URI" "$APP_ROOT"
           docker push "$IMAGE_URI"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
@@ -136,6 +127,7 @@ jobs:
             backend "s3" {}
             required_providers {
               aws = { source = "hashicorp/aws", version = "~> 5.0" }
+              random = { source = "hashicorp/random", version = "~> 3.0" }
             }
           }
           provider "aws" { region = var.aws_region }
@@ -146,7 +138,20 @@ jobs:
           variable "app_port" { type = number }
           variable "health_check_path" { type = string }
           variable "image_uri" { type = string }
-          locals { name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28) }
+          variable "managed_database_config" { type = any, default = null }
+          locals {
+            name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28)
+            managed_database = var.managed_database_config
+            managed_database_enabled = try(local.managed_database.provider, "") == "managed"
+            app_environment = concat(
+              [{ name = "PORT", value = tostring(var.app_port) }],
+              [for key, value in try(local.managed_database.runtimeAliases, {}) : { name = key, value = value }]
+            )
+            app_database_secrets = [for key, property in try(local.managed_database.secretAliases, {}) : {
+              name = key
+              valueFrom = property == "url" ? aws_secretsmanager_secret.database_url[0].arn : aws_secretsmanager_secret.database_password[0].arn
+            }]
+          }
           resource "aws_security_group" "alb" {
             name = "${local.name}-alb"
             vpc_id = var.vpc_id
@@ -221,6 +226,98 @@ jobs:
             role = aws_iam_role.execution.id
             policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Action=["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],Resource="*"}]})
           }
+          resource "aws_secretsmanager_secret" "database_password" {
+            count = local.managed_database_enabled ? 1 : 0
+            name = "deployguard/${var.project_id}/dev/database/password"
+            recovery_window_in_days = 7
+          }
+          resource "random_password" "database" {
+            count = local.managed_database_enabled ? 1 : 0
+            length = 32
+            special = true
+            override_special = "_-"
+          }
+          resource "aws_secretsmanager_secret_version" "database_password" {
+            count = local.managed_database_enabled ? 1 : 0
+            secret_id = aws_secretsmanager_secret.database_password[0].id
+            secret_string = random_password.database[0].result
+          }
+          resource "aws_service_discovery_private_dns_namespace" "database" {
+            count = local.managed_database_enabled ? 1 : 0
+            name = "project-${var.project_id}.deployguard.local"
+            vpc = var.vpc_id
+          }
+          resource "aws_service_discovery_service" "database" {
+            count = local.managed_database_enabled ? 1 : 0
+            name = "db"
+            dns_config {
+              namespace_id = aws_service_discovery_private_dns_namespace.database[0].id
+              dns_records {
+                ttl = 10
+                type = "A"
+              }
+              routing_policy = "MULTIVALUE"
+            }
+            health_check_custom_config { failure_threshold = 1 }
+          }
+          resource "aws_secretsmanager_secret" "database_url" {
+            count = local.managed_database_enabled ? 1 : 0
+            name = "deployguard/${var.project_id}/dev/database/url"
+            recovery_window_in_days = 7
+          }
+          resource "aws_secretsmanager_secret_version" "database_url" {
+            count = local.managed_database_enabled ? 1 : 0
+            secret_id = aws_secretsmanager_secret.database_url[0].id
+            secret_string = "postgresql://${local.managed_database.databaseUser}:${urlencode(random_password.database[0].result)}@${local.managed_database.host}:${local.managed_database.port}/${local.managed_database.databaseName}"
+          }
+          resource "aws_iam_role_policy" "database_secrets" {
+            count = local.managed_database_enabled ? 1 : 0
+            name = "database-secrets"
+            role = aws_iam_role.execution.id
+            policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Action=["secretsmanager:GetSecretValue"],Resource=[aws_secretsmanager_secret.database_password[0].arn,aws_secretsmanager_secret.database_url[0].arn]}]})
+          }
+          resource "aws_security_group" "database" {
+            count = local.managed_database_enabled ? 1 : 0
+            name = "${local.name}-db"
+            vpc_id = var.vpc_id
+            ingress {
+              from_port = local.managed_database.port
+              to_port = local.managed_database.port
+              protocol = "tcp"
+              security_groups = [aws_security_group.service.id]
+            }
+            egress {
+              from_port = 0
+              to_port = 0
+              protocol = "-1"
+              cidr_blocks = ["0.0.0.0/0"]
+            }
+          }
+          resource "aws_ecs_task_definition" "database" {
+            count = local.managed_database_enabled ? 1 : 0
+            family = "${local.name}-database"
+            network_mode = "awsvpc"
+            requires_compatibilities = ["FARGATE"]
+            cpu = "512"
+            memory = "1024"
+            execution_role_arn = aws_iam_role.execution.arn
+            container_definitions = jsonencode([{name="database",image="postgres:16",essential=true,portMappings=[{containerPort=local.managed_database.port,hostPort=local.managed_database.port,protocol="tcp"}],environment=[{name="POSTGRES_DB",value=local.managed_database.databaseName},{name="POSTGRES_USER",value=local.managed_database.databaseUser}],secrets=[{name="POSTGRES_PASSWORD",valueFrom=aws_secretsmanager_secret.database_password[0].arn]} }])
+          }
+          resource "aws_ecs_service" "database" {
+            count = local.managed_database_enabled ? 1 : 0
+            name = "database"
+            cluster = aws_ecs_cluster.app.id
+            task_definition = aws_ecs_task_definition.database[0].arn
+            desired_count = 1
+            launch_type = "FARGATE"
+            network_configuration {
+              subnets = var.public_subnet_ids
+              security_groups = [aws_security_group.database[0].id]
+              assign_public_ip = true
+            }
+            service_registries { registry_arn = aws_service_discovery_service.database[0].arn }
+            depends_on = [aws_secretsmanager_secret_version.database_password]
+          }
           resource "aws_ecs_task_definition" "app" {
             family = local.name
             network_mode = "awsvpc"
@@ -228,7 +325,7 @@ jobs:
             cpu = "1024"
             memory = "2048"
             execution_role_arn = aws_iam_role.execution.arn
-            container_definitions = jsonencode([{name="app",image=var.image_uri,essential=true,portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}]}])
+            container_definitions = jsonencode([{name="app",image=var.image_uri,essential=true,portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}],environment=local.app_environment,secrets=local.app_database_secrets}])
           }
           resource "aws_ecs_service" "app" {
             name = local.name
@@ -247,15 +344,13 @@ jobs:
               container_name = "app"
               container_port = var.app_port
             }
-            depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution]
+            depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution, aws_ecs_service.database]
           }
           output "deployed_url" { value = "http://${aws_lb.app.dns_name}" }
           output "cluster_name" { value = aws_ecs_cluster.app.name }
           output "service_name" { value = aws_ecs_service.app.name }
           TERRAFORM
-          cat > .deployguard/terraform/terraform.tfvars.json <<EOF
-          {"aws_region":"$AWS_REGION","project_id":"$PROJECT_ID","vpc_id":"$VPC_ID","public_subnet_ids":["${PUBLIC_SUBNET_IDS//,/\",\"}"],"app_port":$APP_PORT,"health_check_path":"$HEALTH_CHECK_PATH","image_uri":"$IMAGE_URI"}
-          EOF
+          IMAGE_URI="$IMAGE_URI" node -e 'const fs=require("fs");const database=process.env.MANAGED_DATABASE_CONFIG_BASE64?JSON.parse(Buffer.from(process.env.MANAGED_DATABASE_CONFIG_BASE64,"base64").toString("utf8")):null;if(database&&(!database.bindingId||database.provider!=="managed"||database.engine!=="postgres"||!database.host||!database.databaseName||!database.databaseUser))throw new Error("invalid canonical managed database configuration");fs.writeFileSync(".deployguard/terraform/terraform.tfvars.json",JSON.stringify({aws_region:process.env.AWS_REGION,project_id:process.env.PROJECT_ID,vpc_id:process.env.VPC_ID,public_subnet_ids:process.env.PUBLIC_SUBNET_IDS.split(",").filter(Boolean),app_port:Number(process.env.APP_PORT),health_check_path:process.env.HEALTH_CHECK_PATH,image_uri:process.env.IMAGE_URI,managed_database_config:database}));'
 
       - name: Terraform plan and apply
         working-directory: .deployguard/terraform
