@@ -133,6 +133,9 @@ jobs:
           const databaseBytes = decode("managed_database_config_base64", 256 * 1024);
           if (databaseBytes) {
             const database = JSON.parse(databaseBytes.toString("utf8"));
+            const environment = database.environment === undefined ? "dev" : database.environment;
+            if (!["dev", "production"].includes(environment)) throw new Error("DeployGuard received an invalid deployment environment.");
+            database.environment = environment;
             fs.writeFileSync(".deployguard/managed-database-config.json", JSON.stringify(database), { mode: 0o600 });
           }
           NODE
@@ -200,6 +203,7 @@ jobs:
             name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28)
             managed_database = var.managed_database_config
             managed_database_enabled = try(local.managed_database.provider, "") == "managed"
+            deployment_environment = try(local.managed_database.environment, "dev")
             application_config = var.application_config
             application_secret_arn = try(local.application_config.secretArn, "") == null ? "" : try(local.application_config.secretArn, "")
             app_environment_map = merge(
@@ -319,8 +323,13 @@ jobs:
           }
           resource "aws_secretsmanager_secret" "database_password" {
             count = local.managed_database_enabled ? 1 : 0
-            name = "deployguard/${var.project_id}/dev/database/password"
+            name = "deployguard/${var.project_id}/${local.deployment_environment}/database/password"
             recovery_window_in_days = 7
+            tags = {
+              ManagedBy            = "DeployGuard"
+              DeployGuardProjectId = var.project_id
+              Environment          = local.deployment_environment
+            }
           }
           resource "random_password" "database" {
             count = local.managed_database_enabled ? 1 : 0
@@ -353,8 +362,13 @@ jobs:
           }
           resource "aws_secretsmanager_secret" "database_url" {
             count = local.managed_database_enabled ? 1 : 0
-            name = "deployguard/${var.project_id}/dev/database/url"
+            name = "deployguard/${var.project_id}/${local.deployment_environment}/database/url"
             recovery_window_in_days = 7
+            tags = {
+              ManagedBy            = "DeployGuard"
+              DeployGuardProjectId = var.project_id
+              Environment          = local.deployment_environment
+            }
           }
           resource "aws_secretsmanager_secret_version" "database_url" {
             count = local.managed_database_enabled ? 1 : 0
@@ -642,6 +656,114 @@ jobs:
           if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             terraform plan -destroy -input=false -out=deployguard.tfplan
           else
+            reconcile_fixed_secret() {
+              local logical_name="$1"
+              local secret_suffix="$2"
+              local secret_address="aws_secretsmanager_secret.${logical_name}[0]"
+              local version_address="aws_secretsmanager_secret_version.${logical_name}[0]"
+              local secret_name="deployguard/${PROJECT_ID}/${DEPLOYMENT_ENVIRONMENT}/database/${secret_suffix}"
+              local lifecycle="missing" restore_result="not_required" import_result="not_required"
+              local metadata_file=".secret-${logical_name}.json"
+              local error_file=".secret-${logical_name}.error"
+              local state_file=".secret-state-list"
+              fail_secret_reconciliation() {
+                echo "::error::DeployGuard secret lifecycle reconciliation failed: secret_name=${secret_name}; lifecycle=${lifecycle}; restore_result=${restore_result}; import_result=${import_result}; terraform_address=${secret_address}" >&2
+                rm -f "$metadata_file" "$error_file" "$state_file"
+                return 1
+              }
+
+              if ! aws secretsmanager describe-secret --secret-id "$secret_name" --output json >"$metadata_file" 2>"$error_file"; then
+                if grep -q 'ResourceNotFoundException' "$error_file"; then
+                  rm -f "$metadata_file" "$error_file" "$state_file"
+                  echo "DeployGuard secret lifecycle reconciliation: secret_name=${secret_name}; lifecycle=missing; restore_result=not_required; import_result=terraform_create; terraform_address=${secret_address}"
+                  return 0
+                fi
+                lifecycle="describe_failed"
+                fail_secret_reconciliation
+                return 1
+              fi
+
+              local secret_arn deleted_date ownership version_id
+              secret_arn="$(node -e 'const m=require("./"+process.argv[1]);process.stdout.write(typeof m.ARN==="string"?m.ARN:"")' "$metadata_file")"
+              deleted_date="$(node -e 'const m=require("./"+process.argv[1]);process.stdout.write(m.DeletedDate?String(m.DeletedDate):"")' "$metadata_file")"
+              ownership="$(PROJECT_ID="$PROJECT_ID" DEPLOYMENT_ENVIRONMENT="$DEPLOYMENT_ENVIRONMENT" node -e 'const m=require("./"+process.argv[1]);const t=Object.fromEntries((m.Tags||[]).map(x=>[x.Key,x.Value]));process.stdout.write(t.ManagedBy==="DeployGuard"&&t.DeployGuardProjectId===process.env.PROJECT_ID&&t.Environment===process.env.DEPLOYMENT_ENVIRONMENT?"verified":"mismatch")' "$metadata_file")"
+              version_id="$(node -e 'const m=require("./"+process.argv[1]);const ids=Object.entries(m.VersionIdsToStages||{}).filter(([,s])=>Array.isArray(s)&&s.includes("AWSCURRENT")).map(([id])=>id);process.stdout.write(ids.length===1?ids[0]:"")' "$metadata_file")"
+              lifecycle="$([ -n "$deleted_date" ] && printf 'scheduled_for_deletion' || printf 'active')"
+              if [ -z "$secret_arn" ] || [ "$ownership" != "verified" ]; then
+                restore_result="blocked_ownership_mismatch"
+                import_result="blocked"
+                fail_secret_reconciliation
+                return 1
+              fi
+
+              if [ "$lifecycle" = "scheduled_for_deletion" ]; then
+                if ! aws secretsmanager restore-secret --secret-id "$secret_arn" >/dev/null 2>&1; then
+                  restore_result="failed"
+                  fail_secret_reconciliation
+                  return 1
+                fi
+                restore_result="requested"
+                local restored="false"
+                for _attempt in $(seq 1 12); do
+                  if aws secretsmanager describe-secret --secret-id "$secret_arn" --output json >"$metadata_file" 2>/dev/null \
+                    && node -e 'const m=require("./"+process.argv[1]);process.exit(m.DeletedDate?1:0)' "$metadata_file"; then
+                    restored="true"
+                    restore_result="restored"
+                    break
+                  fi
+                  sleep 5
+                done
+                if [ "$restored" != "true" ]; then
+                  restore_result="timed_out"
+                  fail_secret_reconciliation
+                  return 1
+                fi
+              fi
+
+              if ! terraform state list >"$state_file" 2>/dev/null; then
+                import_result="state_read_failed"
+                fail_secret_reconciliation
+                return 1
+              fi
+              if grep -Fqx "$secret_address" "$state_file"; then
+                import_result="already_imported"
+              elif terraform import -input=false "$secret_address" "$secret_arn" >/dev/null 2>&1; then
+                import_result="imported"
+              else
+                import_result="failed"
+                fail_secret_reconciliation
+                return 1
+              fi
+
+              if ! terraform state list >"$state_file" 2>/dev/null; then
+                import_result="state_read_failed"
+                fail_secret_reconciliation
+                return 1
+              fi
+              if [ -n "$version_id" ] && ! grep -Fqx "$version_address" "$state_file"; then
+                if ! terraform import -input=false "$version_address" "${secret_arn}|${version_id}" >/dev/null 2>&1; then
+                  import_result="version_import_failed"
+                  fail_secret_reconciliation
+                  return 1
+                fi
+                import_result="${import_result}+version_imported"
+              fi
+              rm -f "$metadata_file" "$error_file" "$state_file"
+              echo "DeployGuard secret lifecycle reconciliation: secret_name=${secret_name}; lifecycle=${lifecycle}; restore_result=${restore_result}; import_result=${import_result}; terraform_address=${secret_address}"
+            }
+
+            DEPLOYMENT_ENVIRONMENT="dev"
+            if [ -f ../managed-database-config.json ]; then
+              DEPLOYMENT_ENVIRONMENT="$(node -e 'const d=require("./../managed-database-config.json");process.stdout.write(d.environment||"dev")')"
+            fi
+            if [ "$DEPLOYMENT_ENVIRONMENT" != "dev" ] && [ "$DEPLOYMENT_ENVIRONMENT" != "production" ]; then
+              echo "::error::DeployGuard secret lifecycle reconciliation failed: invalid deployment environment" >&2
+              exit 1
+            fi
+            if [ -f ../managed-database-config.json ] && node -e 'const d=require("./../managed-database-config.json");process.exit(d.provider==="managed"?0:1)' 2>/dev/null; then
+              reconcile_fixed_secret "database_password" "password"
+              reconcile_fixed_secret "database_url" "url"
+            fi
             terraform plan -input=false -out=deployguard.tfplan
           fi
           terraform apply -input=false -auto-approve deployguard.tfplan
