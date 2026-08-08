@@ -138,7 +138,10 @@ jobs:
           variable "app_port" { type = number }
           variable "health_check_path" { type = string }
           variable "image_uri" { type = string }
-          variable "managed_database_config" { type = any, default = null }
+          variable "managed_database_config" {
+            type    = any
+            default = null
+          }
           locals {
             name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28)
             managed_database = var.managed_database_config
@@ -301,7 +304,36 @@ jobs:
             cpu = "512"
             memory = "1024"
             execution_role_arn = aws_iam_role.execution.arn
-            container_definitions = jsonencode([{name="database",image="postgres:16",essential=true,portMappings=[{containerPort=local.managed_database.port,hostPort=local.managed_database.port,protocol="tcp"}],environment=[{name="POSTGRES_DB",value=local.managed_database.databaseName},{name="POSTGRES_USER",value=local.managed_database.databaseUser}],secrets=[{name="POSTGRES_PASSWORD",valueFrom=aws_secretsmanager_secret.database_password[0].arn]} }])
+            container_definitions = jsonencode([
+              {
+                name      = "database"
+                image     = "postgres:16"
+                essential = true
+                portMappings = [
+                  {
+                    containerPort = local.managed_database.port
+                    hostPort      = local.managed_database.port
+                    protocol      = "tcp"
+                  }
+                ]
+                environment = [
+                  {
+                    name  = "POSTGRES_DB"
+                    value = local.managed_database.databaseName
+                  },
+                  {
+                    name  = "POSTGRES_USER"
+                    value = local.managed_database.databaseUser
+                  }
+                ]
+                secrets = [
+                  {
+                    name      = "POSTGRES_PASSWORD"
+                    valueFrom = aws_secretsmanager_secret.database_password[0].arn
+                  }
+                ]
+              }
+            ])
           }
           resource "aws_ecs_service" "database" {
             count = local.managed_database_enabled ? 1 : 0
@@ -357,11 +389,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          terraform fmt main.tf
           terraform init -input=false \
             -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
             -backend-config="key=projects/$PROJECT_ID/dev/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
             -backend-config="encrypt=true"
+          terraform validate
           if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             terraform plan -destroy -input=false -out=deployguard.tfplan
           else
