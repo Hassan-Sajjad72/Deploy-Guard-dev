@@ -220,6 +220,15 @@ jobs:
             }
           }
           resource "aws_ecs_cluster" "app" { name = local.name }
+          resource "aws_cloudwatch_log_group" "app" {
+            name              = "/deployguard/${var.project_id}/app"
+            retention_in_days = 7
+          }
+          resource "aws_cloudwatch_log_group" "database" {
+            count             = local.managed_database_enabled ? 1 : 0
+            name              = "/deployguard/${var.project_id}/database"
+            retention_in_days = 7
+          }
           resource "aws_iam_role" "execution" {
             name = "${local.name}-execution"
             assume_role_policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Principal={Service="ecs-tasks.amazonaws.com"},Action="sts:AssumeRole"}]})
@@ -227,7 +236,24 @@ jobs:
           resource "aws_iam_role_policy" "execution" {
             name = "ecr-pull"
             role = aws_iam_role.execution.id
-            policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Action=["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],Resource="*"}]})
+            policy = jsonencode({
+              Version = "2012-10-17"
+              Statement = [
+                {
+                  Effect   = "Allow"
+                  Action   = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"]
+                  Resource = "*"
+                },
+                {
+                  Effect   = "Allow"
+                  Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+                  Resource = concat(
+                    ["${aws_cloudwatch_log_group.app.arn}:*"],
+                    local.managed_database_enabled ? ["${aws_cloudwatch_log_group.database[0].arn}:*"] : []
+                  )
+                }
+              ]
+            })
           }
           resource "aws_secretsmanager_secret" "database_password" {
             count = local.managed_database_enabled ? 1 : 0
@@ -332,6 +358,14 @@ jobs:
                     valueFrom = aws_secretsmanager_secret.database_password[0].arn
                   }
                 ]
+                logConfiguration = {
+                  logDriver = "awslogs"
+                  options = {
+                    "awslogs-group"         = aws_cloudwatch_log_group.database[0].name
+                    "awslogs-region"        = var.aws_region
+                    "awslogs-stream-prefix" = "database"
+                  }
+                }
               }
             ])
           }
@@ -357,7 +391,22 @@ jobs:
             cpu = "1024"
             memory = "2048"
             execution_role_arn = aws_iam_role.execution.arn
-            container_definitions = jsonencode([{name="app",image=var.image_uri,essential=true,portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}],environment=local.app_environment,secrets=local.app_database_secrets}])
+            container_definitions = jsonencode([{
+              name         = "app"
+              image        = var.image_uri
+              essential    = true
+              portMappings = [{ containerPort = var.app_port, hostPort = var.app_port, protocol = "tcp" }]
+              environment  = local.app_environment
+              secrets      = local.app_database_secrets
+              logConfiguration = {
+                logDriver = "awslogs"
+                options = {
+                  "awslogs-group"         = aws_cloudwatch_log_group.app.name
+                  "awslogs-region"        = var.aws_region
+                  "awslogs-stream-prefix" = "app"
+                }
+              }
+            }])
           }
           resource "aws_ecs_service" "app" {
             name = local.name
