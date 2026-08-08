@@ -45,9 +45,6 @@ jobs:
       APP_ROOT: ${{ inputs.app_root }}
       DOCKER_STRATEGY: ${{ inputs.docker_strategy }}
       SOURCE_COMMIT_SHA: ${{ inputs.source_commit_sha }}
-      GENERATED_DOCKERFILE_BASE64: ${{ inputs.generated_dockerfile_base64 }}
-      MANAGED_DATABASE_CONFIG_BASE64: ${{ inputs.managed_database_config_base64 }}
-      APPLICATION_CONFIG_BASE64: ${{ inputs.application_config_base64 }}
     steps:
       - name: Checkout application
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -96,22 +93,33 @@ jobs:
             echo "DeployGuard received an unsafe application root." >&2
             exit 1
           fi
-          if [ "$DOCKER_STRATEGY" = "generated" ]; then
-            if [ -z "$GENERATED_DOCKERFILE_BASE64" ]; then
-              echo "DeployGuard deployment contract is missing a generated Dockerfile." >&2
-              exit 1
-            fi
-            mkdir -p .deployguard
-            printf '%s' "$GENERATED_DOCKERFILE_BASE64" | base64 --decode > .deployguard/Dockerfile
-          elif [ "$DOCKER_STRATEGY" != "custom" ] || [ ! -f "$APP_ROOT/Dockerfile" ]; then
+          if [ "$DOCKER_STRATEGY" != "generated" ] && { [ "$DOCKER_STRATEGY" != "custom" ] || [ ! -f "$APP_ROOT/Dockerfile" ]; }; then
             echo "DeployGuard deployment contract does not select a usable Docker strategy." >&2
             exit 1
           fi
-          APPLICATION_CONFIG_BASE64="$APPLICATION_CONFIG_BASE64" node <<'NODE'
+          mkdir -p .deployguard
+          node <<'NODE'
           const fs = require("fs");
-          const encoded = process.env.APPLICATION_CONFIG_BASE64 || "";
-          const config = encoded
-            ? JSON.parse(Buffer.from(encoded, "base64").toString("utf8"))
+          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+          const inputs = event.inputs && typeof event.inputs === "object" ? event.inputs : {};
+          const decode = (name, maximumBytes) => {
+            const encoded = typeof inputs[name] === "string" ? inputs[name] : "";
+            if (!encoded) return null;
+            if (encoded.length > Math.ceil(maximumBytes / 3) * 4 + 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+              throw new Error(`DeployGuard received an invalid ${name} payload.`);
+            }
+            const decoded = Buffer.from(encoded, "base64");
+            if (decoded.length > maximumBytes) throw new Error(`DeployGuard received an oversized ${name} payload.`);
+            return decoded;
+          };
+          if (process.env.DOCKER_STRATEGY === "generated") {
+            const dockerfile = decode("generated_dockerfile_base64", 1024 * 1024);
+            if (!dockerfile?.length) throw new Error("DeployGuard deployment contract is missing a generated Dockerfile.");
+            fs.writeFileSync(".deployguard/Dockerfile", dockerfile, { mode: 0o600 });
+          }
+          const applicationBytes = decode("application_config_base64", 256 * 1024);
+          const config = applicationBytes
+            ? JSON.parse(applicationBytes.toString("utf8"))
             : { configurationFingerprint: "", environment: {}, buildArguments: {}, secretArn: null, secretKeys: [] };
           const validRecord = (value) => value && typeof value === "object" && !Array.isArray(value)
             && Object.entries(value).every(([key, item]) => /^[A-Z][A-Z0-9_]{0,127}$/.test(key) && typeof item === "string" && Buffer.byteLength(item) <= 4096 && !/[\r\n\0]/.test(item));
@@ -122,6 +130,11 @@ jobs:
             throw new Error("DeployGuard received an invalid sanitized application configuration mapping.");
           }
           fs.writeFileSync(".deployguard/application-config.json", JSON.stringify(config), { mode: 0o600 });
+          const databaseBytes = decode("managed_database_config_base64", 256 * 1024);
+          if (databaseBytes) {
+            const database = JSON.parse(databaseBytes.toString("utf8"));
+            fs.writeFileSync(".deployguard/managed-database-config.json", JSON.stringify(database), { mode: 0o600 });
+          }
           NODE
 
       - name: Build and push immutable image
@@ -149,7 +162,7 @@ jobs:
       - name: Install Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
-          terraform_version: 1.9.8
+          terraform_version: 1.15.8
           terraform_wrapper: false
 
       - name: Generate deployment Terraform
@@ -611,7 +624,7 @@ jobs:
           output "database_efs_file_system_id" { value = local.managed_database_enabled ? aws_efs_file_system.database[0].id : null }
           output "database_efs_access_point_id" { value = local.managed_database_enabled ? aws_efs_access_point.database[0].id : null }
           TERRAFORM
-          IMAGE_URI="$IMAGE_URI" node -e 'const fs=require("fs");const database=process.env.MANAGED_DATABASE_CONFIG_BASE64?JSON.parse(Buffer.from(process.env.MANAGED_DATABASE_CONFIG_BASE64,"base64").toString("utf8")):null;const application=fs.existsSync(".deployguard/application-config.json")?JSON.parse(fs.readFileSync(".deployguard/application-config.json","utf8")):null;if(database&&(!database.bindingId||database.provider!=="managed"||database.engine!=="postgres"||!database.host||!database.databaseName||!database.databaseUser))throw new Error("invalid canonical managed database configuration");fs.writeFileSync(".deployguard/terraform/terraform.tfvars.json",JSON.stringify({aws_region:process.env.AWS_REGION,project_id:process.env.PROJECT_ID,vpc_id:process.env.VPC_ID,public_subnet_ids:process.env.PUBLIC_SUBNET_IDS.split(",").filter(Boolean),app_port:Number(process.env.APP_PORT),health_check_path:process.env.HEALTH_CHECK_PATH,image_uri:process.env.IMAGE_URI,managed_database_config:database,application_config:application}));'
+          IMAGE_URI="$IMAGE_URI" node -e 'const fs=require("fs");const database=fs.existsSync(".deployguard/managed-database-config.json")?JSON.parse(fs.readFileSync(".deployguard/managed-database-config.json","utf8")):null;const application=fs.existsSync(".deployguard/application-config.json")?JSON.parse(fs.readFileSync(".deployguard/application-config.json","utf8")):null;if(database&&(!database.bindingId||database.provider!=="managed"||database.engine!=="postgres"||!database.host||!database.databaseName||!database.databaseUser))throw new Error("invalid canonical managed database configuration");fs.writeFileSync(".deployguard/terraform/terraform.tfvars.json",JSON.stringify({aws_region:process.env.AWS_REGION,project_id:process.env.PROJECT_ID,vpc_id:process.env.VPC_ID,public_subnet_ids:process.env.PUBLIC_SUBNET_IDS.split(",").filter(Boolean),app_port:Number(process.env.APP_PORT),health_check_path:process.env.HEALTH_CHECK_PATH,image_uri:process.env.IMAGE_URI,managed_database_config:database,application_config:application}));'
 
       - name: Terraform plan and apply
         working-directory: .deployguard/terraform
