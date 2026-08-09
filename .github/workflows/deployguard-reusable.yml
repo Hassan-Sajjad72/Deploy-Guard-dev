@@ -104,8 +104,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          aws ecr describe-repositories --repository-names "${{ steps.release.outputs.repository_name }}" >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name "${{ steps.release.outputs.repository_name }}" --image-scanning-configuration scanOnPush=false >/dev/null
+          REPOSITORY_NAME="${{ steps.release.outputs.repository_name }}"
+          ERROR_FILE="$(mktemp)"
+          if REPOSITORY="$(aws ecr describe-repositories --repository-names "$REPOSITORY_NAME" --output json 2>"$ERROR_FILE")"; then
+            REPOSITORY_ARN="$(printf '%s' "$REPOSITORY" | jq -r '.repositories | if length == 1 then .[0].repositoryArn else empty end')"
+          elif grep -q 'RepositoryNotFoundException' "$ERROR_FILE"; then
+            REPOSITORY="$(aws ecr create-repository --repository-name "$REPOSITORY_NAME" --image-scanning-configuration scanOnPush=false \
+              --tags Key=ManagedBy,Value=DeployGuard Key=DeployGuardProjectId,Value="$PROJECT_ID" Key=Environment,Value="$ENVIRONMENT_NAME" --output json)"
+            REPOSITORY_ARN="$(printf '%s' "$REPOSITORY" | jq -r '.repository.repositoryArn // empty')"
+          else
+            echo "The project image repository could not be verified." >&2
+            exit 1
+          fi
+          [ -n "$REPOSITORY_ARN" ] || { echo "The project image repository identity is ambiguous." >&2; exit 1; }
+          TAGS="$(aws ecr list-tags-for-resource --resource-arn "$REPOSITORY_ARN" --output json)"
+          printf '%s' "$TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+            (.tags | map({key: .Key, value: .Value}) | from_entries) as $tags
+            | $tags.ManagedBy == "DeployGuard"
+              and $tags.DeployGuardProjectId == $project
+              and $tags.Environment == $environment
+          ' >/dev/null || { echo "The project image repository failed DeployGuard ownership verification." >&2; exit 1; }
 
       - name: Materialize immutable container contract
         if: inputs.deployment_action == 'deploy'
@@ -201,149 +219,160 @@ jobs:
           locals {
             log_group_prefix = var.infrastructure_namespace
             ownership_tags = {
-              ManagedBy = "DeployGuard"
+              ManagedBy            = "DeployGuard"
               DeployGuardProjectId = var.project_id
-              Environment = var.environment_name
+              Environment          = var.environment_name
             }
           }
           resource "aws_cloudwatch_log_group" "app" {
-            name = "${local.log_group_prefix}/app"
+            name              = "${local.log_group_prefix}/app"
             retention_in_days = 14
-            tags = merge(local.ownership_tags, { LogPurpose = "app" })
+            tags              = merge(local.ownership_tags, { LogPurpose = "app" })
           }
           resource "aws_cloudwatch_log_group" "database" {
-            name = "${local.log_group_prefix}/database"
+            name              = "${local.log_group_prefix}/database"
             retention_in_days = 14
-            tags = merge(local.ownership_tags, { LogPurpose = "database" })
+            tags              = merge(local.ownership_tags, { LogPurpose = "database" })
           }
           resource "aws_cloudwatch_log_group" "deployment" {
-            name = "${local.log_group_prefix}/deployment"
+            name              = "${local.log_group_prefix}/deployment"
             retention_in_days = 14
-            tags = merge(local.ownership_tags, { LogPurpose = "deployment" })
+            tags              = merge(local.ownership_tags, { LogPurpose = "deployment" })
           }
           resource "aws_security_group" "alb" {
-            name = "${local.name}-alb"
+            name   = "${local.name}-alb"
             vpc_id = var.vpc_id
+            tags   = local.ownership_tags
             ingress {
-              from_port = 80
-              to_port = 80
-              protocol = "tcp"
+              from_port   = 80
+              to_port     = 80
+              protocol    = "tcp"
               cidr_blocks = ["0.0.0.0/0"]
             }
             egress {
-              from_port = 0
-              to_port = 0
-              protocol = "-1"
+              from_port   = 0
+              to_port     = 0
+              protocol    = "-1"
               cidr_blocks = ["0.0.0.0/0"]
             }
           }
           resource "aws_security_group" "service" {
-            name = "${local.name}-svc"
+            name   = "${local.name}-svc"
             vpc_id = var.vpc_id
+            tags   = local.ownership_tags
             ingress {
-              from_port = var.app_port
-              to_port = var.app_port
-              protocol = "tcp"
+              from_port       = var.app_port
+              to_port         = var.app_port
+              protocol        = "tcp"
               security_groups = [aws_security_group.alb.id]
             }
             egress {
-              from_port = 0
-              to_port = 0
-              protocol = "-1"
+              from_port   = 0
+              to_port     = 0
+              protocol    = "-1"
               cidr_blocks = ["0.0.0.0/0"]
             }
           }
           resource "aws_lb" "app" {
-            name = local.name
-            internal = false
+            name               = local.name
+            internal           = false
             load_balancer_type = "application"
-            security_groups = [aws_security_group.alb.id]
-            subnets = var.public_subnet_ids
+            security_groups    = [aws_security_group.alb.id]
+            subnets            = var.public_subnet_ids
+            tags               = local.ownership_tags
           }
           resource "aws_lb_target_group" "app" {
             name_prefix = substr(local.name, 0, 6)
-            port = var.app_port
-            protocol = "HTTP"
-            vpc_id = var.vpc_id
+            port        = var.app_port
+            protocol    = "HTTP"
+            vpc_id      = var.vpc_id
             target_type = "ip"
+            tags        = merge(local.ownership_tags, { DeployGuardResource = "app-target-group" })
             lifecycle { create_before_destroy = true }
             health_check {
-              path = var.health_check_path
-              matcher = "200-399"
-              interval = 30
-              timeout = 10
-              healthy_threshold = 2
+              path                = var.health_check_path
+              matcher             = "200-399"
+              interval            = 30
+              timeout             = 10
+              healthy_threshold   = 2
               unhealthy_threshold = 3
             }
           }
           resource "aws_lb_listener" "http" {
             load_balancer_arn = aws_lb.app.arn
-            port = 80
-            protocol = "HTTP"
+            port              = 80
+            protocol          = "HTTP"
             default_action {
-              type = "forward"
+              type             = "forward"
               target_group_arn = aws_lb_target_group.app.arn
             }
           }
-          resource "aws_ecs_cluster" "app" { name = local.name }
+          resource "aws_ecs_cluster" "app" {
+            name = local.name
+            tags = local.ownership_tags
+          }
           resource "aws_iam_role" "execution" {
-            name = "${local.name}-execution"
-            assume_role_policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Principal={Service="ecs-tasks.amazonaws.com"},Action="sts:AssumeRole"}]})
+            name               = "${local.name}-execution"
+            assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }] })
+            tags               = local.ownership_tags
           }
           resource "aws_iam_role_policy" "execution" {
             name = "ecr-pull"
             role = aws_iam_role.execution.id
-            policy = jsonencode({Version="2012-10-17",Statement=[
-              {Effect="Allow",Action=["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],Resource="*"},
-              {Effect="Allow",Action=["logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogStreams"],Resource=[
+            policy = jsonencode({ Version = "2012-10-17", Statement = [
+              { Effect = "Allow", Action = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"], Resource = "*" },
+              { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"], Resource = [
                 "${aws_cloudwatch_log_group.app.arn}:*",
                 "${aws_cloudwatch_log_group.database.arn}:*",
                 "${aws_cloudwatch_log_group.deployment.arn}:*"
-              ]}
-            ]})
+              ] }
+            ] })
           }
           resource "aws_ecs_task_definition" "app" {
-            family = local.name
-            network_mode = "awsvpc"
+            family                   = local.name
+            network_mode             = "awsvpc"
             requires_compatibilities = ["FARGATE"]
-            cpu = "1024"
-            memory = "2048"
-            execution_role_arn = aws_iam_role.execution.arn
+            cpu                      = "1024"
+            memory                   = "2048"
+            execution_role_arn       = aws_iam_role.execution.arn
+            tags                     = local.ownership_tags
             container_definitions = jsonencode([{
-              name="app"
-              image=var.image_uri
-              essential=true
-              environment=[{name="PORT",value=tostring(var.app_port)},{name="HOST",value="0.0.0.0"}]
-              portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}]
-              logConfiguration={logDriver="awslogs",options={
-                awslogs-group=aws_cloudwatch_log_group.app.name
-                awslogs-region=var.aws_region
-                awslogs-stream-prefix="ecs"
-              }}
+              name         = "app"
+              image        = var.image_uri
+              essential    = true
+              environment  = [{ name = "PORT", value = tostring(var.app_port) }, { name = "HOST", value = "0.0.0.0" }]
+              portMappings = [{ containerPort = var.app_port, hostPort = var.app_port, protocol = "tcp" }]
+              logConfiguration = { logDriver = "awslogs", options = {
+                awslogs-group         = aws_cloudwatch_log_group.app.name
+                awslogs-region        = var.aws_region
+                awslogs-stream-prefix = "ecs"
+              } }
             }])
           }
           resource "aws_ecs_service" "app" {
-            name = local.name
-            cluster = aws_ecs_cluster.app.id
-            task_definition = aws_ecs_task_definition.app.arn
-            desired_count = 1
-            launch_type = "FARGATE"
+            name                  = local.name
+            cluster               = aws_ecs_cluster.app.id
+            task_definition       = aws_ecs_task_definition.app.arn
+            desired_count         = 1
+            launch_type           = "FARGATE"
             wait_for_steady_state = true
+            tags                  = local.ownership_tags
             network_configuration {
-              subnets = var.public_subnet_ids
-              security_groups = [aws_security_group.service.id]
+              subnets          = var.public_subnet_ids
+              security_groups  = [aws_security_group.service.id]
               assign_public_ip = true
             }
             load_balancer {
               target_group_arn = aws_lb_target_group.app.arn
-              container_name = "app"
-              container_port = var.app_port
+              container_name   = "app"
+              container_port   = var.app_port
             }
             depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution]
           }
           output "deployed_url" { value = "http://${aws_lb.app.dns_name}" }
           output "cluster_name" { value = aws_ecs_cluster.app.name }
           output "service_name" { value = aws_ecs_service.app.name }
+
           TERRAFORM
           cat > .deployguard/terraform/terraform.tfvars.json <<EOF
           {"aws_region":"$AWS_REGION","project_id":"$PROJECT_ID","environment_name":"$ENVIRONMENT_NAME","infrastructure_namespace":"$INFRASTRUCTURE_NAMESPACE","vpc_id":"$VPC_ID","public_subnet_ids":["${PUBLIC_SUBNET_IDS//,/\",\"}"],"app_port":$APP_PORT,"health_check_path":"$HEALTH_CHECK_PATH","image_uri":"$IMAGE_URI"}
@@ -354,6 +383,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          terraform fmt -check -recursive -diff
           terraform init -input=false \
             -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
             -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/terraform.tfstate" \
@@ -386,11 +416,134 @@ jobs:
           reconcile_log_group app
           reconcile_log_group database
           reconcile_log_group deployment
+          state_has() {
+            terraform state list 2>/dev/null | grep -Fqx "$1"
+          }
+          verify_owned_tags() {
+            local tags="$1"
+            printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+              map({key: (.key // .Key), value: (.value // .Value)}) | from_entries
+              | .ManagedBy == "DeployGuard"
+                and .DeployGuardProjectId == $project
+                and .Environment == $environment
+            ' >/dev/null
+          }
+          RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
+          reconcile_security_group() {
+            local address="$1" name="$2" result count identifier
+            state_has "$address" && return 0
+            result="$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$name" "Name=vpc-id,Values=$VPC_ID" --output json)"
+            count="$(printf '%s' "$result" | jq '.SecurityGroups | length')"
+            [ "$count" -eq 0 ] && return 0
+            [ "$count" -eq 1 ] || { echo "Existing security-group identity is ambiguous." >&2; exit 1; }
+            verify_owned_tags "$(printf '%s' "$result" | jq -c '.SecurityGroups[0].Tags // []')" || { echo "Existing security group failed DeployGuard ownership verification." >&2; exit 1; }
+            identifier="$(printf '%s' "$result" | jq -r '.SecurityGroups[0].GroupId')"
+            terraform import -input=false "$address" "$identifier" >/dev/null
+          }
+          reconcile_ecs_cluster() {
+            local result count arn
+            state_has "aws_ecs_cluster.app" && return 0
+            result="$(aws ecs describe-clusters --clusters "$RESOURCE_NAME" --include TAGS --output json)"
+            count="$(printf '%s' "$result" | jq '[.clusters[]? | select(.status == "ACTIVE")] | length')"
+            [ "$count" -eq 0 ] && return 0
+            [ "$count" -eq 1 ] || { echo "Existing ECS cluster identity is ambiguous." >&2; exit 1; }
+            verify_owned_tags "$(printf '%s' "$result" | jq -c '.clusters[0].tags // []')" || { echo "Existing ECS cluster failed DeployGuard ownership verification." >&2; exit 1; }
+            arn="$(printf '%s' "$result" | jq -r '.clusters[0].clusterArn')"
+            terraform import -input=false "aws_ecs_cluster.app" "$arn" >/dev/null
+          }
+          reconcile_ecs_service() {
+            local result count
+            state_has "aws_ecs_service.app" && return 0
+            result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" --include TAGS --output json)"
+            count="$(printf '%s' "$result" | jq '[.services[]? | select(.status == "ACTIVE")] | length')"
+            [ "$count" -eq 0 ] && return 0
+            [ "$count" -eq 1 ] || { echo "Existing ECS service identity is ambiguous." >&2; exit 1; }
+            verify_owned_tags "$(printf '%s' "$result" | jq -c '.services[0].tags // []')" || { echo "Existing ECS service failed DeployGuard ownership verification." >&2; exit 1; }
+            terraform import -input=false "aws_ecs_service.app" "$RESOURCE_NAME/$RESOURCE_NAME" >/dev/null
+          }
+          reconcile_load_balancer() {
+            local address="aws_lb.app" result arn tags error_file
+            state_has "$address" && return 0
+            error_file="$(mktemp)"
+            if ! result="$(aws elbv2 describe-load-balancers --names "$RESOURCE_NAME" --output json 2>"$error_file")"; then
+              if grep -q 'LoadBalancerNotFound' "$error_file"; then return 0; fi
+              echo "Existing load balancer could not be verified." >&2
+              exit 1
+            fi
+            [ "$(printf '%s' "$result" | jq '.LoadBalancers | length')" -eq 1 ] || { echo "Existing load-balancer identity is ambiguous." >&2; exit 1; }
+            arn="$(printf '%s' "$result" | jq -r '.LoadBalancers[0].LoadBalancerArn')"
+            tags="$(aws elbv2 describe-tags --resource-arns "$arn" --output json | jq -c '.TagDescriptions[0].Tags // []')"
+            verify_owned_tags "$tags" || { echo "Existing load balancer failed DeployGuard ownership verification." >&2; exit 1; }
+            terraform import -input=false "$address" "$arn" >/dev/null
+          }
+          reconcile_execution_role() {
+            local address="aws_iam_role.execution" name="$RESOURCE_NAME-execution" result tags error_file
+            state_has "$address" && return 0
+            error_file="$(mktemp)"
+            if ! result="$(aws iam get-role --role-name "$name" --output json 2>"$error_file")"; then
+              if grep -q 'NoSuchEntity' "$error_file"; then return 0; fi
+              echo "Existing execution role could not be verified." >&2
+              exit 1
+            fi
+            tags="$(printf '%s' "$result" | jq -c '.Role.Tags // []')"
+            verify_owned_tags "$tags" || { echo "Existing execution role failed DeployGuard ownership verification." >&2; exit 1; }
+            terraform import -input=false "$address" "$name" >/dev/null
+          }
+          reconcile_security_group "aws_security_group.alb" "$RESOURCE_NAME-alb"
+          reconcile_security_group "aws_security_group.service" "$RESOURCE_NAME-svc"
+          reconcile_ecs_cluster
+          reconcile_load_balancer
+          reconcile_execution_role
+          reconcile_ecs_service
+          terraform validate -no-color
+          set +e
           if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
-            terraform plan -destroy -input=false -out=deployguard.tfplan
+            terraform plan -destroy -detailed-exitcode -input=false -no-color -out=deployguard.tfplan
           else
-            terraform plan -input=false -out=deployguard.tfplan
+            terraform plan -detailed-exitcode -input=false -no-color -out=deployguard.tfplan
           fi
+          PLAN_EXIT_CODE="$?"
+          set -e
+          [ "$PLAN_EXIT_CODE" -eq 0 ] || [ "$PLAN_EXIT_CODE" -eq 2 ] || { echo "Terraform planning failed before apply." >&2; exit "$PLAN_EXIT_CODE"; }
+          terraform show -json deployguard.tfplan > deployguard-plan.json
+          jq -c '
+            reduce (.resource_changes[]? | {type: .type, actions: (.change.actions // [])}) as $change
+              ({create:0,update:0,replace:0,delete:0,noOp:0,resourceTypes:[]};
+                .resourceTypes += [$change.type]
+                | if (($change.actions | index("create")) and ($change.actions | index("delete"))) then .replace += 1
+                  elif ($change.actions | index("create")) then .create += 1
+                  elif ($change.actions | index("update")) then .update += 1
+                  elif ($change.actions | index("delete")) then .delete += 1
+                  else .noOp += 1 end)
+            | .resourceTypes |= (map(select(type == "string")) | unique | sort)
+          ' deployguard-plan.json > deployguard-plan-summary.json
+          if ! jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg namespace "$INFRASTRUCTURE_NAMESPACE" '
+            def actions: (.change.actions // []);
+            def deletes: (actions | index("delete")) != null;
+            def retained: (.type | test("^aws_secretsmanager_secret(_version)?$|^aws_efs_(file_system|access_point)$"));
+            def owned_tags: (.change.after.tags // .change.before.tags // {});
+            def wrong_owner:
+              owned_tags.ManagedBy == "DeployGuard"
+              and (owned_tags.DeployGuardProjectId != $project or owned_tags.Environment != $environment);
+            def cross_namespace:
+              ((.change.after.name // .change.before.name // "") as $name
+                | (($name | startswith("/deployguard/")) and ($name | startswith($namespace + "/") | not))
+                  or (($name | startswith("deployguard/")) and ($name | startswith("deployguard/" + $project + "/" + $environment + "/") | not)));
+            [ .resource_changes[]?
+              | select(
+                  (retained and deletes)
+                  or (.type == "aws_cloudwatch_log_group" and deletes)
+                  or wrong_owner
+                  or cross_namespace
+                )
+              | {address, type, actions: (.change.actions // [])}
+            ] | length == 0
+          ' deployguard-plan.json >/dev/null; then
+            echo "Terraform plan safety policy rejected an unexpected retained-resource or ownership change." >&2
+            exit 1
+          fi
+          PLAN_SUMMARY="$(jq -c '. + {safety:"passed"}' deployguard-plan-summary.json)"
+          printf 'DEPLOYGUARD_PLAN_SUMMARY=%s\n' "$PLAN_SUMMARY"
           terraform apply -input=false -auto-approve deployguard.tfplan
 
       - name: Remove immutable image repository after destroy
