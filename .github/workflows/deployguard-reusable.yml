@@ -471,9 +471,19 @@ jobs:
             terraform import -input=false "aws_ecs_cluster.app" "$arn" >/dev/null
           }
           reconcile_ecs_service() {
-            local result count
+            local result count error_file
             state_has "aws_ecs_service.app" && return 0
-            result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" --include TAGS --output json)"
+            error_file="$(mktemp)"
+            if ! result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" --include TAGS --output json 2>"$error_file")"; then
+              if grep -q 'ClusterNotFoundException' "$error_file"; then
+                rm -f "$error_file"
+                return 0
+              fi
+              rm -f "$error_file"
+              echo "Existing ECS service could not be verified." >&2
+              exit 1
+            fi
+            rm -f "$error_file"
             count="$(printf '%s' "$result" | jq '[.services[]? | select(.status == "ACTIVE")] | length')"
             [ "$count" -eq 0 ] && return 0
             [ "$count" -eq 1 ] || { echo "Existing ECS service identity is ambiguous." >&2; exit 1; }
