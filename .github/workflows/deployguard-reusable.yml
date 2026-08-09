@@ -514,6 +514,21 @@ jobs:
           reconcile_load_balancer
           reconcile_execution_role
           reconcile_ecs_service
+          # Capture bounded destroy verification scope from the initialized,
+          # reconciled state before Terraform removes normal resources.
+          if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
+            terraform show -json | jq -c '
+              def resources: [.values.root_module.resources[]?];
+              {
+                ecsClusters: [resources[] | select(.type == "aws_ecs_cluster") | .values.name | select(type == "string" and length > 0)],
+                ecsServices: [resources[] | select(.type == "aws_ecs_service") | {cluster: .values.cluster, name: .values.name} | select(.cluster != null and .name != null)],
+                loadBalancerArns: [resources[] | select(.type == "aws_lb") | .values.arn | select(type == "string" and length > 0)],
+                listenerArns: [resources[] | select(.type == "aws_lb_listener") | .values.arn | select(type == "string" and length > 0)],
+                targetGroupArns: [resources[] | select(.type == "aws_lb_target_group") | .values.arn | select(type == "string" and length > 0)],
+                endpoint: (.values.outputs.deployed_url.value // "")
+              }
+            ' > destroy-verification-scope.json
+          fi
           terraform validate -no-color
           set +e
           if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
@@ -536,7 +551,7 @@ jobs:
                   else .noOp += 1 end)
             | .resourceTypes |= (map(select(type == "string")) | unique | sort)
           ' deployguard-plan.json > deployguard-plan-summary.json
-          if ! jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg namespace "$INFRASTRUCTURE_NAMESPACE" '
+          if ! jq -e --arg action "$DEPLOYMENT_ACTION" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg namespace "$INFRASTRUCTURE_NAMESPACE" '
             def actions: (.change.actions // []);
             def deletes: (actions | index("delete")) != null;
             def retained: (.type | test("^aws_secretsmanager_secret(_version)?$|^aws_efs_(file_system|access_point)$"));
@@ -551,7 +566,7 @@ jobs:
             [ .resource_changes[]?
               | select(
                   (retained and deletes)
-                  or (.type == "aws_cloudwatch_log_group" and deletes)
+                  or ($action != "destroy" and .type == "aws_cloudwatch_log_group" and deletes)
                   or wrong_owner
                   or cross_namespace
                 )
@@ -667,12 +682,129 @@ jobs:
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
 
-      - name: Write destroy result
+      - name: Verify destroyed infrastructure and write result
         if: inputs.deployment_action == 'destroy'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
-          COMMIT_SHA="${{ inputs.commit_sha }}" node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"destroyed",commitSha:process.env.COMMIT_SHA},null,2))'
+          set -euo pipefail
+          [ -s destroy-verification-scope.json ] || { echo "Destroy verification scope is unavailable." >&2; exit 1; }
+
+          aws_absent() {
+            local kind="$1" identifier="$2" error_file not_found
+            local -a command
+            error_file="$(mktemp)"
+            case "$kind" in
+              load_balancer) command=(aws elbv2 describe-load-balancers --load-balancer-arns "$identifier" --output json) ; not_found="LoadBalancerNotFound" ;;
+              listener) command=(aws elbv2 describe-listeners --listener-arns "$identifier" --output json) ; not_found="ListenerNotFound" ;;
+              target_group) command=(aws elbv2 describe-target-groups --target-group-arns "$identifier" --output json) ; not_found="TargetGroupNotFound" ;;
+              *) rm -f "$error_file"; return 2 ;;
+            esac
+            if "${command[@]}" >/dev/null 2>"$error_file"; then rm -f "$error_file"; return 1; fi
+            if grep -q "$not_found" "$error_file"; then rm -f "$error_file"; return 0; fi
+            rm -f "$error_file"
+            echo "AWS resource absence could not be verified." >&2
+            return 2
+          }
+
+          ecs_services_absent() {
+            local encoded cluster service response error_file
+            while IFS= read -r encoded; do
+              [ -n "$encoded" ] || continue
+              cluster="$(printf '%s' "$encoded" | base64 --decode | jq -r '.cluster')"
+              service="$(printf '%s' "$encoded" | base64 --decode | jq -r '.name')"
+              error_file="$(mktemp)"
+              if response="$(aws ecs describe-services --cluster "$cluster" --services "$service" --output json 2>"$error_file")"; then
+                rm -f "$error_file"
+                printf '%s' "$response" | jq -e '[.services[]? | select(.status == "ACTIVE")] | length == 0' >/dev/null || return 1
+              elif grep -q 'ClusterNotFoundException' "$error_file"; then
+                rm -f "$error_file"
+              else
+                rm -f "$error_file"
+                echo "ECS service absence could not be verified." >&2
+                return 2
+              fi
+            done < <(jq -r '.ecsServices[]? | @base64' destroy-verification-scope.json)
+          }
+
+          running_tasks_zero() {
+            local cluster response error_file
+            while IFS= read -r cluster; do
+              [ -n "$cluster" ] || continue
+              error_file="$(mktemp)"
+              if response="$(aws ecs list-tasks --cluster "$cluster" --desired-status RUNNING --output json 2>"$error_file")"; then
+                rm -f "$error_file"
+                printf '%s' "$response" | jq -e '.taskArns | length == 0' >/dev/null || return 1
+              elif grep -q 'ClusterNotFoundException' "$error_file"; then
+                rm -f "$error_file"
+              else
+                rm -f "$error_file"
+                echo "Running ECS task absence could not be verified." >&2
+                return 2
+              fi
+            done < <(jq -r '.ecsClusters[]?' destroy-verification-scope.json)
+          }
+
+          arns_absent() {
+            local kind="$1" selector="$2" arn result
+            while IFS= read -r arn; do
+              [ -n "$arn" ] || continue
+              set +e
+              aws_absent "$kind" "$arn"
+              result="$?"
+              set -e
+              [ "$result" -eq 0 ] || return "$result"
+            done < <(jq -r "$selector[]?" destroy-verification-scope.json)
+          }
+
+          normal_state_resources_absent() {
+            local unexpected
+            unexpected="$(terraform state list 2>/dev/null | grep -Ev '^aws_(secretsmanager_secret(_version)?|efs_(file_system|access_point))\.' || true)"
+            [ -z "$unexpected" ]
+          }
+
+          image_repository_absent() {
+            local safe_project repository_name error_file
+            safe_project="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
+            repository_name="deployguard-$safe_project"
+            error_file="$(mktemp)"
+            if aws ecr describe-repositories --repository-names "$repository_name" --output json >/dev/null 2>"$error_file"; then
+              rm -f "$error_file"
+              return 1
+            fi
+            if grep -q 'RepositoryNotFoundException' "$error_file"; then rm -f "$error_file"; return 0; fi
+            rm -f "$error_file"
+            echo "Image repository absence could not be verified." >&2
+            return 2
+          }
+
+          endpoint_unavailable() {
+            local endpoint
+            endpoint="$(jq -r '.endpoint // ""' destroy-verification-scope.json)"
+            [ -z "$endpoint" ] && return 0
+            ! curl --silent --show-error --max-time 10 --output /dev/null "$endpoint"
+          }
+
+          VERIFIED=false
+          for attempt in $(seq 1 30); do
+            if ecs_services_absent \
+              && running_tasks_zero \
+              && arns_absent load_balancer '.loadBalancerArns' \
+              && arns_absent listener '.listenerArns' \
+              && arns_absent target_group '.targetGroupArns' \
+              && endpoint_unavailable \
+              && image_repository_absent \
+              && normal_state_resources_absent; then
+              VERIFIED=true
+              break
+            fi
+            [ "$attempt" -eq 30 ] || sleep 10
+          done
+          [ "$VERIFIED" = "true" ] || { echo "Project infrastructure absence was not verified within the bounded window." >&2; exit 1; }
+
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,normalResourcesAbsent:true,verifiedAt:$verifiedAt}')"
+          printf 'DEPLOYGUARD_DESTROY_RESULT=%s\n' "$RESULT"
+          printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
       - name: Upload DeployGuard result
         uses: actions/upload-artifact@v4
