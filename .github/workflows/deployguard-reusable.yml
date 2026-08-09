@@ -27,6 +27,9 @@ on:
       output_directory: { required: true, type: string }
       generated_dockerfile_base64: { required: false, type: string, default: "" }
       build_time_public_config_base64: { required: false, type: string, default: "" }
+      rollback_source_operation_id: { required: false, type: string, default: "" }
+      rollback_image_uri: { required: false, type: string, default: "" }
+      rollback_task_definition_arn: { required: false, type: string, default: "" }
 
 permissions:
   contents: read
@@ -58,8 +61,12 @@ jobs:
       BUILD_TIME_PUBLIC_CONFIG_BASE64: ${{ inputs.build_time_public_config_base64 }}
       ENVIRONMENT_REFERENCES_BASE64: ${{ inputs.environment_references_base64 }}
       INFRASTRUCTURE_NAMESPACE: ${{ inputs.infrastructure_namespace }}
+      ROLLBACK_SOURCE_OPERATION_ID: ${{ inputs.rollback_source_operation_id }}
+      ROLLBACK_IMAGE_URI: ${{ inputs.rollback_image_uri }}
+      ROLLBACK_TASK_DEFINITION_ARN: ${{ inputs.rollback_task_definition_arn }}
     steps:
       - name: Checkout application
+        if: inputs.deployment_action != 'rollback'
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit_sha }}
@@ -74,9 +81,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ "$GITHUB_REPOSITORY" = "${{ inputs.repository_full_name }}" ] || { echo "Immutable repository identity mismatch." >&2; exit 1; }
-          [ "$GITHUB_REF_NAME" = "${{ inputs.repository_branch }}" ] || { echo "Immutable branch identity mismatch." >&2; exit 1; }
-          [ "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}" ] || { echo "Immutable commit identity mismatch." >&2; exit 1; }
+          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|destroy|rollback)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
+          if [ "$DEPLOYMENT_ACTION" != "rollback" ]; then
+            [ "$GITHUB_REPOSITORY" = "${{ inputs.repository_full_name }}" ] || { echo "Immutable repository identity mismatch." >&2; exit 1; }
+            [ "$GITHUB_REF_NAME" = "${{ inputs.repository_branch }}" ] || { echo "Immutable branch identity mismatch." >&2; exit 1; }
+            [ "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}" ] || { echo "Immutable commit identity mismatch." >&2; exit 1; }
+          else
+            [[ "$ROLLBACK_SOURCE_OPERATION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || { echo "Rollback source identity is invalid." >&2; exit 1; }
+            [[ "$ROLLBACK_IMAGE_URI" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$ ]] || { echo "Rollback image evidence is invalid." >&2; exit 1; }
+            [[ "$ROLLBACK_TASK_DEFINITION_ARN" =~ ^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/[A-Za-z0-9_-]+:[0-9]+$ ]] || { echo "Rollback task-definition evidence is invalid." >&2; exit 1; }
+          fi
           [[ "$ENVIRONMENT_NAME" =~ ^(dev|production)$ ]] || { echo "Invalid immutable environment." >&2; exit 1; }
           [ "$INFRASTRUCTURE_NAMESPACE" = "/deployguard/$PROJECT_ID" ] || { echo "Invalid infrastructure namespace." >&2; exit 1; }
           [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
@@ -186,12 +200,14 @@ jobs:
           echo "uri=$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install Terraform
+        if: inputs.deployment_action != 'rollback'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.8
           terraform_wrapper: false
 
       - name: Generate deployment Terraform
+        if: inputs.deployment_action != 'rollback'
         shell: bash
         env:
           IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || 'destroy.invalid' }}
@@ -335,6 +351,7 @@ jobs:
             cpu                      = "1024"
             memory                   = "2048"
             execution_role_arn       = aws_iam_role.execution.arn
+            skip_destroy             = true
             tags                     = local.ownership_tags
             container_definitions = jsonencode([{
               name         = "app"
@@ -372,6 +389,7 @@ jobs:
           output "deployed_url" { value = "http://${aws_lb.app.dns_name}" }
           output "cluster_name" { value = aws_ecs_cluster.app.name }
           output "service_name" { value = aws_ecs_service.app.name }
+          output "task_definition_arn" { value = aws_ecs_task_definition.app.arn }
 
           TERRAFORM
           cat > .deployguard/terraform/terraform.tfvars.json <<EOF
@@ -379,6 +397,7 @@ jobs:
           EOF
 
       - name: Terraform plan and apply
+        if: inputs.deployment_action != 'rollback'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
@@ -577,8 +596,76 @@ jobs:
             if [ "$attempt" -eq 30 ]; then echo "ALB health verification failed" >&2; exit 1; fi
             sleep 10
           done
-          URL="$URL" CLUSTER_NAME="$(terraform output -raw cluster_name)" SERVICE_NAME="$(terraform output -raw service_name)" \
-            node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"succeeded",deployedUrl:process.env.URL,imageUri:process.env.IMAGE_URI,imageDigest:process.env.IMAGE_DIGEST,commitSha:process.env.COMMIT_SHA,clusterName:process.env.CLUSTER_NAME,serviceName:process.env.SERVICE_NAME},null,2))'
+          CLUSTER_NAME="$(terraform output -raw cluster_name)"
+          SERVICE_NAME="$(terraform output -raw service_name)"
+          TASK_DEFINITION_ARN="$(terraform output -raw task_definition_arn)"
+          CONFIGURATION_FINGERPRINT="$(printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -r '.configurationFingerprint')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" '{deploymentOperationId:$operation,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint}')"
+          printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
+          printf '%s\n' "$RESULT" | jq . > deployguard-result.json
+
+      - name: Roll back to immutable application release
+        if: inputs.deployment_action == 'rollback'
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
+          TASK_DEFINITION="$(aws ecs describe-task-definition --task-definition "$ROLLBACK_TASK_DEFINITION_ARN" --include TAGS --output json)"
+          [ "$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.taskDefinitionArn')" = "$ROLLBACK_TASK_DEFINITION_ARN" ] || { echo "Rollback task definition could not be resolved exactly." >&2; exit 1; }
+          [ "$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.family')" = "$RESOURCE_NAME" ] || { echo "Rollback task definition belongs to another service." >&2; exit 1; }
+          printf '%s' "$TASK_DEFINITION" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+            (.tags | map({key: .key, value: .value}) | from_entries) as $tags
+            | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment
+          ' >/dev/null || { echo "Rollback task definition failed DeployGuard ownership verification." >&2; exit 1; }
+          CONTAINER_IMAGE="$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.containerDefinitions[] | select(.name == "app") | .image')"
+          CONTAINER_PORT="$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.containerDefinitions[] | select(.name == "app") | .portMappings[0].containerPort')"
+          [ "$CONTAINER_IMAGE" = "$ROLLBACK_IMAGE_URI" ] || { echo "Rollback image does not match the immutable task definition." >&2; exit 1; }
+          [ "$CONTAINER_PORT" = "$APP_PORT" ] || { echo "Rollback port does not match the immutable task definition." >&2; exit 1; }
+          SERVICE="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" --include TAGS --output json)"
+          [ "$(printf '%s' "$SERVICE" | jq '[.services[]? | select(.status == "ACTIVE")] | length')" -eq 1 ] || { echo "Rollback ECS service identity is unavailable or ambiguous." >&2; exit 1; }
+          printf '%s' "$SERVICE" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+            (.services[0].tags | map({key: .key, value: .value}) | from_entries) as $tags
+            | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment
+          ' >/dev/null || { echo "Rollback ECS service failed DeployGuard ownership verification." >&2; exit 1; }
+          PREVIOUS_TASK_DEFINITION_ARN="$(printf '%s' "$SERVICE" | jq -r '.services[0].taskDefinition')"
+          TARGET_GROUP_ARN="$(printf '%s' "$SERVICE" | jq -r '.services[0].loadBalancers[0].targetGroupArn')"
+          TARGET_GROUP="$(aws elbv2 describe-target-groups --target-group-arns "$TARGET_GROUP_ARN" --output json)"
+          [ "$(printf '%s' "$TARGET_GROUP" | jq -r '.TargetGroups[0].Port')" = "$APP_PORT" ] || { echo "Rollback target-group port differs from the historical release." >&2; exit 1; }
+          [ "$(printf '%s' "$TARGET_GROUP" | jq -r '.TargetGroups[0].HealthCheckPath')" = "$HEALTH_CHECK_PATH" ] || { echo "Rollback health path differs from the historical release." >&2; exit 1; }
+          restore_previous() {
+            aws ecs update-service --cluster "$RESOURCE_NAME" --service "$RESOURCE_NAME" --task-definition "$PREVIOUS_TASK_DEFINITION_ARN" --force-new-deployment >/dev/null || true
+            aws ecs wait services-stable --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" || true
+          }
+          aws ecs update-service --cluster "$RESOURCE_NAME" --service "$RESOURCE_NAME" --task-definition "$ROLLBACK_TASK_DEFINITION_ARN" --force-new-deployment >/dev/null
+          if ! aws ecs wait services-stable --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME"; then
+            restore_previous
+            echo "Rollback service did not stabilize; the previously live task definition was restored." >&2
+            exit 1
+          fi
+          LOAD_BALANCER_ARN="$(printf '%s' "$TARGET_GROUP" | jq -r '.TargetGroups[0].LoadBalancerArns[0]')"
+          LOAD_BALANCER="$(aws elbv2 describe-load-balancers --load-balancer-arns "$LOAD_BALANCER_ARN" --output json)"
+          URL="http://$(printf '%s' "$LOAD_BALANCER" | jq -r '.LoadBalancers[0].DNSName')"
+          HEALTHY=false
+          for attempt in $(seq 1 30); do
+            TARGET_HEALTH="$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --output json)"
+            if printf '%s' "$TARGET_HEALTH" | jq -e '.TargetHealthDescriptions | length > 0 and all(.[]; .TargetHealth.State == "healthy")' >/dev/null \
+              && curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then
+              HEALTHY=true
+              break
+            fi
+            sleep 10
+          done
+          if [ "$HEALTHY" != "true" ]; then
+            restore_previous
+            echo "Rollback health verification failed; the previously live task definition was restored." >&2
+            exit 1
+          fi
+          CONFIGURATION_FINGERPRINT="$(printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -r '.configurationFingerprint')"
+          IMAGE_DIGEST="${ROLLBACK_IMAGE_URI##*@}"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg url "$URL" --arg imageUri "$ROLLBACK_IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "${{ inputs.commit_sha }}" --arg cluster "$RESOURCE_NAME" --arg service "$RESOURCE_NAME" --arg taskDefinitionArn "$ROLLBACK_TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg rollbackSourceOperationId "$ROLLBACK_SOURCE_OPERATION_ID" '{deploymentOperationId:$operation,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,rollbackSourceOperationId:$rollbackSourceOperationId}')"
+          mkdir -p .deployguard/terraform
+          printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
+          printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
 
       - name: Write destroy result
         if: inputs.deployment_action == 'destroy'
