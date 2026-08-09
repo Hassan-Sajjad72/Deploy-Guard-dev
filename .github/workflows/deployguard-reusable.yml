@@ -10,23 +10,19 @@ on:
       aws_role_arn: { required: true, type: string }
       vpc_id: { required: true, type: string }
       public_subnet_ids: { required: true, type: string }
+      commit_sha: { required: true, type: string }
+      application_root: { required: true, type: string }
       app_port: { required: true, type: number }
       health_check_path: { required: true, type: string }
       terraform_state_bucket: { required: true, type: string }
-      app_root: { required: true, type: string }
-      docker_strategy: { required: true, type: string }
-      source_commit_sha: { required: true, type: string }
+      container_profile: { required: true, type: string }
+      output_directory: { required: true, type: string }
       generated_dockerfile_base64: { required: false, type: string, default: "" }
-      managed_database_config_base64: { required: false, type: string, default: "" }
-      application_config_base64: { required: false, type: string, default: "" }
+      build_time_public_config_base64: { required: false, type: string, default: "" }
 
 permissions:
   contents: read
   id-token: write
-
-concurrency:
-  group: deployguard-${{ inputs.project_id }}
-  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -42,17 +38,19 @@ jobs:
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
-      APP_ROOT: ${{ inputs.app_root }}
-      DOCKER_STRATEGY: ${{ inputs.docker_strategy }}
-      SOURCE_COMMIT_SHA: ${{ inputs.source_commit_sha }}
+      CONTAINER_PROFILE: ${{ inputs.container_profile }}
+      OUTPUT_DIRECTORY: ${{ inputs.output_directory }}
+      APPLICATION_ROOT: ${{ inputs.application_root }}
+      GENERATED_DOCKERFILE_BASE64: ${{ inputs.generated_dockerfile_base64 }}
+      BUILD_TIME_PUBLIC_CONFIG_BASE64: ${{ inputs.build_time_public_config_base64 }}
     steps:
       - name: Checkout application
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_commit_sha }}
+          ref: ${{ inputs.commit_sha }}
 
       - name: Configure AWS credentials through OIDC
-        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ inputs.aws_role_arn }}
           aws-region: ${{ inputs.aws_region }}
@@ -63,12 +61,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CHECKED_OUT_SHA="$(git rev-parse HEAD)"
-          if [[ ! "$SOURCE_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || [ "$CHECKED_OUT_SHA" != "$SOURCE_COMMIT_SHA" ]; then
-            echo "DeployGuard could not check out the immutable deployment commit." >&2
-            exit 1
-          fi
-          SHORT_SHA="${SOURCE_COMMIT_SHA::12}"
+          SHORT_SHA="${{ inputs.commit_sha }}"
+          SHORT_SHA="${SHORT_SHA::12}"
           OPERATION_SUFFIX="$(printf '%s' "$OPERATION_ID" | tr -cd '[:alnum:]' | cut -c1-12)"
           SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
           REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
@@ -84,61 +78,35 @@ jobs:
           aws ecr describe-repositories --repository-names "${{ steps.release.outputs.repository_name }}" >/dev/null 2>&1 || \
             aws ecr create-repository --repository-name "${{ steps.release.outputs.repository_name }}" --image-scanning-configuration scanOnPush=false >/dev/null
 
-      - name: Materialize contract Dockerfile
+      - name: Materialize immutable container contract
         if: inputs.deployment_action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$APP_ROOT" =~ ^(\.|[A-Za-z0-9._/-]+)$ ]] || [[ "/$APP_ROOT/" == *"/../"* ]]; then
-            echo "DeployGuard received an unsafe application root." >&2
+          case "$APPLICATION_ROOT" in ""|/*|*".."*) echo "Invalid application root." >&2; exit 1;; esac
+          APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$APPLICATION_ROOT"
+          [ -d "$APPLICATION_DIRECTORY" ] || { echo "Contract application root does not exist." >&2; exit 1; }
+          cd "$APPLICATION_DIRECTORY"
+          if [ -n "$GENERATED_DOCKERFILE_BASE64" ]; then
+            [ ! -e Dockerfile ] || { echo "Generated strategy cannot overwrite a repository Dockerfile." >&2; exit 1; }
+            printf '%s' "$GENERATED_DOCKERFILE_BASE64" | base64 --decode > Dockerfile
+            [ -s Dockerfile ] || { echo "Generated Dockerfile payload is empty." >&2; exit 1; }
+          elif [ ! -f Dockerfile ]; then
+            echo "Deployment contract supplied neither a generated nor repository Dockerfile." >&2
             exit 1
           fi
-          if [ "$DOCKER_STRATEGY" != "generated" ] && { [ "$DOCKER_STRATEGY" != "custom" ] || [ ! -f "$APP_ROOT/Dockerfile" ]; }; then
-            echo "DeployGuard deployment contract does not select a usable Docker strategy." >&2
-            exit 1
-          fi
-          mkdir -p .deployguard
-          node <<'NODE'
-          const fs = require("fs");
-          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
-          const inputs = event.inputs && typeof event.inputs === "object" ? event.inputs : {};
-          const decode = (name, maximumBytes) => {
-            const encoded = typeof inputs[name] === "string" ? inputs[name] : "";
-            if (!encoded) return null;
-            if (encoded.length > Math.ceil(maximumBytes / 3) * 4 + 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
-              throw new Error(`DeployGuard received an invalid ${name} payload.`);
-            }
-            const decoded = Buffer.from(encoded, "base64");
-            if (decoded.length > maximumBytes) throw new Error(`DeployGuard received an oversized ${name} payload.`);
-            return decoded;
-          };
-          if (process.env.DOCKER_STRATEGY === "generated") {
-            const dockerfile = decode("generated_dockerfile_base64", 1024 * 1024);
-            if (!dockerfile?.length) throw new Error("DeployGuard deployment contract is missing a generated Dockerfile.");
-            fs.writeFileSync(".deployguard/Dockerfile", dockerfile, { mode: 0o600 });
-          }
-          const applicationBytes = decode("application_config_base64", 256 * 1024);
-          const config = applicationBytes
-            ? JSON.parse(applicationBytes.toString("utf8"))
-            : { configurationFingerprint: "", environment: {}, buildArguments: {}, secretArn: null, secretKeys: [] };
-          const validRecord = (value) => value && typeof value === "object" && !Array.isArray(value)
-            && Object.entries(value).every(([key, item]) => /^[A-Z][A-Z0-9_]{0,127}$/.test(key) && typeof item === "string" && Buffer.byteLength(item) <= 4096 && !/[\r\n\0]/.test(item));
-          if (!validRecord(config.environment) || !validRecord(config.buildArguments)
-            || !Array.isArray(config.secretKeys) || !config.secretKeys.every((key) => /^[A-Z][A-Z0-9_]{0,127}$/.test(key))
-            || (config.secretArn !== null && !/^arn:(?:aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$/.test(config.secretArn))
-            || (config.secretKeys.length > 0 && !config.secretArn)) {
-            throw new Error("DeployGuard received an invalid sanitized application configuration mapping.");
-          }
-          fs.writeFileSync(".deployguard/application-config.json", JSON.stringify(config), { mode: 0o600 });
-          const databaseBytes = decode("managed_database_config_base64", 256 * 1024);
-          if (databaseBytes) {
-            const database = JSON.parse(databaseBytes.toString("utf8"));
-            const environment = database.environment === undefined ? "dev" : database.environment;
-            if (!["dev", "production"].includes(environment)) throw new Error("DeployGuard received an invalid deployment environment.");
-            database.environment = environment;
-            fs.writeFileSync(".deployguard/managed-database-config.json", JSON.stringify(database), { mode: 0o600 });
-          }
-          NODE
+          grep -q '${{ inputs.commit_sha }}' Dockerfile || [ -z "$GENERATED_DOCKERFILE_BASE64" ] || { echo "Generated Dockerfile does not match the immutable commit contract." >&2; exit 1; }
+          cat > .dockerignore <<'DOCKERIGNORE'
+          .git
+          .github
+          .env
+          .env.*
+          node_modules
+          __pycache__
+          .pytest_cache
+          .venv
+          .deployguard
+          DOCKERIGNORE
 
       - name: Build and push immutable image
         if: inputs.deployment_action == 'deploy'
@@ -150,22 +118,27 @@ jobs:
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
           IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.image_tag }}"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
-          DOCKERFILE_PATH="$APP_ROOT/Dockerfile"
-          if [ "$DOCKER_STRATEGY" = "generated" ]; then DOCKERFILE_PATH="$GITHUB_WORKSPACE/.deployguard/Dockerfile"; fi
-          mapfile -t BUILD_ARGS < <(node -e 'const c=require("./.deployguard/application-config.json");for(const [k,v] of Object.entries(c.buildArguments||{}))process.stdout.write(`--build-arg\n${k}=${v}\n`)')
-          docker build --file "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" -t "$IMAGE_URI" "$APP_ROOT"
-          docker push "$IMAGE_URI"
-          IMAGE_DIGEST="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids imageTag="${{ steps.release.outputs.image_tag }}" --query 'imageDetails[0].imageDigest' --output text)"
-          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "DeployGuard could not resolve the immutable pushed image digest." >&2
-            exit 1
+          APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$APPLICATION_ROOT"
+          cd "$APPLICATION_DIRECTORY"
+          BUILD_ARGS=()
+          if [ -n "$BUILD_TIME_PUBLIC_CONFIG_BASE64" ]; then
+            CONFIG_FILE="$(mktemp)"
+            trap 'rm -f "$CONFIG_FILE"' EXIT
+            printf '%s' "$BUILD_TIME_PUBLIC_CONFIG_BASE64" | base64 --decode > "$CONFIG_FILE"
+            jq -e 'type == "object" and all(keys[]; test("^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$")) and all(.[]; type == "string")' "$CONFIG_FILE" >/dev/null || { echo "Invalid public build configuration payload." >&2; exit 1; }
+            while IFS= read -r key; do
+              value="$(jq -r --arg key "$key" '.[$key]' "$CONFIG_FILE")"
+              BUILD_ARGS+=(--build-arg "$key=$value")
+            done < <(jq -r 'keys[]' "$CONFIG_FILE")
           fi
-          echo "uri=$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          docker build --pull "${BUILD_ARGS[@]}" -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
       - name: Install Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.15.8
+          terraform_version: 1.9.8
           terraform_wrapper: false
 
       - name: Generate deployment Terraform
@@ -180,7 +153,6 @@ jobs:
             backend "s3" {}
             required_providers {
               aws = { source = "hashicorp/aws", version = "~> 5.0" }
-              random = { source = "hashicorp/random", version = "~> 3.0" }
             }
           }
           provider "aws" { region = var.aws_region }
@@ -191,36 +163,7 @@ jobs:
           variable "app_port" { type = number }
           variable "health_check_path" { type = string }
           variable "image_uri" { type = string }
-          variable "managed_database_config" {
-            type    = any
-            default = null
-          }
-          variable "application_config" {
-            type    = any
-            default = null
-          }
-          locals {
-            name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28)
-            managed_database = var.managed_database_config
-            managed_database_enabled = try(local.managed_database.provider, "") == "managed"
-            deployment_environment = try(local.managed_database.environment, "dev")
-            application_config = var.application_config
-            application_secret_arn = try(local.application_config.secretArn, "") == null ? "" : try(local.application_config.secretArn, "")
-            app_environment_map = merge(
-              { HOST = "0.0.0.0", PORT = tostring(var.app_port) },
-              try(local.application_config.environment, {}),
-              try(local.managed_database.runtimeAliases, {})
-            )
-            app_environment = [for key, value in local.app_environment_map : { name = key, value = value }]
-            app_project_secrets = local.application_secret_arn == "" ? [] : [for key in try(local.application_config.secretKeys, []) : {
-              name = key
-              valueFrom = "${local.application_secret_arn}:${key}::"
-            }]
-            app_database_secrets = [for key, property in try(local.managed_database.secretAliases, {}) : {
-              name = key
-              valueFrom = property == "url" ? aws_secretsmanager_secret.database_url[0].arn : aws_secretsmanager_secret.database_password[0].arn
-            }]
-          }
+          locals { name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28) }
           resource "aws_security_group" "alb" {
             name = "${local.name}-alb"
             vpc_id = var.vpc_id
@@ -286,15 +229,6 @@ jobs:
             }
           }
           resource "aws_ecs_cluster" "app" { name = local.name }
-          resource "aws_cloudwatch_log_group" "app" {
-            name              = "/deployguard/${var.project_id}/app"
-            retention_in_days = 7
-          }
-          resource "aws_cloudwatch_log_group" "database" {
-            count             = local.managed_database_enabled ? 1 : 0
-            name              = "/deployguard/${var.project_id}/database"
-            retention_in_days = 7
-          }
           resource "aws_iam_role" "execution" {
             name = "${local.name}-execution"
             assume_role_policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Principal={Service="ecs-tasks.amazonaws.com"},Action="sts:AssumeRole"}]})
@@ -302,288 +236,7 @@ jobs:
           resource "aws_iam_role_policy" "execution" {
             name = "ecr-pull"
             role = aws_iam_role.execution.id
-            policy = jsonencode({
-              Version = "2012-10-17"
-              Statement = [
-                {
-                  Effect   = "Allow"
-                  Action   = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"]
-                  Resource = "*"
-                },
-                {
-                  Effect   = "Allow"
-                  Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-                  Resource = concat(
-                    ["${aws_cloudwatch_log_group.app.arn}:*"],
-                    local.managed_database_enabled ? ["${aws_cloudwatch_log_group.database[0].arn}:*"] : []
-                  )
-                }
-              ]
-            })
-          }
-          resource "aws_secretsmanager_secret" "database_password" {
-            count = local.managed_database_enabled ? 1 : 0
-            name = "deployguard/${var.project_id}/${local.deployment_environment}/database/password"
-            recovery_window_in_days = 7
-            tags = {
-              ManagedBy            = "DeployGuard"
-              DeployGuardProjectId = var.project_id
-              Environment          = local.deployment_environment
-            }
-          }
-          resource "random_password" "database" {
-            count = local.managed_database_enabled ? 1 : 0
-            length = 32
-            special = true
-            override_special = "_-"
-          }
-          resource "aws_secretsmanager_secret_version" "database_password" {
-            count = local.managed_database_enabled ? 1 : 0
-            secret_id = aws_secretsmanager_secret.database_password[0].id
-            secret_string = random_password.database[0].result
-            lifecycle {
-              ignore_changes = [secret_string]
-            }
-          }
-          resource "aws_service_discovery_private_dns_namespace" "database" {
-            count = local.managed_database_enabled ? 1 : 0
-            name = "project-${var.project_id}.deployguard.local"
-            vpc = var.vpc_id
-          }
-          resource "aws_service_discovery_service" "database" {
-            count = local.managed_database_enabled ? 1 : 0
-            name = "db"
-            dns_config {
-              namespace_id = aws_service_discovery_private_dns_namespace.database[0].id
-              dns_records {
-                ttl = 10
-                type = "A"
-              }
-              routing_policy = "MULTIVALUE"
-            }
-            health_check_custom_config { failure_threshold = 1 }
-          }
-          resource "aws_secretsmanager_secret" "database_url" {
-            count = local.managed_database_enabled ? 1 : 0
-            name = "deployguard/${var.project_id}/${local.deployment_environment}/database/url"
-            recovery_window_in_days = 7
-            tags = {
-              ManagedBy            = "DeployGuard"
-              DeployGuardProjectId = var.project_id
-              Environment          = local.deployment_environment
-            }
-          }
-          resource "aws_secretsmanager_secret_version" "database_url" {
-            count = local.managed_database_enabled ? 1 : 0
-            secret_id = aws_secretsmanager_secret.database_url[0].id
-            secret_string = "postgresql://${local.managed_database.databaseUser}:${urlencode(random_password.database[0].result)}@${local.managed_database.host}:${local.managed_database.port}/${local.managed_database.databaseName}"
-            lifecycle {
-              ignore_changes = [secret_string]
-            }
-          }
-          moved {
-            from = aws_iam_role_policy.database_secrets
-            to   = aws_iam_role_policy.runtime_secrets
-          }
-          resource "aws_iam_role_policy" "runtime_secrets" {
-            count = local.managed_database_enabled || local.application_secret_arn != "" ? 1 : 0
-            name = "runtime-secrets"
-            role = aws_iam_role.execution.id
-            policy = jsonencode({
-              Version = "2012-10-17"
-              Statement = [{
-                Effect = "Allow"
-                Action = ["secretsmanager:GetSecretValue"]
-                Resource = concat(
-                  local.managed_database_enabled ? [aws_secretsmanager_secret.database_password[0].arn, aws_secretsmanager_secret.database_url[0].arn] : [],
-                  local.application_secret_arn != "" ? [local.application_secret_arn] : []
-                )
-              }]
-            })
-          }
-          resource "aws_security_group" "database" {
-            count = local.managed_database_enabled ? 1 : 0
-            name = "${local.name}-db"
-            vpc_id = var.vpc_id
-            ingress {
-              from_port = local.managed_database.port
-              to_port = local.managed_database.port
-              protocol = "tcp"
-              security_groups = [aws_security_group.service.id]
-            }
-            egress {
-              from_port = 0
-              to_port = 0
-              protocol = "-1"
-              cidr_blocks = ["0.0.0.0/0"]
-            }
-          }
-          resource "aws_security_group" "database_efs" {
-            count  = local.managed_database_enabled ? 1 : 0
-            name   = "${local.name}-db-efs"
-            vpc_id = var.vpc_id
-            ingress {
-              from_port       = 2049
-              to_port         = 2049
-              protocol        = "tcp"
-              security_groups = [aws_security_group.database[0].id]
-            }
-            egress {
-              from_port   = 0
-              to_port     = 0
-              protocol    = "-1"
-              cidr_blocks = ["0.0.0.0/0"]
-            }
-          }
-          resource "aws_efs_file_system" "database" {
-            count          = local.managed_database_enabled ? 1 : 0
-            creation_token = "deployguard-${var.project_id}-database"
-            encrypted      = true
-            lifecycle_policy { transition_to_ia = "AFTER_30_DAYS" }
-            tags = {
-              Name                 = "deployguard-${var.project_id}-database"
-              ManagedBy            = "DeployGuard"
-              DeployGuardProjectId = var.project_id
-              Environment          = "production"
-            }
-          }
-          resource "aws_efs_mount_target" "database" {
-            count           = local.managed_database_enabled ? length(var.public_subnet_ids) : 0
-            file_system_id  = aws_efs_file_system.database[0].id
-            subnet_id       = var.public_subnet_ids[count.index]
-            security_groups = [aws_security_group.database_efs[0].id]
-          }
-          resource "aws_efs_access_point" "database" {
-            count          = local.managed_database_enabled ? 1 : 0
-            file_system_id = aws_efs_file_system.database[0].id
-            posix_user {
-              uid = 999
-              gid = 999
-            }
-            root_directory {
-              path = "/database"
-              creation_info {
-                owner_uid   = 999
-                owner_gid   = 999
-                permissions = "700"
-              }
-            }
-            tags = {
-              Name                 = "deployguard-${var.project_id}-database"
-              ManagedBy            = "DeployGuard"
-              DeployGuardProjectId = var.project_id
-              Environment          = "production"
-            }
-          }
-          resource "aws_iam_role" "database_task" {
-            count              = local.managed_database_enabled ? 1 : 0
-            name               = "${local.name}-database-task"
-            assume_role_policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Principal={Service="ecs-tasks.amazonaws.com"},Action="sts:AssumeRole"}]})
-          }
-          resource "aws_iam_role_policy" "database_efs" {
-            count = local.managed_database_enabled ? 1 : 0
-            name  = "database-efs"
-            role  = aws_iam_role.database_task[0].id
-            policy = jsonencode({
-              Version = "2012-10-17"
-              Statement = [{
-                Effect   = "Allow"
-                Action   = ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"]
-                Resource = [aws_efs_file_system.database[0].arn]
-                Condition = {
-                  StringEquals = {
-                    "elasticfilesystem:AccessPointArn" = aws_efs_access_point.database[0].arn
-                  }
-                }
-              }]
-            })
-          }
-          resource "aws_ecs_task_definition" "database" {
-            count = local.managed_database_enabled ? 1 : 0
-            family = "${local.name}-database"
-            network_mode = "awsvpc"
-            requires_compatibilities = ["FARGATE"]
-            cpu = "512"
-            memory = "1024"
-            execution_role_arn = aws_iam_role.execution.arn
-            task_role_arn      = aws_iam_role.database_task[0].arn
-            container_definitions = jsonencode([
-              {
-                name      = "database"
-                image     = "postgres:16@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b"
-                essential = true
-                portMappings = [
-                  {
-                    containerPort = local.managed_database.port
-                    hostPort      = local.managed_database.port
-                    protocol      = "tcp"
-                  }
-                ]
-                environment = [
-                  {
-                    name  = "POSTGRES_DB"
-                    value = local.managed_database.databaseName
-                  },
-                  {
-                    name  = "POSTGRES_USER"
-                    value = local.managed_database.databaseUser
-                  }
-                ]
-                secrets = [
-                  {
-                    name      = "POSTGRES_PASSWORD"
-                    valueFrom = aws_secretsmanager_secret.database_password[0].arn
-                  }
-                ]
-                mountPoints = [{
-                  sourceVolume  = "database-data"
-                  containerPath = "/var/lib/postgresql/data"
-                  readOnly      = false
-                }]
-                healthCheck = {
-                  command     = ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
-                  interval    = 10
-                  timeout     = 5
-                  retries     = 6
-                  startPeriod = 20
-                }
-                logConfiguration = {
-                  logDriver = "awslogs"
-                  options = {
-                    "awslogs-group"         = aws_cloudwatch_log_group.database[0].name
-                    "awslogs-region"        = var.aws_region
-                    "awslogs-stream-prefix" = "database"
-                  }
-                }
-              }
-            ])
-            volume {
-              name = "database-data"
-              efs_volume_configuration {
-                file_system_id     = aws_efs_file_system.database[0].id
-                transit_encryption = "ENABLED"
-                authorization_config {
-                  access_point_id = aws_efs_access_point.database[0].id
-                  iam             = "ENABLED"
-                }
-              }
-            }
-          }
-          resource "aws_ecs_service" "database" {
-            count = local.managed_database_enabled ? 1 : 0
-            name = "database"
-            cluster = aws_ecs_cluster.app.id
-            task_definition = aws_ecs_task_definition.database[0].arn
-            desired_count = 1
-            launch_type = "FARGATE"
-            wait_for_steady_state = true
-            network_configuration {
-              subnets = var.public_subnet_ids
-              security_groups = [aws_security_group.database[0].id]
-              assign_public_ip = true
-            }
-            service_registries { registry_arn = aws_service_discovery_service.database[0].arn }
-            depends_on = [aws_secretsmanager_secret_version.database_password, aws_efs_mount_target.database, aws_iam_role_policy.database_efs]
+            policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Action=["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],Resource="*"}]})
           }
           resource "aws_ecs_task_definition" "app" {
             family = local.name
@@ -592,22 +245,7 @@ jobs:
             cpu = "1024"
             memory = "2048"
             execution_role_arn = aws_iam_role.execution.arn
-            container_definitions = jsonencode([{
-              name         = "app"
-              image        = var.image_uri
-              essential    = true
-              portMappings = [{ containerPort = var.app_port, hostPort = var.app_port, protocol = "tcp" }]
-              environment  = local.app_environment
-              secrets      = concat(local.app_project_secrets, local.app_database_secrets)
-              logConfiguration = {
-                logDriver = "awslogs"
-                options = {
-                  "awslogs-group"         = aws_cloudwatch_log_group.app.name
-                  "awslogs-region"        = var.aws_region
-                  "awslogs-stream-prefix" = "app"
-                }
-              }
-            }])
+            container_definitions = jsonencode([{name="app",image=var.image_uri,essential=true,environment=[{name="PORT",value=tostring(var.app_port)},{name="HOST",value="0.0.0.0"}],portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}]}])
           }
           resource "aws_ecs_service" "app" {
             name = local.name
@@ -616,11 +254,6 @@ jobs:
             desired_count = 1
             launch_type = "FARGATE"
             wait_for_steady_state = true
-            health_check_grace_period_seconds = 90
-            deployment_circuit_breaker {
-              enable   = true
-              rollback = true
-            }
             network_configuration {
               subnets = var.public_subnet_ids
               security_groups = [aws_security_group.service.id]
@@ -631,145 +264,29 @@ jobs:
               container_name = "app"
               container_port = var.app_port
             }
-            depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution, aws_iam_role_policy.runtime_secrets, aws_ecs_service.database]
+            depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution]
           }
           output "deployed_url" { value = "http://${aws_lb.app.dns_name}" }
           output "cluster_name" { value = aws_ecs_cluster.app.name }
           output "service_name" { value = aws_ecs_service.app.name }
-          output "database_internal_host" { value = local.managed_database_enabled ? local.managed_database.host : null }
-          output "database_service_arn" { value = local.managed_database_enabled ? aws_ecs_service.database[0].id : null }
-          output "database_cloud_map_service_arn" { value = local.managed_database_enabled ? aws_service_discovery_service.database[0].arn : null }
-          output "database_password_secret_arn" { value = local.managed_database_enabled ? aws_secretsmanager_secret.database_password[0].arn : null }
-          output "database_url_secret_arn" { value = local.managed_database_enabled ? aws_secretsmanager_secret.database_url[0].arn : null }
-          output "database_efs_file_system_id" { value = local.managed_database_enabled ? aws_efs_file_system.database[0].id : null }
-          output "database_efs_access_point_id" { value = local.managed_database_enabled ? aws_efs_access_point.database[0].id : null }
           TERRAFORM
-          IMAGE_URI="$IMAGE_URI" node -e 'const fs=require("fs");const database=fs.existsSync(".deployguard/managed-database-config.json")?JSON.parse(fs.readFileSync(".deployguard/managed-database-config.json","utf8")):null;const application=fs.existsSync(".deployguard/application-config.json")?JSON.parse(fs.readFileSync(".deployguard/application-config.json","utf8")):null;if(database&&(!database.bindingId||database.provider!=="managed"||database.engine!=="postgres"||!database.host||!database.databaseName||!database.databaseUser))throw new Error("invalid canonical managed database configuration");fs.writeFileSync(".deployguard/terraform/terraform.tfvars.json",JSON.stringify({aws_region:process.env.AWS_REGION,project_id:process.env.PROJECT_ID,vpc_id:process.env.VPC_ID,public_subnet_ids:process.env.PUBLIC_SUBNET_IDS.split(",").filter(Boolean),app_port:Number(process.env.APP_PORT),health_check_path:process.env.HEALTH_CHECK_PATH,image_uri:process.env.IMAGE_URI,managed_database_config:database,application_config:application}));'
+          cat > .deployguard/terraform/terraform.tfvars.json <<EOF
+          {"aws_region":"$AWS_REGION","project_id":"$PROJECT_ID","vpc_id":"$VPC_ID","public_subnet_ids":["${PUBLIC_SUBNET_IDS//,/\",\"}"],"app_port":$APP_PORT,"health_check_path":"$HEALTH_CHECK_PATH","image_uri":"$IMAGE_URI"}
+          EOF
 
       - name: Terraform plan and apply
         working-directory: .deployguard/terraform
         shell: bash
         run: |
           set -euo pipefail
-          terraform fmt main.tf
           terraform init -input=false \
             -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
             -backend-config="key=projects/$PROJECT_ID/dev/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
-            -backend-config="encrypt=true" \
-            -backend-config="use_lockfile=true"
-          terraform validate
+            -backend-config="encrypt=true"
           if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             terraform plan -destroy -input=false -out=deployguard.tfplan
           else
-            reconcile_fixed_secret() {
-              local logical_name="$1"
-              local secret_suffix="$2"
-              local secret_address="aws_secretsmanager_secret.${logical_name}[0]"
-              local version_address="aws_secretsmanager_secret_version.${logical_name}[0]"
-              local secret_name="deployguard/${PROJECT_ID}/${DEPLOYMENT_ENVIRONMENT}/database/${secret_suffix}"
-              local lifecycle="missing" restore_result="not_required" import_result="not_required"
-              local metadata_file=".secret-${logical_name}.json"
-              local error_file=".secret-${logical_name}.error"
-              local state_file=".secret-state-list"
-              fail_secret_reconciliation() {
-                echo "::error::DeployGuard secret lifecycle reconciliation failed: secret_name=${secret_name}; lifecycle=${lifecycle}; restore_result=${restore_result}; import_result=${import_result}; terraform_address=${secret_address}" >&2
-                rm -f "$metadata_file" "$error_file" "$state_file"
-                return 1
-              }
-
-              if ! aws secretsmanager describe-secret --secret-id "$secret_name" --output json >"$metadata_file" 2>"$error_file"; then
-                if grep -q 'ResourceNotFoundException' "$error_file"; then
-                  rm -f "$metadata_file" "$error_file" "$state_file"
-                  echo "DeployGuard secret lifecycle reconciliation: secret_name=${secret_name}; lifecycle=missing; restore_result=not_required; import_result=terraform_create; terraform_address=${secret_address}"
-                  return 0
-                fi
-                lifecycle="describe_failed"
-                fail_secret_reconciliation
-                return 1
-              fi
-
-              local secret_arn deleted_date ownership version_id
-              secret_arn="$(node -e 'const m=require("./"+process.argv[1]);process.stdout.write(typeof m.ARN==="string"?m.ARN:"")' "$metadata_file")"
-              deleted_date="$(node -e 'const m=require("./"+process.argv[1]);process.stdout.write(m.DeletedDate?String(m.DeletedDate):"")' "$metadata_file")"
-              ownership="$(PROJECT_ID="$PROJECT_ID" DEPLOYMENT_ENVIRONMENT="$DEPLOYMENT_ENVIRONMENT" node -e 'const m=require("./"+process.argv[1]);const t=Object.fromEntries((m.Tags||[]).map(x=>[x.Key,x.Value]));process.stdout.write(t.ManagedBy==="DeployGuard"&&t.DeployGuardProjectId===process.env.PROJECT_ID&&t.Environment===process.env.DEPLOYMENT_ENVIRONMENT?"verified":"mismatch")' "$metadata_file")"
-              version_id="$(node -e 'const m=require("./"+process.argv[1]);const ids=Object.entries(m.VersionIdsToStages||{}).filter(([,s])=>Array.isArray(s)&&s.includes("AWSCURRENT")).map(([id])=>id);process.stdout.write(ids.length===1?ids[0]:"")' "$metadata_file")"
-              lifecycle="$([ -n "$deleted_date" ] && printf 'scheduled_for_deletion' || printf 'active')"
-              if [ -z "$secret_arn" ] || [ "$ownership" != "verified" ]; then
-                restore_result="blocked_ownership_mismatch"
-                import_result="blocked"
-                fail_secret_reconciliation
-                return 1
-              fi
-
-              if [ "$lifecycle" = "scheduled_for_deletion" ]; then
-                if ! aws secretsmanager restore-secret --secret-id "$secret_arn" >/dev/null 2>&1; then
-                  restore_result="failed"
-                  fail_secret_reconciliation
-                  return 1
-                fi
-                restore_result="requested"
-                local restored="false"
-                for _attempt in $(seq 1 12); do
-                  if aws secretsmanager describe-secret --secret-id "$secret_arn" --output json >"$metadata_file" 2>/dev/null \
-                    && node -e 'const m=require("./"+process.argv[1]);process.exit(m.DeletedDate?1:0)' "$metadata_file"; then
-                    restored="true"
-                    restore_result="restored"
-                    break
-                  fi
-                  sleep 5
-                done
-                if [ "$restored" != "true" ]; then
-                  restore_result="timed_out"
-                  fail_secret_reconciliation
-                  return 1
-                fi
-              fi
-
-              if ! terraform state list >"$state_file" 2>/dev/null; then
-                import_result="state_read_failed"
-                fail_secret_reconciliation
-                return 1
-              fi
-              if grep -Fqx "$secret_address" "$state_file"; then
-                import_result="already_imported"
-              elif terraform import -input=false "$secret_address" "$secret_arn" >/dev/null 2>&1; then
-                import_result="imported"
-              else
-                import_result="failed"
-                fail_secret_reconciliation
-                return 1
-              fi
-
-              if ! terraform state list >"$state_file" 2>/dev/null; then
-                import_result="state_read_failed"
-                fail_secret_reconciliation
-                return 1
-              fi
-              if [ -n "$version_id" ] && ! grep -Fqx "$version_address" "$state_file"; then
-                if ! terraform import -input=false "$version_address" "${secret_arn}|${version_id}" >/dev/null 2>&1; then
-                  import_result="version_import_failed"
-                  fail_secret_reconciliation
-                  return 1
-                fi
-                import_result="${import_result}+version_imported"
-              fi
-              rm -f "$metadata_file" "$error_file" "$state_file"
-              echo "DeployGuard secret lifecycle reconciliation: secret_name=${secret_name}; lifecycle=${lifecycle}; restore_result=${restore_result}; import_result=${import_result}; terraform_address=${secret_address}"
-            }
-
-            DEPLOYMENT_ENVIRONMENT="dev"
-            if [ -f ../managed-database-config.json ]; then
-              DEPLOYMENT_ENVIRONMENT="$(node -e 'const d=require("./../managed-database-config.json");process.stdout.write(d.environment||"dev")')"
-            fi
-            if [ "$DEPLOYMENT_ENVIRONMENT" != "dev" ] && [ "$DEPLOYMENT_ENVIRONMENT" != "production" ]; then
-              echo "::error::DeployGuard secret lifecycle reconciliation failed: invalid deployment environment" >&2
-              exit 1
-            fi
-            if [ -f ../managed-database-config.json ] && node -e 'const d=require("./../managed-database-config.json");process.exit(d.provider==="managed"?0:1)' 2>/dev/null; then
-              reconcile_fixed_secret "database_password" "password"
-              reconcile_fixed_secret "database_url" "url"
-            fi
             terraform plan -input=false -out=deployguard.tfplan
           fi
           terraform apply -input=false -auto-approve deployguard.tfplan
@@ -789,25 +306,13 @@ jobs:
             exit 1
           fi
 
-      - name: Remove immutable application configuration after destroy
-        if: inputs.deployment_action == 'destroy'
-        shell: bash
-        run: |
-          set -euo pipefail
-          PREFIX="deployguard/$PROJECT_ID/production/application/"
-          aws secretsmanager list-secrets --filters "Key=name,Values=$PREFIX" --query 'SecretList[].ARN' --output text \
-            | tr '\t' '\n' \
-            | while IFS= read -r SECRET_ARN; do
-                [ -z "$SECRET_ARN" ] || aws secretsmanager delete-secret --secret-id "$SECRET_ARN" --force-delete-without-recovery >/dev/null
-              done
-
       - name: Verify ALB health and write result
         if: inputs.deployment_action == 'deploy'
         working-directory: .deployguard/terraform
         shell: bash
         env:
           IMAGE_URI: ${{ steps.image.outputs.uri }}
-          COMMIT_SHA: ${{ inputs.source_commit_sha }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           URL="$(terraform output -raw deployed_url)"
@@ -816,42 +321,18 @@ jobs:
             if [ "$attempt" -eq 30 ]; then echo "ALB health verification failed" >&2; exit 1; fi
             sleep 10
           done
-          terraform output -json > deployguard-outputs.json
-          URL="$URL" node <<'NODE'
-          const fs = require("fs");
-          const outputs = JSON.parse(fs.readFileSync("deployguard-outputs.json", "utf8"));
-          const value = (name) => typeof outputs[name]?.value === "string" ? outputs[name].value : null;
-          const terraformOutputs = Object.fromEntries([
-            "database_internal_host",
-            "database_service_arn",
-            "database_cloud_map_service_arn",
-            "database_password_secret_arn",
-            "database_url_secret_arn",
-            "database_efs_file_system_id",
-            "database_efs_access_point_id",
-          ].map((name) => [name, value(name)]).filter(([, item]) => item));
-          fs.writeFileSync("deployguard-result.json", JSON.stringify({
-            deploymentOperationId: process.env.OPERATION_ID,
-            status: "succeeded",
-            deployedUrl: process.env.URL,
-            imageUri: process.env.IMAGE_URI,
-            commitSha: process.env.COMMIT_SHA,
-            clusterName: value("cluster_name"),
-            serviceName: value("service_name"),
-            terraformOutputRevision: `${process.env.GITHUB_RUN_ID}:${process.env.GITHUB_RUN_ATTEMPT}`,
-            terraformOutputs,
-          }, null, 2));
-          NODE
+          URL="$URL" CLUSTER_NAME="$(terraform output -raw cluster_name)" SERVICE_NAME="$(terraform output -raw service_name)" \
+            node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"succeeded",deployedUrl:process.env.URL,imageUri:process.env.IMAGE_URI,commitSha:process.env.COMMIT_SHA,clusterName:process.env.CLUSTER_NAME,serviceName:process.env.SERVICE_NAME},null,2))'
 
       - name: Write destroy result
         if: inputs.deployment_action == 'destroy'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
-          node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"destroyed",commitSha:process.env.SOURCE_COMMIT_SHA},null,2))'
+          node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"destroyed",commitSha:process.env.GITHUB_SHA},null,2))'
 
       - name: Upload DeployGuard result
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4
         with:
           name: deployguard-result-${{ inputs.deployment_operation_id }}
           path: .deployguard/terraform/deployguard-result.json
