@@ -10,11 +10,15 @@ on:
       aws_role_arn: { required: true, type: string }
       vpc_id: { required: true, type: string }
       public_subnet_ids: { required: true, type: string }
+      commit_sha: { required: true, type: string }
+      application_root: { required: true, type: string }
       app_port: { required: true, type: number }
       health_check_path: { required: true, type: string }
       terraform_state_bucket: { required: true, type: string }
       container_profile: { required: true, type: string }
       output_directory: { required: true, type: string }
+      generated_dockerfile_base64: { required: false, type: string, default: "" }
+      build_time_public_config_base64: { required: false, type: string, default: "" }
 
 permissions:
   contents: read
@@ -36,9 +40,14 @@ jobs:
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
       CONTAINER_PROFILE: ${{ inputs.container_profile }}
       OUTPUT_DIRECTORY: ${{ inputs.output_directory }}
+      APPLICATION_ROOT: ${{ inputs.application_root }}
+      GENERATED_DOCKERFILE_BASE64: ${{ inputs.generated_dockerfile_base64 }}
+      BUILD_TIME_PUBLIC_CONFIG_BASE64: ${{ inputs.build_time_public_config_base64 }}
     steps:
       - name: Checkout application
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
 
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -52,7 +61,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SHORT_SHA="${GITHUB_SHA::12}"
+          SHORT_SHA="${{ inputs.commit_sha }}"
+          SHORT_SHA="${SHORT_SHA::12}"
           OPERATION_SUFFIX="$(printf '%s' "$OPERATION_ID" | tr -cd '[:alnum:]' | cut -c1-12)"
           SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
           REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
@@ -68,43 +78,35 @@ jobs:
           aws ecr describe-repositories --repository-names "${{ steps.release.outputs.repository_name }}" >/dev/null 2>&1 || \
             aws ecr create-repository --repository-name "${{ steps.release.outputs.repository_name }}" --image-scanning-configuration scanOnPush=false >/dev/null
 
-      - name: Generate Dockerfile when absent
+      - name: Materialize immutable container contract
         if: inputs.deployment_action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f Dockerfile ]; then
-            if [ "$CONTAINER_PROFILE" = "react-static" ]; then
-              cat > Dockerfile <<'DOCKERFILE'
-          FROM node:20-alpine AS build
-          WORKDIR /app
-          COPY package*.json ./
-          RUN npm ci
-          COPY . .
-          ARG STATIC_OUTPUT_DIR=build
-          RUN npm run build && mkdir -p /static && cp -R "$STATIC_OUTPUT_DIR"/. /static/
-          FROM nginx:1.27-alpine
-          COPY --from=build /static/ /usr/share/nginx/html/
-          EXPOSE 80
-          DOCKERFILE
-            elif [ "$CONTAINER_PROFILE" = "streamlit" ] || [ "$CONTAINER_PROFILE" = "generic-python" ]; then
-              cat > Dockerfile <<'DOCKERFILE'
-          FROM python:3.11-slim
-          WORKDIR /app
-          ARG APP_PORT=8000
-          ENV PORT=${APP_PORT}
-          ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-          COPY requirements.txt ./
-          RUN pip install --no-cache-dir -r requirements.txt
-          COPY . .
-          EXPOSE ${APP_PORT}
-          CMD ["sh", "-c", "streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT} --server.headless=true"]
-          DOCKERFILE
-            else
-              echo "DeployGuard has no safe generated container for detected profile: $CONTAINER_PROFILE" >&2
-              exit 1
-            fi
+          case "$APPLICATION_ROOT" in ""|/*|*".."*) echo "Invalid application root." >&2; exit 1;; esac
+          APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$APPLICATION_ROOT"
+          [ -d "$APPLICATION_DIRECTORY" ] || { echo "Contract application root does not exist." >&2; exit 1; }
+          cd "$APPLICATION_DIRECTORY"
+          if [ -n "$GENERATED_DOCKERFILE_BASE64" ]; then
+            [ ! -e Dockerfile ] || { echo "Generated strategy cannot overwrite a repository Dockerfile." >&2; exit 1; }
+            printf '%s' "$GENERATED_DOCKERFILE_BASE64" | base64 --decode > Dockerfile
+            [ -s Dockerfile ] || { echo "Generated Dockerfile payload is empty." >&2; exit 1; }
+          elif [ ! -f Dockerfile ]; then
+            echo "Deployment contract supplied neither a generated nor repository Dockerfile." >&2
+            exit 1
           fi
+          grep -q '${{ inputs.commit_sha }}' Dockerfile || [ -z "$GENERATED_DOCKERFILE_BASE64" ] || { echo "Generated Dockerfile does not match the immutable commit contract." >&2; exit 1; }
+          cat > .dockerignore <<'DOCKERIGNORE'
+          .git
+          .github
+          .env
+          .env.*
+          node_modules
+          __pycache__
+          .pytest_cache
+          .venv
+          .deployguard
+          DOCKERIGNORE
 
       - name: Build and push immutable image
         if: inputs.deployment_action == 'deploy'
@@ -116,7 +118,20 @@ jobs:
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
           IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.image_tag }}"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
-          docker build --pull --build-arg APP_PORT="$APP_PORT" --build-arg STATIC_OUTPUT_DIR="$OUTPUT_DIRECTORY" -t "$IMAGE_URI" .
+          APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$APPLICATION_ROOT"
+          cd "$APPLICATION_DIRECTORY"
+          BUILD_ARGS=()
+          if [ -n "$BUILD_TIME_PUBLIC_CONFIG_BASE64" ]; then
+            CONFIG_FILE="$(mktemp)"
+            trap 'rm -f "$CONFIG_FILE"' EXIT
+            printf '%s' "$BUILD_TIME_PUBLIC_CONFIG_BASE64" | base64 --decode > "$CONFIG_FILE"
+            jq -e 'type == "object" and all(keys[]; test("^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$")) and all(.[]; type == "string")' "$CONFIG_FILE" >/dev/null || { echo "Invalid public build configuration payload." >&2; exit 1; }
+            while IFS= read -r key; do
+              value="$(jq -r --arg key "$key" '.[$key]' "$CONFIG_FILE")"
+              BUILD_ARGS+=(--build-arg "$key=$value")
+            done < <(jq -r 'keys[]' "$CONFIG_FILE")
+          fi
+          docker build --pull "${BUILD_ARGS[@]}" -t "$IMAGE_URI" .
           docker push "$IMAGE_URI"
           echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
@@ -230,7 +245,7 @@ jobs:
             cpu = "1024"
             memory = "2048"
             execution_role_arn = aws_iam_role.execution.arn
-            container_definitions = jsonencode([{name="app",image=var.image_uri,essential=true,portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}]}])
+            container_definitions = jsonencode([{name="app",image=var.image_uri,essential=true,environment=[{name="PORT",value=tostring(var.app_port)},{name="HOST",value="0.0.0.0"}],portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}]}])
           }
           resource "aws_ecs_service" "app" {
             name = local.name
