@@ -6,6 +6,14 @@ on:
       deployment_action: { required: true, type: string }
       deployment_operation_id: { required: true, type: string }
       project_id: { required: true, type: string }
+      environment_name: { required: true, type: string }
+      repository_full_name: { required: true, type: string }
+      repository_branch: { required: true, type: string }
+      detection_profile_version: { required: true, type: string }
+      deployment_contract_version: { required: true, type: string }
+      image_tag: { required: true, type: string }
+      environment_references_base64: { required: true, type: string }
+      infrastructure_namespace: { required: true, type: string }
       aws_region: { required: true, type: string }
       aws_role_arn: { required: true, type: string }
       vpc_id: { required: true, type: string }
@@ -24,6 +32,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: deployguard-${{ inputs.project_id }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -31,6 +43,7 @@ jobs:
     env:
       AWS_REGION: ${{ inputs.aws_region }}
       PROJECT_ID: ${{ inputs.project_id }}
+      ENVIRONMENT_NAME: ${{ inputs.environment_name }}
       OPERATION_ID: ${{ inputs.deployment_operation_id }}
       DEPLOYMENT_ACTION: ${{ inputs.deployment_action }}
       APP_PORT: ${{ inputs.app_port }}
@@ -43,6 +56,8 @@ jobs:
       APPLICATION_ROOT: ${{ inputs.application_root }}
       GENERATED_DOCKERFILE_BASE64: ${{ inputs.generated_dockerfile_base64 }}
       BUILD_TIME_PUBLIC_CONFIG_BASE64: ${{ inputs.build_time_public_config_base64 }}
+      ENVIRONMENT_REFERENCES_BASE64: ${{ inputs.environment_references_base64 }}
+      INFRASTRUCTURE_NAMESPACE: ${{ inputs.infrastructure_namespace }}
     steps:
       - name: Checkout application
         uses: actions/checkout@v4
@@ -54,6 +69,19 @@ jobs:
         with:
           role-to-assume: ${{ inputs.aws_role_arn }}
           aws-region: ${{ inputs.aws_region }}
+
+      - name: Validate immutable operation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REPOSITORY" = "${{ inputs.repository_full_name }}" ] || { echo "Immutable repository identity mismatch." >&2; exit 1; }
+          [ "$GITHUB_REF_NAME" = "${{ inputs.repository_branch }}" ] || { echo "Immutable branch identity mismatch." >&2; exit 1; }
+          [ "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}" ] || { echo "Immutable commit identity mismatch." >&2; exit 1; }
+          [[ "$ENVIRONMENT_NAME" =~ ^(dev|production)$ ]] || { echo "Invalid immutable environment." >&2; exit 1; }
+          [ "$INFRASTRUCTURE_NAMESPACE" = "/deployguard/$PROJECT_ID" ] || { echo "Invalid infrastructure namespace." >&2; exit 1; }
+          [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
+          [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
+          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e 'type == "object" and (.public | type == "array") and all(.public[]; type == "string") and (.secret | type == "array") and all(.secret[]; type == "string") and (.configurationFingerprint | type == "string")' >/dev/null || { echo "Invalid immutable environment references." >&2; exit 1; }
 
       - name: Derive immutable release identity
         if: inputs.deployment_action == 'deploy'
@@ -67,7 +95,8 @@ jobs:
           SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
           REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${SHORT_SHA}-${OPERATION_SUFFIX}" >> "$GITHUB_OUTPUT"
+          [ "${{ inputs.image_tag }}" = "${SHORT_SHA}-${OPERATION_SUFFIX}" ] || { echo "Immutable image tag does not match this operation." >&2; exit 1; }
+          echo "image_tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
           echo "repository_name=$REPOSITORY_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Ensure ECR repository
@@ -133,7 +162,10 @@ jobs:
           fi
           docker build --pull "${BUILD_ARGS[@]}" -t "$IMAGE_URI" .
           docker push "$IMAGE_URI"
-          echo "uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+          IMAGE_DIGEST="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids imageTag="${{ steps.release.outputs.image_tag }}" --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "The immutable image digest could not be resolved." >&2; exit 1; }
+          echo "digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "uri=$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v3
@@ -158,12 +190,37 @@ jobs:
           provider "aws" { region = var.aws_region }
           variable "aws_region" { type = string }
           variable "project_id" { type = string }
+          variable "environment_name" { type = string }
+          variable "infrastructure_namespace" { type = string }
           variable "vpc_id" { type = string }
           variable "public_subnet_ids" { type = list(string) }
           variable "app_port" { type = number }
           variable "health_check_path" { type = string }
           variable "image_uri" { type = string }
           locals { name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28) }
+          locals {
+            log_group_prefix = var.infrastructure_namespace
+            ownership_tags = {
+              ManagedBy = "DeployGuard"
+              DeployGuardProjectId = var.project_id
+              Environment = var.environment_name
+            }
+          }
+          resource "aws_cloudwatch_log_group" "app" {
+            name = "${local.log_group_prefix}/app"
+            retention_in_days = 14
+            tags = merge(local.ownership_tags, { LogPurpose = "app" })
+          }
+          resource "aws_cloudwatch_log_group" "database" {
+            name = "${local.log_group_prefix}/database"
+            retention_in_days = 14
+            tags = merge(local.ownership_tags, { LogPurpose = "database" })
+          }
+          resource "aws_cloudwatch_log_group" "deployment" {
+            name = "${local.log_group_prefix}/deployment"
+            retention_in_days = 14
+            tags = merge(local.ownership_tags, { LogPurpose = "deployment" })
+          }
           resource "aws_security_group" "alb" {
             name = "${local.name}-alb"
             vpc_id = var.vpc_id
@@ -236,7 +293,14 @@ jobs:
           resource "aws_iam_role_policy" "execution" {
             name = "ecr-pull"
             role = aws_iam_role.execution.id
-            policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Action=["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],Resource="*"}]})
+            policy = jsonencode({Version="2012-10-17",Statement=[
+              {Effect="Allow",Action=["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],Resource="*"},
+              {Effect="Allow",Action=["logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogStreams"],Resource=[
+                "${aws_cloudwatch_log_group.app.arn}:*",
+                "${aws_cloudwatch_log_group.database.arn}:*",
+                "${aws_cloudwatch_log_group.deployment.arn}:*"
+              ]}
+            ]})
           }
           resource "aws_ecs_task_definition" "app" {
             family = local.name
@@ -245,7 +309,18 @@ jobs:
             cpu = "1024"
             memory = "2048"
             execution_role_arn = aws_iam_role.execution.arn
-            container_definitions = jsonencode([{name="app",image=var.image_uri,essential=true,environment=[{name="PORT",value=tostring(var.app_port)},{name="HOST",value="0.0.0.0"}],portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}]}])
+            container_definitions = jsonencode([{
+              name="app"
+              image=var.image_uri
+              essential=true
+              environment=[{name="PORT",value=tostring(var.app_port)},{name="HOST",value="0.0.0.0"}]
+              portMappings=[{containerPort=var.app_port,hostPort=var.app_port,protocol="tcp"}]
+              logConfiguration={logDriver="awslogs",options={
+                awslogs-group=aws_cloudwatch_log_group.app.name
+                awslogs-region=var.aws_region
+                awslogs-stream-prefix="ecs"
+              }}
+            }])
           }
           resource "aws_ecs_service" "app" {
             name = local.name
@@ -271,7 +346,7 @@ jobs:
           output "service_name" { value = aws_ecs_service.app.name }
           TERRAFORM
           cat > .deployguard/terraform/terraform.tfvars.json <<EOF
-          {"aws_region":"$AWS_REGION","project_id":"$PROJECT_ID","vpc_id":"$VPC_ID","public_subnet_ids":["${PUBLIC_SUBNET_IDS//,/\",\"}"],"app_port":$APP_PORT,"health_check_path":"$HEALTH_CHECK_PATH","image_uri":"$IMAGE_URI"}
+          {"aws_region":"$AWS_REGION","project_id":"$PROJECT_ID","environment_name":"$ENVIRONMENT_NAME","infrastructure_namespace":"$INFRASTRUCTURE_NAMESPACE","vpc_id":"$VPC_ID","public_subnet_ids":["${PUBLIC_SUBNET_IDS//,/\",\"}"],"app_port":$APP_PORT,"health_check_path":"$HEALTH_CHECK_PATH","image_uri":"$IMAGE_URI"}
           EOF
 
       - name: Terraform plan and apply
@@ -281,9 +356,36 @@ jobs:
           set -euo pipefail
           terraform init -input=false \
             -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
-            -backend-config="key=projects/$PROJECT_ID/dev/terraform.tfstate" \
+            -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
             -backend-config="encrypt=true"
+          reconcile_log_group() {
+            local purpose="$1"
+            local address="aws_cloudwatch_log_group.$purpose"
+            local name="$INFRASTRUCTURE_NAMESPACE/$purpose"
+            local account_id arn tags error_file
+            account_id="$(aws sts get-caller-identity --query Account --output text)"
+            arn="arn:aws:logs:$AWS_REGION:$account_id:log-group:$name"
+            error_file="$(mktemp)"
+            if ! tags="$(aws logs list-tags-for-resource --resource-arn "$arn" --query tags --output json 2>"$error_file")"; then
+              if grep -q 'ResourceNotFoundException' "$error_file"; then rm -f "$error_file"; return 0; fi
+              rm -f "$error_file"
+              echo "CloudWatch log group $name could not be verified." >&2
+              exit 1
+            fi
+            rm -f "$error_file"
+            printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg purpose "$purpose" \
+              '.ManagedBy == "DeployGuard" and .DeployGuardProjectId == $project and .Environment == $environment and .LogPurpose == $purpose' >/dev/null || {
+                echo "CloudWatch log group $name failed DeployGuard ownership verification." >&2
+                exit 1
+              }
+            if ! terraform state list 2>/dev/null | grep -Fqx "$address"; then
+              terraform import -input=false "$address" "$name" >/dev/null
+            fi
+          }
+          reconcile_log_group app
+          reconcile_log_group database
+          reconcile_log_group deployment
           if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             terraform plan -destroy -input=false -out=deployguard.tfplan
           else
@@ -312,7 +414,8 @@ jobs:
         shell: bash
         env:
           IMAGE_URI: ${{ steps.image.outputs.uri }}
-          COMMIT_SHA: ${{ github.sha }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
           URL="$(terraform output -raw deployed_url)"
@@ -322,14 +425,14 @@ jobs:
             sleep 10
           done
           URL="$URL" CLUSTER_NAME="$(terraform output -raw cluster_name)" SERVICE_NAME="$(terraform output -raw service_name)" \
-            node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"succeeded",deployedUrl:process.env.URL,imageUri:process.env.IMAGE_URI,commitSha:process.env.COMMIT_SHA,clusterName:process.env.CLUSTER_NAME,serviceName:process.env.SERVICE_NAME},null,2))'
+            node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"succeeded",deployedUrl:process.env.URL,imageUri:process.env.IMAGE_URI,imageDigest:process.env.IMAGE_DIGEST,commitSha:process.env.COMMIT_SHA,clusterName:process.env.CLUSTER_NAME,serviceName:process.env.SERVICE_NAME},null,2))'
 
       - name: Write destroy result
         if: inputs.deployment_action == 'destroy'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
-          node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"destroyed",commitSha:process.env.GITHUB_SHA},null,2))'
+          COMMIT_SHA="${{ inputs.commit_sha }}" node -e 'const fs=require("fs");fs.writeFileSync("deployguard-result.json",JSON.stringify({deploymentOperationId:process.env.OPERATION_ID,status:"destroyed",commitSha:process.env.COMMIT_SHA},null,2))'
 
       - name: Upload DeployGuard result
         uses: actions/upload-artifact@v4
