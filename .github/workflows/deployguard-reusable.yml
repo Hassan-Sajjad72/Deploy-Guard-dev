@@ -95,7 +95,31 @@ jobs:
           [ "$INFRASTRUCTURE_NAMESPACE" = "/deployguard/$PROJECT_ID" ] || { echo "Invalid infrastructure namespace." >&2; exit 1; }
           [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
           [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
-          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e 'type == "object" and (.public | type == "array") and all(.public[]; type == "string") and (.secret | type == "array") and all(.secret[]; type == "string") and (.configurationFingerprint | type == "string")' >/dev/null || { echo "Invalid immutable environment references." >&2; exit 1; }
+          mkdir -p .deployguard
+          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
+          chmod 600 .deployguard/runtime-config.json
+          if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
+            jq -e --arg operation "$OPERATION_ID" --arg environment "$ENVIRONMENT_NAME" '
+              type == "object"
+              and .schemaVersion == 1
+              and (.configurationSnapshotId | test("^[0-9a-fA-F-]{36}$"))
+              and (.configurationFingerprint | test("^[0-9a-f]{64}$"))
+              and .environmentName == $environment
+              and (.environment | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | type == "string")))
+              and (.secretReferences | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:"))))
+              and (.managedDatabase == null or (
+                .managedDatabase.provider == "managed"
+                and .managedDatabase.engine == "postgres"
+                and .managedDatabase.persistenceEnabled == true
+                and (.managedDatabase.bindingId | test("^[0-9a-fA-F-]{36}$"))
+                and (.managedDatabase.bindingFingerprint | test("^[0-9a-f]{64}$"))
+                and (.managedDatabase.port == 5432)
+              ))
+              and (.environment.DEPLOYGUARD_OPERATION_ID == $operation)
+            ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable runtime configuration references." >&2; exit 1; }
+          else
+            jq -e 'type == "object" and (.configurationFingerprint | type == "string")' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable environment references." >&2; exit 1; }
+          fi
 
       - name: Derive immutable release identity
         if: inputs.deployment_action == 'deploy'
@@ -218,7 +242,8 @@ jobs:
           terraform {
             backend "s3" {}
             required_providers {
-              aws = { source = "hashicorp/aws", version = "~> 5.0" }
+              aws    = { source = "hashicorp/aws", version = "~> 5.0" }
+              random = { source = "hashicorp/random", version = "~> 3.0" }
             }
           }
           provider "aws" { region = var.aws_region }
@@ -231,6 +256,9 @@ jobs:
           variable "app_port" { type = number }
           variable "health_check_path" { type = string }
           variable "image_uri" { type = string }
+          variable "runtime_config" {
+            type = any
+          }
           locals { name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28) }
           locals {
             log_group_prefix = var.infrastructure_namespace
@@ -239,6 +267,24 @@ jobs:
               DeployGuardProjectId = var.project_id
               Environment          = var.environment_name
             }
+            runtime_config           = var.runtime_config
+            managed_database         = try(local.runtime_config.managedDatabase, null)
+            managed_database_enabled = local.managed_database != null && try(local.managed_database.provider, "") == "managed"
+            application_secret_arns  = distinct([for reference in values(try(local.runtime_config.secretReferences, {})) : join(":", slice(split(":", reference), 0, 7))])
+            app_environment_map = merge(
+              { HOST = "0.0.0.0", PORT = tostring(var.app_port) },
+              try(local.runtime_config.environment, {}),
+              try(local.managed_database.runtimeAliases, {})
+            )
+            app_environment = [for key in sort(keys(local.app_environment_map)) : { name = key, value = tostring(local.app_environment_map[key]) }]
+            app_project_secrets = [for key in sort(keys(try(local.runtime_config.secretReferences, {}))) : {
+              name      = key
+              valueFrom = local.runtime_config.secretReferences[key]
+            }]
+            app_database_secrets = [for key in sort(keys(try(local.managed_database.secretAliases, {}))) : {
+              name      = key
+              valueFrom = local.managed_database.secretAliases[key] == "url" ? aws_secretsmanager_secret.database_url[0].arn : aws_secretsmanager_secret.database_password[0].arn
+            }]
           }
           resource "aws_cloudwatch_log_group" "app" {
             name              = "${local.log_group_prefix}/app"
@@ -344,6 +390,208 @@ jobs:
               ] }
             ] })
           }
+          resource "aws_iam_role_policy" "runtime_secrets" {
+            count = local.managed_database_enabled || length(local.application_secret_arns) > 0 ? 1 : 0
+            name  = "runtime-secrets"
+            role  = aws_iam_role.execution.id
+            policy = jsonencode({ Version = "2012-10-17", Statement = [{
+              Effect = "Allow"
+              Action = ["secretsmanager:GetSecretValue"]
+              Resource = concat(
+                local.application_secret_arns,
+                local.managed_database_enabled ? [aws_secretsmanager_secret.database_password[0].arn, aws_secretsmanager_secret.database_url[0].arn] : []
+              )
+            }] })
+          }
+          resource "aws_secretsmanager_secret" "database_password" {
+            count                   = local.managed_database_enabled ? 1 : 0
+            name                    = "deployguard/${var.project_id}/${var.environment_name}/database/password"
+            recovery_window_in_days = 7
+            tags                    = merge(local.ownership_tags, { SecretPurpose = "database_password" })
+          }
+          resource "random_password" "database" {
+            count            = local.managed_database_enabled ? 1 : 0
+            length           = 32
+            special          = true
+            override_special = "_-"
+          }
+          resource "aws_secretsmanager_secret_version" "database_password" {
+            count         = local.managed_database_enabled ? 1 : 0
+            secret_id     = aws_secretsmanager_secret.database_password[0].id
+            secret_string = random_password.database[0].result
+            lifecycle { ignore_changes = [secret_string] }
+          }
+          resource "aws_service_discovery_private_dns_namespace" "database" {
+            count = local.managed_database_enabled ? 1 : 0
+            name  = "project-${var.project_id}.deployguard.local"
+            vpc   = var.vpc_id
+            tags  = merge(local.ownership_tags, { ServicePurpose = "database_namespace" })
+          }
+          resource "aws_service_discovery_service" "database" {
+            count = local.managed_database_enabled ? 1 : 0
+            name  = "db"
+            dns_config {
+              namespace_id = aws_service_discovery_private_dns_namespace.database[0].id
+              dns_records {
+                ttl  = 10
+                type = "A"
+              }
+              routing_policy = "MULTIVALUE"
+            }
+            health_check_custom_config { failure_threshold = 1 }
+            tags = merge(local.ownership_tags, { ServicePurpose = "database" })
+          }
+          resource "aws_secretsmanager_secret" "database_url" {
+            count                   = local.managed_database_enabled ? 1 : 0
+            name                    = "deployguard/${var.project_id}/${var.environment_name}/database/url"
+            recovery_window_in_days = 7
+            tags                    = merge(local.ownership_tags, { SecretPurpose = "database_url" })
+          }
+          resource "aws_secretsmanager_secret_version" "database_url" {
+            count         = local.managed_database_enabled ? 1 : 0
+            secret_id     = aws_secretsmanager_secret.database_url[0].id
+            secret_string = "postgresql://${local.managed_database.databaseUser}:${urlencode(random_password.database[0].result)}@${local.managed_database.host}:${local.managed_database.port}/${local.managed_database.databaseName}"
+            lifecycle { ignore_changes = [secret_string] }
+          }
+          resource "aws_security_group" "database" {
+            count  = local.managed_database_enabled ? 1 : 0
+            name   = "${local.name}-db"
+            vpc_id = var.vpc_id
+            tags   = local.ownership_tags
+            ingress {
+              from_port       = local.managed_database.port
+              to_port         = local.managed_database.port
+              protocol        = "tcp"
+              security_groups = [aws_security_group.service.id]
+            }
+            egress {
+              from_port   = 0
+              to_port     = 0
+              protocol    = "-1"
+              cidr_blocks = ["0.0.0.0/0"]
+            }
+          }
+          resource "aws_security_group" "database_efs" {
+            count  = local.managed_database_enabled ? 1 : 0
+            name   = "${local.name}-db-efs"
+            vpc_id = var.vpc_id
+            tags   = local.ownership_tags
+            ingress {
+              from_port       = 2049
+              to_port         = 2049
+              protocol        = "tcp"
+              security_groups = [aws_security_group.database[0].id]
+            }
+            egress {
+              from_port   = 0
+              to_port     = 0
+              protocol    = "-1"
+              cidr_blocks = ["0.0.0.0/0"]
+            }
+          }
+          resource "aws_efs_file_system" "database" {
+            count          = local.managed_database_enabled ? 1 : 0
+            creation_token = "deployguard-${var.project_id}-${var.environment_name}-database"
+            encrypted      = true
+            lifecycle_policy { transition_to_ia = "AFTER_30_DAYS" }
+            tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-database", Persistence = "retained" })
+          }
+          resource "aws_efs_mount_target" "database" {
+            count           = local.managed_database_enabled ? length(var.public_subnet_ids) : 0
+            file_system_id  = aws_efs_file_system.database[0].id
+            subnet_id       = var.public_subnet_ids[count.index]
+            security_groups = [aws_security_group.database_efs[0].id]
+          }
+          resource "aws_efs_access_point" "database" {
+            count          = local.managed_database_enabled ? 1 : 0
+            file_system_id = aws_efs_file_system.database[0].id
+            posix_user {
+              uid = 999
+              gid = 999
+            }
+            root_directory {
+              path = "/database"
+              creation_info {
+                owner_uid   = 999
+                owner_gid   = 999
+                permissions = "700"
+              }
+            }
+            tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-database", Persistence = "retained" })
+          }
+          resource "aws_iam_role" "database_task" {
+            count              = local.managed_database_enabled ? 1 : 0
+            name               = "${local.name}-database-task"
+            assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }] })
+            tags               = local.ownership_tags
+          }
+          resource "aws_iam_role_policy" "database_efs" {
+            count = local.managed_database_enabled ? 1 : 0
+            name  = "database-efs"
+            role  = aws_iam_role.database_task[0].id
+            policy = jsonencode({ Version = "2012-10-17", Statement = [{
+              Effect    = "Allow"
+              Action    = ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"]
+              Resource  = [aws_efs_file_system.database[0].arn]
+              Condition = { StringEquals = { "elasticfilesystem:AccessPointArn" = aws_efs_access_point.database[0].arn } }
+            }] })
+          }
+          resource "aws_ecs_task_definition" "database" {
+            count                    = local.managed_database_enabled ? 1 : 0
+            family                   = "${local.name}-database"
+            network_mode             = "awsvpc"
+            requires_compatibilities = ["FARGATE"]
+            cpu                      = "512"
+            memory                   = "1024"
+            execution_role_arn       = aws_iam_role.execution.arn
+            task_role_arn            = aws_iam_role.database_task[0].arn
+            skip_destroy             = true
+            tags                     = local.ownership_tags
+            container_definitions = jsonencode([{
+              name         = "database"
+              image        = "postgres:16@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b"
+              essential    = true
+              portMappings = [{ containerPort = local.managed_database.port, hostPort = local.managed_database.port, protocol = "tcp" }]
+              environment = [
+                { name = "POSTGRES_DB", value = local.managed_database.databaseName },
+                { name = "POSTGRES_USER", value = local.managed_database.databaseUser }
+              ]
+              secrets     = [{ name = "POSTGRES_PASSWORD", valueFrom = aws_secretsmanager_secret.database_password[0].arn }]
+              mountPoints = [{ sourceVolume = "database-data", containerPath = "/var/lib/postgresql/data", readOnly = false }]
+              healthCheck = { command = ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"], interval = 10, timeout = 5, retries = 6, startPeriod = 20 }
+              logConfiguration = { logDriver = "awslogs", options = {
+                awslogs-group = aws_cloudwatch_log_group.database.name, awslogs-region = var.aws_region, awslogs-stream-prefix = "database"
+              } }
+            }])
+            volume {
+              name = "database-data"
+              efs_volume_configuration {
+                file_system_id     = aws_efs_file_system.database[0].id
+                transit_encryption = "ENABLED"
+                authorization_config {
+                  access_point_id = aws_efs_access_point.database[0].id
+                  iam             = "ENABLED"
+                }
+              }
+            }
+          }
+          resource "aws_ecs_service" "database" {
+            count                 = local.managed_database_enabled ? 1 : 0
+            name                  = "${local.name}-database"
+            cluster               = aws_ecs_cluster.app.id
+            task_definition       = aws_ecs_task_definition.database[0].arn
+            desired_count         = 1
+            launch_type           = "FARGATE"
+            wait_for_steady_state = true
+            tags                  = local.ownership_tags
+            network_configuration {
+              subnets          = var.public_subnet_ids
+              security_groups  = [aws_security_group.database[0].id]
+              assign_public_ip = true
+            }
+            service_registries { registry_arn = aws_service_discovery_service.database[0].arn }
+            depends_on = [aws_secretsmanager_secret_version.database_password, aws_efs_mount_target.database, aws_iam_role_policy.database_efs, aws_iam_role_policy.runtime_secrets]
+          }
           resource "aws_ecs_task_definition" "app" {
             family                   = local.name
             network_mode             = "awsvpc"
@@ -357,7 +605,8 @@ jobs:
               name         = "app"
               image        = var.image_uri
               essential    = true
-              environment  = [{ name = "PORT", value = tostring(var.app_port) }, { name = "HOST", value = "0.0.0.0" }]
+              environment  = local.app_environment
+              secrets      = concat(local.app_project_secrets, local.app_database_secrets)
               portMappings = [{ containerPort = var.app_port, hostPort = var.app_port, protocol = "tcp" }]
               logConfiguration = { logDriver = "awslogs", options = {
                 awslogs-group         = aws_cloudwatch_log_group.app.name
@@ -384,17 +633,37 @@ jobs:
               container_name   = "app"
               container_port   = var.app_port
             }
-            depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution]
+            depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution, aws_iam_role_policy.runtime_secrets, aws_ecs_service.database]
           }
           output "deployed_url" { value = "http://${aws_lb.app.dns_name}" }
           output "cluster_name" { value = aws_ecs_cluster.app.name }
           output "service_name" { value = aws_ecs_service.app.name }
           output "task_definition_arn" { value = aws_ecs_task_definition.app.arn }
+          output "database_internal_host" { value = local.managed_database_enabled ? local.managed_database.host : null }
+          output "database_service_arn" { value = local.managed_database_enabled ? aws_ecs_service.database[0].id : null }
+          output "database_cloud_map_service_arn" { value = local.managed_database_enabled ? aws_service_discovery_service.database[0].arn : null }
+          output "database_password_secret_arn" { value = local.managed_database_enabled ? aws_secretsmanager_secret.database_password[0].arn : null }
+          output "database_url_secret_arn" { value = local.managed_database_enabled ? aws_secretsmanager_secret.database_url[0].arn : null }
+          output "database_efs_file_system_id" { value = local.managed_database_enabled ? aws_efs_file_system.database[0].id : null }
+          output "database_efs_access_point_id" { value = local.managed_database_enabled ? aws_efs_access_point.database[0].id : null }
 
           TERRAFORM
-          cat > .deployguard/terraform/terraform.tfvars.json <<EOF
-          {"aws_region":"$AWS_REGION","project_id":"$PROJECT_ID","environment_name":"$ENVIRONMENT_NAME","infrastructure_namespace":"$INFRASTRUCTURE_NAMESPACE","vpc_id":"$VPC_ID","public_subnet_ids":["${PUBLIC_SUBNET_IDS//,/\",\"}"],"app_port":$APP_PORT,"health_check_path":"$HEALTH_CHECK_PATH","image_uri":"$IMAGE_URI"}
-          EOF
+          IMAGE_URI="$IMAGE_URI" node <<'NODE'
+          const fs = require("fs");
+          const runtime = JSON.parse(fs.readFileSync(".deployguard/runtime-config.json", "utf8"));
+          fs.writeFileSync(".deployguard/terraform/terraform.tfvars.json", JSON.stringify({
+            aws_region: process.env.AWS_REGION,
+            project_id: process.env.PROJECT_ID,
+            environment_name: process.env.ENVIRONMENT_NAME,
+            infrastructure_namespace: process.env.INFRASTRUCTURE_NAMESPACE,
+            vpc_id: process.env.VPC_ID,
+            public_subnet_ids: process.env.PUBLIC_SUBNET_IDS.split(",").filter(Boolean),
+            app_port: Number(process.env.APP_PORT),
+            health_check_path: process.env.HEALTH_CHECK_PATH,
+            image_uri: process.env.IMAGE_URI,
+            runtime_config: runtime,
+          }), { mode: 0o600 });
+          NODE
 
       - name: Terraform plan and apply
         if: inputs.deployment_action != 'rollback'
@@ -447,6 +716,41 @@ jobs:
                 and .Environment == $environment
             ' >/dev/null
           }
+          reconcile_managed_secret() {
+            local purpose="$1" address="$2" version_address="$3"
+            local name="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/database/$purpose"
+            local description error_file arn version_id
+            error_file="$(mktemp)"
+            if ! description="$(aws secretsmanager describe-secret --secret-id "$name" --output json 2>"$error_file")"; then
+              if grep -q 'ResourceNotFoundException' "$error_file"; then rm -f "$error_file"; return 0; fi
+              rm -f "$error_file"
+              echo "Managed database secret identity could not be verified." >&2
+              exit 1
+            fi
+            rm -f "$error_file"
+            verify_owned_tags "$(printf '%s' "$description" | jq -c '.Tags // []')" || { echo "Managed database secret failed DeployGuard ownership verification." >&2; exit 1; }
+            if [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "true" ]; then
+              aws secretsmanager restore-secret --secret-id "$name" >/dev/null
+              for attempt in $(seq 1 10); do
+                description="$(aws secretsmanager describe-secret --secret-id "$name" --output json)"
+                [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "false" ] && break
+                [ "$attempt" -lt 10 ] && sleep 2
+              done
+              [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "false" ] || { echo "Managed database secret restoration did not complete in time." >&2; exit 1; }
+            fi
+            arn="$(printf '%s' "$description" | jq -r '.ARN')"
+            if ! state_has "$address"; then terraform import -input=false "$address" "$arn" >/dev/null; fi
+            if ! state_has "$version_address"; then
+              version_id="$(printf '%s' "$description" | jq -r '.VersionIdsToStages | to_entries | map(select(.value | index("AWSCURRENT"))) | if length == 1 then .[0].key else empty end')"
+              [ -n "$version_id" ] || { echo "Managed database secret has no unambiguous current version." >&2; exit 1; }
+              terraform import -input=false "$version_address" "$arn|$version_id" >/dev/null
+            fi
+          }
+          MANAGED_DATABASE_ENABLED="$(jq -r '.managedDatabase != null' ../runtime-config.json)"
+          if [ "$MANAGED_DATABASE_ENABLED" = "true" ]; then
+            reconcile_managed_secret password 'aws_secretsmanager_secret.database_password[0]' 'aws_secretsmanager_secret_version.database_password[0]'
+            reconcile_managed_secret url 'aws_secretsmanager_secret.database_url[0]' 'aws_secretsmanager_secret_version.database_url[0]'
+          fi
           RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
           reconcile_security_group() {
             local address="$1" name="$2" result count identifier
@@ -520,6 +824,10 @@ jobs:
           }
           reconcile_security_group "aws_security_group.alb" "$RESOURCE_NAME-alb"
           reconcile_security_group "aws_security_group.service" "$RESOURCE_NAME-svc"
+          if [ "$MANAGED_DATABASE_ENABLED" = "true" ]; then
+            reconcile_security_group 'aws_security_group.database[0]' "$RESOURCE_NAME-db"
+            reconcile_security_group 'aws_security_group.database_efs[0]' "$RESOURCE_NAME-db-efs"
+          fi
           reconcile_ecs_cluster
           reconcile_load_balancer
           reconcile_execution_role
@@ -624,8 +932,12 @@ jobs:
           CLUSTER_NAME="$(terraform output -raw cluster_name)"
           SERVICE_NAME="$(terraform output -raw service_name)"
           TASK_DEFINITION_ARN="$(terraform output -raw task_definition_arn)"
-          CONFIGURATION_FINGERPRINT="$(printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -r '.configurationFingerprint')"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" '{deploymentOperationId:$operation,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint}')"
+          CONFIGURATION_FINGERPRINT="$(jq -r '.configurationFingerprint' ../runtime-config.json)"
+          CONFIGURATION_SNAPSHOT_ID="$(jq -r '.configurationSnapshotId' ../runtime-config.json)"
+          DATABASE_BINDING_ID="$(jq -r '.managedDatabase.bindingId // empty' ../runtime-config.json)"
+          SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
+          DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" '{deploymentOperationId:$operation,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs}')"
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
