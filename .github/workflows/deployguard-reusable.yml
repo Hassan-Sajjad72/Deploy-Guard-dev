@@ -728,6 +728,7 @@ jobs:
               exit 1
             fi
             rm -f "$error_file"
+            DATABASE_SECRET_PRESENT=true
             verify_owned_tags "$(printf '%s' "$description" | jq -c '.Tags // []')" || { echo "Managed database secret failed DeployGuard ownership verification." >&2; exit 1; }
             if [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "true" ]; then
               aws secretsmanager restore-secret --secret-id "$name" >/dev/null
@@ -751,10 +752,95 @@ jobs:
               terraform untaint "$version_address" >/dev/null
             fi
           }
+          reconcile_retained_database_efs() {
+            local filesystem_address='aws_efs_file_system.database[0]'
+            local access_point_address='aws_efs_access_point.database[0]'
+            local creation_token="deployguard-$PROJECT_ID-$ENVIRONMENT_NAME-database"
+            local filesystems filesystem_count filesystem filesystem_id lifecycle
+            local access_points access_point_count access_point access_point_id state_id
+            case "$filesystem_address|$access_point_address" in
+              'aws_efs_file_system.database[0]|aws_efs_access_point.database[0]') ;;
+              *) echo "Unexpected retained EFS Terraform address." >&2; exit 1 ;;
+            esac
+            filesystems="$(aws efs describe-file-systems --output json)"
+            filesystem_count="$(printf '%s' "$filesystems" | jq --arg token "$creation_token" '[.FileSystems[]? | select(.CreationToken == $token)] | length')"
+            if [ "$filesystem_count" -eq 0 ]; then
+              [ "$DATABASE_SECRET_PRESENT" = "false" ] && return 0
+              echo "A retained database filesystem is required but was not found." >&2
+              exit 1
+            fi
+            [ "$filesystem_count" -eq 1 ] || { echo "Retained database filesystem identity is ambiguous." >&2; exit 1; }
+            filesystem="$(printf '%s' "$filesystems" | jq -c --arg token "$creation_token" '.FileSystems[] | select(.CreationToken == $token)')"
+            verify_owned_tags "$(printf '%s' "$filesystem" | jq -c '.Tags // []')" \
+              && printf '%s' "$filesystem" | jq -e '
+                .LifeCycleState == "available"
+                and .Encrypted == true
+                and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries).Persistence == "retained")
+              ' >/dev/null \
+              || { echo "Retained database filesystem failed ownership or lifecycle verification." >&2; exit 1; }
+            filesystem_id="$(printf '%s' "$filesystem" | jq -r '.FileSystemId')"
+            lifecycle="$(aws efs describe-lifecycle-configuration --file-system-id "$filesystem_id" --output json)"
+            printf '%s' "$lifecycle" | jq -e '[.LifecyclePolicies[]? | select(.TransitionToIA == "AFTER_30_DAYS")] | length == 1' >/dev/null \
+              || { echo "Retained database filesystem lifecycle configuration is incompatible." >&2; exit 1; }
+
+            access_points="$(aws efs describe-access-points --file-system-id "$filesystem_id" --output json)"
+            access_point_count="$(printf '%s' "$access_points" | jq --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg filesystem_id "$filesystem_id" '
+              [.AccessPoints[]? | select(
+                .FileSystemId == $filesystem_id
+                and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
+                  | $tags.ManagedBy == "DeployGuard"
+                    and $tags.DeployGuardProjectId == $project
+                    and $tags.Environment == $environment
+                    and $tags.Persistence == "retained")
+              )] | length
+            ')"
+            [ "$access_point_count" -eq 1 ] || {
+              [ "$access_point_count" -eq 0 ] \
+                && echo "A compatible retained database access point was not found." >&2 \
+                || echo "Retained database access-point identity is ambiguous." >&2
+              exit 1
+            }
+            access_point="$(printf '%s' "$access_points" | jq -c --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg filesystem_id "$filesystem_id" '
+              .AccessPoints[] | select(
+                .FileSystemId == $filesystem_id
+                and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
+                  | $tags.ManagedBy == "DeployGuard"
+                    and $tags.DeployGuardProjectId == $project
+                    and $tags.Environment == $environment
+                    and $tags.Persistence == "retained")
+              )
+            ')"
+            printf '%s' "$access_point" | jq -e --arg filesystem_id "$filesystem_id" '
+              .FileSystemId == $filesystem_id
+              and (.PosixUser.Uid | tostring) == "999"
+              and (.PosixUser.Gid | tostring) == "999"
+              and ((.PosixUser.SecondaryGids // []) | length) == 0
+              and .RootDirectory.Path == "/database"
+              and (.RootDirectory.CreationInfo.OwnerUid | tostring) == "999"
+              and (.RootDirectory.CreationInfo.OwnerGid | tostring) == "999"
+              and .RootDirectory.CreationInfo.Permissions == "700"
+            ' >/dev/null || { echo "Retained database access-point configuration is incompatible." >&2; exit 1; }
+            access_point_id="$(printf '%s' "$access_point" | jq -r '.AccessPointId')"
+
+            if state_has "$filesystem_address"; then
+              state_id="$(terraform show -json | jq -r --arg address "$filesystem_address" '[.values.root_module.resources[]? | select(.address == $address) | .values.id] | if length == 1 then .[0] else empty end')"
+              [ "$state_id" = "$filesystem_id" ] || { echo "Retained database filesystem state identity is incompatible." >&2; exit 1; }
+            else
+              terraform import -input=false "$filesystem_address" "$filesystem_id" >/dev/null
+            fi
+            if state_has "$access_point_address"; then
+              state_id="$(terraform show -json | jq -r --arg address "$access_point_address" '[.values.root_module.resources[]? | select(.address == $address) | .values.id] | if length == 1 then .[0] else empty end')"
+              [ "$state_id" = "$access_point_id" ] || { echo "Retained database access-point state identity is incompatible." >&2; exit 1; }
+            else
+              terraform import -input=false "$access_point_address" "$access_point_id" >/dev/null
+            fi
+          }
           MANAGED_DATABASE_ENABLED="$(jq -r '.managedDatabase != null' ../runtime-config.json)"
+          DATABASE_SECRET_PRESENT=false
           if [ "$MANAGED_DATABASE_ENABLED" = "true" ]; then
             reconcile_managed_secret password 'aws_secretsmanager_secret.database_password[0]' 'aws_secretsmanager_secret_version.database_password[0]'
             reconcile_managed_secret url 'aws_secretsmanager_secret.database_url[0]' 'aws_secretsmanager_secret_version.database_url[0]'
+            reconcile_retained_database_efs
           fi
           RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
           reconcile_security_group() {
