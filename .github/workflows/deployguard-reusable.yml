@@ -740,10 +740,15 @@ jobs:
             fi
             arn="$(printf '%s' "$description" | jq -r '.ARN')"
             if ! state_has "$address"; then terraform import -input=false "$address" "$arn" >/dev/null; fi
+            version_id="$(printf '%s' "$description" | jq -r '.VersionIdsToStages | to_entries | map(select(.value | index("AWSCURRENT"))) | if length == 1 then .[0].key else empty end')"
+            [ -n "$version_id" ] || { echo "Managed database secret has no unambiguous current version." >&2; exit 1; }
             if ! state_has "$version_address"; then
-              version_id="$(printf '%s' "$description" | jq -r '.VersionIdsToStages | to_entries | map(select(.value | index("AWSCURRENT"))) | if length == 1 then .[0].key else empty end')"
-              [ -n "$version_id" ] || { echo "Managed database secret has no unambiguous current version." >&2; exit 1; }
               terraform import -input=false "$version_address" "$arn|$version_id" >/dev/null
+            elif terraform state show -no-color "$version_address" 2>/dev/null | sed -n '1p' | grep -Fq '(tainted)'; then
+              # A failed provider read-after-write may taint a version that AWS
+              # already made AWSCURRENT. Ownership and the single current
+              # version were verified above, so preserve it without rotation.
+              terraform untaint "$version_address" >/dev/null
             fi
           }
           MANAGED_DATABASE_ENABLED="$(jq -r '.managedDatabase != null' ../runtime-config.json)"
