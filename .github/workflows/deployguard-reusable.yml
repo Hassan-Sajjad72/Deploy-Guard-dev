@@ -892,6 +892,7 @@ jobs:
             fi
           }
           MANAGED_DATABASE_ENABLED="$(jq -r '.managedDatabase != null' ../runtime-config.json)"
+          DEPLOYMENT_MODE="$(jq -r '.deploymentContext.deploymentMode' ../runtime-config.json)"
           PERSISTENT_STATE="$(jq -r '.deploymentContext.persistentState' ../runtime-config.json)"
           RECOVERY_EVIDENCE_AVAILABLE="$(jq -r '.deploymentContext.recoveryEvidenceAvailable' ../runtime-config.json)"
           if [ "$MANAGED_DATABASE_ENABLED" = "true" ]; then
@@ -1029,6 +1030,11 @@ jobs:
                   else .noOp += 1 end)
             | .resourceTypes |= (map(select(type == "string")) | unique | sort)
           ' deployguard-plan.json > deployguard-plan-summary.json
+          PERSISTENT_CHANGE_COUNT="$(jq '[.resource_changes[]? | select((.type | test("^aws_secretsmanager_secret(_version)?$|^aws_efs_(file_system|access_point)$")) and any(.change.actions[]?; . != "no-op" and . != "read"))] | length' deployguard-plan.json)"
+          if [ "$DEPLOYMENT_ACTION" = "deploy" ] && [ "$PERSISTENT_STATE" = "PERSISTENT" ] && { [ "$DEPLOYMENT_MODE" = "UPDATE" ] || [ "$DEPLOYMENT_MODE" = "RETRY" ]; } && [ "$PERSISTENT_CHANGE_COUNT" -gt 0 ]; then
+            echo "An application release cannot modify the active generation's verified database filesystem or secrets. Use the explicit recovery/reset flow for persistence changes." >&2
+            exit 1
+          fi
           DESTRUCTIVE_PERSISTENT_COUNT="$(jq '[.resource_changes[]? | select((.type | test("^aws_secretsmanager_secret(_version)?$|^aws_efs_(file_system|access_point)$")) and ((.change.actions // []) | index("delete")))] | length' deployguard-plan.json)"
           if [ "$DEPLOYMENT_ACTION" = "deploy" ] && [ "$DESTRUCTIVE_PERSISTENT_COUNT" -gt 0 ]; then
             if [ "$PERSISTENT_STATE" = "PERSISTENT" ] && [ "$RECOVERY_EVIDENCE_AVAILABLE" != "true" ]; then
