@@ -316,9 +316,9 @@ jobs:
           locals {
             log_group_prefix = var.infrastructure_namespace
             ownership_tags = {
-              ManagedBy            = "DeployGuard"
-              DeployGuardProjectId = var.project_id
-              Environment          = var.environment_name
+              ManagedBy               = "DeployGuard"
+              DeployGuardProjectId    = var.project_id
+              Environment             = var.environment_name
               DeployGuardGenerationId = var.generation_id
             }
             runtime_config           = var.runtime_config
