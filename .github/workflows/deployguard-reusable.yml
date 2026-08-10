@@ -545,7 +545,7 @@ jobs:
           }
           resource "aws_efs_file_system" "database" {
             count          = local.managed_database_enabled ? 1 : 0
-            creation_token = "deployguard-${var.project_id}-${var.environment_name}-${var.generation_id}-database"
+            creation_token = "dg-efs-${substr(replace(lower(var.project_id), "_", "-"), 0, 8)}-${substr(replace(lower(var.environment_name), "_", "-"), 0, 8)}-${substr(sha256(join(":", [var.project_id, var.environment_name, var.generation_id])), 0, 32)}"
             encrypted      = true
             lifecycle_policy { transition_to_ia = "AFTER_30_DAYS" }
             tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-${var.generation_id}-database", Persistence = "generation" })
@@ -810,9 +810,13 @@ jobs:
           reconcile_retained_database_efs() {
             local filesystem_address='aws_efs_file_system.database[0]'
             local access_point_address='aws_efs_access_point.database[0]'
-            local creation_token="deployguard-$PROJECT_ID-$ENVIRONMENT_NAME-$GENERATION_ID-database"
+            local project_prefix environment_prefix identity_hash creation_token
             local filesystems filesystem_count filesystem filesystem_id lifecycle
             local access_points access_point_count access_point access_point_id state_id
+            project_prefix="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
+            environment_prefix="$(printf '%s' "$ENVIRONMENT_NAME" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
+            identity_hash="$(printf '%s:%s:%s' "$PROJECT_ID" "$ENVIRONMENT_NAME" "$GENERATION_ID" | sha256sum | cut -c1-32)"
+            creation_token="dg-efs-$project_prefix-$environment_prefix-$identity_hash"
             case "$filesystem_address|$access_point_address" in
               'aws_efs_file_system.database[0]|aws_efs_access_point.database[0]') ;;
               *) echo "Unexpected retained EFS Terraform address." >&2; exit 1 ;;
