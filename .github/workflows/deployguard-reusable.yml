@@ -95,7 +95,10 @@ jobs:
             [[ "$ROLLBACK_TASK_DEFINITION_ARN" =~ ^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/[A-Za-z0-9_-]+:[0-9]+$ ]] || { echo "Rollback task-definition evidence is invalid." >&2; exit 1; }
           fi
           [[ "$ENVIRONMENT_NAME" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || { echo "Invalid immutable environment." >&2; exit 1; }
-          [ "$INFRASTRUCTURE_NAMESPACE" = "/deployguard/$PROJECT_ID" ] || { echo "Invalid infrastructure namespace." >&2; exit 1; }
+          GENERATION_ID="${INFRASTRUCTURE_NAMESPACE##*/}"
+          [[ "$GENERATION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || { echo "Invalid deployment generation identity." >&2; exit 1; }
+          [ "$INFRASTRUCTURE_NAMESPACE" = "/deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID" ] || { echo "Invalid infrastructure namespace." >&2; exit 1; }
+          printf 'GENERATION_ID=%s\n' "$GENERATION_ID" >> "$GITHUB_ENV"
           [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
           [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
           mkdir -p .deployguard
@@ -127,12 +130,13 @@ jobs:
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
           if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
-            jq -e --arg operation "$OPERATION_ID" --arg environment "$ENVIRONMENT_NAME" '
+            jq -e --arg operation "$OPERATION_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               type == "object"
               and .schemaVersion == 1
               and (.configurationSnapshotId | test("^[0-9a-fA-F-]{36}$"))
               and (.configurationFingerprint | test("^[0-9a-f]{64}$"))
               and .environmentName == $environment
+              and .generationId == $generation
               and (.environment | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | type == "string")))
               and (.secretReferences | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:"))))
               and (.deploymentContext.schemaVersion == 1)
@@ -298,6 +302,7 @@ jobs:
           variable "aws_region" { type = string }
           variable "project_id" { type = string }
           variable "environment_name" { type = string }
+          variable "generation_id" { type = string }
           variable "infrastructure_namespace" { type = string }
           variable "vpc_id" { type = string }
           variable "public_subnet_ids" { type = list(string) }
@@ -314,6 +319,7 @@ jobs:
               ManagedBy            = "DeployGuard"
               DeployGuardProjectId = var.project_id
               Environment          = var.environment_name
+              DeployGuardGenerationId = var.generation_id
             }
             runtime_config           = var.runtime_config
             managed_database         = try(local.runtime_config.managedDatabase, null)
@@ -453,8 +459,8 @@ jobs:
           }
           resource "aws_secretsmanager_secret" "database_password" {
             count                   = local.managed_database_enabled ? 1 : 0
-            name                    = "deployguard/${var.project_id}/${var.environment_name}/database/password"
-            recovery_window_in_days = 7
+            name                    = "deployguard/${var.project_id}/${var.environment_name}/${var.generation_id}/database/password"
+            recovery_window_in_days = 0
             tags                    = merge(local.ownership_tags, { SecretPurpose = "database_password" })
           }
           resource "random_password" "database" {
@@ -491,8 +497,8 @@ jobs:
           }
           resource "aws_secretsmanager_secret" "database_url" {
             count                   = local.managed_database_enabled ? 1 : 0
-            name                    = "deployguard/${var.project_id}/${var.environment_name}/database/url"
-            recovery_window_in_days = 7
+            name                    = "deployguard/${var.project_id}/${var.environment_name}/${var.generation_id}/database/url"
+            recovery_window_in_days = 0
             tags                    = merge(local.ownership_tags, { SecretPurpose = "database_url" })
           }
           resource "aws_secretsmanager_secret_version" "database_url" {
@@ -539,10 +545,10 @@ jobs:
           }
           resource "aws_efs_file_system" "database" {
             count          = local.managed_database_enabled ? 1 : 0
-            creation_token = "deployguard-${var.project_id}-${var.environment_name}-database"
+            creation_token = "deployguard-${var.project_id}-${var.environment_name}-${var.generation_id}-database"
             encrypted      = true
             lifecycle_policy { transition_to_ia = "AFTER_30_DAYS" }
-            tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-database", Persistence = "retained" })
+            tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-${var.generation_id}-database", Persistence = "generation" })
           }
           resource "aws_efs_mount_target" "database" {
             count           = local.managed_database_enabled ? length(var.public_subnet_ids) : 0
@@ -565,7 +571,7 @@ jobs:
                 permissions = "700"
               }
             }
-            tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-database", Persistence = "retained" })
+            tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-${var.generation_id}-database", Persistence = "generation" })
           }
           resource "aws_iam_role" "database_task" {
             count              = local.managed_database_enabled ? 1 : 0
@@ -703,6 +709,7 @@ jobs:
             aws_region: process.env.AWS_REGION,
             project_id: process.env.PROJECT_ID,
             environment_name: process.env.ENVIRONMENT_NAME,
+            generation_id: process.env.GENERATION_ID,
             infrastructure_namespace: process.env.INFRASTRUCTURE_NAMESPACE,
             vpc_id: process.env.VPC_ID,
             public_subnet_ids: process.env.PUBLIC_SUBNET_IDS.split(",").filter(Boolean),
@@ -722,7 +729,7 @@ jobs:
           terraform fmt -check -recursive -diff
           terraform init -input=false \
             -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
-            -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/terraform.tfstate" \
+            -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
             -backend-config="encrypt=true"
           reconcile_log_group() {
@@ -740,8 +747,8 @@ jobs:
               exit 1
             fi
             rm -f "$error_file"
-            printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg purpose "$purpose" \
-              '.ManagedBy == "DeployGuard" and .DeployGuardProjectId == $project and .Environment == $environment and .LogPurpose == $purpose' >/dev/null || {
+            printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg purpose "$purpose" \
+              '.ManagedBy == "DeployGuard" and .DeployGuardProjectId == $project and .Environment == $environment and .DeployGuardGenerationId == $generation and .LogPurpose == $purpose' >/dev/null || {
                 echo "CloudWatch log group $name failed DeployGuard ownership verification." >&2
                 exit 1
               }
@@ -757,16 +764,17 @@ jobs:
           }
           verify_owned_tags() {
             local tags="$1"
-            printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+            printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               map({key: (.key // .Key), value: (.value // .Value)}) | from_entries
               | .ManagedBy == "DeployGuard"
                 and .DeployGuardProjectId == $project
                 and .Environment == $environment
+                and .DeployGuardGenerationId == $generation
             ' >/dev/null
           }
           reconcile_managed_secret() {
             local purpose="$1" address="$2" version_address="$3"
-            local name="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/database/$purpose"
+            local name="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/database/$purpose"
             local description error_file arn version_id
             error_file="$(mktemp)"
             if ! description="$(aws secretsmanager describe-secret --secret-id "$name" --output json 2>"$error_file")"; then
@@ -802,7 +810,7 @@ jobs:
           reconcile_retained_database_efs() {
             local filesystem_address='aws_efs_file_system.database[0]'
             local access_point_address='aws_efs_access_point.database[0]'
-            local creation_token="deployguard-$PROJECT_ID-$ENVIRONMENT_NAME-database"
+            local creation_token="deployguard-$PROJECT_ID-$ENVIRONMENT_NAME-$GENERATION_ID-database"
             local filesystems filesystem_count filesystem filesystem_id lifecycle
             local access_points access_point_count access_point access_point_id state_id
             case "$filesystem_address|$access_point_address" in
@@ -821,7 +829,7 @@ jobs:
               && printf '%s' "$filesystem" | jq -e '
                 .LifeCycleState == "available"
                 and .Encrypted == true
-                and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries).Persistence == "retained")
+                and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries).Persistence == "generation")
               ' >/dev/null \
               || { echo "Retained database filesystem failed ownership or lifecycle verification." >&2; exit 1; }
             filesystem_id="$(printf '%s' "$filesystem" | jq -r '.FileSystemId')"
@@ -830,14 +838,15 @@ jobs:
               || { echo "Retained database filesystem lifecycle configuration is incompatible." >&2; exit 1; }
 
             access_points="$(aws efs describe-access-points --file-system-id "$filesystem_id" --output json)"
-            access_point_count="$(printf '%s' "$access_points" | jq --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg filesystem_id "$filesystem_id" '
+            access_point_count="$(printf '%s' "$access_points" | jq --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg filesystem_id "$filesystem_id" '
               [.AccessPoints[]? | select(
                 .FileSystemId == $filesystem_id
                 and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
                   | $tags.ManagedBy == "DeployGuard"
                     and $tags.DeployGuardProjectId == $project
                     and $tags.Environment == $environment
-                    and $tags.Persistence == "retained")
+                    and $tags.DeployGuardGenerationId == $generation
+                    and $tags.Persistence == "generation")
               )] | length
             ')"
             [ "$access_point_count" -eq 1 ] || {
@@ -846,14 +855,15 @@ jobs:
                 || echo "Retained database access-point identity is ambiguous." >&2
               exit 1
             }
-            access_point="$(printf '%s' "$access_points" | jq -c --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg filesystem_id "$filesystem_id" '
+            access_point="$(printf '%s' "$access_points" | jq -c --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg filesystem_id "$filesystem_id" '
               .AccessPoints[] | select(
                 .FileSystemId == $filesystem_id
                 and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
                   | $tags.ManagedBy == "DeployGuard"
                     and $tags.DeployGuardProjectId == $project
                     and $tags.Environment == $environment
-                    and $tags.Persistence == "retained")
+                    and $tags.DeployGuardGenerationId == $generation
+                    and $tags.Persistence == "generation")
               )
             ')"
             printf '%s' "$access_point" | jq -e --arg filesystem_id "$filesystem_id" '
@@ -994,178 +1004,8 @@ jobs:
               }
             ' pre-destroy-state.json > destroy-verification-scope.json
 
-            # Retained resources are adopted again on a future deployment. They
-            # must be excluded from the destroy graph only after exact identity
-            # and ownership verification; no resource API mutation is allowed.
-            RETAINED_EVIDENCE="retained-resource-evidence.json"
-            jq -n '{schemaVersion:1,resources:[]}' > "$RETAINED_EVIDENCE"
-            mapfile -t CURRENT_STATE_ADDRESSES < <(terraform state list)
-            state_has_exact() {
-              local expected="$1" current
-              for current in "${CURRENT_STATE_ADDRESSES[@]}"; do
-                [ "$current" = "$expected" ] && return 0
-              done
-              return 1
-            }
-            state_value() {
-              local address="$1" property="$2"
-              jq -r --arg address "$address" --arg property "$property" '
-                [.values.root_module.resources[]? | select(.address == $address) | .values[$property]]
-                | if length == 1 and .[0] != null then .[0] else empty end
-              ' pre-destroy-state.json
-            }
-            append_retained_evidence() {
-              local address="$1" type="$2" identity="$3" name="$4" state_action="$5" next
-              next="$(mktemp)"
-              jq --arg address "$address" --arg type "$type" --arg identity "$identity" --arg name "$name" --arg stateAction "$state_action" '
-                .resources += [{
-                  terraformAddress: (if $address == "" then null else $address end),
-                  type: $type,
-                  identity: $identity,
-                  name: $name,
-                  stateAction: $stateAction
-                }]
-              ' "$RETAINED_EVIDENCE" > "$next"
-              mv "$next" "$RETAINED_EVIDENCE"
-            }
-            verify_ownership_tags() {
-              local json="$1" persistence="${2:-false}"
-              printf '%s' "$json" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --argjson persistence "$persistence" '
-                (.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                | $tags.ManagedBy == "DeployGuard"
-                  and $tags.DeployGuardProjectId == $project
-                  and $tags.Environment == $environment
-                  and (($persistence | not) or $tags.Persistence == "retained")
-              ' >/dev/null
-            }
-            describe_secret_exact() {
-              local name="$1" required="$2" error_file response
-              error_file="$(mktemp)"
-              if response="$(aws secretsmanager describe-secret --secret-id "$name" --output json 2>"$error_file")"; then
-                rm -f "$error_file"
-                printf '%s' "$response"
-                return 0
-              fi
-              if grep -q 'ResourceNotFoundException' "$error_file" && [ "$required" = "false" ]; then
-                rm -f "$error_file"
-                return 1
-              fi
-              rm -f "$error_file"
-              echo "A retained secret identity could not be verified." >&2
-              exit 1
-            }
-
-            while IFS= read -r address; do
-              case "$address" in
-                'aws_secretsmanager_secret.database_password[0]'|'aws_secretsmanager_secret.database_url[0]'|'aws_secretsmanager_secret_version.database_password[0]'|'aws_secretsmanager_secret_version.database_url[0]'|'aws_efs_file_system.database[0]'|'aws_efs_access_point.database[0]') ;;
-                *) echo "An unexpected retained-resource Terraform address was found." >&2; exit 1 ;;
-              esac
-            done < <(printf '%s\n' "${CURRENT_STATE_ADDRESSES[@]}" | grep -E '^aws_(secretsmanager_secret(_version)?|efs_(file_system|access_point))\.' || true)
-
-            DATABASE_PASSWORD_NAME="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/database/password"
-            DATABASE_URL_NAME="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/database/url"
-            APPLICATION_RUNTIME_NAME="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/application/runtime"
-            DATABASE_RETAINED=false
-            if printf '%s\n' "${CURRENT_STATE_ADDRESSES[@]}" | grep -Eq '^aws_(secretsmanager_secret(_version)?|efs_(file_system|access_point))\.database'; then
-              DATABASE_RETAINED=true
-            else
-              probe_error="$(mktemp)"
-              if aws secretsmanager describe-secret --secret-id "$DATABASE_PASSWORD_NAME" --output json >/dev/null 2>"$probe_error"; then
-                DATABASE_RETAINED=true
-              elif ! grep -q 'ResourceNotFoundException' "$probe_error"; then
-                rm -f "$probe_error"
-                echo "The retained database identity could not be discovered safely." >&2
-                exit 1
-              fi
-              rm -f "$probe_error"
-            fi
-
-            APP_SECRET=""
-            if APP_SECRET="$(describe_secret_exact "$APPLICATION_RUNTIME_NAME" false)"; then
-              printf '%s' "$APP_SECRET" | jq -e --arg name "$APPLICATION_RUNTIME_NAME" '.Name == $name and (.DeletedDate == null)' >/dev/null \
-                && verify_ownership_tags "$APP_SECRET" \
-                || { echo "The retained application secret failed ownership verification." >&2; exit 1; }
-              append_retained_evidence "" "aws_secretsmanager_secret" "$(printf '%s' "$APP_SECRET" | jq -r '.ARN')" "$APPLICATION_RUNTIME_NAME" "external"
-            fi
-
-            ADDRESSES_TO_REMOVE=()
-            if [ "$DATABASE_RETAINED" = "true" ]; then
-              PASSWORD_SECRET="$(describe_secret_exact "$DATABASE_PASSWORD_NAME" true)"
-              URL_SECRET="$(describe_secret_exact "$DATABASE_URL_NAME" true)"
-              printf '%s' "$PASSWORD_SECRET" | jq -e --arg name "$DATABASE_PASSWORD_NAME" '.Name == $name and (.DeletedDate == null)' >/dev/null \
-                && verify_ownership_tags "$PASSWORD_SECRET" \
-                || { echo "The retained database password secret failed ownership verification." >&2; exit 1; }
-              printf '%s' "$URL_SECRET" | jq -e --arg name "$DATABASE_URL_NAME" '.Name == $name and (.DeletedDate == null)' >/dev/null \
-                && verify_ownership_tags "$URL_SECRET" \
-                || { echo "The retained database URL secret failed ownership verification." >&2; exit 1; }
-              PASSWORD_ARN="$(printf '%s' "$PASSWORD_SECRET" | jq -r '.ARN')"
-              URL_ARN="$(printf '%s' "$URL_SECRET" | jq -r '.ARN')"
-
-              FILE_SYSTEMS="$(aws efs describe-file-systems --output json)"
-              FILE_SYSTEM="$(printf '%s' "$FILE_SYSTEMS" | jq -c --arg token "deployguard-$PROJECT_ID-$ENVIRONMENT_NAME-database" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
-                [.FileSystems[]? | select(
-                  .CreationToken == $token
-                  and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                    | $tags.ManagedBy == "DeployGuard"
-                      and $tags.DeployGuardProjectId == $project
-                      and $tags.Environment == $environment
-                      and $tags.Persistence == "retained")
-                )] | if length == 1 then .[0] else empty end
-              ')"
-              [ -n "$FILE_SYSTEM" ] && [ "$(printf '%s' "$FILE_SYSTEM" | jq -r '.LifeCycleState')" = "available" ] \
-                || { echo "The retained EFS filesystem failed ownership verification." >&2; exit 1; }
-              FILE_SYSTEM_ID="$(printf '%s' "$FILE_SYSTEM" | jq -r '.FileSystemId')"
-              FILE_SYSTEM_ARN="$(printf '%s' "$FILE_SYSTEM" | jq -r '.FileSystemArn')"
-              ACCESS_POINTS="$(aws efs describe-access-points --file-system-id "$FILE_SYSTEM_ID" --output json)"
-              ACCESS_POINT="$(printf '%s' "$ACCESS_POINTS" | jq -c --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
-                [.AccessPoints[]? | select(
-                  ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                    | $tags.ManagedBy == "DeployGuard"
-                      and $tags.DeployGuardProjectId == $project
-                      and $tags.Environment == $environment
-                      and $tags.Persistence == "retained")
-                )] | if length == 1 then .[0] else empty end
-              ')"
-              [ -n "$ACCESS_POINT" ] && [ "$(printf '%s' "$ACCESS_POINT" | jq -r '.LifeCycleState')" = "available" ] \
-                || { echo "The retained EFS access point failed ownership verification." >&2; exit 1; }
-              ACCESS_POINT_ID="$(printf '%s' "$ACCESS_POINT" | jq -r '.AccessPointId')"
-              ACCESS_POINT_ARN="$(printf '%s' "$ACCESS_POINT" | jq -r '.AccessPointArn')"
-
-              while IFS='|' read -r address type identity name expected_state_identity; do
-                state_action="already_absent"
-                if state_has_exact "$address"; then
-                  actual_state_identity="$(state_value "$address" "$expected_state_identity")"
-                  [ "$actual_state_identity" = "$identity" ] || { echo "A retained Terraform state identity did not match AWS." >&2; exit 1; }
-                  ADDRESSES_TO_REMOVE+=("$address")
-                  state_action="removed"
-                fi
-                append_retained_evidence "$address" "$type" "$identity" "$name" "$state_action"
-              done <<EOF
-          aws_secretsmanager_secret.database_password[0]|aws_secretsmanager_secret|$PASSWORD_ARN|$DATABASE_PASSWORD_NAME|id
-          aws_secretsmanager_secret.database_url[0]|aws_secretsmanager_secret|$URL_ARN|$DATABASE_URL_NAME|id
-          aws_secretsmanager_secret_version.database_password[0]|aws_secretsmanager_secret_version|$PASSWORD_ARN|$DATABASE_PASSWORD_NAME|secret_id
-          aws_secretsmanager_secret_version.database_url[0]|aws_secretsmanager_secret_version|$URL_ARN|$DATABASE_URL_NAME|secret_id
-          aws_efs_file_system.database[0]|aws_efs_file_system|$FILE_SYSTEM_ID|$FILE_SYSTEM_ARN|id
-          aws_efs_access_point.database[0]|aws_efs_access_point|$ACCESS_POINT_ID|$ACCESS_POINT_ARN|id
-          EOF
-            fi
-
-            # All candidates are verified before the first exact state mutation.
-            for address in "${ADDRESSES_TO_REMOVE[@]}"; do
-              terraform state rm "$address" >/dev/null
-            done
-            for address in "${ADDRESSES_TO_REMOVE[@]}"; do
-              terraform state list | grep -Fxq "$address" \
-                && { echo "A retained Terraform address remained after exact state exclusion." >&2; exit 1; }
-            done
-            jq -e '
-              .schemaVersion == 1
-              and (.resources | type == "array")
-              and all(.resources[];
-                (.type | test("^aws_secretsmanager_secret(_version)?$|^aws_efs_(file_system|access_point)$"))
-                and (.identity | type == "string" and length > 0)
-                and (.stateAction | IN("removed", "already_absent", "external")))
-            ' "$RETAINED_EVIDENCE" >/dev/null || { echo "Retained-resource evidence validation failed." >&2; exit 1; }
+            # A verified destroy removes the complete generation, including
+            # database secrets, EFS, access points and application resources.
           fi
           terraform validate -no-color
           set +e
@@ -1201,21 +1041,21 @@ jobs:
               echo "The plan changes persistent resources and verified recovery evidence is available."
             fi
           fi
-          if ! jq -e --arg action "$DEPLOYMENT_ACTION" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg persistent_state "$PERSISTENT_STATE" --arg recovery_available "$RECOVERY_EVIDENCE_AVAILABLE" --arg namespace "$INFRASTRUCTURE_NAMESPACE" '
+          if ! jq -e --arg action "$DEPLOYMENT_ACTION" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg persistent_state "$PERSISTENT_STATE" --arg recovery_available "$RECOVERY_EVIDENCE_AVAILABLE" --arg namespace "$INFRASTRUCTURE_NAMESPACE" '
             def actions: (.change.actions // []);
             def deletes: (actions | index("delete")) != null;
             def retained: (.type | test("^aws_secretsmanager_secret(_version)?$|^aws_efs_(file_system|access_point)$"));
             def owned_tags: (.change.after.tags // .change.before.tags // {});
             def wrong_owner:
               owned_tags.ManagedBy == "DeployGuard"
-              and (owned_tags.DeployGuardProjectId != $project or owned_tags.Environment != $environment);
+              and (owned_tags.DeployGuardProjectId != $project or owned_tags.Environment != $environment or owned_tags.DeployGuardGenerationId != $generation);
             def cross_namespace:
               ((.change.after.name // .change.before.name // "") as $name
                 | (($name | startswith("/deployguard/")) and ($name | startswith($namespace + "/") | not))
                   or (($name | startswith("deployguard/")) and ($name | startswith("deployguard/" + $project + "/" + $environment + "/") | not)));
             [ .resource_changes[]?
               | select(
-                  (retained and deletes and ($action == "destroy" or ($persistent_state == "PERSISTENT" and $recovery_available != "true")))
+                  (retained and deletes and $action != "destroy" and ($persistent_state == "PERSISTENT" and $recovery_available != "true"))
                   or ($action == "destroy" and (deletes | not))
                   or ($action != "destroy" and .type == "aws_cloudwatch_log_group" and deletes)
                   or wrong_owner
@@ -1236,6 +1076,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          RUNTIME_SECRET="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/application/runtime"
+          if ! SECRET_ERROR="$(aws secretsmanager delete-secret --secret-id "$RUNTIME_SECRET" --force-delete-without-recovery 2>&1)"; then
+            printf '%s' "$SECRET_ERROR" | grep -q 'ResourceNotFoundException' || { echo "DeployGuard could not remove the generation runtime secret." >&2; exit 1; }
+          fi
+          for FAMILY in "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)" "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)-database"; do
+            while IFS= read -r TASK_DEFINITION; do
+              [ -n "$TASK_DEFINITION" ] || continue
+              TAGS="$(aws ecs list-tags-for-resource --resource-arn "$TASK_DEFINITION" --output json)"
+              if printf '%s' "$TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+                (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
+                | $tags.ManagedBy == "DeployGuard"
+                  and $tags.DeployGuardProjectId == $project
+                  and $tags.Environment == $environment
+                  and $tags.DeployGuardGenerationId == $generation
+              ' >/dev/null; then
+                aws ecs deregister-task-definition --task-definition "$TASK_DEFINITION" >/dev/null
+              fi
+            done < <(aws ecs list-task-definitions --family-prefix "$FAMILY" --status ACTIVE --query 'taskDefinitionArns[]' --output text | tr '\t' '\n')
+          done
           SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
           REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
           if ! ERROR="$(aws ecr delete-repository --repository-name "$REPOSITORY_NAME" --force 2>&1)"; then
@@ -1413,9 +1272,7 @@ jobs:
           }
 
           normal_state_resources_absent() {
-            local unexpected
-            unexpected="$(terraform state list 2>/dev/null | grep -Ev '^aws_(secretsmanager_secret(_version)?|efs_(file_system|access_point))\.' || true)"
-            [ -z "$unexpected" ]
+            [ -z "$(terraform state list 2>/dev/null || true)" ]
           }
 
           retained_resources_available() {
@@ -1500,8 +1357,7 @@ jobs:
               && arns_absent target_group '.targetGroupArns' \
               && endpoint_unavailable \
               && image_repository_absent \
-              && normal_state_resources_absent \
-              && retained_resources_available; then
+              && normal_state_resources_absent; then
               VERIFIED=true
               break
             fi
@@ -1509,8 +1365,7 @@ jobs:
           done
           [ "$VERIFIED" = "true" ] || { echo "Project infrastructure absence was not verified within the bounded window." >&2; exit 1; }
 
-          RETAINED_ADDRESSES="$(jq -c '[.resources[]? | .terraformAddress | select(. != null)] | unique | sort' retained-resource-evidence.json)"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson retainedTerraformAddresses "$RETAINED_ADDRESSES" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,normalResourcesAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:$retainedTerraformAddresses,verifiedAt:$verifiedAt}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,normalResourcesAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
           printf 'DEPLOYGUARD_DESTROY_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
