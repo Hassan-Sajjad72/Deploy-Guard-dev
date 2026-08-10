@@ -1,6 +1,7 @@
 name: DeployGuard reusable AWS deployment
 
 on:
+  # Validated against deployguard.workflow-call/v2.
   workflow_call:
     inputs:
       deployment_action: { required: true, type: string }
@@ -11,6 +12,7 @@ on:
       repository_branch: { required: true, type: string }
       detection_profile_version: { required: true, type: string }
       deployment_contract_version: { required: true, type: string }
+      build_plan_base64: { required: true, type: string }
       image_tag: { required: true, type: string }
       environment_references_base64: { required: true, type: string }
       infrastructure_namespace: { required: true, type: string }
@@ -59,6 +61,7 @@ jobs:
       APPLICATION_ROOT: ${{ inputs.application_root }}
       GENERATED_DOCKERFILE_BASE64: ${{ inputs.generated_dockerfile_base64 }}
       BUILD_TIME_PUBLIC_CONFIG_BASE64: ${{ inputs.build_time_public_config_base64 }}
+      BUILD_PLAN_BASE64: ${{ inputs.build_plan_base64 }}
       ENVIRONMENT_REFERENCES_BASE64: ${{ inputs.environment_references_base64 }}
       INFRASTRUCTURE_NAMESPACE: ${{ inputs.infrastructure_namespace }}
       ROLLBACK_SOURCE_OPERATION_ID: ${{ inputs.rollback_source_operation_id }}
@@ -91,11 +94,36 @@ jobs:
             [[ "$ROLLBACK_IMAGE_URI" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$ ]] || { echo "Rollback image evidence is invalid." >&2; exit 1; }
             [[ "$ROLLBACK_TASK_DEFINITION_ARN" =~ ^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/[A-Za-z0-9_-]+:[0-9]+$ ]] || { echo "Rollback task-definition evidence is invalid." >&2; exit 1; }
           fi
-          [[ "$ENVIRONMENT_NAME" =~ ^(dev|production)$ ]] || { echo "Invalid immutable environment." >&2; exit 1; }
+          [[ "$ENVIRONMENT_NAME" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || { echo "Invalid immutable environment." >&2; exit 1; }
           [ "$INFRASTRUCTURE_NAMESPACE" = "/deployguard/$PROJECT_ID" ] || { echo "Invalid infrastructure namespace." >&2; exit 1; }
           [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
           [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
           mkdir -p .deployguard
+          printf '%s' "$BUILD_PLAN_BASE64" | base64 --decode > .deployguard/build-plan.json
+          chmod 600 .deployguard/build-plan.json
+          jq -e \
+            --arg repository "${{ inputs.repository_full_name }}" \
+            --arg branch "${{ inputs.repository_branch }}" \
+            --arg commit "${{ inputs.commit_sha }}" \
+            --arg appRoot "$APPLICATION_ROOT" \
+            --argjson port "$APP_PORT" \
+            --arg health "$HEALTH_CHECK_PATH" \
+            --arg template "$CONTAINER_PROFILE" \
+            --arg output "$OUTPUT_DIRECTORY" '
+              type == "object"
+              and .planVersion == 1
+              and (.detectorVersion | type == "string" and length > 0)
+              and .repositoryFullName == $repository
+              and .branch == $branch
+              and .commitSha == $commit
+              and .appRoot == $appRoot
+              and .port == $port
+              and .healthPath == $health
+              and .dockerTemplate == $template
+              and ((.outputDirectory // "") == $output)
+              and (.environmentOwnership | type == "array")
+              and (.requiredInputs | type == "array")
+            ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
           if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
@@ -1203,7 +1231,7 @@ jobs:
           DATABASE_BINDING_ID="$(jq -r '.managedDatabase.bindingId // empty' ../runtime-config.json)"
           SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
           DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" '{deploymentOperationId:$operation,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" '{deploymentOperationId:$operation,environmentName:$environmentName,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs}')"
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
@@ -1265,7 +1293,7 @@ jobs:
           fi
           CONFIGURATION_FINGERPRINT="$(printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -r '.configurationFingerprint')"
           IMAGE_DIGEST="${ROLLBACK_IMAGE_URI##*@}"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg url "$URL" --arg imageUri "$ROLLBACK_IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "${{ inputs.commit_sha }}" --arg cluster "$RESOURCE_NAME" --arg service "$RESOURCE_NAME" --arg taskDefinitionArn "$ROLLBACK_TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg rollbackSourceOperationId "$ROLLBACK_SOURCE_OPERATION_ID" '{deploymentOperationId:$operation,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,rollbackSourceOperationId:$rollbackSourceOperationId}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$ROLLBACK_IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "${{ inputs.commit_sha }}" --arg cluster "$RESOURCE_NAME" --arg service "$RESOURCE_NAME" --arg taskDefinitionArn "$ROLLBACK_TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg rollbackSourceOperationId "$ROLLBACK_SOURCE_OPERATION_ID" '{deploymentOperationId:$operation,environmentName:$environmentName,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,rollbackSourceOperationId:$rollbackSourceOperationId}')"
           mkdir -p .deployguard/terraform
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
