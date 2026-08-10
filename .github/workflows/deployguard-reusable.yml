@@ -138,12 +138,23 @@ jobs:
               and (.deploymentContext.schemaVersion == 1)
               and (.deploymentContext.deploymentMode | IN("FRESH", "UPDATE", "RETRY", "RESTORE", "RESET_FRESH"))
               and (.deploymentContext.persistentState | IN("NONE", "PERSISTENT"))
-              and (.deploymentContext.recoveryState | IN("NOT_REQUIRED", "AVAILABLE", "REQUIRED", "BLOCKED"))
-              and (.deploymentContext.recoveryRequired | type == "boolean")
+              and (.deploymentContext.recoveryState | IN("NOT_REQUIRED", "AVAILABLE"))
+              and .deploymentContext.recoveryRequired == false
               and (.deploymentContext.recoveryEvidenceAvailable | type == "boolean")
               and (.deploymentContext.persistentPreviouslyEstablished | type == "boolean")
               and .deploymentContext.deploymentAllowed == true
               and (.deploymentContext.reason | type == "string" and length > 0 and length <= 512)
+              and (
+                if .deploymentContext.persistentState == "PERSISTENT" then
+                  .deploymentContext.persistentPreviouslyEstablished == true
+                  and (.deploymentContext.deploymentMode | IN("UPDATE", "RETRY", "RESTORE"))
+                elif .deploymentContext.deploymentMode == "RESET_FRESH" then
+                  true
+                else
+                  .deploymentContext.persistentPreviouslyEstablished == false
+                  and (.deploymentContext.deploymentMode | IN("FRESH", "RETRY"))
+                end
+              )
               and (.managedDatabase == null or (
                 .managedDatabase.provider == "managed"
                 and .managedDatabase.engine == "postgres"
@@ -765,7 +776,6 @@ jobs:
               exit 1
             fi
             rm -f "$error_file"
-            DATABASE_SECRET_PRESENT=true
             verify_owned_tags "$(printf '%s' "$description" | jq -c '.Tags // []')" || { echo "Managed database secret failed DeployGuard ownership verification." >&2; exit 1; }
             if [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "true" ]; then
               aws secretsmanager restore-secret --secret-id "$name" >/dev/null
@@ -802,11 +812,7 @@ jobs:
             filesystems="$(aws efs describe-file-systems --output json)"
             filesystem_count="$(printf '%s' "$filesystems" | jq --arg token "$creation_token" '[.FileSystems[]? | select(.CreationToken == $token)] | length')"
             if [ "$filesystem_count" -eq 0 ]; then
-              if [ "$PERSISTENT_STATE" = "NONE" ]; then
-                echo "No previous persistent deployment detected. Recovery protection is not required. Starting fresh infrastructure deployment."
-                return 0
-              fi
-              echo "A previous persistent deployment existed, but its retained filesystem is unavailable. Restore verified recovery evidence or explicitly start a fresh deployment generation." >&2
+              echo "The authoritative deployment context requires an established persistent filesystem, but AWS verification could not find it." >&2
               exit 1
             fi
             [ "$filesystem_count" -eq 1 ] || { echo "Retained database filesystem identity is ambiguous." >&2; exit 1; }
@@ -876,14 +882,20 @@ jobs:
             fi
           }
           MANAGED_DATABASE_ENABLED="$(jq -r '.managedDatabase != null' ../runtime-config.json)"
-          DEPLOYMENT_MODE="$(jq -r '.deploymentContext.deploymentMode' ../runtime-config.json)"
           PERSISTENT_STATE="$(jq -r '.deploymentContext.persistentState' ../runtime-config.json)"
           RECOVERY_EVIDENCE_AVAILABLE="$(jq -r '.deploymentContext.recoveryEvidenceAvailable' ../runtime-config.json)"
-          DATABASE_SECRET_PRESENT=false
           if [ "$MANAGED_DATABASE_ENABLED" = "true" ]; then
+            # Existing secrets are reconciled only as Terraform resource
+            # identities. Their presence never establishes persistent data.
             reconcile_managed_secret password 'aws_secretsmanager_secret.database_password[0]' 'aws_secretsmanager_secret_version.database_password[0]'
             reconcile_managed_secret url 'aws_secretsmanager_secret.database_url[0]' 'aws_secretsmanager_secret_version.database_url[0]'
-            reconcile_retained_database_efs
+            if [ "$PERSISTENT_STATE" = "PERSISTENT" ]; then
+              # The backend's immutable deployment context is the sole source
+              # of truth for whether retained database data must exist.
+              reconcile_retained_database_efs
+            else
+              echo "The authoritative deployment context does not contain an established persistent generation; retained EFS adoption is skipped."
+            fi
           fi
           RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
           reconcile_security_group() {
