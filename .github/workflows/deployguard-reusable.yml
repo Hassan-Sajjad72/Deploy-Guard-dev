@@ -794,7 +794,7 @@ jobs:
             filesystem_count="$(printf '%s' "$filesystems" | jq --arg token "$creation_token" '[.FileSystems[]? | select(.CreationToken == $token)] | length')"
             if [ "$filesystem_count" -eq 0 ]; then
               [ "$DATABASE_SECRET_PRESENT" = "false" ] && return 0
-              echo "A retained database filesystem is required but was not found." >&2
+              echo "Managed database data is unavailable and no retained filesystem was found. Review verified backup evidence or reset the managed database before deploying a fresh instance." >&2
               exit 1
             fi
             [ "$filesystem_count" -eq 1 ] || { echo "Retained database filesystem identity is ambiguous." >&2; exit 1; }
