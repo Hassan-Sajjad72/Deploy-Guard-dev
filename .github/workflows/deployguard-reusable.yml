@@ -736,11 +736,31 @@ jobs:
             -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
             -backend-config="encrypt=true"
+          state_has() {
+            local address="$1" state_output error_file
+            error_file="$(mktemp)"
+            if ! state_output="$(terraform state list 2>"$error_file")"; then
+              rm -f "$error_file"
+              echo "Terraform state could not be read while checking $address; refusing unsafe import preparation." >&2
+              exit 1
+            fi
+            rm -f "$error_file"
+            printf '%s\n' "$state_output" | grep -Fqx "$address"
+          }
+          import_owned_if_unmanaged() {
+            local address="$1" identifier="$2"
+            if state_has "$address"; then
+              echo "Terraform already manages $address; import skipped."
+              return 0
+            fi
+            terraform import -input=false "$address" "$identifier" >/dev/null
+          }
           reconcile_log_group() {
             local purpose="$1"
             local address="aws_cloudwatch_log_group.$purpose"
             local name="$INFRASTRUCTURE_NAMESPACE/$purpose"
             local account_id arn tags error_file
+            state_has "$address" && return 0
             account_id="$(aws sts get-caller-identity --query Account --output text)"
             arn="arn:aws:logs:$AWS_REGION:$account_id:log-group:$name"
             error_file="$(mktemp)"
@@ -756,16 +776,11 @@ jobs:
                 echo "CloudWatch log group $name failed DeployGuard ownership verification." >&2
                 exit 1
               }
-            if ! terraform state list 2>/dev/null | grep -Fqx "$address"; then
-              terraform import -input=false "$address" "$name" >/dev/null
-            fi
+            import_owned_if_unmanaged "$address" "$name"
           }
           reconcile_log_group app
           reconcile_log_group database
           reconcile_log_group deployment
-          state_has() {
-            terraform state list 2>/dev/null | grep -Fqx "$1"
-          }
           verify_owned_tags() {
             local tags="$1"
             printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
@@ -799,11 +814,11 @@ jobs:
               [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "false" ] || { echo "Managed database secret restoration did not complete in time." >&2; exit 1; }
             fi
             arn="$(printf '%s' "$description" | jq -r '.ARN')"
-            if ! state_has "$address"; then terraform import -input=false "$address" "$arn" >/dev/null; fi
+            import_owned_if_unmanaged "$address" "$arn"
             version_id="$(printf '%s' "$description" | jq -r '.VersionIdsToStages | to_entries | map(select(.value | index("AWSCURRENT"))) | if length == 1 then .[0].key else empty end')"
             [ -n "$version_id" ] || { echo "Managed database secret has no unambiguous current version." >&2; exit 1; }
             if ! state_has "$version_address"; then
-              terraform import -input=false "$version_address" "$arn|$version_id" >/dev/null
+              import_owned_if_unmanaged "$version_address" "$arn|$version_id"
             elif terraform state show -no-color "$version_address" 2>/dev/null | sed -n '1p' | grep -Fq '(tainted)'; then
               # A failed provider read-after-write may taint a version that AWS
               # already made AWSCURRENT. Ownership and the single current
@@ -890,13 +905,13 @@ jobs:
               state_id="$(terraform show -json | jq -r --arg address "$filesystem_address" '[.values.root_module.resources[]? | select(.address == $address) | .values.id] | if length == 1 then .[0] else empty end')"
               [ "$state_id" = "$filesystem_id" ] || { echo "Retained database filesystem state identity is incompatible." >&2; exit 1; }
             else
-              terraform import -input=false "$filesystem_address" "$filesystem_id" >/dev/null
+              import_owned_if_unmanaged "$filesystem_address" "$filesystem_id"
             fi
             if state_has "$access_point_address"; then
               state_id="$(terraform show -json | jq -r --arg address "$access_point_address" '[.values.root_module.resources[]? | select(.address == $address) | .values.id] | if length == 1 then .[0] else empty end')"
               [ "$state_id" = "$access_point_id" ] || { echo "Retained database access-point state identity is incompatible." >&2; exit 1; }
             else
-              terraform import -input=false "$access_point_address" "$access_point_id" >/dev/null
+              import_owned_if_unmanaged "$access_point_address" "$access_point_id"
             fi
           }
           MANAGED_DATABASE_ENABLED="$(jq -r '.managedDatabase != null' ../runtime-config.json)"
@@ -926,7 +941,7 @@ jobs:
             [ "$count" -eq 1 ] || { echo "Existing security-group identity is ambiguous." >&2; exit 1; }
             verify_owned_tags "$(printf '%s' "$result" | jq -c '.SecurityGroups[0].Tags // []')" || { echo "Existing security group failed DeployGuard ownership verification." >&2; exit 1; }
             identifier="$(printf '%s' "$result" | jq -r '.SecurityGroups[0].GroupId')"
-            terraform import -input=false "$address" "$identifier" >/dev/null
+            import_owned_if_unmanaged "$address" "$identifier"
           }
           reconcile_ecs_cluster() {
             local result count arn
@@ -937,7 +952,7 @@ jobs:
             [ "$count" -eq 1 ] || { echo "Existing ECS cluster identity is ambiguous." >&2; exit 1; }
             verify_owned_tags "$(printf '%s' "$result" | jq -c '.clusters[0].tags // []')" || { echo "Existing ECS cluster failed DeployGuard ownership verification." >&2; exit 1; }
             arn="$(printf '%s' "$result" | jq -r '.clusters[0].clusterArn')"
-            terraform import -input=false "aws_ecs_cluster.app" "$arn" >/dev/null
+            import_owned_if_unmanaged "aws_ecs_cluster.app" "$arn"
           }
           reconcile_ecs_service() {
             local result count error_file
@@ -957,7 +972,7 @@ jobs:
             [ "$count" -eq 0 ] && return 0
             [ "$count" -eq 1 ] || { echo "Existing ECS service identity is ambiguous." >&2; exit 1; }
             verify_owned_tags "$(printf '%s' "$result" | jq -c '.services[0].tags // []')" || { echo "Existing ECS service failed DeployGuard ownership verification." >&2; exit 1; }
-            terraform import -input=false "aws_ecs_service.app" "$RESOURCE_NAME/$RESOURCE_NAME" >/dev/null
+            import_owned_if_unmanaged "aws_ecs_service.app" "$RESOURCE_NAME/$RESOURCE_NAME"
           }
           reconcile_load_balancer() {
             local address="aws_lb.app" result arn tags error_file
@@ -972,7 +987,7 @@ jobs:
             arn="$(printf '%s' "$result" | jq -r '.LoadBalancers[0].LoadBalancerArn')"
             tags="$(aws elbv2 describe-tags --resource-arns "$arn" --output json | jq -c '.TagDescriptions[0].Tags // []')"
             verify_owned_tags "$tags" || { echo "Existing load balancer failed DeployGuard ownership verification." >&2; exit 1; }
-            terraform import -input=false "$address" "$arn" >/dev/null
+            import_owned_if_unmanaged "$address" "$arn"
           }
           reconcile_execution_role() {
             local address="aws_iam_role.execution" name="$RESOURCE_NAME-execution" result tags error_file
@@ -985,7 +1000,7 @@ jobs:
             fi
             tags="$(printf '%s' "$result" | jq -c '.Role.Tags // []')"
             verify_owned_tags "$tags" || { echo "Existing execution role failed DeployGuard ownership verification." >&2; exit 1; }
-            terraform import -input=false "$address" "$name" >/dev/null
+            import_owned_if_unmanaged "$address" "$name"
           }
           reconcile_security_group "aws_security_group.alb" "$RESOURCE_NAME-alb"
           reconcile_security_group "aws_security_group.service" "$RESOURCE_NAME-svc"
