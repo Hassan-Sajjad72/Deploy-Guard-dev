@@ -1547,6 +1547,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          printf 'DEPLOYGUARD_STAGE=verify_destroyed_infrastructure_and_write_result\n'
           [ -s destroy-verification-scope.json ] || { echo "Destroy verification scope is unavailable." >&2; exit 1; }
 
           aws_absent() {
