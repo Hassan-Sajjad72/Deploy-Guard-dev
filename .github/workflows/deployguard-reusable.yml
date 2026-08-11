@@ -215,11 +215,8 @@ jobs:
             | $tags.ManagedBy == "DeployGuard"
               and $tags.DeployGuardProjectId == $project
               and $tags.Environment == $environment
-              and (($tags.DeployGuardGenerationId // $generation) == $generation)
+              and $tags.DeployGuardGenerationId == $generation
           ' >/dev/null || { echo "The project image repository failed DeployGuard ownership verification." >&2; exit 1; }
-          if ! printf '%s' "$TAGS" | jq -e 'any(.tags[]?; .Key == "DeployGuardGenerationId")' >/dev/null; then
-            aws ecr tag-resource --resource-arn "$REPOSITORY_ARN" --tags Key=DeployGuardGenerationId,Value="$GENERATION_ID" >/dev/null
-          fi
 
       - name: Materialize immutable container contract
         if: inputs.deployment_action == 'deploy'
@@ -1220,6 +1217,20 @@ jobs:
           set -e
           [ "$PLAN_EXIT_CODE" -eq 0 ] || [ "$PLAN_EXIT_CODE" -eq 2 ] || { echo "Terraform planning failed before apply." >&2; exit "$PLAN_EXIT_CODE"; }
           terraform show -json deployguard.tfplan > deployguard-plan.json
+          jq '
+            def redact($value; $mask):
+              if $mask == true then null
+              elif (($mask | type) == "object" and ($value | type) == "object") then
+                reduce ($value | keys_unsorted[]) as $key ({}; .[$key] = redact($value[$key]; ($mask[$key] // false)))
+              elif (($mask | type) == "array" and ($value | type) == "array") then
+                [range(0; $value | length) as $index | redact($value[$index]; ($mask[$index] // false))]
+              else $value end;
+            .resource_changes |= map(
+              .change.before = redact(.change.before; (.change.before_sensitive // false))
+              | .change.after = redact(.change.after; (.change.after_sensitive // false))
+              | del(.change.before_sensitive, .change.after_sensitive)
+            )
+          ' deployguard-plan.json > deployguard-cost-plan.json
           jq -c '
             reduce (.resource_changes[]? | {type: .type, actions: (.change.actions // [])}) as $change
               ({create:0,update:0,replace:0,delete:0,noOp:0,resourceTypes:[]};
@@ -1372,14 +1383,11 @@ jobs:
                 | $tags.ManagedBy == "DeployGuard"
                   and $tags.DeployGuardProjectId == $project
                   and $tags.Environment == $environment
-                  and (($tags.DeployGuardGenerationId // $generation) == $generation)
+                  and $tags.DeployGuardGenerationId == $generation
               ' >/dev/null || {
-                echo "DeployGuard refused to remove an image repository owned by another generation." >&2
+                echo "DeployGuard refused to remove an unscoped or differently owned image repository." >&2
                 return 1
               }
-              if ! printf '%s' "$tags" | jq -e 'any(.tags[]?; .Key == "DeployGuardGenerationId")' >/dev/null; then
-                aws ecr tag-resource --resource-arn "$repository_arn" --tags Key=DeployGuardGenerationId,Value="$GENERATION_ID" >/dev/null
-              fi
               error_file="$(mktemp)"
               if ! aws ecr delete-repository --repository-name "$repository_name" --force >/dev/null 2>"$error_file"; then
                 if ! aws_error_is "$error_file" 'RepositoryNotFoundException'; then
@@ -1420,6 +1428,27 @@ jobs:
             if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then break; fi
             if [ "$attempt" -eq 30 ]; then echo "ALB health verification failed" >&2; exit 1; fi
             sleep 10
+          done
+          # Keep a bounded rollback window. The current and immediately prior
+          # releases are always among the newest entries because operations
+          # are serialized per project/generation.
+          for batch in $(seq 1 10); do
+            DELETE_IMAGES="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --output json | jq -c '
+              [.imageDetails | sort_by(.imagePushedAt) | reverse | .[20:120][]? | {imageDigest}]
+            ')"
+            [ "$(printf '%s' "$DELETE_IMAGES" | jq 'length')" -gt 0 ] || break
+            aws ecr batch-delete-image --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids "$DELETE_IMAGES" >/dev/null
+          done
+          mapfile -t OLD_TASK_DEFINITIONS < <(aws ecs list-task-definitions --family-prefix "$RESOURCE_NAME" --status ACTIVE --sort DESC --output json | jq -r '.taskDefinitionArns[20:][]?')
+          for task_definition in "${OLD_TASK_DEFINITIONS[@]}"; do
+            tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)"
+            if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+              (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
+              | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
+                and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation
+            ' >/dev/null; then
+              aws ecs deregister-task-definition --task-definition "$task_definition" >/dev/null
+            fi
           done
           CLUSTER_NAME="$(terraform output -raw cluster_name)"
           SERVICE_NAME="$(terraform output -raw service_name)"
@@ -1574,57 +1603,6 @@ jobs:
             [ -z "$(terraform state list 2>/dev/null || true)" ]
           }
 
-          retained_resources_available() {
-            local evidence encoded type identity name response
-            evidence="retained-resource-evidence.json"
-            [ -s "$evidence" ] || { echo "Retained-resource evidence is unavailable." >&2; return 2; }
-            while IFS= read -r encoded; do
-              [ -n "$encoded" ] || continue
-              type="$(printf '%s' "$encoded" | base64 --decode | jq -r '.type')"
-              identity="$(printf '%s' "$encoded" | base64 --decode | jq -r '.identity')"
-              name="$(printf '%s' "$encoded" | base64 --decode | jq -r '.name')"
-              case "$type" in
-                aws_secretsmanager_secret|aws_secretsmanager_secret_version)
-                  response="$(aws secretsmanager describe-secret --secret-id "$name" --output json)" || return 2
-                  printf '%s' "$response" | jq -e --arg identity "$identity" --arg name "$name" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
-                    .ARN == $identity and .Name == $name and (.DeletedDate == null)
-                    and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                      | $tags.ManagedBy == "DeployGuard"
-                        and $tags.DeployGuardProjectId == $project
-                        and $tags.Environment == $environment)
-                  ' >/dev/null || return 1
-                  ;;
-                aws_efs_file_system)
-                  response="$(aws efs describe-file-systems --file-system-id "$identity" --output json)" || return 2
-                  printf '%s' "$response" | jq -e --arg identity "$identity" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
-                    .FileSystems | length == 1
-                    and .[0].FileSystemId == $identity
-                    and .[0].LifeCycleState == "available"
-                    and ((.[0].Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                      | $tags.ManagedBy == "DeployGuard"
-                        and $tags.DeployGuardProjectId == $project
-                        and $tags.Environment == $environment
-                        and $tags.Persistence == "retained")
-                  ' >/dev/null || return 1
-                  ;;
-                aws_efs_access_point)
-                  response="$(aws efs describe-access-points --access-point-id "$identity" --output json)" || return 2
-                  printf '%s' "$response" | jq -e --arg identity "$identity" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
-                    .AccessPoints | length == 1
-                    and .[0].AccessPointId == $identity
-                    and .[0].LifeCycleState == "available"
-                    and ((.[0].Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                      | $tags.ManagedBy == "DeployGuard"
-                        and $tags.DeployGuardProjectId == $project
-                        and $tags.Environment == $environment
-                        and $tags.Persistence == "retained")
-                  ' >/dev/null || return 1
-                  ;;
-                *) echo "Unexpected retained-resource evidence type." >&2; return 2 ;;
-              esac
-            done < <(jq -r '.resources[]? | @base64' "$evidence")
-          }
-
           image_repository_absent() {
             local safe_project repository_name error_file
             safe_project="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
@@ -1685,6 +1663,34 @@ jobs:
             ! curl --silent --show-error --max-time 10 --output /dev/null "$endpoint"
           }
 
+          purge_generation_state_versions() {
+            local state_key lock_key versions delete_count
+            state_key="projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate"
+            lock_key="${state_key}.tflock"
+            for attempt in $(seq 1 100); do
+              versions="$(aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --prefix "$state_key" --output json)" || return 2
+              printf '%s' "$versions" | jq -c --arg state "$state_key" --arg lock "$lock_key" '
+                {Objects: (([.Versions[]? | select(.Key == $state or .Key == $lock) | {Key,VersionId}]
+                  + [.DeleteMarkers[]? | select(.Key == $state or .Key == $lock) | {Key,VersionId}])[:1000]), Quiet: true}
+              ' > state-version-delete.json
+              delete_count="$(jq '.Objects | length' state-version-delete.json)"
+              [ "$delete_count" -gt 0 ] || return 0
+              aws s3api delete-objects --bucket "$TERRAFORM_STATE_BUCKET" --delete file://state-version-delete.json >/dev/null || return 2
+            done
+            echo "Terraform state version cleanup exceeded its bounded batch limit." >&2
+            return 2
+          }
+
+          generation_state_versions_absent() {
+            local state_key lock_key versions
+            state_key="projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate"
+            lock_key="${state_key}.tflock"
+            versions="$(aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --prefix "$state_key" --output json)" || return 2
+            printf '%s' "$versions" | jq -e --arg state "$state_key" --arg lock "$lock_key" '
+              ([.Versions[]?, .DeleteMarkers[]?] | map(select(.Key == $state or .Key == $lock)) | length) == 0
+            ' >/dev/null
+          }
+
           VERIFIED=false
           for attempt in $(seq 1 30); do
             if ecs_services_absent \
@@ -1704,7 +1710,13 @@ jobs:
           done
           [ "$VERIFIED" = "true" ] || { echo "Project infrastructure absence was not verified within the bounded window." >&2; exit 1; }
 
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,imageRepositoryAbsent:true,runtimeSecretAbsent:true,activeGenerationTaskDefinitionsAbsent:true,normalResourcesAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
+          # State is destroyed only after AWS/Terraform absence is verified.
+          # All versions and delete markers for this exact generation are then
+          # removed so no future generation can discover stale state or locks.
+          purge_generation_state_versions
+          generation_state_versions_absent || { echo "Generation Terraform state versions are still present." >&2; exit 1; }
+
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,imageRepositoryAbsent:true,runtimeSecretAbsent:true,activeGenerationTaskDefinitionsAbsent:true,normalResourcesAbsent:true,terraformStateVersionsAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
           printf 'DEPLOYGUARD_DESTROY_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
@@ -1712,5 +1724,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deployguard-result-${{ inputs.deployment_operation_id }}
-          path: .deployguard/terraform/deployguard-result.json
+          path: |
+            .deployguard/terraform/deployguard-result.json
+            .deployguard/terraform/deployguard-cost-plan.json
           retention-days: 30
