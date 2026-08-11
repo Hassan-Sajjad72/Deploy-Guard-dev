@@ -747,6 +747,7 @@ jobs:
             sed -n '1,20p' "$STATE_JSON_ERROR_FILE" >&2
             exit 1
           fi
+          printf 'DEPLOYGUARD_STAGE=terraform_state_preparation\n'
           if ! jq -e '
             type == "object"
             and (.format_version | type == "string")
@@ -1044,24 +1045,31 @@ jobs:
             arn="$(printf '%s' "$result" | jq -r '.LoadBalancers[0].LoadBalancerArn')"
             tags="$(aws elbv2 describe-tags --resource-arns "$arn" --output json | jq -c '.TagDescriptions[0].Tags // []')"
             verify_owned_tags "$tags" || { echo "Existing load balancer failed DeployGuard ownership verification." >&2; exit 1; }
+            RECONCILED_LOAD_BALANCER_ARN="$arn"
             trust_or_import_owned "$address" "$arn"
           }
           reconcile_target_group() {
-            local address="aws_lb_target_group.app" resources count arn
-            resources="$(aws resourcegroupstaggingapi get-resources \
-              --resource-type-filters elasticloadbalancing:targetgroup \
-              --tag-filters \
-                Key=ManagedBy,Values=DeployGuard \
-                Key=DeployGuardProjectId,Values="$PROJECT_ID" \
-                Key=Environment,Values="$ENVIRONMENT_NAME" \
-                Key=DeployGuardGenerationId,Values="$GENERATION_ID" \
-                Key=DeployGuardResource,Values=app-target-group \
-              --output json)" || { echo "Existing target-group identity could not be inspected." >&2; exit 1; }
-            count="$(printf '%s' "$resources" | jq '.ResourceTagMappingList | length')"
-            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected target group is absent." >&2; exit 1; }; return 0; fi
+            local address="aws_lb_target_group.app" targets candidates='[]' count arn candidate tags
+            if state_has "$address"; then
+              arn="$(state_resource_json "$address" | jq -r '.values.arn // .values.id // empty')"
+              [ -n "$arn" ] || { echo "Terraform target-group state identity is missing." >&2; exit 1; }
+              targets="$(aws elbv2 describe-target-groups --target-group-arns "$arn" --output json)" || { echo "The state-managed target group could not be inspected." >&2; exit 1; }
+              [ "$(printf '%s' "$targets" | jq '.TargetGroups | length')" -eq 1 ] || { echo "The state-managed target group is absent or ambiguous." >&2; exit 1; }
+            else
+              [ -n "${RECONCILED_LOAD_BALANCER_ARN:-}" ] || return 0
+              targets="$(aws elbv2 describe-target-groups --load-balancer-arn "$RECONCILED_LOAD_BALANCER_ARN" --output json)" || { echo "Existing target groups could not be inspected." >&2; exit 1; }
+            fi
+            while IFS= read -r candidate; do
+              [ -n "$candidate" ] || continue
+              tags="$(aws elbv2 describe-tags --resource-arns "$candidate" --output json | jq -c '.TagDescriptions[0].Tags // []')" || { echo "Existing target-group tags could not be inspected." >&2; exit 1; }
+              if verify_owned_tags "$tags" && printf '%s' "$tags" | jq -e 'map({key:.Key,value:.Value}) | from_entries | .DeployGuardResource == "app-target-group"' >/dev/null; then
+                candidates="$(printf '%s' "$candidates" | jq -c --arg arn "$candidate" '. + [$arn]')"
+              fi
+            done < <(printf '%s' "$targets" | jq -r '.TargetGroups[]?.TargetGroupArn')
+            count="$(printf '%s' "$candidates" | jq 'length')"
+            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected target group is absent or foreign." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing target-group identity is ambiguous." >&2; exit 1; }
-            arn="$(printf '%s' "$resources" | jq -r '.ResourceTagMappingList[0].ResourceARN')"
-            verify_owned_tags "$(printf '%s' "$resources" | jq -c '.ResourceTagMappingList[0].Tags // []')" || { echo "Existing target group failed DeployGuard ownership verification." >&2; exit 1; }
+            arn="$(printf '%s' "$candidates" | jq -r '.[0]')"
             trust_or_import_owned "$address" "$arn"
           }
           reconcile_http_listener() {
@@ -1201,6 +1209,7 @@ jobs:
             # database secrets, EFS, access points and application resources.
           fi
           terraform validate -no-color
+          printf 'DEPLOYGUARD_STAGE=terraform_plan_and_apply\n'
           set +e
           if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             terraform plan -destroy -detailed-exitcode -input=false -no-color -out=deployguard.tfplan
@@ -1267,6 +1276,7 @@ jobs:
           fi
           PLAN_SUMMARY="$(jq -c '. + {safety:"passed"}' deployguard-plan-summary.json)"
           printf 'DEPLOYGUARD_PLAN_SUMMARY=%s\n' "$PLAN_SUMMARY"
+          printf 'DEPLOYGUARD_STAGE=terraform_apply\n'
           terraform apply -input=false -auto-approve deployguard.tfplan
 
       - name: Remove immutable image repository after destroy
