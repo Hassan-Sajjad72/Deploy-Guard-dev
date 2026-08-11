@@ -1141,8 +1141,12 @@ jobs:
           }
 
           deregister_generation_task_definitions() {
-            local family task_definition tags
+            local family task_definition task_definitions tags
             for family in "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)" "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)-database"; do
+              task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text)" || {
+                echo "DeployGuard could not list active task definitions for generation cleanup." >&2
+                return 1
+              }
               while IFS= read -r task_definition; do
                 [ -n "$task_definition" ] || continue
                 tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)"
@@ -1155,7 +1159,7 @@ jobs:
                 ' >/dev/null; then
                   aws ecs deregister-task-definition --task-definition "$task_definition" >/dev/null
                 fi
-              done < <(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text | tr '\t' '\n')
+              done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
             done
           }
 
@@ -1458,8 +1462,12 @@ jobs:
           }
 
           active_generation_task_definitions_absent() {
-            local family task_definition tags
+            local family task_definition task_definitions tags
             for family in "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)" "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)-database"; do
+              task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text)" || {
+                echo "Active task-definition absence could not be verified." >&2
+                return 2
+              }
               while IFS= read -r task_definition; do
                 [ -n "$task_definition" ] || continue
                 tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)" || return 2
@@ -1472,7 +1480,7 @@ jobs:
                 ' >/dev/null; then
                   return 1
                 fi
-              done < <(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text | tr '\t' '\n')
+              done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
             done
             return 0
           }
