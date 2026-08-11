@@ -150,6 +150,8 @@ jobs:
               and (.deploymentContext.persistentPreviouslyEstablished | type == "boolean")
               and .deploymentContext.deploymentAllowed == true
               and (.deploymentContext.reason | type == "string" and length > 0 and length <= 512)
+              and (.retentionProtectedRelease.imageDigests | type == "array" and length <= 10 and all(.[]; test("^sha256:[0-9a-f]{64}$")))
+              and (.retentionProtectedRelease.taskDefinitionArns | type == "array" and length <= 10 and all(.[]; test("^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/[A-Za-z0-9_-]+:[0-9]+$")))
               and (
                 if .deploymentContext.persistentState == "PERSISTENT" then
                   .deploymentContext.persistentPreviouslyEstablished == true
@@ -1431,16 +1433,23 @@ jobs:
           done
           # Keep a bounded rollback window. The current and immediately prior
           # releases are always among the newest entries because operations
-          # are serialized per project/generation.
+          # are serialized per project/generation. The exact previous LIVE
+          # release is additionally protected because failed attempts can
+          # create newer images/task definitions without becoming LIVE.
+          PROTECTED_IMAGE_DIGESTS="$(jq -c '.retentionProtectedRelease.imageDigests' ../runtime-config.json)"
           for batch in $(seq 1 10); do
-            DELETE_IMAGES="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --output json | jq -c '
-              [.imageDetails | sort_by(.imagePushedAt) | reverse | .[20:120][]? | {imageDigest}]
+            DELETE_IMAGES="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --output json | jq -c --argjson protected "$PROTECTED_IMAGE_DIGESTS" '
+              [.imageDetails | sort_by(.imagePushedAt) | reverse | .[20:120][]?
+                | select(.imageDigest as $digest | ($protected | index($digest)) == null)
+                | {imageDigest}]
             ')"
             [ "$(printf '%s' "$DELETE_IMAGES" | jq 'length')" -gt 0 ] || break
             aws ecr batch-delete-image --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids "$DELETE_IMAGES" >/dev/null
           done
+          PROTECTED_TASK_DEFINITIONS="$(jq -c '.retentionProtectedRelease.taskDefinitionArns' ../runtime-config.json)"
           mapfile -t OLD_TASK_DEFINITIONS < <(aws ecs list-task-definitions --family-prefix "$RESOURCE_NAME" --status ACTIVE --sort DESC --output json | jq -r '.taskDefinitionArns[20:][]?')
           for task_definition in "${OLD_TASK_DEFINITIONS[@]}"; do
+            if jq -en --argjson protected "$PROTECTED_TASK_DEFINITIONS" --arg arn "$task_definition" '$protected | index($arn) != null' >/dev/null; then continue; fi
             tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)"
             if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
