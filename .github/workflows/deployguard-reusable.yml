@@ -740,38 +740,62 @@ jobs:
             -backend-config="region=$AWS_REGION" \
             -backend-config="encrypt=true" \
             -backend-config="use_lockfile=true"
-          state_has() {
-            local address="$1" state_output error_file
-            error_file="$(mktemp)"
-            if ! state_output="$(terraform state list 2>"$error_file")"; then
-              rm -f "$error_file"
-              echo "Terraform state could not be read while checking $address; refusing unsafe import preparation." >&2
+          STATE_JSON_FILE="$(mktemp)"
+          STATE_JSON_ERROR_FILE="$(mktemp)"
+          if ! terraform show -json >"$STATE_JSON_FILE" 2>"$STATE_JSON_ERROR_FILE"; then
+            echo "Terraform state JSON could not be read; refusing unsafe import preparation." >&2
+            sed -n '1,20p' "$STATE_JSON_ERROR_FILE" >&2
+            exit 1
+          fi
+          if ! jq -e '
+            type == "object"
+            and (.format_version | type == "string")
+            and (
+              (has("values") | not)
+              or (
+                (.values | type == "object")
+                and (.values.root_module | type == "object")
+              )
+            )
+          ' "$STATE_JSON_FILE" >/dev/null; then
+            echo "Terraform returned malformed or incomplete state JSON; refusing unsafe import preparation." >&2
+            exit 1
+          fi
+          state_resource_json() {
+            local address="$1" match_count
+            if ! match_count="$(jq -r --arg address "$address" '
+              def modules: ., (.child_modules[]? | modules);
+              [(.values.root_module? | modules | .resources[]? | select(.address == $address))] | length
+            ' "$STATE_JSON_FILE")"; then
+              echo "Terraform state JSON could not be parsed while checking $address; refusing unsafe preparation." >&2
               exit 1
             fi
-            rm -f "$error_file"
-            printf '%s\n' "$state_output" | grep -Fqx "$address"
+            case "$match_count" in
+              0) return 1 ;;
+              1) ;;
+              *) echo "Terraform state contains an ambiguous address $address; refusing unsafe preparation." >&2; exit 1 ;;
+            esac
+            jq -ce --arg address "$address" '
+              def modules: ., (.child_modules[]? | modules);
+              .values.root_module? | modules | .resources[]? | select(.address == $address)
+            ' "$STATE_JSON_FILE" || {
+              echo "Terraform state identity could not be extracted for $address; refusing unsafe preparation." >&2
+              exit 1
+            }
           }
-          state_identity_json() {
-            local address="$1" state_json error_file
-            error_file="$(mktemp)"
-            if ! state_json="$(terraform state show -json "$address" 2>"$error_file")"; then
-              rm -f "$error_file"
-              echo "Terraform state identity could not be read for $address; refusing unsafe preparation." >&2
-              exit 1
-            fi
-            rm -f "$error_file"
-            printf '%s' "$state_json"
+          state_has() {
+            state_resource_json "$1" >/dev/null
           }
           state_identity_is_owned() {
             local address="$1" expected_identifier="$2" ownership_mode="${3:-owned}" state_json
-            state_json="$(state_identity_json "$address")"
+            state_json="$(state_resource_json "$address")"
             printf '%s' "$state_json" | jq -e \
               --arg expected "$expected_identifier" \
               --arg project "$PROJECT_ID" \
               --arg environment "$ENVIRONMENT_NAME" \
               --arg generation "$GENERATION_ID" \
               --arg ownership_mode "$ownership_mode" '
-                (.attributes // {}) as $attributes
+                (.values // {}) as $attributes
                 | (($attributes.id // "") == $expected
                   or ($attributes.arn // "") == $expected
                   or ($attributes.name // "") == $expected)
@@ -788,13 +812,13 @@ jobs:
               }
           }
           trust_or_import_owned() {
-            local address="$1" identifier="$2" ownership_mode="${3:-owned}"
+            local address="$1" import_identifier="$2" ownership_mode="${3:-owned}" state_identifier="${4:-$2}"
             if state_has "$address"; then
-              state_identity_is_owned "$address" "$identifier" "$ownership_mode"
+              state_identity_is_owned "$address" "$state_identifier" "$ownership_mode"
               echo "Terraform already manages the verified current-generation object at $address; import skipped."
               return 0
             fi
-            terraform import -input=false "$address" "$identifier" >/dev/null
+            terraform import -input=false "$address" "$import_identifier" >/dev/null
           }
           reconcile_log_group() {
             local purpose="$1"
@@ -988,7 +1012,7 @@ jobs:
             trust_or_import_owned "aws_ecs_cluster.app" "$arn"
           }
           reconcile_ecs_service() {
-            local result count error_file
+            local result count arn error_file
             error_file="$(mktemp)"
             if ! result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" --include TAGS --output json 2>"$error_file")"; then
               if grep -q 'ClusterNotFoundException' "$error_file"; then
@@ -1005,7 +1029,8 @@ jobs:
             if [ "$count" -eq 0 ]; then state_has "aws_ecs_service.app" && { echo "Terraform state contains aws_ecs_service.app but the expected service is absent." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing ECS service identity is ambiguous." >&2; exit 1; }
             verify_owned_tags "$(printf '%s' "$result" | jq -c '.services[0].tags // []')" || { echo "Existing ECS service failed DeployGuard ownership verification." >&2; exit 1; }
-            trust_or_import_owned "aws_ecs_service.app" "$RESOURCE_NAME/$RESOURCE_NAME"
+            arn="$(printf '%s' "$result" | jq -r '.services[0].serviceArn')"
+            trust_or_import_owned "aws_ecs_service.app" "$RESOURCE_NAME/$RESOURCE_NAME" owned "$arn"
           }
           reconcile_load_balancer() {
             local address="aws_lb.app" result arn tags error_file
@@ -1111,7 +1136,7 @@ jobs:
             trust_or_import_owned "$service_address" "$service_id"
           }
           reconcile_database_ecs_service() {
-            local address='aws_ecs_service.database[0]' name="$RESOURCE_NAME-database" result count error_file
+            local address='aws_ecs_service.database[0]' name="$RESOURCE_NAME-database" result count arn error_file
             error_file="$(mktemp)"
             if ! result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$name" --include TAGS --output json 2>"$error_file")"; then
               if grep -q 'ClusterNotFoundException' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the application cluster is absent." >&2; exit 1; }; return 0; fi
@@ -1121,7 +1146,8 @@ jobs:
             if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected database service is absent." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing database ECS service identity is ambiguous." >&2; exit 1; }
             verify_owned_tags "$(printf '%s' "$result" | jq -c '.services[0].tags // []')" || { echo "Existing database ECS service failed DeployGuard ownership verification." >&2; exit 1; }
-            trust_or_import_owned "$address" "$RESOURCE_NAME/$name"
+            arn="$(printf '%s' "$result" | jq -r '.services[0].serviceArn')"
+            trust_or_import_owned "$address" "$RESOURCE_NAME/$name" owned "$arn"
           }
           reconcile_database_mount_targets() {
             local filesystem_id="${RECONCILED_DATABASE_FILESYSTEM_ID:-}" mount_targets index subnet address matches count mount_target_id
