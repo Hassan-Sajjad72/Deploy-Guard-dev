@@ -1081,13 +1081,12 @@ jobs:
             trust_or_import_owned "$address" "$arn"
           }
           reconcile_http_listener() {
-            local address="aws_lb_listener.http" load_balancer listener count arn tags
-            load_balancer="$(aws elbv2 describe-load-balancers --names "$RESOURCE_NAME" --output json 2>/dev/null || true)"
-            if [ "$(printf '%s' "$load_balancer" | jq '.LoadBalancers | length' 2>/dev/null || printf 0)" -eq 0 ]; then
+            local address="aws_lb_listener.http" listener count arn tags
+            if [ -z "${RECONCILED_LOAD_BALANCER_ARN:-}" ]; then
               state_has "$address" && { echo "Terraform state contains $address but its expected load balancer is absent." >&2; exit 1; }
               return 0
             fi
-            listener="$(aws elbv2 describe-listeners --load-balancer-arn "$(printf '%s' "$load_balancer" | jq -r '.LoadBalancers[0].LoadBalancerArn')" --output json)" || { echo "Existing listener identity could not be inspected." >&2; exit 1; }
+            listener="$(aws elbv2 describe-listeners --load-balancer-arn "$RECONCILED_LOAD_BALANCER_ARN" --output json)" || { echo "Existing listener identity could not be inspected." >&2; exit 1; }
             count="$(printf '%s' "$listener" | jq '[.Listeners[]? | select(.Port == 80 and .Protocol == "HTTP")] | length')"
             if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected HTTP listener is absent." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing HTTP listener identity is ambiguous." >&2; exit 1; }
