@@ -1235,11 +1235,11 @@ jobs:
               elif (($mask | type) == "array" and ($value | type) == "array") then
                 [range(0; $value | length) as $index | redact($value[$index]; ($mask[$index] // false))]
               else $value end;
-            .resource_changes |= map(
+            .resource_changes = ((.resource_changes // []) | map(
               .change.before = redact(.change.before; (.change.before_sensitive // false))
               | .change.after = redact(.change.after; (.change.after_sensitive // false))
               | del(.change.before_sensitive, .change.after_sensitive)
-            )
+            ))
           ' deployguard-plan.json > deployguard-cost-plan.json
           jq -c '
             reduce (.resource_changes[]? | {type: .type, actions: (.change.actions // [])}) as $change
