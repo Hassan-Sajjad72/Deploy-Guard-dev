@@ -1660,7 +1660,12 @@ jobs:
                   if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '
                     (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
                     | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
-                  ' >/dev/null; then return 1; fi
+                  ' >/dev/null; then
+                    # AWS may retain a task-definition record after its final
+                    # delete request. ACTIVE or merely INACTIVE revisions are
+                    # still actionable residue and continue to block success.
+                    [ "$status" = "DELETE_IN_PROGRESS" ] || return 1
+                  fi
                 done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
               done
             done
@@ -1760,9 +1765,48 @@ jobs:
           }
 
           project_owned_resources_absent() {
-            local mappings secrets logs parameters
+            local mappings secrets logs parameters arn resource cluster service response error_file
             mappings="$(aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json)" || return 2
-            [ "$(printf '%s' "$mappings" | jq '.ResourceTagMappingList | length')" -eq 0 ] || return 1
+            # Resource Groups Tagging API can retain ECS identities after AWS
+            # has accepted their final deletion. Accept only exact terminal
+            # provider states; every actionable or unknown resource blocks.
+            while IFS= read -r arn; do
+              [ -n "$arn" ] || continue
+              case "$arn" in
+                arn:aws:ecs:*:cluster/*)
+                  response="$(aws ecs describe-clusters --clusters "$arn" --output json)" || return 2
+                  printf '%s' "$response" | jq -e '((.clusters // []) | length) == 0 or all(.clusters[]; .status == "INACTIVE")' >/dev/null || return 1
+                  ;;
+                arn:aws:ecs:*:service/*/*)
+                  resource="${arn#*:service/}"
+                  cluster="${resource%%/*}"
+                  service="${resource#*/}"
+                  error_file="$(mktemp)"
+                  if response="$(aws ecs describe-services --cluster "$cluster" --services "$service" --output json 2>"$error_file")"; then
+                    rm -f "$error_file"
+                    printf '%s' "$response" | jq -e '[.services[]? | select(.status == "ACTIVE")] | length == 0' >/dev/null || return 1
+                  elif grep -q 'ClusterNotFoundException' "$error_file"; then
+                    rm -f "$error_file"
+                  else
+                    rm -f "$error_file"
+                    return 2
+                  fi
+                  ;;
+                arn:aws:ecs:*:task-definition/*)
+                  error_file="$(mktemp)"
+                  if response="$(aws ecs describe-task-definition --task-definition "$arn" --output json 2>"$error_file")"; then
+                    rm -f "$error_file"
+                    [ "$(printf '%s' "$response" | jq -r '.taskDefinition.status')" = "DELETE_IN_PROGRESS" ] || return 1
+                  elif grep -Eq 'ClientException|ResourceNotFoundException' "$error_file"; then
+                    rm -f "$error_file"
+                  else
+                    rm -f "$error_file"
+                    return 2
+                  fi
+                  ;;
+                *) return 1 ;;
+              esac
+            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]?.ResourceARN')
             secrets="$(aws secretsmanager list-secrets --include-planned-deletion --filters Key=name,Values="deployguard/$PROJECT_ID/" --query 'SecretList | length(@)' --output text)" || return 2
             [ "$secrets" -eq 0 ] || return 1
             logs="$(aws logs describe-log-groups --log-group-name-prefix "/deployguard/$PROJECT_ID/" --query 'logGroups | length(@)' --output text)" || return 2
