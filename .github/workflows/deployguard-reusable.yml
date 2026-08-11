@@ -99,6 +99,8 @@ jobs:
           [[ "$GENERATION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || { echo "Invalid deployment generation identity." >&2; exit 1; }
           [ "$INFRASTRUCTURE_NAMESPACE" = "/deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID" ] || { echo "Invalid infrastructure namespace." >&2; exit 1; }
           printf 'GENERATION_ID=%s\n' "$GENERATION_ID" >> "$GITHUB_ENV"
+          RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
+          printf 'RESOURCE_NAME=%s\n' "$RESOURCE_NAME" >> "$GITHUB_ENV"
           [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
           [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
           mkdir -p .deployguard
@@ -283,7 +285,7 @@ jobs:
         if: inputs.deployment_action != 'rollback'
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.8
+          terraform_version: 1.10.5
           terraform_wrapper: false
 
       - name: Generate deployment Terraform
@@ -422,6 +424,7 @@ jobs:
             load_balancer_arn = aws_lb.app.arn
             port              = 80
             protocol          = "HTTP"
+            tags              = merge(local.ownership_tags, { DeployGuardResource = "http-listener" })
             default_action {
               type             = "forward"
               target_group_arn = aws_lb_target_group.app.arn
@@ -735,7 +738,8 @@ jobs:
             -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
             -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
-            -backend-config="encrypt=true"
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
           state_has() {
             local address="$1" state_output error_file
             error_file="$(mktemp)"
@@ -747,10 +751,47 @@ jobs:
             rm -f "$error_file"
             printf '%s\n' "$state_output" | grep -Fqx "$address"
           }
-          import_owned_if_unmanaged() {
-            local address="$1" identifier="$2"
+          state_identity_json() {
+            local address="$1" state_json error_file
+            error_file="$(mktemp)"
+            if ! state_json="$(terraform state show -json "$address" 2>"$error_file")"; then
+              rm -f "$error_file"
+              echo "Terraform state identity could not be read for $address; refusing unsafe preparation." >&2
+              exit 1
+            fi
+            rm -f "$error_file"
+            printf '%s' "$state_json"
+          }
+          state_identity_is_owned() {
+            local address="$1" expected_identifier="$2" ownership_mode="${3:-owned}" state_json
+            state_json="$(state_identity_json "$address")"
+            printf '%s' "$state_json" | jq -e \
+              --arg expected "$expected_identifier" \
+              --arg project "$PROJECT_ID" \
+              --arg environment "$ENVIRONMENT_NAME" \
+              --arg generation "$GENERATION_ID" \
+              --arg ownership_mode "$ownership_mode" '
+                (.attributes // {}) as $attributes
+                | (($attributes.id // "") == $expected
+                  or ($attributes.arn // "") == $expected
+                  or ($attributes.name // "") == $expected)
+                and ($ownership_mode == "child" or (
+                  ($attributes.tags_all // $attributes.tags // {}) as $tags
+                  | $tags.ManagedBy == "DeployGuard"
+                    and $tags.DeployGuardProjectId == $project
+                    and $tags.Environment == $environment
+                    and $tags.DeployGuardGenerationId == $generation
+                ))
+              ' >/dev/null || {
+                echo "Terraform state address $address is bound to a foreign, stale, untagged, or unexpected object; refusing preparation." >&2
+                exit 1
+              }
+          }
+          trust_or_import_owned() {
+            local address="$1" identifier="$2" ownership_mode="${3:-owned}"
             if state_has "$address"; then
-              echo "Terraform already manages $address; import skipped."
+              state_identity_is_owned "$address" "$identifier" "$ownership_mode"
+              echo "Terraform already manages the verified current-generation object at $address; import skipped."
               return 0
             fi
             terraform import -input=false "$address" "$identifier" >/dev/null
@@ -760,12 +801,15 @@ jobs:
             local address="aws_cloudwatch_log_group.$purpose"
             local name="$INFRASTRUCTURE_NAMESPACE/$purpose"
             local account_id arn tags error_file
-            state_has "$address" && return 0
             account_id="$(aws sts get-caller-identity --query Account --output text)"
             arn="arn:aws:logs:$AWS_REGION:$account_id:log-group:$name"
             error_file="$(mktemp)"
             if ! tags="$(aws logs list-tags-for-resource --resource-arn "$arn" --query tags --output json 2>"$error_file")"; then
-              if grep -q 'ResourceNotFoundException' "$error_file"; then rm -f "$error_file"; return 0; fi
+              if grep -q 'ResourceNotFoundException' "$error_file"; then
+                rm -f "$error_file"
+                state_has "$address" && { echo "Terraform state contains $address but the expected log group is absent." >&2; exit 1; }
+                return 0
+              fi
               rm -f "$error_file"
               echo "CloudWatch log group $name could not be verified." >&2
               exit 1
@@ -776,7 +820,7 @@ jobs:
                 echo "CloudWatch log group $name failed DeployGuard ownership verification." >&2
                 exit 1
               }
-            import_owned_if_unmanaged "$address" "$name"
+            trust_or_import_owned "$address" "$name"
           }
           reconcile_log_group app
           reconcile_log_group database
@@ -797,7 +841,11 @@ jobs:
             local description error_file arn version_id
             error_file="$(mktemp)"
             if ! description="$(aws secretsmanager describe-secret --secret-id "$name" --output json 2>"$error_file")"; then
-              if grep -q 'ResourceNotFoundException' "$error_file"; then rm -f "$error_file"; return 0; fi
+              if grep -q 'ResourceNotFoundException' "$error_file"; then
+                rm -f "$error_file"
+                { state_has "$address" || state_has "$version_address"; } && { echo "Terraform state contains a managed-secret address but the expected secret is absent." >&2; exit 1; }
+                return 0
+              fi
               rm -f "$error_file"
               echo "Managed database secret identity could not be verified." >&2
               exit 1
@@ -814,15 +862,12 @@ jobs:
               [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "false" ] || { echo "Managed database secret restoration did not complete in time." >&2; exit 1; }
             fi
             arn="$(printf '%s' "$description" | jq -r '.ARN')"
-            import_owned_if_unmanaged "$address" "$arn"
+            trust_or_import_owned "$address" "$arn"
             version_id="$(printf '%s' "$description" | jq -r '.VersionIdsToStages | to_entries | map(select(.value | index("AWSCURRENT"))) | if length == 1 then .[0].key else empty end')"
             [ -n "$version_id" ] || { echo "Managed database secret has no unambiguous current version." >&2; exit 1; }
             if ! state_has "$version_address"; then
-              import_owned_if_unmanaged "$version_address" "$arn|$version_id"
-            elif terraform state show -no-color "$version_address" 2>/dev/null | sed -n '1p' | grep -Fq '(tainted)'; then
-              # A failed provider read-after-write may taint a version that AWS
-              # already made AWSCURRENT. Ownership and the single current
-              # version were verified above, so preserve it without rotation.
+              trust_or_import_owned "$version_address" "$arn|$version_id" child
+            elif state_identity_is_owned "$version_address" "$arn|$version_id" child && terraform state show -no-color "$version_address" 2>/dev/null | sed -n '1p' | grep -Fq '(tainted)'; then
               terraform untaint "$version_address" >/dev/null
             fi
           }
@@ -831,7 +876,7 @@ jobs:
             local access_point_address='aws_efs_access_point.database[0]'
             local project_prefix environment_prefix identity_hash creation_token
             local filesystems filesystem_count filesystem filesystem_id lifecycle
-            local access_points access_point_count access_point access_point_id state_id
+            local access_points access_point_count access_point access_point_id
             project_prefix="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
             environment_prefix="$(printf '%s' "$ENVIRONMENT_NAME" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
             identity_hash="$(printf '%s:%s:%s' "$PROJECT_ID" "$ENVIRONMENT_NAME" "$GENERATION_ID" | sha256sum | cut -c1-32)"
@@ -856,6 +901,7 @@ jobs:
               ' >/dev/null \
               || { echo "Retained database filesystem failed ownership or lifecycle verification." >&2; exit 1; }
             filesystem_id="$(printf '%s' "$filesystem" | jq -r '.FileSystemId')"
+            RECONCILED_DATABASE_FILESYSTEM_ID="$filesystem_id"
             lifecycle="$(aws efs describe-lifecycle-configuration --file-system-id "$filesystem_id" --output json)"
             printf '%s' "$lifecycle" | jq -e '[.LifecyclePolicies[]? | select(.TransitionToIA == "AFTER_30_DAYS")] | length == 1' >/dev/null \
               || { echo "Retained database filesystem lifecycle configuration is incompatible." >&2; exit 1; }
@@ -901,18 +947,8 @@ jobs:
             ' >/dev/null || { echo "Retained database access-point configuration is incompatible." >&2; exit 1; }
             access_point_id="$(printf '%s' "$access_point" | jq -r '.AccessPointId')"
 
-            if state_has "$filesystem_address"; then
-              state_id="$(terraform show -json | jq -r --arg address "$filesystem_address" '[.values.root_module.resources[]? | select(.address == $address) | .values.id] | if length == 1 then .[0] else empty end')"
-              [ "$state_id" = "$filesystem_id" ] || { echo "Retained database filesystem state identity is incompatible." >&2; exit 1; }
-            else
-              import_owned_if_unmanaged "$filesystem_address" "$filesystem_id"
-            fi
-            if state_has "$access_point_address"; then
-              state_id="$(terraform show -json | jq -r --arg address "$access_point_address" '[.values.root_module.resources[]? | select(.address == $address) | .values.id] | if length == 1 then .[0] else empty end')"
-              [ "$state_id" = "$access_point_id" ] || { echo "Retained database access-point state identity is incompatible." >&2; exit 1; }
-            else
-              import_owned_if_unmanaged "$access_point_address" "$access_point_id"
-            fi
+            trust_or_import_owned "$filesystem_address" "$filesystem_id"
+            trust_or_import_owned "$access_point_address" "$access_point_id"
           }
           MANAGED_DATABASE_ENABLED="$(jq -r '.managedDatabase != null' ../runtime-config.json)"
           DEPLOYMENT_MODE="$(jq -r '.deploymentContext.deploymentMode' ../runtime-config.json)"
@@ -931,36 +967,33 @@ jobs:
               echo "The authoritative deployment context does not contain an established persistent generation; retained EFS adoption is skipped."
             fi
           fi
-          RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
           reconcile_security_group() {
             local address="$1" name="$2" result count identifier
-            state_has "$address" && return 0
             result="$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$name" "Name=vpc-id,Values=$VPC_ID" --output json)"
             count="$(printf '%s' "$result" | jq '.SecurityGroups | length')"
-            [ "$count" -eq 0 ] && return 0
+            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected security group is absent." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing security-group identity is ambiguous." >&2; exit 1; }
             verify_owned_tags "$(printf '%s' "$result" | jq -c '.SecurityGroups[0].Tags // []')" || { echo "Existing security group failed DeployGuard ownership verification." >&2; exit 1; }
             identifier="$(printf '%s' "$result" | jq -r '.SecurityGroups[0].GroupId')"
-            import_owned_if_unmanaged "$address" "$identifier"
+            trust_or_import_owned "$address" "$identifier"
           }
           reconcile_ecs_cluster() {
             local result count arn
-            state_has "aws_ecs_cluster.app" && return 0
             result="$(aws ecs describe-clusters --clusters "$RESOURCE_NAME" --include TAGS --output json)"
             count="$(printf '%s' "$result" | jq '[.clusters[]? | select(.status == "ACTIVE")] | length')"
-            [ "$count" -eq 0 ] && return 0
+            if [ "$count" -eq 0 ]; then state_has "aws_ecs_cluster.app" && { echo "Terraform state contains aws_ecs_cluster.app but the expected cluster is absent." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing ECS cluster identity is ambiguous." >&2; exit 1; }
             verify_owned_tags "$(printf '%s' "$result" | jq -c '.clusters[0].tags // []')" || { echo "Existing ECS cluster failed DeployGuard ownership verification." >&2; exit 1; }
             arn="$(printf '%s' "$result" | jq -r '.clusters[0].clusterArn')"
-            import_owned_if_unmanaged "aws_ecs_cluster.app" "$arn"
+            trust_or_import_owned "aws_ecs_cluster.app" "$arn"
           }
           reconcile_ecs_service() {
             local result count error_file
-            state_has "aws_ecs_service.app" && return 0
             error_file="$(mktemp)"
             if ! result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" --include TAGS --output json 2>"$error_file")"; then
               if grep -q 'ClusterNotFoundException' "$error_file"; then
                 rm -f "$error_file"
+                state_has "aws_ecs_service.app" && { echo "Terraform state contains aws_ecs_service.app but the expected service is absent." >&2; exit 1; }
                 return 0
               fi
               rm -f "$error_file"
@@ -969,17 +1002,16 @@ jobs:
             fi
             rm -f "$error_file"
             count="$(printf '%s' "$result" | jq '[.services[]? | select(.status == "ACTIVE")] | length')"
-            [ "$count" -eq 0 ] && return 0
+            if [ "$count" -eq 0 ]; then state_has "aws_ecs_service.app" && { echo "Terraform state contains aws_ecs_service.app but the expected service is absent." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing ECS service identity is ambiguous." >&2; exit 1; }
             verify_owned_tags "$(printf '%s' "$result" | jq -c '.services[0].tags // []')" || { echo "Existing ECS service failed DeployGuard ownership verification." >&2; exit 1; }
-            import_owned_if_unmanaged "aws_ecs_service.app" "$RESOURCE_NAME/$RESOURCE_NAME"
+            trust_or_import_owned "aws_ecs_service.app" "$RESOURCE_NAME/$RESOURCE_NAME"
           }
           reconcile_load_balancer() {
             local address="aws_lb.app" result arn tags error_file
-            state_has "$address" && return 0
             error_file="$(mktemp)"
             if ! result="$(aws elbv2 describe-load-balancers --names "$RESOURCE_NAME" --output json 2>"$error_file")"; then
-              if grep -q 'LoadBalancerNotFound' "$error_file"; then return 0; fi
+              if grep -q 'LoadBalancerNotFound' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the expected load balancer is absent." >&2; exit 1; }; return 0; fi
               echo "Existing load balancer could not be verified." >&2
               exit 1
             fi
@@ -987,29 +1019,133 @@ jobs:
             arn="$(printf '%s' "$result" | jq -r '.LoadBalancers[0].LoadBalancerArn')"
             tags="$(aws elbv2 describe-tags --resource-arns "$arn" --output json | jq -c '.TagDescriptions[0].Tags // []')"
             verify_owned_tags "$tags" || { echo "Existing load balancer failed DeployGuard ownership verification." >&2; exit 1; }
-            import_owned_if_unmanaged "$address" "$arn"
+            trust_or_import_owned "$address" "$arn"
+          }
+          reconcile_target_group() {
+            local address="aws_lb_target_group.app" resources count arn
+            resources="$(aws resourcegroupstaggingapi get-resources \
+              --resource-type-filters elasticloadbalancing:targetgroup \
+              --tag-filters \
+                Key=ManagedBy,Values=DeployGuard \
+                Key=DeployGuardProjectId,Values="$PROJECT_ID" \
+                Key=Environment,Values="$ENVIRONMENT_NAME" \
+                Key=DeployGuardGenerationId,Values="$GENERATION_ID" \
+                Key=DeployGuardResource,Values=app-target-group \
+              --output json)" || { echo "Existing target-group identity could not be inspected." >&2; exit 1; }
+            count="$(printf '%s' "$resources" | jq '.ResourceTagMappingList | length')"
+            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected target group is absent." >&2; exit 1; }; return 0; fi
+            [ "$count" -eq 1 ] || { echo "Existing target-group identity is ambiguous." >&2; exit 1; }
+            arn="$(printf '%s' "$resources" | jq -r '.ResourceTagMappingList[0].ResourceARN')"
+            verify_owned_tags "$(printf '%s' "$resources" | jq -c '.ResourceTagMappingList[0].Tags // []')" || { echo "Existing target group failed DeployGuard ownership verification." >&2; exit 1; }
+            trust_or_import_owned "$address" "$arn"
+          }
+          reconcile_http_listener() {
+            local address="aws_lb_listener.http" load_balancer listener count arn tags
+            load_balancer="$(aws elbv2 describe-load-balancers --names "$RESOURCE_NAME" --output json 2>/dev/null || true)"
+            if [ "$(printf '%s' "$load_balancer" | jq '.LoadBalancers | length' 2>/dev/null || printf 0)" -eq 0 ]; then
+              state_has "$address" && { echo "Terraform state contains $address but its expected load balancer is absent." >&2; exit 1; }
+              return 0
+            fi
+            listener="$(aws elbv2 describe-listeners --load-balancer-arn "$(printf '%s' "$load_balancer" | jq -r '.LoadBalancers[0].LoadBalancerArn')" --output json)" || { echo "Existing listener identity could not be inspected." >&2; exit 1; }
+            count="$(printf '%s' "$listener" | jq '[.Listeners[]? | select(.Port == 80 and .Protocol == "HTTP")] | length')"
+            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected HTTP listener is absent." >&2; exit 1; }; return 0; fi
+            [ "$count" -eq 1 ] || { echo "Existing HTTP listener identity is ambiguous." >&2; exit 1; }
+            arn="$(printf '%s' "$listener" | jq -r '.Listeners[] | select(.Port == 80 and .Protocol == "HTTP") | .ListenerArn')"
+            tags="$(aws elbv2 describe-tags --resource-arns "$arn" --output json | jq -c '.TagDescriptions[0].Tags // []')"
+            verify_owned_tags "$tags" || { echo "Existing HTTP listener failed DeployGuard ownership verification; explicit recovery is required." >&2; exit 1; }
+            trust_or_import_owned "$address" "$arn"
           }
           reconcile_execution_role() {
             local address="aws_iam_role.execution" name="$RESOURCE_NAME-execution" result tags error_file
-            state_has "$address" && return 0
             error_file="$(mktemp)"
             if ! result="$(aws iam get-role --role-name "$name" --output json 2>"$error_file")"; then
-              if grep -q 'NoSuchEntity' "$error_file"; then return 0; fi
+              if grep -q 'NoSuchEntity' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the expected execution role is absent." >&2; exit 1; }; return 0; fi
               echo "Existing execution role could not be verified." >&2
               exit 1
             fi
             tags="$(printf '%s' "$result" | jq -c '.Role.Tags // []')"
             verify_owned_tags "$tags" || { echo "Existing execution role failed DeployGuard ownership verification." >&2; exit 1; }
-            import_owned_if_unmanaged "$address" "$name"
+            trust_or_import_owned "$address" "$name"
+          }
+          reconcile_database_task_role() {
+            local address='aws_iam_role.database_task[0]' name="$RESOURCE_NAME-database-task" result tags error_file
+            error_file="$(mktemp)"
+            if ! result="$(aws iam get-role --role-name "$name" --output json 2>"$error_file")"; then
+              if grep -q 'NoSuchEntity' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the expected database task role is absent." >&2; exit 1; }; return 0; fi
+              echo "Existing database task role could not be verified." >&2; exit 1
+            fi
+            tags="$(printf '%s' "$result" | jq -c '.Role.Tags // []')"
+            verify_owned_tags "$tags" || { echo "Existing database task role failed DeployGuard ownership verification." >&2; exit 1; }
+            trust_or_import_owned "$address" "$name"
+          }
+          reconcile_database_discovery() {
+            local namespace_address='aws_service_discovery_private_dns_namespace.database[0]' service_address='aws_service_discovery_service.database[0]'
+            local namespace_name="project-$PROJECT_ID.deployguard.local" namespaces namespace_count namespace_id namespace_arn namespace_tags services service_count service_id service_arn service_tags
+            namespaces="$(aws servicediscovery list-namespaces --filters Name=TYPE,Values=DNS_PRIVATE,Condition=EQ --output json)" || { echo "Database namespace identity could not be inspected." >&2; exit 1; }
+            namespace_count="$(printf '%s' "$namespaces" | jq --arg name "$namespace_name" '[.Namespaces[]? | select(.Name == $name)] | length')"
+            if [ "$namespace_count" -eq 0 ]; then
+              { state_has "$namespace_address" || state_has "$service_address"; } && { echo "Terraform state contains database discovery resources but the expected namespace is absent." >&2; exit 1; }
+              return 0
+            fi
+            [ "$namespace_count" -eq 1 ] || { echo "Existing database namespace identity is ambiguous." >&2; exit 1; }
+            namespace_id="$(printf '%s' "$namespaces" | jq -r --arg name "$namespace_name" '.Namespaces[] | select(.Name == $name) | .Id')"
+            namespace_arn="$(printf '%s' "$namespaces" | jq -r --arg name "$namespace_name" '.Namespaces[] | select(.Name == $name) | .Arn')"
+            namespace_tags="$(aws servicediscovery list-tags-for-resource --resource-arn "$namespace_arn" --output json | jq -c '.Tags // []')"
+            verify_owned_tags "$namespace_tags" || { echo "Existing database namespace failed DeployGuard ownership verification." >&2; exit 1; }
+            trust_or_import_owned "$namespace_address" "$namespace_id"
+            services="$(aws servicediscovery list-services --filters Name=NAMESPACE_ID,Values="$namespace_id",Condition=EQ --output json)" || { echo "Database discovery-service identity could not be inspected." >&2; exit 1; }
+            service_count="$(printf '%s' "$services" | jq '[.Services[]? | select(.Name == "db")] | length')"
+            if [ "$service_count" -eq 0 ]; then state_has "$service_address" && { echo "Terraform state contains $service_address but the expected discovery service is absent." >&2; exit 1; }; return 0; fi
+            [ "$service_count" -eq 1 ] || { echo "Existing database discovery-service identity is ambiguous." >&2; exit 1; }
+            service_id="$(printf '%s' "$services" | jq -r '.Services[] | select(.Name == "db") | .Id')"
+            service_arn="$(printf '%s' "$services" | jq -r '.Services[] | select(.Name == "db") | .Arn')"
+            service_tags="$(aws servicediscovery list-tags-for-resource --resource-arn "$service_arn" --output json | jq -c '.Tags // []')"
+            verify_owned_tags "$service_tags" || { echo "Existing database discovery service failed DeployGuard ownership verification." >&2; exit 1; }
+            trust_or_import_owned "$service_address" "$service_id"
+          }
+          reconcile_database_ecs_service() {
+            local address='aws_ecs_service.database[0]' name="$RESOURCE_NAME-database" result count error_file
+            error_file="$(mktemp)"
+            if ! result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$name" --include TAGS --output json 2>"$error_file")"; then
+              if grep -q 'ClusterNotFoundException' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the application cluster is absent." >&2; exit 1; }; return 0; fi
+              echo "Existing database ECS service could not be verified." >&2; exit 1
+            fi
+            count="$(printf '%s' "$result" | jq '[.services[]? | select(.status == "ACTIVE")] | length')"
+            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected database service is absent." >&2; exit 1; }; return 0; fi
+            [ "$count" -eq 1 ] || { echo "Existing database ECS service identity is ambiguous." >&2; exit 1; }
+            verify_owned_tags "$(printf '%s' "$result" | jq -c '.services[0].tags // []')" || { echo "Existing database ECS service failed DeployGuard ownership verification." >&2; exit 1; }
+            trust_or_import_owned "$address" "$RESOURCE_NAME/$name"
+          }
+          reconcile_database_mount_targets() {
+            local filesystem_id="${RECONCILED_DATABASE_FILESYSTEM_ID:-}" mount_targets index subnet address matches count mount_target_id
+            [ -n "$filesystem_id" ] || return 0
+            mount_targets="$(aws efs describe-mount-targets --file-system-id "$filesystem_id" --output json)" || { echo "Database EFS mount-target identity could not be inspected." >&2; exit 1; }
+            index=0
+            while IFS= read -r subnet; do
+              address="aws_efs_mount_target.database[$index]"
+              matches="$(printf '%s' "$mount_targets" | jq -c --arg subnet "$subnet" '[.MountTargets[]? | select(.SubnetId == $subnet and .LifeCycleState != "deleted")]')"
+              count="$(printf '%s' "$matches" | jq 'length')"
+              if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but its expected mount target is absent." >&2; exit 1; }; index=$((index + 1)); continue; fi
+              [ "$count" -eq 1 ] || { echo "Database EFS mount-target identity is ambiguous." >&2; exit 1; }
+              mount_target_id="$(printf '%s' "$matches" | jq -r '.[0].MountTargetId')"
+              trust_or_import_owned "$address" "$mount_target_id" child
+              index=$((index + 1))
+            done < <(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -r '.[]')
           }
           reconcile_security_group "aws_security_group.alb" "$RESOURCE_NAME-alb"
           reconcile_security_group "aws_security_group.service" "$RESOURCE_NAME-svc"
           if [ "$MANAGED_DATABASE_ENABLED" = "true" ]; then
             reconcile_security_group 'aws_security_group.database[0]' "$RESOURCE_NAME-db"
             reconcile_security_group 'aws_security_group.database_efs[0]' "$RESOURCE_NAME-db-efs"
+            reconcile_database_task_role
+            reconcile_database_discovery
+            reconcile_database_ecs_service
+            reconcile_database_mount_targets
           fi
           reconcile_ecs_cluster
           reconcile_load_balancer
+          reconcile_target_group
+          reconcile_http_listener
           reconcile_execution_role
           reconcile_ecs_service
           # Capture bounded destroy verification scope from the initialized,
@@ -1157,7 +1293,7 @@ jobs:
 
           deregister_generation_task_definitions() {
             local family task_definition task_definitions tags
-            for family in "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)" "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)-database"; do
+            for family in "$RESOURCE_NAME" "$RESOURCE_NAME-database"; do
               task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text)" || {
                 echo "DeployGuard could not list active task definitions for generation cleanup." >&2
                 return 1
@@ -1259,7 +1395,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
           TASK_DEFINITION="$(aws ecs describe-task-definition --task-definition "$ROLLBACK_TASK_DEFINITION_ARN" --include TAGS --output json)"
           [ "$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.taskDefinitionArn')" = "$ROLLBACK_TASK_DEFINITION_ARN" ] || { echo "Rollback task definition could not be resolved exactly." >&2; exit 1; }
           [ "$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.family')" = "$RESOURCE_NAME" ] || { echo "Rollback task definition belongs to another service." >&2; exit 1; }
@@ -1478,7 +1613,7 @@ jobs:
 
           active_generation_task_definitions_absent() {
             local family task_definition task_definitions tags
-            for family in "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)" "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)-database"; do
+            for family in "$RESOURCE_NAME" "$RESOURCE_NAME-database"; do
               task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text)" || {
                 echo "Active task-definition absence could not be verified." >&2
                 return 2
