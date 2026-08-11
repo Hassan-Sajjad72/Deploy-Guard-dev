@@ -1051,6 +1051,13 @@ jobs:
             if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected HTTP listener is absent." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing HTTP listener identity is ambiguous." >&2; exit 1; }
             arn="$(printf '%s' "$listener" | jq -r '.Listeners[] | select(.Port == 80 and .Protocol == "HTTP") | .ListenerArn')"
+            if state_has "$address"; then
+              # Listener ownership is inherited from the already-verified
+              # exact load balancer for pre-tagging workflow generations.
+              state_identity_is_owned "$address" "$arn" child
+              echo "Terraform already manages the verified listener child at $address; import skipped."
+              return 0
+            fi
             tags="$(aws elbv2 describe-tags --resource-arns "$arn" --output json | jq -c '.TagDescriptions[0].Tags // []')"
             verify_owned_tags "$tags" || { echo "Existing HTTP listener failed DeployGuard ownership verification; explicit recovery is required." >&2; exit 1; }
             trust_or_import_owned "$address" "$arn"
