@@ -173,6 +173,15 @@ jobs:
               ))
               and (.environment.DEPLOYGUARD_OPERATION_ID == $operation)
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable runtime configuration references." >&2; exit 1; }
+          elif [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
+            jq -e --arg project "$PROJECT_ID" --arg generation "$GENERATION_ID" '
+              type == "object"
+              and (.configurationFingerprint | test("^[0-9a-f]{64}$"))
+              and .extinction.projectId == $project
+              and (.extinction.knownGenerationIds | type == "array" and length > 0 and length <= 1000)
+              and all(.extinction.knownGenerationIds[]; test("^[0-9a-fA-F-]{36}$"))
+              and (.extinction.knownGenerationIds | index($generation)) != null
+            ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable project-extinction context." >&2; exit 1; }
           else
             jq -e 'type == "object" and (.configurationFingerprint | type == "string")' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable environment references." >&2; exit 1; }
           fi
@@ -1641,28 +1650,128 @@ jobs:
             return 2
           }
 
-          active_generation_task_definitions_absent() {
-            local family task_definition task_definitions tags
+          project_task_definitions_absent() {
+            local family status task_definition task_definitions tags
             for family in "$RESOURCE_NAME" "$RESOURCE_NAME-database"; do
-              task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text)" || {
-                echo "Active task-definition absence could not be verified." >&2
-                return 2
-              }
-              while IFS= read -r task_definition; do
-                [ -n "$task_definition" ] || continue
-                tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)" || return 2
-                if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-                  (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
-                  | $tags.ManagedBy == "DeployGuard"
-                    and $tags.DeployGuardProjectId == $project
-                    and $tags.Environment == $environment
-                    and $tags.DeployGuardGenerationId == $generation
-                ' >/dev/null; then
-                  return 1
-                fi
-              done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
+              for status in ACTIVE INACTIVE DELETE_IN_PROGRESS; do
+                task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status "$status" --query 'taskDefinitionArns[]' --output text)" || return 2
+                while IFS= read -r task_definition; do
+                  [ -n "$task_definition" ] || continue
+                  tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)" || return 2
+                  if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '
+                    (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
+                    | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
+                  ' >/dev/null; then return 1; fi
+                done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
+              done
             done
             return 0
+          }
+
+          purge_project_task_definitions() {
+            local family status task_definition task_definitions tags
+            for family in "$RESOURCE_NAME" "$RESOURCE_NAME-database"; do
+              for status in ACTIVE INACTIVE; do
+                task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status "$status" --query 'taskDefinitionArns[]' --output text)" || return 2
+                while IFS= read -r task_definition; do
+                  [ -n "$task_definition" ] || continue
+                  tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)" || return 2
+                  printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '(.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project' >/dev/null || continue
+                  [ "$status" = "INACTIVE" ] || aws ecs deregister-task-definition --task-definition "$task_definition" >/dev/null
+                  aws ecs delete-task-definitions --task-definitions "$task_definition" >/dev/null || true
+                done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
+              done
+            done
+          }
+
+          purge_project_secrets_and_logs() {
+            local secret log_group tags
+            while IFS= read -r secret; do
+              [ -n "$secret" ] || continue
+              tags="$(aws secretsmanager describe-secret --secret-id "$secret" --output json)" || continue
+              printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '(.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project' >/dev/null || continue
+              aws secretsmanager delete-secret --secret-id "$secret" --force-delete-without-recovery >/dev/null || true
+            done < <(aws secretsmanager list-secrets --include-planned-deletion --filters Key=name,Values="deployguard/$PROJECT_ID/" --query 'SecretList[].ARN' --output text | tr '\t' '\n')
+            while IFS= read -r log_group; do
+              [ -n "$log_group" ] || continue
+              tags="$(aws logs list-tags-log-group --log-group-name "$log_group" --output json)" || continue
+              printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '.tags.ManagedBy == "DeployGuard" and .tags.DeployGuardProjectId == $project' >/dev/null || continue
+              aws logs delete-log-group --log-group-name "$log_group" >/dev/null || true
+            done < <(aws logs describe-log-groups --log-group-name-prefix "/deployguard/$PROJECT_ID/" --query 'logGroups[].logGroupName' --output text | tr '\t' '\n')
+          }
+
+          purge_tagged_project_resources() {
+            local mappings arn detail role_name group_name user_name profile policy version group_id fs_id cluster service task target
+            mappings="$(aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json)" || return 2
+            while IFS= read -r arn; do
+              [ -n "$arn" ] || continue
+              case "$arn" in
+                arn:aws*:ecr:*:repository/*) aws ecr delete-repository --repository-name "${arn##*:repository/}" --force >/dev/null || true ;;
+                arn:aws*:ecs:*:service/*/*) detail="${arn##*:service/}"; cluster="${detail%%/*}"; service="${detail#*/}"; aws ecs update-service --cluster "$cluster" --service "$service" --desired-count 0 >/dev/null || true; aws ecs delete-service --cluster "$cluster" --service "$service" --force >/dev/null || true ;;
+                arn:aws*:ecs:*:task/*/*) detail="${arn##*:task/}"; cluster="${detail%%/*}"; task="${detail#*/}"; aws ecs stop-task --cluster "$cluster" --task "$task" >/dev/null || true ;;
+                arn:aws*:ecs:*:task-definition/*) aws ecs deregister-task-definition --task-definition "$arn" >/dev/null 2>&1 || true; aws ecs delete-task-definitions --task-definitions "$arn" >/dev/null || true ;;
+                arn:aws*:ecs:*:cluster/*) aws ecs delete-cluster --cluster "${arn##*:cluster/}" >/dev/null || true ;;
+                arn:aws*:elasticloadbalancing:*:listener/*) aws elbv2 delete-listener --listener-arn "$arn" >/dev/null || true ;;
+                arn:aws*:elasticloadbalancing:*:listener-rule/*) aws elbv2 delete-rule --rule-arn "$arn" >/dev/null || true ;;
+                arn:aws*:elasticloadbalancing:*:loadbalancer/*) aws elbv2 delete-load-balancer --load-balancer-arn "$arn" >/dev/null || true ;;
+                arn:aws*:elasticloadbalancing:*:targetgroup/*) aws elbv2 delete-target-group --target-group-arn "$arn" >/dev/null || true ;;
+                arn:aws*:logs:*:log-group:*) detail="${arn#*:log-group:}"; aws logs delete-log-group --log-group-name "${detail%:*}" >/dev/null || true ;;
+                arn:aws*:secretsmanager:*:secret:*) aws secretsmanager delete-secret --secret-id "$arn" --force-delete-without-recovery >/dev/null || true ;;
+                arn:aws*:elasticfilesystem:*:access-point/*) aws efs delete-access-point --access-point-id "${arn##*/}" >/dev/null || true ;;
+                arn:aws*:elasticfilesystem:*:file-system/*) fs_id="${arn##*/}"; for target in $(aws efs describe-mount-targets --file-system-id "$fs_id" --query 'MountTargets[].MountTargetId' --output text 2>/dev/null); do aws efs delete-mount-target --mount-target-id "$target" >/dev/null || true; done; aws efs delete-file-system --file-system-id "$fs_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:security-group/*) group_id="${arn##*/}"; aws ec2 delete-security-group --group-id "$group_id" >/dev/null || true ;;
+                arn:aws*:iam::*:role/*) role_name="${arn##*/}"; for profile in $(aws iam list-instance-profiles-for-role --role-name "$role_name" --query 'InstanceProfiles[].InstanceProfileName' --output text 2>/dev/null); do aws iam remove-role-from-instance-profile --instance-profile-name "$profile" --role-name "$role_name" >/dev/null || true; aws iam delete-instance-profile --instance-profile-name "$profile" >/dev/null || true; done; for policy in $(aws iam list-role-policies --role-name "$role_name" --query 'PolicyNames[]' --output text 2>/dev/null); do aws iam delete-role-policy --role-name "$role_name" --policy-name "$policy" >/dev/null || true; done; for policy in $(aws iam list-attached-role-policies --role-name "$role_name" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do aws iam detach-role-policy --role-name "$role_name" --policy-arn "$policy" >/dev/null || true; done; aws iam delete-role --role-name "$role_name" >/dev/null || true ;;
+                arn:aws*:iam::*:policy/*) for role_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyRoles[].RoleName' --output text 2>/dev/null); do aws iam detach-role-policy --role-name "$role_name" --policy-arn "$arn" >/dev/null || true; done; for group_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyGroups[].GroupName' --output text 2>/dev/null); do aws iam detach-group-policy --group-name "$group_name" --policy-arn "$arn" >/dev/null || true; done; for user_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyUsers[].UserName' --output text 2>/dev/null); do aws iam detach-user-policy --user-name "$user_name" --policy-arn "$arn" >/dev/null || true; done; for version in $(aws iam list-policy-versions --policy-arn "$arn" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do aws iam delete-policy-version --policy-arn "$arn" --version-id "$version" >/dev/null || true; done; aws iam delete-policy --policy-arn "$arn" >/dev/null || true ;;
+                arn:aws*:servicediscovery:*:service/*) aws servicediscovery delete-service --id "${arn##*/}" >/dev/null || true ;;
+                arn:aws*:servicediscovery:*:namespace/*) aws servicediscovery delete-namespace --id "${arn##*/}" >/dev/null || true ;;
+                arn:aws*:backup:*:backup-vault:*) aws backup delete-backup-vault --backup-vault-name "${arn##*:backup-vault:}" >/dev/null || true ;;
+                arn:aws*:sns:*:*) aws sns delete-topic --topic-arn "$arn" >/dev/null || true ;;
+                arn:aws*:ssm:*:parameter/*) aws ssm delete-parameter --name "/${arn##*:parameter/}" >/dev/null || true ;;
+              esac
+            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]?.ResourceARN')
+          }
+
+          purge_project_parameters_and_backups() {
+            local parameter vault recovery tags
+            while IFS= read -r parameter; do [ -z "$parameter" ] || aws ssm delete-parameter --name "$parameter" >/dev/null || true; done < <(aws ssm get-parameters-by-path --path "/deployguard/$PROJECT_ID" --recursive --query 'Parameters[].Name' --output text 2>/dev/null | tr '\t' '\n')
+            while IFS= read -r vault; do
+              [ -n "$vault" ] || continue
+              while IFS= read -r recovery; do
+                [ -n "$recovery" ] || continue
+                tags="$(aws backup list-tags --resource-arn "$recovery" --output json 2>/dev/null || true)"
+                printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '.Tags.ManagedBy == "DeployGuard" and .Tags.DeployGuardProjectId == $project' >/dev/null || continue
+                aws backup delete-recovery-point --backup-vault-name "$vault" --recovery-point-arn "$recovery" >/dev/null || true
+              done < <(aws backup list-recovery-points-by-backup-vault --backup-vault-name "$vault" --query 'RecoveryPoints[].RecoveryPointArn' --output text | tr '\t' '\n')
+            done < <(aws backup list-backup-vaults --query 'BackupVaultList[].BackupVaultName' --output text | tr '\t' '\n')
+          }
+
+          project_backups_absent() {
+            local vault recovery tags vaults recoveries
+            vaults="$(aws backup list-backup-vaults --query 'BackupVaultList[].BackupVaultName' --output text)" || return 2
+            while IFS= read -r vault; do
+              [ -n "$vault" ] || continue
+              recoveries="$(aws backup list-recovery-points-by-backup-vault --backup-vault-name "$vault" --query 'RecoveryPoints[].RecoveryPointArn' --output text)" || return 2
+              while IFS= read -r recovery; do
+                [ -n "$recovery" ] || continue
+                tags="$(aws backup list-tags --resource-arn "$recovery" --output json)" || return 2
+                if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '.Tags.ManagedBy == "DeployGuard" and .Tags.DeployGuardProjectId == $project' >/dev/null; then return 1; fi
+              done <<< "$(printf '%s' "$recoveries" | tr '\t' '\n')"
+            done <<< "$(printf '%s' "$vaults" | tr '\t' '\n')"
+            return 0
+          }
+
+          project_owned_resources_absent() {
+            local mappings secrets logs parameters
+            mappings="$(aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json)" || return 2
+            [ "$(printf '%s' "$mappings" | jq '.ResourceTagMappingList | length')" -eq 0 ] || return 1
+            secrets="$(aws secretsmanager list-secrets --include-planned-deletion --filters Key=name,Values="deployguard/$PROJECT_ID/" --query 'SecretList | length(@)' --output text)" || return 2
+            [ "$secrets" -eq 0 ] || return 1
+            logs="$(aws logs describe-log-groups --log-group-name-prefix "/deployguard/$PROJECT_ID/" --query 'logGroups | length(@)' --output text)" || return 2
+            [ "$logs" -eq 0 ] || return 1
+            parameters="$(aws ssm get-parameters-by-path --path "/deployguard/$PROJECT_ID" --recursive --query 'Parameters | length(@)' --output text)" || return 2
+            [ "$parameters" -eq 0 ] || return 1
+            project_backups_absent || return $?
+            project_task_definitions_absent
           }
 
           endpoint_unavailable() {
@@ -1672,15 +1781,15 @@ jobs:
             ! curl --silent --show-error --max-time 10 --output /dev/null "$endpoint"
           }
 
-          purge_generation_state_versions() {
-            local state_key lock_key versions delete_count
-            state_key="projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate"
-            lock_key="${state_key}.tflock"
+          purge_project_state_versions() {
+            local versions delete_count known_generations
+            known_generations="$(jq -c '.extinction.knownGenerationIds' ../runtime-config.json)"
             for attempt in $(seq 1 100); do
-              versions="$(aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --prefix "$state_key" --output json)" || return 2
-              printf '%s' "$versions" | jq -c --arg state "$state_key" --arg lock "$lock_key" '
-                {Objects: (([.Versions[]? | select(.Key == $state or .Key == $lock) | {Key,VersionId}]
-                  + [.DeleteMarkers[]? | select(.Key == $state or .Key == $lock) | {Key,VersionId}])[:1000]), Quiet: true}
+              versions="$(aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --output json)" || return 2
+              printf '%s' "$versions" | jq -c --arg project "$PROJECT_ID" --argjson generations "$known_generations" '
+                def owned: (.Key | contains($project)) or ([ $generations[] as $generation | .Key | contains($generation) ] | any);
+                {Objects: (([.Versions[]? | select(owned) | {Key,VersionId}]
+                  + [.DeleteMarkers[]? | select(owned) | {Key,VersionId}])[:1000]), Quiet: true}
               ' > state-version-delete.json
               delete_count="$(jq '.Objects | length' state-version-delete.json)"
               [ "$delete_count" -gt 0 ] || return 0
@@ -1690,15 +1799,24 @@ jobs:
             return 2
           }
 
-          generation_state_versions_absent() {
-            local state_key lock_key versions
-            state_key="projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate"
-            lock_key="${state_key}.tflock"
-            versions="$(aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --prefix "$state_key" --output json)" || return 2
-            printf '%s' "$versions" | jq -e --arg state "$state_key" --arg lock "$lock_key" '
-              ([.Versions[]?, .DeleteMarkers[]?] | map(select(.Key == $state or .Key == $lock)) | length) == 0
+          project_state_versions_absent() {
+            local versions known_generations
+            known_generations="$(jq -c '.extinction.knownGenerationIds' ../runtime-config.json)"
+            versions="$(aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --output json)" || return 2
+            printf '%s' "$versions" | jq -e --arg project "$PROJECT_ID" --argjson generations "$known_generations" '
+              def owned: (.Key | contains($project)) or ([ $generations[] as $generation | .Key | contains($generation) ] | any);
+              ([.Versions[]?, .DeleteMarkers[]?] | map(select(owned)) | length) == 0
             ' >/dev/null
           }
+
+          for cleanup_pass in $(seq 1 20); do
+            purge_project_task_definitions
+            purge_project_secrets_and_logs
+            purge_project_parameters_and_backups
+            purge_tagged_project_resources
+            project_owned_resources_absent && break
+            [ "$cleanup_pass" -eq 20 ] || sleep 10
+          done
 
           VERIFIED=false
           for attempt in $(seq 1 30); do
@@ -1710,7 +1828,7 @@ jobs:
               && endpoint_unavailable \
               && image_repository_absent \
               && runtime_secret_absent \
-              && active_generation_task_definitions_absent \
+              && project_owned_resources_absent \
               && normal_state_resources_absent; then
               VERIFIED=true
               break
@@ -1719,13 +1837,13 @@ jobs:
           done
           [ "$VERIFIED" = "true" ] || { echo "Project infrastructure absence was not verified within the bounded window." >&2; exit 1; }
 
-          # State is destroyed only after AWS/Terraform absence is verified.
-          # All versions and delete markers for this exact generation are then
-          # removed so no future generation can discover stale state or locks.
-          purge_generation_state_versions
-          generation_state_versions_absent || { echo "Generation Terraform state versions are still present." >&2; exit 1; }
+          # State is deleted only after all project-owned AWS resources are
+          # absent. Every current, legacy and generation-scoped object version
+          # and delete marker containing a known project identity is removed.
+          purge_project_state_versions
+          project_state_versions_absent || { echo "Project Terraform artifacts remain in versioned state storage." >&2; exit 1; }
 
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,imageRepositoryAbsent:true,runtimeSecretAbsent:true,activeGenerationTaskDefinitionsAbsent:true,normalResourcesAbsent:true,terraformStateVersionsAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,imageRepositoryAbsent:true,runtimeSecretAbsent:true,activeGenerationTaskDefinitionsAbsent:true,normalResourcesAbsent:true,terraformStateVersionsAbsent:true,projectOwnedAwsResourcesAbsent:true,allProjectTerraformArtifactsAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
           printf 'DEPLOYGUARD_DESTROY_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
