@@ -200,7 +200,7 @@ jobs:
             REPOSITORY_ARN="$(printf '%s' "$REPOSITORY" | jq -r '.repositories | if length == 1 then .[0].repositoryArn else empty end')"
           elif grep -q 'RepositoryNotFoundException' "$ERROR_FILE"; then
             REPOSITORY="$(aws ecr create-repository --repository-name "$REPOSITORY_NAME" --image-scanning-configuration scanOnPush=false \
-              --tags Key=ManagedBy,Value=DeployGuard Key=DeployGuardProjectId,Value="$PROJECT_ID" Key=Environment,Value="$ENVIRONMENT_NAME" --output json)"
+              --tags Key=ManagedBy,Value=DeployGuard Key=DeployGuardProjectId,Value="$PROJECT_ID" Key=Environment,Value="$ENVIRONMENT_NAME" Key=DeployGuardGenerationId,Value="$GENERATION_ID" --output json)"
             REPOSITORY_ARN="$(printf '%s' "$REPOSITORY" | jq -r '.repository.repositoryArn // empty')"
           else
             echo "The project image repository could not be verified." >&2
@@ -208,12 +208,16 @@ jobs:
           fi
           [ -n "$REPOSITORY_ARN" ] || { echo "The project image repository identity is ambiguous." >&2; exit 1; }
           TAGS="$(aws ecr list-tags-for-resource --resource-arn "$REPOSITORY_ARN" --output json)"
-          printf '%s' "$TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+          printf '%s' "$TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
             (.tags | map({key: .Key, value: .Value}) | from_entries) as $tags
             | $tags.ManagedBy == "DeployGuard"
               and $tags.DeployGuardProjectId == $project
               and $tags.Environment == $environment
+              and (($tags.DeployGuardGenerationId // $generation) == $generation)
           ' >/dev/null || { echo "The project image repository failed DeployGuard ownership verification." >&2; exit 1; }
+          if ! printf '%s' "$TAGS" | jq -e 'any(.tags[]?; .Key == "DeployGuardGenerationId")' >/dev/null; then
+            aws ecr tag-resource --resource-arn "$REPOSITORY_ARN" --tags Key=DeployGuardGenerationId,Value="$GENERATION_ID" >/dev/null
+          fi
 
       - name: Materialize immutable container contract
         if: inputs.deployment_action == 'deploy'
@@ -1086,34 +1090,122 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RUNTIME_SECRET="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/application/runtime"
-          if ! SECRET_ERROR="$(aws secretsmanager delete-secret --secret-id "$RUNTIME_SECRET" --force-delete-without-recovery 2>&1)"; then
-            printf '%s' "$SECRET_ERROR" | grep -q 'ResourceNotFoundException' || { echo "DeployGuard could not remove the generation runtime secret." >&2; exit 1; }
-          fi
-          for FAMILY in "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)" "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)-database"; do
-            while IFS= read -r TASK_DEFINITION; do
-              [ -n "$TASK_DEFINITION" ] || continue
-              TAGS="$(aws ecs list-tags-for-resource --resource-arn "$TASK_DEFINITION" --output json)"
-              if printf '%s' "$TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-                (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
+
+          aws_error_is() {
+            local error_file="$1" code="$2"
+            grep -q "$code" "$error_file"
+          }
+
+          runtime_secret_owned() {
+            jq -e --arg name "$RUNTIME_SECRET" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+              .Name == $name
+              and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
                 | $tags.ManagedBy == "DeployGuard"
                   and $tags.DeployGuardProjectId == $project
                   and $tags.Environment == $environment
                   and $tags.DeployGuardGenerationId == $generation
-              ' >/dev/null; then
-                aws ecs deregister-task-definition --task-definition "$TASK_DEFINITION" >/dev/null
+                  and $tags.SecretPurpose == "application_runtime")
+            ' >/dev/null
+          }
+
+          delete_runtime_secret_if_owned() {
+            local description error_file delete_error
+            error_file="$(mktemp)"
+            if description="$(aws secretsmanager describe-secret --secret-id "$RUNTIME_SECRET" --output json 2>"$error_file")"; then
+              rm -f "$error_file"
+              printf '%s' "$description" | runtime_secret_owned || {
+                echo "DeployGuard refused to remove a runtime secret owned by another generation." >&2
+                return 1
+              }
+              if [ "$(printf '%s' "$description" | jq -r '.DeletedDate // empty')" = "" ]; then
+                error_file="$(mktemp)"
+                if ! aws secretsmanager delete-secret --secret-id "$RUNTIME_SECRET" --force-delete-without-recovery >/dev/null 2>"$error_file"; then
+                  if ! aws_error_is "$error_file" 'ResourceNotFoundException'; then
+                    delete_error="$(sed -n 's/.*(\([A-Za-z][A-Za-z]*Exception\)).*/\1/p' "$error_file" | head -n1)"
+                    rm -f "$error_file"
+                    echo "DeployGuard could not remove the owned generation runtime secret (${delete_error:-AWS error})." >&2
+                    return 1
+                  fi
+                fi
+                rm -f "$error_file"
               fi
-            done < <(aws ecs list-task-definitions --family-prefix "$FAMILY" --status ACTIVE --query 'taskDefinitionArns[]' --output text | tr '\t' '\n')
-          done
-          SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
-          REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
-          if ! ERROR="$(aws ecr delete-repository --repository-name "$REPOSITORY_NAME" --force 2>&1)"; then
-            if printf '%s' "$ERROR" | grep -q 'RepositoryNotFoundException'; then
-              exit 0
+              return 0
             fi
-            echo "DeployGuard could not remove the project image repository." >&2
-            exit 1
-          fi
+            if aws_error_is "$error_file" 'ResourceNotFoundException'; then
+              rm -f "$error_file"
+              return 0
+            fi
+            rm -f "$error_file"
+            echo "DeployGuard could not verify the generation runtime secret before cleanup." >&2
+            return 1
+          }
+
+          deregister_generation_task_definitions() {
+            local family task_definition tags
+            for family in "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)" "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)-database"; do
+              while IFS= read -r task_definition; do
+                [ -n "$task_definition" ] || continue
+                tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)"
+                if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+                  (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
+                  | $tags.ManagedBy == "DeployGuard"
+                    and $tags.DeployGuardProjectId == $project
+                    and $tags.Environment == $environment
+                    and $tags.DeployGuardGenerationId == $generation
+                ' >/dev/null; then
+                  aws ecs deregister-task-definition --task-definition "$task_definition" >/dev/null
+                fi
+              done < <(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text | tr '\t' '\n')
+            done
+          }
+
+          delete_generation_image_repository() {
+            local safe_project repository_name repository repository_arn tags error_file
+            safe_project="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
+            repository_name="deployguard-${safe_project}"
+            error_file="$(mktemp)"
+            if repository="$(aws ecr describe-repositories --repository-names "$repository_name" --output json 2>"$error_file")"; then
+              rm -f "$error_file"
+              repository_arn="$(printf '%s' "$repository" | jq -r '.repositories | if length == 1 then .[0].repositoryArn else empty end')"
+              [ -n "$repository_arn" ] || { echo "The project image repository identity is ambiguous." >&2; return 1; }
+              tags="$(aws ecr list-tags-for-resource --resource-arn "$repository_arn" --output json)"
+              printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+                (.tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
+                | $tags.ManagedBy == "DeployGuard"
+                  and $tags.DeployGuardProjectId == $project
+                  and $tags.Environment == $environment
+                  and (($tags.DeployGuardGenerationId // $generation) == $generation)
+              ' >/dev/null || {
+                echo "DeployGuard refused to remove an image repository owned by another generation." >&2
+                return 1
+              }
+              if ! printf '%s' "$tags" | jq -e 'any(.tags[]?; .Key == "DeployGuardGenerationId")' >/dev/null; then
+                aws ecr tag-resource --resource-arn "$repository_arn" --tags Key=DeployGuardGenerationId,Value="$GENERATION_ID" >/dev/null
+              fi
+              error_file="$(mktemp)"
+              if ! aws ecr delete-repository --repository-name "$repository_name" --force >/dev/null 2>"$error_file"; then
+                if ! aws_error_is "$error_file" 'RepositoryNotFoundException'; then
+                  rm -f "$error_file"
+                  echo "DeployGuard could not remove the owned generation image repository." >&2
+                  return 1
+                fi
+              fi
+              rm -f "$error_file"
+              return 0
+            fi
+            if aws_error_is "$error_file" 'RepositoryNotFoundException'; then
+              rm -f "$error_file"
+              return 0
+            fi
+            rm -f "$error_file"
+            echo "DeployGuard could not verify the generation image repository before cleanup." >&2
+            return 1
+          }
+
+          RUNTIME_SECRET="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/application/runtime"
+          delete_runtime_secret_if_owned
+          deregister_generation_task_definitions
+          delete_generation_image_repository
 
       - name: Verify ALB health and write result
         if: inputs.deployment_action == 'deploy'
@@ -1351,6 +1443,40 @@ jobs:
             return 2
           }
 
+          runtime_secret_absent() {
+            local runtime_secret error_file
+            runtime_secret="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/application/runtime"
+            error_file="$(mktemp)"
+            if aws secretsmanager describe-secret --secret-id "$runtime_secret" --output json >/dev/null 2>"$error_file"; then
+              rm -f "$error_file"
+              return 1
+            fi
+            if grep -q 'ResourceNotFoundException' "$error_file"; then rm -f "$error_file"; return 0; fi
+            rm -f "$error_file"
+            echo "Runtime secret absence could not be verified." >&2
+            return 2
+          }
+
+          active_generation_task_definitions_absent() {
+            local family task_definition tags
+            for family in "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)" "dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-28)-database"; do
+              while IFS= read -r task_definition; do
+                [ -n "$task_definition" ] || continue
+                tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)" || return 2
+                if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+                  (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
+                  | $tags.ManagedBy == "DeployGuard"
+                    and $tags.DeployGuardProjectId == $project
+                    and $tags.Environment == $environment
+                    and $tags.DeployGuardGenerationId == $generation
+                ' >/dev/null; then
+                  return 1
+                fi
+              done < <(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text | tr '\t' '\n')
+            done
+            return 0
+          }
+
           endpoint_unavailable() {
             local endpoint
             endpoint="$(jq -r '.endpoint // ""' destroy-verification-scope.json)"
@@ -1367,6 +1493,8 @@ jobs:
               && arns_absent target_group '.targetGroupArns' \
               && endpoint_unavailable \
               && image_repository_absent \
+              && runtime_secret_absent \
+              && active_generation_task_definitions_absent \
               && normal_state_resources_absent; then
               VERIFIED=true
               break
@@ -1375,7 +1503,7 @@ jobs:
           done
           [ "$VERIFIED" = "true" ] || { echo "Project infrastructure absence was not verified within the bounded window." >&2; exit 1; }
 
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,normalResourcesAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,imageRepositoryAbsent:true,runtimeSecretAbsent:true,activeGenerationTaskDefinitionsAbsent:true,normalResourcesAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
           printf 'DEPLOYGUARD_DESTROY_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
