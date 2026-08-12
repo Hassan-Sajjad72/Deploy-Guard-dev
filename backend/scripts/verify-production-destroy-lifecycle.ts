@@ -23,6 +23,8 @@ assert.match(destroyTerraform, /create" or \. == "update"/);
 assert.match(destroyTerraform, /importAttempted:false/);
 assert.doesNotMatch(destroyTerraform, /if \[ "\$TF_EXIT_CODE" -eq 2 \]; then[\s\S]*?terraform apply/, "the saved plan is applied even after a no-change refresh so stale addresses are persisted as absent");
 assert.match(destroyTerraform, /# Apply the saved plan even when detailed-exitcode is 0[\s\S]*?terraform apply -input=false -auto-approve deployguard-destroy\.tfplan/);
+assert.match(destroyTerraform, /# GitHub invokes bash with -e[\s\S]*?set \+e[\s\S]*?terraform plan -destroy -detailed-exitcode[\s\S]*?TF_EXIT_CODE=\$\?[\s\S]*?set -e/, "Terraform detailed exit code 2 is captured instead of terminating the step");
+assert.match(destroyTerraform, /set \+e\n\s+terraform apply[\s\S]*?TF_EXIT_CODE=\$\?[\s\S]*?set -e/, "Terraform apply failures are persisted as evidence before the independent scavenger runs");
 
 const scavenger = workflow.match(/- name: Run generation-scoped AWS scavenger[\s\S]*?- name: Verify ALB health/)?.[0] || "";
 const verifier = workflow.match(/- name: Verify destroyed infrastructure and write result[\s\S]*?- name: Upload DeployGuard result/)?.[0] || "";

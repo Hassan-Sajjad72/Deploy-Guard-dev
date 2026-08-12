@@ -1368,6 +1368,7 @@ jobs:
           terraform fmt -check -recursive -diff || {
             TF_STATUS="format_failed"; TF_EXIT_CODE=$?; TF_ERROR="Generated Terraform is not fmt compliant."; write_terraform_evidence; exit "$TF_EXIT_CODE"
           }
+          set +e
           terraform init -input=false \
             -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
             -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" \
@@ -1375,6 +1376,7 @@ jobs:
             -backend-config="encrypt=true" \
             -backend-config="use_lockfile=true" >terraform-init.log 2>&1
           TF_EXIT_CODE=$?
+          set -e
           if [ "$TF_EXIT_CODE" -ne 0 ]; then
             TF_STATUS="init_failed"
             TF_ERROR="$(tail -n 20 terraform-init.log | tr '\n' ' ' | cut -c1-1000)"
@@ -1398,16 +1400,22 @@ jobs:
           else
             printf '%s\n' '{"ecsClusters":[],"ecsServices":[],"loadBalancerArns":[],"listenerArns":[],"targetGroupArns":[],"endpoint":""}' > destroy-verification-scope.json
           fi
+          set +e
           terraform validate -no-color >terraform-validate.log 2>&1
           TF_EXIT_CODE=$?
+          set -e
           if [ "$TF_EXIT_CODE" -ne 0 ]; then
             TF_STATUS="validate_failed"
             TF_ERROR="$(tail -n 20 terraform-validate.log | tr '\n' ' ' | cut -c1-1000)"
             write_terraform_evidence
             exit "$TF_EXIT_CODE"
           fi
+          # GitHub invokes bash with -e. Terraform's detailed exit code 2 is a
+          # successful plan with changes, so capture it outside errexit.
+          set +e
           terraform plan -destroy -detailed-exitcode -input=false -no-color -out=deployguard-destroy.tfplan >terraform-plan.log 2>&1
           TF_EXIT_CODE=$?
+          set -e
           if [ "$TF_EXIT_CODE" -ne 0 ] && [ "$TF_EXIT_CODE" -ne 2 ]; then
             TF_STATUS="plan_failed"
             TF_ERROR="$(tail -n 20 terraform-plan.log | tr '\n' ' ' | cut -c1-1000)"
@@ -1426,8 +1434,10 @@ jobs:
           # destroy plan can still contain refresh evidence that removes
           # already-absent objects from state; skipping apply would leave stale
           # addresses in the generation state and permanently block extinction.
+          set +e
           terraform apply -input=false -auto-approve deployguard-destroy.tfplan >terraform-apply.log 2>&1
           TF_EXIT_CODE=$?
+          set -e
           if [ "$TF_EXIT_CODE" -ne 0 ]; then
             TF_STATUS="apply_failed"
             TF_ERROR="$(tail -n 20 terraform-apply.log | tr '\n' ' ' | cut -c1-1000)"
