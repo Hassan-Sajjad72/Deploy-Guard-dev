@@ -69,7 +69,7 @@ jobs:
       ROLLBACK_TASK_DEFINITION_ARN: ${{ inputs.rollback_task_definition_arn }}
     steps:
       - name: Checkout application
-        if: inputs.deployment_action != 'rollback'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy'
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit_sha }}
@@ -84,12 +84,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|destroy|rollback)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
-          if [ "$DEPLOYMENT_ACTION" != "rollback" ]; then
+          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|destroy|rollback|promote|compensate)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
+          if [ "$DEPLOYMENT_ACTION" = "deploy" ] || [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             [ "$GITHUB_REPOSITORY" = "${{ inputs.repository_full_name }}" ] || { echo "Immutable repository identity mismatch." >&2; exit 1; }
             [ "$GITHUB_REF_NAME" = "${{ inputs.repository_branch }}" ] || { echo "Immutable branch identity mismatch." >&2; exit 1; }
             [ "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}" ] || { echo "Immutable commit identity mismatch." >&2; exit 1; }
-          else
+          elif [ "$DEPLOYMENT_ACTION" = "rollback" ]; then
             [[ "$ROLLBACK_SOURCE_OPERATION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || { echo "Rollback source identity is invalid." >&2; exit 1; }
             [[ "$ROLLBACK_IMAGE_URI" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$ ]] || { echo "Rollback image evidence is invalid." >&2; exit 1; }
             [[ "$ROLLBACK_TASK_DEFINITION_ARN" =~ ^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/[A-Za-z0-9_-]+:[0-9]+$ ]] || { echo "Rollback task-definition evidence is invalid." >&2; exit 1; }
@@ -103,7 +103,9 @@ jobs:
           GENERATION_PREFIX="$(printf '%s' "$GENERATION_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
           RESOURCE_NAME="dg-$PROJECT_PREFIX-$GENERATION_PREFIX"
           printf 'RESOURCE_NAME=%s\n' "$RESOURCE_NAME" >> "$GITHUB_ENV"
-          [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
+          if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
+            [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
+          fi
           [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
           mkdir -p .deployguard
           printf '%s' "$BUILD_PLAN_BASE64" | base64 --decode > .deployguard/build-plan.json
@@ -133,7 +135,7 @@ jobs:
             ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
-          if [ "$DEPLOYMENT_ACTION" = "deploy" ] || [ "$DEPLOYMENT_ACTION" = "rollback" ]; then
+          if [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|promote|compensate)$ ]]; then
             jq -e --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               type == "object"
               and .schemaVersion == 1
@@ -170,6 +172,21 @@ jobs:
               and (.deploymentContext.reason | type == "string" and length > 0 and length <= 512)
               and (.retentionProtectedRelease.imageDigests | type == "array" and length <= 10 and all(.[]; test("^sha256:[0-9a-f]{64}$")))
               and (.retentionProtectedRelease.taskDefinitionArns | type == "array" and length <= 10 and all(.[]; test("^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/[A-Za-z0-9_-]+:[0-9]+$")))
+              and .promotion.contractVersion == "deployguard.promotion-intent/v1"
+              and .promotion.operationId == $operation
+              and .promotion.projectId == $project
+              and .promotion.environmentName == $environment
+              and .promotion.generationId == $generation
+              and (
+                if ($ENV.DEPLOYMENT_ACTION | IN("promote", "compensate")) then
+                  .promotion.candidate.contractVersion == "deployguard.candidate-result/v1"
+                  and .promotion.candidate.deploymentOperationId == $operation
+                  and .promotion.candidate.projectId == $project
+                  and .promotion.candidate.environmentName == $environment
+                  and .promotion.candidate.generationId == $generation
+                  and (.promotion.intentFingerprint | test("^[0-9a-f]{64}$"))
+                else .promotion.candidate == null and .promotion.intentFingerprint == null end
+              )
               and (
                 if .deploymentContext.persistentState == "PERSISTENT" then
                   .deploymentContext.persistentPreviouslyEstablished == true
@@ -317,12 +334,14 @@ jobs:
           echo "uri=$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install Terraform
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
 
       - name: Prepare project-scoped persistence
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
         shell: bash
         run: |
           set -euo pipefail
@@ -585,6 +604,7 @@ jobs:
           fi
 
       - name: Generate deployment Terraform
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
         shell: bash
         env:
           IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.deployment_action == 'rollback' && inputs.rollback_image_uri || 'destroy.invalid' }}
@@ -817,6 +837,7 @@ jobs:
           NODE
 
       - name: Terraform plan and apply
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
@@ -1076,8 +1097,8 @@ jobs:
             done
           done < <(jq -r '.projectDeletion.generations[].generationId' .deployguard/runtime-config.json)
 
-      - name: Verify ALB health and write result
-        if: inputs.deployment_action != 'destroy'
+      - name: Verify exact candidate health and write evidence
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'rollback'
         working-directory: .deployguard/terraform
         shell: bash
         env:
@@ -1088,74 +1109,145 @@ jobs:
           set -euo pipefail
           if [ -z "$IMAGE_DIGEST" ]; then IMAGE_DIGEST="${IMAGE_URI##*@}"; fi
           URL="$(terraform output -raw deployed_url)"
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then break; fi
-            if [ "$attempt" -eq 30 ]; then echo "ALB health verification failed" >&2; exit 1; fi
-            sleep 10
-          done
           TARGET_GROUP_ARN="$(terraform output -raw target_group_arn)"
-          LISTENER_ARN="$(jq -r '.platformFoundation.listenerArn' ../runtime-config.json)"
-          PRODUCTION_HOST="$(jq -r '.routing.productionHost' ../runtime-config.json)"
-          PRODUCTION_PRIORITY="$(jq -r '.routing.listenerPriority' ../runtime-config.json)"
-          EXISTING_RULE_ARN="$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --output json | jq -r --arg priority "$PRODUCTION_PRIORITY" '.Rules[]? | select(.Priority == $priority) | .RuleArn' | head -1)"
-          if [ -n "$EXISTING_RULE_ARN" ]; then
-            RULE_TAGS="$(aws elbv2 describe-tags --resource-arns "$EXISTING_RULE_ARN" --output json)"
-            printf '%s' "$RULE_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
-              (.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags
-              | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
-                and $tags.Environment == $environment and $tags.DeployGuardScope == "project"
-            ' >/dev/null || { echo "Stable route priority is owned by another project environment." >&2; exit 1; }
-            aws elbv2 modify-rule --rule-arn "$EXISTING_RULE_ARN" --actions "Type=forward,TargetGroupArn=$TARGET_GROUP_ARN" --conditions "Field=host-header,Values=$PRODUCTION_HOST" >/dev/null
-            STABLE_RULE_ARN="$EXISTING_RULE_ARN"
-          else
-            STABLE_RULE_ARN="$(aws elbv2 create-rule --listener-arn "$LISTENER_ARN" --priority "$PRODUCTION_PRIORITY" --actions "Type=forward,TargetGroupArn=$TARGET_GROUP_ARN" --conditions "Field=host-header,Values=$PRODUCTION_HOST" --tags "Key=ManagedBy,Value=DeployGuard" "Key=DeployGuardProjectId,Value=$PROJECT_ID" "Key=Environment,Value=$ENVIRONMENT_NAME" "Key=DeployGuardScope,Value=project" --output json | jq -r '.Rules[0].RuleArn')"
-          fi
-          PRODUCTION_URL="$(terraform output -raw production_url)"
-          curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$HEALTH_CHECK_PATH" >/dev/null || { echo "Production route did not verify after candidate cutover." >&2; exit 1; }
-          # Keep a bounded rollback window. The current and immediately prior
-          # releases are always among the newest entries because operations
-          # are serialized per project/generation. The exact previous LIVE
-          # release is additionally protected because failed attempts can
-          # create newer images/task definitions without becoming LIVE.
-          REPOSITORY_NAME="$(jq -r '.projectPersistence.ecrRepositoryName' ../runtime-config.json)"
-          PROTECTED_IMAGE_DIGESTS="$(jq -c '.retentionProtectedRelease.imageDigests' ../runtime-config.json)"
-          for batch in $(seq 1 10); do
-            DELETE_IMAGES="$(aws ecr describe-images --repository-name "$REPOSITORY_NAME" --output json | jq -c --argjson protected "$PROTECTED_IMAGE_DIGESTS" '
-              [.imageDetails | sort_by(.imagePushedAt) | reverse | .[20:120][]?
-                | select(.imageDigest as $digest | ($protected | index($digest)) == null)
-                | {imageDigest}]
-            ')"
-            [ "$(printf '%s' "$DELETE_IMAGES" | jq 'length')" -gt 0 ] || break
-            aws ecr batch-delete-image --repository-name "$REPOSITORY_NAME" --image-ids "$DELETE_IMAGES" >/dev/null
-          done
-          PROTECTED_TASK_DEFINITIONS="$(jq -c '.retentionProtectedRelease.taskDefinitionArns' ../runtime-config.json)"
-          mapfile -t OLD_TASK_DEFINITIONS < <(aws ecs list-task-definitions --family-prefix "$RESOURCE_NAME" --status ACTIVE --sort DESC --output json | jq -r '.taskDefinitionArns[20:][]?')
-          for task_definition in "${OLD_TASK_DEFINITIONS[@]}"; do
-            if jq -en --argjson protected "$PROTECTED_TASK_DEFINITIONS" --arg arn "$task_definition" '$protected | index($arn) != null' >/dev/null; then continue; fi
-            tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)"
-            if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-              (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
-              | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
-                and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation
-            ' >/dev/null; then
-              aws ecs deregister-task-definition --task-definition "$task_definition" >/dev/null
-            fi
-          done
           CLUSTER_NAME="$(terraform output -raw cluster_name)"
           SERVICE_NAME="$(terraform output -raw service_name)"
           TASK_DEFINITION_ARN="$(terraform output -raw task_definition_arn)"
           ECS_SERVICE_ARN="$(terraform output -raw ecs_service_arn)"
+          TARGET_TAGS="$(aws elbv2 describe-tags --resource-arns "$TARGET_GROUP_ARN" --output json)"
+          printf '%s' "$TARGET_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+            (.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags
+            | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
+              and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation
+              and $tags.DeployGuardResource == "app-target-group"
+          ' >/dev/null || { echo "Candidate target group ownership does not match the immutable generation." >&2; exit 1; }
+          for attempt in $(seq 1 30); do
+            SERVICE="$(aws ecs describe-services --cluster "$CLUSTER_NAME" --services "$SERVICE_NAME" --output json)"
+            TASK_IMAGE="$(aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_ARN" --query 'taskDefinition.containerDefinitions[?name==`app`].image | [0]' --output text)"
+            TARGET_HEALTH="$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --output json)"
+            ECS_READY="$(printf '%s' "$SERVICE" | jq -r --arg task "$TASK_DEFINITION_ARN" '(.services | length) == 1 and .services[0].taskDefinition == $task and .services[0].desiredCount > 0 and .services[0].runningCount == .services[0].desiredCount and (.services[0].pendingCount // 0) == 0 and any(.services[0].deployments[]?; .status == "PRIMARY" and .rolloutState == "COMPLETED" and .taskDefinition == $task)')"
+            TG_READY="$(printf '%s' "$TARGET_HEALTH" | jq -r '(.TargetHealthDescriptions | length) > 0 and all(.TargetHealthDescriptions[]; .TargetHealth.State == "healthy")')"
+            HTTP_READY=false
+            if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then HTTP_READY=true; fi
+            if [ "$ECS_READY" = "true" ] && [ "$TASK_IMAGE" = "$IMAGE_URI" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ]; then break; fi
+            if [ "$attempt" -eq 30 ]; then echo "Candidate ECS, immutable image, target-group health, and HTTP verification did not converge." >&2; exit 1; fi
+            sleep 10
+          done
+          TARGET_STATES="$(printf '%s' "$TARGET_HEALTH" | jq -c '[.TargetHealthDescriptions[].TargetHealth.State] | sort')"
+          HEALTHY_TARGET_COUNT="$(printf '%s' "$TARGET_HEALTH" | jq '[.TargetHealthDescriptions[] | select(.TargetHealth.State == "healthy")] | length')"
           CONFIGURATION_FINGERPRINT="$(jq -r '.configurationFingerprint' ../runtime-config.json)"
           CONFIGURATION_SNAPSHOT_ID="$(jq -r '.configurationSnapshotId' ../runtime-config.json)"
           DATABASE_BINDING_ID="$(jq -r '.managedDatabase.bindingId // empty' ../runtime-config.json)"
           SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
           DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$PRODUCTION_URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId:$operation,generationId:$generationId,environmentName:$environmentName,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs}')"
-          printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
+          printf 'DEPLOYGUARD_CANDIDATE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
+      - name: Promote exact verified candidate and write result
+        if: inputs.deployment_action == 'promote'
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          CANDIDATE="$(jq -c '.promotion.candidate' .deployguard/runtime-config.json)"
+          INTENT_FINGERPRINT="$(jq -r '.promotion.intentFingerprint' .deployguard/runtime-config.json)"
+          TARGET_GROUP_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.targetGroupArn')"
+          CLUSTER_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.clusterName')"
+          SERVICE_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.serviceName')"
+          TASK_DEFINITION_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.taskDefinitionArn')"
+          IMAGE_URI="$(printf '%s' "$CANDIDATE" | jq -r '.imageUri')"
+          URL="$(printf '%s' "$CANDIDATE" | jq -r '.candidateUrl')"
+          TARGET_TAGS="$(aws elbv2 describe-tags --resource-arns "$TARGET_GROUP_ARN" --output json)"
+          printf '%s' "$TARGET_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+            (.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags
+            | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
+              and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation
+              and $tags.DeployGuardResource == "app-target-group"
+          ' >/dev/null || { echo "Promotion candidate target group is not owned by the exact immutable generation." >&2; exit 1; }
+          for attempt in $(seq 1 30); do
+            SERVICE="$(aws ecs describe-services --cluster "$CLUSTER_NAME" --services "$SERVICE_NAME" --output json)"
+            TASK_IMAGE="$(aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_ARN" --query 'taskDefinition.containerDefinitions[?name==`app`].image | [0]' --output text)"
+            TARGET_HEALTH="$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --output json)"
+            ECS_READY="$(printf '%s' "$SERVICE" | jq -r --arg task "$TASK_DEFINITION_ARN" '(.services | length) == 1 and .services[0].taskDefinition == $task and .services[0].desiredCount > 0 and .services[0].runningCount == .services[0].desiredCount and (.services[0].pendingCount // 0) == 0 and any(.services[0].deployments[]?; .status == "PRIMARY" and .rolloutState == "COMPLETED" and .taskDefinition == $task)')"
+            TG_READY="$(printf '%s' "$TARGET_HEALTH" | jq -r '(.TargetHealthDescriptions | length) > 0 and all(.TargetHealthDescriptions[]; .TargetHealth.State == "healthy")')"
+            HTTP_READY=false; if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then HTTP_READY=true; fi
+            if [ "$ECS_READY" = "true" ] && [ "$TASK_IMAGE" = "$IMAGE_URI" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ]; then break; fi
+            if [ "$attempt" -eq 30 ]; then echo "Candidate ceased to be healthy before promotion." >&2; exit 1; fi
+            sleep 10
+          done
+          LISTENER_ARN="$(jq -r '.platformFoundation.listenerArn' .deployguard/runtime-config.json)"
+          PRODUCTION_HOST="$(jq -r '.routing.productionHost' .deployguard/runtime-config.json)"
+          PRODUCTION_PRIORITY="$(jq -r '.routing.listenerPriority' .deployguard/runtime-config.json)"
+          EXPECTED_PREVIOUS_RULE_ARN="$(jq -r '.promotion.previousListenerRuleArn // empty' .deployguard/runtime-config.json)"
+          EXISTING_RULE_ARN="$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --output json | jq -r --arg priority "$PRODUCTION_PRIORITY" '.Rules[]? | select(.Priority == $priority) | .RuleArn' | head -1)"
+          if [ -n "$EXISTING_RULE_ARN" ]; then
+            [ -n "$EXPECTED_PREVIOUS_RULE_ARN" ] && [ "$EXISTING_RULE_ARN" = "$EXPECTED_PREVIOUS_RULE_ARN" ] || { echo "Stable route does not match the authoritative previous route." >&2; exit 1; }
+            RULE_TAGS="$(aws elbv2 describe-tags --resource-arns "$EXISTING_RULE_ARN" --output json)"
+            printf '%s' "$RULE_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '(.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment and $tags.DeployGuardScope == "project"' >/dev/null || { echo "Stable route is not project-owned." >&2; exit 1; }
+            aws elbv2 modify-rule --rule-arn "$EXISTING_RULE_ARN" --actions "Type=forward,TargetGroupArn=$TARGET_GROUP_ARN" --conditions "Field=host-header,Values=$PRODUCTION_HOST" >/dev/null
+            STABLE_RULE_ARN="$EXISTING_RULE_ARN"
+          else
+            [ -z "$EXPECTED_PREVIOUS_RULE_ARN" ] || { echo "The authoritative previous stable route is unexpectedly absent." >&2; exit 1; }
+            STABLE_RULE_ARN="$(aws elbv2 create-rule --listener-arn "$LISTENER_ARN" --priority "$PRODUCTION_PRIORITY" --actions "Type=forward,TargetGroupArn=$TARGET_GROUP_ARN" --conditions "Field=host-header,Values=$PRODUCTION_HOST" --tags "Key=ManagedBy,Value=DeployGuard" "Key=DeployGuardProjectId,Value=$PROJECT_ID" "Key=Environment,Value=$ENVIRONMENT_NAME" "Key=DeployGuardScope,Value=project" --output json | jq -r '.Rules[0].RuleArn')"
+          fi
+          PRODUCTION_URL="http://$PRODUCTION_HOST"
+          curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$HEALTH_CHECK_PATH" >/dev/null || { echo "Production route did not verify after exact candidate cutover." >&2; exit 1; }
+          RESULT="$(printf '%s' "$CANDIDATE" | jq -c --arg url "$PRODUCTION_URL" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg intentFingerprint "$INTENT_FINGERPRINT" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId,generationId,environmentName,status:"succeeded",deployedUrl:$url,imageUri,imageDigest,commitSha,clusterName,serviceName,ecsServiceArn,targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,taskDefinitionArn,appPort,healthCheckPath,configurationFingerprint,configurationSnapshotId,databaseBindingId,secretReferenceNames,databaseOutputs,promotionIntentFingerprint:$intentFingerprint}')"
+          printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
+          mkdir -p .deployguard/terraform
+          printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
+
+      - name: Compensate stable route after failed authoritative promotion
+        if: inputs.deployment_action == 'compensate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          INTENT_FINGERPRINT="$(jq -r '.promotion.intentFingerprint' .deployguard/runtime-config.json)"
+          LISTENER_ARN="$(jq -r '.platformFoundation.listenerArn' .deployguard/runtime-config.json)"
+          PRODUCTION_PRIORITY="$(jq -r '.routing.listenerPriority' .deployguard/runtime-config.json)"
+          PREVIOUS_TARGET="$(jq -r '.promotion.previousTargetGroupArn // empty' .deployguard/runtime-config.json)"
+          PREVIOUS_GENERATION="$(jq -r '.promotion.previousLiveGenerationId // empty' .deployguard/runtime-config.json)"
+          PREVIOUS_URL="$(jq -r '.promotion.previousProductionUrl // empty' .deployguard/runtime-config.json)"
+          RULE_ARN="$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --output json | jq -r --arg priority "$PRODUCTION_PRIORITY" '.Rules[]? | select(.Priority == $priority) | .RuleArn' | head -1)"
+          if [ -z "$RULE_ARN" ] && [ -n "$PREVIOUS_TARGET" ]; then echo "The route requiring compensation is missing." >&2; exit 1; fi
+          if [ -z "$RULE_ARN" ]; then
+            MODE="removed_first_release_route"
+            RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg generationId "$GENERATION_ID" --arg intentFingerprint "$INTENT_FINGERPRINT" --arg mode "$MODE" '{contractVersion:"deployguard.promotion-compensation/v1",deploymentOperationId:$operation,generationId:$generationId,intentFingerprint:$intentFingerprint,status:"compensated",mode:$mode}')"
+            printf 'DEPLOYGUARD_COMPENSATION_RESULT=%s\n' "$RESULT"
+            mkdir -p .deployguard/terraform
+            printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
+            exit 0
+          fi
+          RULE_TAGS="$(aws elbv2 describe-tags --resource-arns "$RULE_ARN" --output json)"
+          printf '%s' "$RULE_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '(.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment and $tags.DeployGuardScope == "project"' >/dev/null || { echo "Compensation route is not project-owned." >&2; exit 1; }
+          if [ -n "$PREVIOUS_TARGET" ]; then
+            PREVIOUS_TARGET_TAGS="$(aws elbv2 describe-tags --resource-arns "$PREVIOUS_TARGET" --output json)"
+            printf '%s' "$PREVIOUS_TARGET_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$PREVIOUS_GENERATION" '
+              (.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags
+              | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
+                and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation
+                and $tags.DeployGuardResource == "app-target-group"
+            ' >/dev/null || { echo "Previous LIVE target is not owned by the authoritative previous generation." >&2; exit 1; }
+            aws elbv2 modify-rule --rule-arn "$RULE_ARN" --actions "Type=forward,TargetGroupArn=$PREVIOUS_TARGET" >/dev/null
+            [ -z "$PREVIOUS_URL" ] || curl --fail --silent --show-error --max-time 15 "$PREVIOUS_URL$HEALTH_CHECK_PATH" >/dev/null || { echo "Previous LIVE route did not recover." >&2; exit 1; }
+            MODE="restored_previous_live"
+          else
+            aws elbv2 delete-rule --rule-arn "$RULE_ARN" >/dev/null
+            MODE="removed_first_release_route"
+          fi
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg generationId "$GENERATION_ID" --arg intentFingerprint "$INTENT_FINGERPRINT" --arg mode "$MODE" '{contractVersion:"deployguard.promotion-compensation/v1",deploymentOperationId:$operation,generationId:$generationId,intentFingerprint:$intentFingerprint,status:"compensated",mode:$mode}')"
+          printf 'DEPLOYGUARD_COMPENSATION_RESULT=%s\n' "$RESULT"
+          mkdir -p .deployguard/terraform
+          printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
+
       - name: Clean retired generation independently
-        if: inputs.deployment_action != 'destroy'
+        # Retired cleanup cannot run until the backend has committed LIVE.
+        # Project Destroy remains the exact, verified cleanup path; a retired
+        # generation is deliberately CLEANUP_PENDING and never blocks a later
+        # candidate.
+        if: ${{ false }}
         continue-on-error: true
         shell: bash
         run: |
