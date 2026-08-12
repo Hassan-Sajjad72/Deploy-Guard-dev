@@ -133,14 +133,30 @@ jobs:
             ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
-          if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
-            jq -e --arg operation "$OPERATION_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+          if [ "$DEPLOYMENT_ACTION" = "deploy" ] || [ "$DEPLOYMENT_ACTION" = "rollback" ]; then
+            jq -e --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               type == "object"
               and .schemaVersion == 1
               and (.configurationSnapshotId | test("^[0-9a-fA-F-]{36}$"))
               and (.configurationFingerprint | test("^[0-9a-f]{64}$"))
               and .environmentName == $environment
+              and .projectId == $project
               and .generationId == $generation
+              and .generationStateKey == ("projects/" + $project + "/" + $environment + "/" + $generation + "/terraform.tfstate")
+              and (.platformFoundation.vpcId | test("^vpc-[0-9a-f]+$"))
+              and (.platformFoundation.publicSubnetIds | type == "array" and length >= 2)
+              and (.platformFoundation.ecsClusterArn | startswith("arn:"))
+              and (.platformFoundation.listenerArn | startswith("arn:"))
+              and (.routing.listenerPriority >= 1000 and .routing.listenerPriority <= 19999)
+              and .routing.verificationPriority == (.routing.listenerPriority + 20000)
+              and .projectPersistence.stateKey == ("projects/" + $project + "/" + $environment + "/project/terraform.tfstate")
+              and .projectPersistence.ownershipScope == "project"
+              and (.retiredGenerationCleanup == null or (
+                (.retiredGenerationCleanup.generationId | test("^[0-9a-fA-F-]{36}$"))
+                and .retiredGenerationCleanup.generationId != $generation
+                and .retiredGenerationCleanup.terraformStateKey == ("projects/" + $project + "/" + $environment + "/" + .retiredGenerationCleanup.generationId + "/terraform.tfstate")
+                and (.retiredGenerationCleanup.resourceManifest | type == "object")
+              ))
               and (.environment | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | type == "string")))
               and (.secretReferences | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:"))))
               and (.deploymentContext.schemaVersion == 1)
@@ -179,26 +195,20 @@ jobs:
             jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               type == "object"
               and (.configurationFingerprint | test("^[0-9a-f]{64}$"))
-              and .extinction.projectId == $project
-              and (.extinction.knownGenerationIds | type == "array" and length > 0 and length <= 1000)
-              and all(.extinction.knownGenerationIds[]; test("^[0-9a-fA-F-]{36}$"))
-              and (.extinction.knownGenerationIds | index($generation)) != null
-              and (.extinction.resourceManifest | type == "object")
-              and .extinction.resourceManifest.schemaVersion == 1
-              and .extinction.resourceManifest.projectId == $project
-              and .extinction.resourceManifest.environmentName == $environment
-              and .extinction.resourceManifest.generationId == $generation
-              and .extinction.resourceManifest.ownership.managedBy == "DeployGuard"
-              and .extinction.resourceManifest.ownership.projectId == $project
-              and .extinction.resourceManifest.ownership.generationId == $generation
-              and (. as $root | all([
-                "terraformStateKeys", "terraformStateBuckets", "taskDefinitionArns", "imageUris",
-                "ecrRepositoryNames", "efsFileSystemIds", "efsAccessPointIds", "secretArns",
-                "ecsClusterArns", "ecsServiceArns", "loadBalancerArns", "listenerArns",
-                "targetGroupArns", "securityGroupIds", "subnetIds", "routeTableIds",
-                "internetGatewayIds", "vpcIds", "resourceEvidence"
-              ][]; (. as $key | $root.extinction.resourceManifest[$key] | type == "array")))
-            ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable project-extinction context." >&2; exit 1; }
+              and .projectDeletion.contractVersion == "deployguard.project-delete/v2"
+              and .projectDeletion.projectId == $project
+              and .projectDeletion.environmentName == $environment
+              and .projectDeletion.targetGenerationId == $generation
+              and (.projectDeletion.generations | type == "array" and length > 0 and length <= 1000)
+              and all(.projectDeletion.generations[];
+                (.generationId | test("^[0-9a-fA-F-]{36}$"))
+                and .terraformStateKey == ("projects/" + $project + "/" + $environment + "/" + .generationId + "/terraform.tfstate")
+                and (.resourceManifest | type == "object"))
+              and any(.projectDeletion.generations[]; .generationId == $generation)
+              and .projectDeletion.projectResources.terraformStateKey == ("projects/" + $project + "/" + $environment + "/project/terraform.tfstate")
+              and .projectDeletion.projectResources.ecrRepositoryName == ("deployguard-" + ($project | ascii_downcase))
+              and .projectDeletion.projectResources.runtimeSecretName == ("deployguard/" + $project + "/" + $environment + "/application/runtime")
+            ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable exact-scope project deletion context." >&2; exit 1; }
           else
             jq -e 'type == "object" and (.configurationFingerprint | type == "string")' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable environment references." >&2; exit 1; }
           fi
@@ -213,9 +223,7 @@ jobs:
           SHORT_SHA="${{ inputs.commit_sha }}"
           SHORT_SHA="${SHORT_SHA::12}"
           OPERATION_SUFFIX="$(printf '%s' "$OPERATION_ID" | tr -cd '[:alnum:]' | cut -c1-12)"
-          SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-12)"
-          SAFE_GENERATION="$(printf '%s' "$GENERATION_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-12)"
-          REPOSITORY_NAME="deployguard-${SAFE_PROJECT}-${SAFE_GENERATION}"
+          REPOSITORY_NAME="deployguard-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]' '[:lower:]')"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           [ "${{ inputs.image_tag }}" = "${SHORT_SHA}-${OPERATION_SUFFIX}" ] || { echo "Immutable image tag does not match this operation." >&2; exit 1; }
           echo "image_tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
@@ -232,7 +240,7 @@ jobs:
             REPOSITORY_ARN="$(printf '%s' "$REPOSITORY" | jq -r '.repositories | if length == 1 then .[0].repositoryArn else empty end')"
           elif grep -q 'RepositoryNotFoundException' "$ERROR_FILE"; then
             REPOSITORY="$(aws ecr create-repository --repository-name "$REPOSITORY_NAME" --image-scanning-configuration scanOnPush=false \
-              --tags Key=ManagedBy,Value=DeployGuard Key=DeployGuardProjectId,Value="$PROJECT_ID" Key=Environment,Value="$ENVIRONMENT_NAME" Key=DeployGuardGenerationId,Value="$GENERATION_ID" --output json)"
+              --tags Key=ManagedBy,Value=DeployGuard Key=DeployGuardProjectId,Value="$PROJECT_ID" Key=Environment,Value="$ENVIRONMENT_NAME" Key=DeployGuardScope,Value=project --output json)"
             REPOSITORY_ARN="$(printf '%s' "$REPOSITORY" | jq -r '.repository.repositoryArn // empty')"
           else
             echo "The project image repository could not be verified." >&2
@@ -240,12 +248,12 @@ jobs:
           fi
           [ -n "$REPOSITORY_ARN" ] || { echo "The project image repository identity is ambiguous." >&2; exit 1; }
           TAGS="$(aws ecr list-tags-for-resource --resource-arn "$REPOSITORY_ARN" --output json)"
-          printf '%s' "$TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+          printf '%s' "$TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
             (.tags | map({key: .Key, value: .Value}) | from_entries) as $tags
             | $tags.ManagedBy == "DeployGuard"
               and $tags.DeployGuardProjectId == $project
               and $tags.Environment == $environment
-              and $tags.DeployGuardGenerationId == $generation
+              and $tags.DeployGuardScope == "project"
           ' >/dev/null || { echo "The project image repository failed DeployGuard ownership verification." >&2; exit 1; }
 
       - name: Materialize immutable container contract
@@ -309,18 +317,277 @@ jobs:
           echo "uri=$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install Terraform
-        if: inputs.deployment_action != 'rollback'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
 
+      - name: Prepare project-scoped persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .deployguard/project-terraform
+          cat > .deployguard/project-terraform/main.tf <<'TERRAFORM'
+          terraform {
+            backend "s3" {}
+            required_providers {
+              aws    = { source = "hashicorp/aws", version = "~> 5.0" }
+              random = { source = "hashicorp/random", version = "~> 3.0" }
+            }
+          }
+          provider "aws" { region = var.aws_region }
+          variable "aws_region" { type = string }
+          variable "project_id" { type = string }
+          variable "environment_name" { type = string }
+          variable "vpc_id" { type = string }
+          variable "public_subnet_ids" { type = list(string) }
+          variable "runtime_config" { type = any }
+          data "aws_vpc" "platform" { id = var.vpc_id }
+          locals {
+            database = try(var.runtime_config.managedDatabase, null)
+            enabled  = local.database != null && try(local.database.provider, "") == "managed"
+            prefix   = substr(replace(lower(var.project_id), "_", "-"), 0, 8)
+            name     = "dg-${local.prefix}-database"
+            tags = {
+              ManagedBy            = "DeployGuard"
+              DeployGuardProjectId = var.project_id
+              Environment          = var.environment_name
+              DeployGuardScope     = "project"
+            }
+          }
+          resource "aws_cloudwatch_log_group" "database" {
+            count             = local.enabled ? 1 : 0
+            name              = "/deployguard/${var.project_id}/${var.environment_name}/database"
+            retention_in_days = 14
+            tags              = merge(local.tags, { LogPurpose = "database" })
+          }
+          resource "aws_secretsmanager_secret" "password" {
+            count                   = local.enabled ? 1 : 0
+            name                    = "deployguard/${var.project_id}/${var.environment_name}/database/password"
+            recovery_window_in_days = 0
+            tags                    = merge(local.tags, { SecretPurpose = "database_password" })
+          }
+          resource "random_password" "database" {
+            count            = local.enabled ? 1 : 0
+            length           = 32
+            special          = true
+            override_special = "_-"
+          }
+          resource "aws_secretsmanager_secret_version" "password" {
+            count         = local.enabled ? 1 : 0
+            secret_id     = aws_secretsmanager_secret.password[0].id
+            secret_string = random_password.database[0].result
+            lifecycle { ignore_changes = [secret_string] }
+          }
+          resource "aws_service_discovery_private_dns_namespace" "database" {
+            count = local.enabled ? 1 : 0
+            name  = "project-${var.project_id}.deployguard.local"
+            vpc   = var.vpc_id
+            tags  = merge(local.tags, { ServicePurpose = "database_namespace" })
+          }
+          resource "aws_service_discovery_service" "database" {
+            count = local.enabled ? 1 : 0
+            name  = "db"
+            dns_config {
+              namespace_id = aws_service_discovery_private_dns_namespace.database[0].id
+              dns_records {
+                ttl  = 10
+                type = "A"
+              }
+              routing_policy = "MULTIVALUE"
+            }
+            health_check_custom_config { failure_threshold = 1 }
+            tags = merge(local.tags, { ServicePurpose = "database" })
+          }
+          resource "aws_secretsmanager_secret" "url" {
+            count                   = local.enabled ? 1 : 0
+            name                    = "deployguard/${var.project_id}/${var.environment_name}/database/url"
+            recovery_window_in_days = 0
+            tags                    = merge(local.tags, { SecretPurpose = "database_url" })
+          }
+          resource "aws_secretsmanager_secret_version" "url" {
+            count         = local.enabled ? 1 : 0
+            secret_id     = aws_secretsmanager_secret.url[0].id
+            secret_string = "postgresql://${local.database.databaseUser}:${urlencode(random_password.database[0].result)}@${local.database.host}:${local.database.port}/${local.database.databaseName}"
+            lifecycle { ignore_changes = [secret_string] }
+          }
+          resource "aws_security_group" "database" {
+            count  = local.enabled ? 1 : 0
+            name   = "${local.name}-service"
+            vpc_id = var.vpc_id
+            tags   = local.tags
+            ingress {
+              from_port   = 5432
+              to_port     = 5432
+              protocol    = "tcp"
+              cidr_blocks = [data.aws_vpc.platform.cidr_block]
+            }
+            egress {
+              from_port   = 0
+              to_port     = 0
+              protocol    = "-1"
+              cidr_blocks = ["0.0.0.0/0"]
+            }
+          }
+          resource "aws_security_group" "efs" {
+            count  = local.enabled ? 1 : 0
+            name   = "${local.name}-efs"
+            vpc_id = var.vpc_id
+            tags   = local.tags
+            ingress {
+              from_port   = 2049
+              to_port     = 2049
+              protocol    = "tcp"
+              cidr_blocks = [data.aws_vpc.platform.cidr_block]
+            }
+            egress {
+              from_port   = 0
+              to_port     = 0
+              protocol    = "-1"
+              cidr_blocks = ["0.0.0.0/0"]
+            }
+          }
+          resource "aws_efs_file_system" "database" {
+            count          = local.enabled ? 1 : 0
+            creation_token = "dg-efs-${local.prefix}-${substr(sha256(join(":", [var.project_id, var.environment_name, "project-persistence"])), 0, 40)}"
+            encrypted      = true
+            lifecycle_policy { transition_to_ia = "AFTER_30_DAYS" }
+            tags = merge(local.tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-database", Persistence = "project" })
+          }
+          resource "aws_efs_mount_target" "database" {
+            count           = local.enabled ? length(var.public_subnet_ids) : 0
+            file_system_id  = aws_efs_file_system.database[0].id
+            subnet_id       = var.public_subnet_ids[count.index]
+            security_groups = [aws_security_group.efs[0].id]
+          }
+          resource "aws_efs_access_point" "database" {
+            count          = local.enabled ? 1 : 0
+            file_system_id = aws_efs_file_system.database[0].id
+            posix_user {
+              uid = 999
+              gid = 999
+            }
+            root_directory {
+              path = "/database"
+              creation_info {
+                owner_uid   = 999
+                owner_gid   = 999
+                permissions = "700"
+              }
+            }
+            tags = merge(local.tags, { Persistence = "project" })
+          }
+          resource "aws_iam_role" "execution" {
+            count              = local.enabled ? 1 : 0
+            name               = "${local.name}-execution"
+            assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }] })
+            tags               = local.tags
+          }
+          resource "aws_iam_role_policy" "execution" {
+            count = local.enabled ? 1 : 0
+            name  = "database-runtime"
+            role  = aws_iam_role.execution[0].id
+            policy = jsonencode({ Version = "2012-10-17", Statement = [
+              { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = ["${aws_cloudwatch_log_group.database[0].arn}:*"] },
+              { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [aws_secretsmanager_secret.password[0].arn] }
+            ] })
+          }
+          resource "aws_iam_role" "task" {
+            count              = local.enabled ? 1 : 0
+            name               = "${local.name}-task"
+            assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }] })
+            tags               = local.tags
+          }
+          resource "aws_iam_role_policy" "efs" {
+            count  = local.enabled ? 1 : 0
+            name   = "database-efs"
+            role   = aws_iam_role.task[0].id
+            policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"], Resource = [aws_efs_file_system.database[0].arn], Condition = { StringEquals = { "elasticfilesystem:AccessPointArn" = aws_efs_access_point.database[0].arn } } }] })
+          }
+          resource "aws_ecs_task_definition" "database" {
+            count                    = local.enabled ? 1 : 0
+            family                   = local.name
+            network_mode             = "awsvpc"
+            requires_compatibilities = ["FARGATE"]
+            cpu                      = "512"
+            memory                   = "1024"
+            execution_role_arn       = aws_iam_role.execution[0].arn
+            task_role_arn            = aws_iam_role.task[0].arn
+            skip_destroy             = true
+            tags                     = local.tags
+            container_definitions = jsonencode([{
+              name             = "database", image = "postgres:16@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b", essential = true,
+              portMappings     = [{ containerPort = 5432, hostPort = 5432, protocol = "tcp" }],
+              environment      = [{ name = "POSTGRES_DB", value = local.database.databaseName }, { name = "POSTGRES_USER", value = local.database.databaseUser }],
+              secrets          = [{ name = "POSTGRES_PASSWORD", valueFrom = aws_secretsmanager_secret.password[0].arn }],
+              mountPoints      = [{ sourceVolume = "database-data", containerPath = "/var/lib/postgresql/data", readOnly = false }],
+              healthCheck      = { command = ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"], interval = 10, timeout = 5, retries = 6, startPeriod = 20 },
+              logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.aws_region, awslogs-stream-prefix = "database" } }
+            }])
+            volume {
+              name = "database-data"
+              efs_volume_configuration {
+                file_system_id     = aws_efs_file_system.database[0].id
+                transit_encryption = "ENABLED"
+                authorization_config {
+                  access_point_id = aws_efs_access_point.database[0].id
+                  iam             = "ENABLED"
+                }
+              }
+            }
+          }
+          resource "aws_ecs_service" "database" {
+            count                 = local.enabled ? 1 : 0
+            name                  = local.name
+            cluster               = var.runtime_config.platformFoundation.ecsClusterArn
+            task_definition       = aws_ecs_task_definition.database[0].arn
+            desired_count         = 1
+            launch_type           = "FARGATE"
+            wait_for_steady_state = true
+            tags                  = local.tags
+            network_configuration {
+              subnets          = var.public_subnet_ids
+              security_groups  = [aws_security_group.database[0].id]
+              assign_public_ip = true
+            }
+            service_registries { registry_arn = aws_service_discovery_service.database[0].arn }
+            depends_on = [aws_secretsmanager_secret_version.password, aws_efs_mount_target.database, aws_iam_role_policy.efs, aws_iam_role_policy.execution]
+          }
+          output "database_internal_host" { value = local.enabled ? local.database.host : null }
+          output "database_service_arn" { value = local.enabled ? aws_ecs_service.database[0].id : null }
+          output "database_cloud_map_service_arn" { value = local.enabled ? aws_service_discovery_service.database[0].arn : null }
+          output "database_password_secret_arn" { value = local.enabled ? aws_secretsmanager_secret.password[0].arn : null }
+          output "database_url_secret_arn" { value = local.enabled ? aws_secretsmanager_secret.url[0].arn : null }
+          output "database_efs_file_system_id" { value = local.enabled ? aws_efs_file_system.database[0].id : null }
+          output "database_efs_access_point_id" { value = local.enabled ? aws_efs_access_point.database[0].id : null }
+          TERRAFORM
+          node <<'NODE'
+          const fs = require("fs");
+          const runtime = JSON.parse(fs.readFileSync(".deployguard/runtime-config.json", "utf8"));
+          fs.writeFileSync(".deployguard/project-terraform/terraform.tfvars.json", JSON.stringify({
+            aws_region: process.env.AWS_REGION, project_id: process.env.PROJECT_ID,
+            environment_name: process.env.ENVIRONMENT_NAME, vpc_id: process.env.VPC_ID,
+            public_subnet_ids: process.env.PUBLIC_SUBNET_IDS.split(",").filter(Boolean), runtime_config: runtime,
+          }), { mode: 0o600 });
+          NODE
+          terraform -chdir=.deployguard/project-terraform fmt -check
+          terraform -chdir=.deployguard/project-terraform init -input=false \
+            -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
+            -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/project/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+          terraform -chdir=.deployguard/project-terraform validate
+          if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
+            terraform -chdir=.deployguard/project-terraform plan -input=false -out=project.tfplan
+            terraform -chdir=.deployguard/project-terraform apply -input=false -auto-approve project.tfplan
+          fi
+          if [ "$DEPLOYMENT_ACTION" != "destroy" ]; then
+            terraform -chdir=.deployguard/project-terraform output -json | jq -c 'with_entries(.value = .value.value)' > .deployguard/project-persistence-outputs.json
+          fi
+
       - name: Generate deployment Terraform
-        if: inputs.deployment_action != 'rollback'
-        continue-on-error: ${{ inputs.deployment_action == 'destroy' }}
         shell: bash
         env:
-          IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || 'destroy.invalid' }}
+          IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.deployment_action == 'rollback' && inputs.rollback_image_uri || 'destroy.invalid' }}
         run: |
           set -euo pipefail
           mkdir -p .deployguard/terraform
@@ -346,7 +613,15 @@ jobs:
           variable "runtime_config" {
             type = any
           }
-          locals { name = substr("dg-${replace(lower(var.project_id), "_", "-")}", 0, 28) }
+          variable "project_persistence_outputs" {
+            type    = any
+            default = {}
+          }
+          locals {
+            project_prefix    = substr(replace(lower(var.project_id), "_", "-"), 0, 8)
+            generation_prefix = substr(replace(lower(var.generation_id), "_", "-"), 0, 8)
+            name              = "dg-${local.project_prefix}-${local.generation_prefix}"
+          }
           locals {
             log_group_prefix = var.infrastructure_namespace
             ownership_tags = {
@@ -355,10 +630,10 @@ jobs:
               Environment             = var.environment_name
               DeployGuardGenerationId = var.generation_id
             }
-            runtime_config           = var.runtime_config
-            managed_database         = try(local.runtime_config.managedDatabase, null)
-            managed_database_enabled = local.managed_database != null && try(local.managed_database.provider, "") == "managed"
-            application_secret_arns  = distinct([for reference in values(try(local.runtime_config.secretReferences, {})) : join(":", slice(split(":", reference), 0, 7))])
+            runtime_config              = var.runtime_config
+            managed_database            = try(local.runtime_config.managedDatabase, null)
+            managed_database_configured = local.managed_database != null && try(local.managed_database.provider, "") == "managed"
+            application_secret_arns     = distinct([for reference in values(try(local.runtime_config.secretReferences, {})) : join(":", slice(split(":", reference), 0, 7))])
             app_environment_map = merge(
               { HOST = "0.0.0.0", PORT = tostring(var.app_port) },
               try(local.runtime_config.environment, {}),
@@ -371,40 +646,18 @@ jobs:
             }]
             app_database_secrets = [for key in sort(keys(try(local.managed_database.secretAliases, {}))) : {
               name      = key
-              valueFrom = local.managed_database.secretAliases[key] == "url" ? aws_secretsmanager_secret.database_url[0].arn : aws_secretsmanager_secret.database_password[0].arn
-            }]
+              valueFrom = local.managed_database.secretAliases[key] == "url" ? var.project_persistence_outputs.database_url_secret_arn : var.project_persistence_outputs.database_password_secret_arn
+            } if local.managed_database_configured]
           }
           resource "aws_cloudwatch_log_group" "app" {
             name              = "${local.log_group_prefix}/app"
             retention_in_days = 14
             tags              = merge(local.ownership_tags, { LogPurpose = "app" })
           }
-          resource "aws_cloudwatch_log_group" "database" {
-            name              = "${local.log_group_prefix}/database"
-            retention_in_days = 14
-            tags              = merge(local.ownership_tags, { LogPurpose = "database" })
-          }
           resource "aws_cloudwatch_log_group" "deployment" {
             name              = "${local.log_group_prefix}/deployment"
             retention_in_days = 14
             tags              = merge(local.ownership_tags, { LogPurpose = "deployment" })
-          }
-          resource "aws_security_group" "alb" {
-            name   = "${local.name}-alb"
-            vpc_id = var.vpc_id
-            tags   = local.ownership_tags
-            ingress {
-              from_port   = 80
-              to_port     = 80
-              protocol    = "tcp"
-              cidr_blocks = ["0.0.0.0/0"]
-            }
-            egress {
-              from_port   = 0
-              to_port     = 0
-              protocol    = "-1"
-              cidr_blocks = ["0.0.0.0/0"]
-            }
           }
           resource "aws_security_group" "service" {
             name   = "${local.name}-svc"
@@ -414,7 +667,7 @@ jobs:
               from_port       = var.app_port
               to_port         = var.app_port
               protocol        = "tcp"
-              security_groups = [aws_security_group.alb.id]
+              security_groups = [local.runtime_config.platformFoundation.albSecurityGroupId]
             }
             egress {
               from_port   = 0
@@ -422,14 +675,6 @@ jobs:
               protocol    = "-1"
               cidr_blocks = ["0.0.0.0/0"]
             }
-          }
-          resource "aws_lb" "app" {
-            name               = local.name
-            internal           = false
-            load_balancer_type = "application"
-            security_groups    = [aws_security_group.alb.id]
-            subnets            = var.public_subnet_ids
-            tags               = local.ownership_tags
           }
           resource "aws_lb_target_group" "app" {
             name_prefix = substr(local.name, 0, 6)
@@ -448,19 +693,17 @@ jobs:
               unhealthy_threshold = 3
             }
           }
-          resource "aws_lb_listener" "http" {
-            load_balancer_arn = aws_lb.app.arn
-            port              = 80
-            protocol          = "HTTP"
-            tags              = merge(local.ownership_tags, { DeployGuardResource = "http-listener" })
-            default_action {
+          resource "aws_lb_listener_rule" "candidate" {
+            listener_arn = local.runtime_config.platformFoundation.listenerArn
+            priority     = local.runtime_config.routing.verificationPriority
+            action {
               type             = "forward"
               target_group_arn = aws_lb_target_group.app.arn
             }
-          }
-          resource "aws_ecs_cluster" "app" {
-            name = local.name
-            tags = local.ownership_tags
+            condition {
+              host_header { values = [local.runtime_config.routing.candidateHost] }
+            }
+            tags = merge(local.ownership_tags, { DeployGuardResource = "candidate-route" })
           }
           resource "aws_iam_role" "execution" {
             name               = "${local.name}-execution"
@@ -474,13 +717,12 @@ jobs:
               { Effect = "Allow", Action = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"], Resource = "*" },
               { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"], Resource = [
                 "${aws_cloudwatch_log_group.app.arn}:*",
-                "${aws_cloudwatch_log_group.database.arn}:*",
                 "${aws_cloudwatch_log_group.deployment.arn}:*"
               ] }
             ] })
           }
           resource "aws_iam_role_policy" "runtime_secrets" {
-            count = local.managed_database_enabled || length(local.application_secret_arns) > 0 ? 1 : 0
+            count = local.managed_database_configured || length(local.application_secret_arns) > 0 ? 1 : 0
             name  = "runtime-secrets"
             role  = aws_iam_role.execution.id
             policy = jsonencode({ Version = "2012-10-17", Statement = [{
@@ -488,198 +730,9 @@ jobs:
               Action = ["secretsmanager:GetSecretValue"]
               Resource = concat(
                 local.application_secret_arns,
-                local.managed_database_enabled ? [aws_secretsmanager_secret.database_password[0].arn, aws_secretsmanager_secret.database_url[0].arn] : []
+                local.managed_database_configured ? [var.project_persistence_outputs.database_password_secret_arn, var.project_persistence_outputs.database_url_secret_arn] : []
               )
             }] })
-          }
-          resource "aws_secretsmanager_secret" "database_password" {
-            count                   = local.managed_database_enabled ? 1 : 0
-            name                    = "deployguard/${var.project_id}/${var.environment_name}/${var.generation_id}/database/password"
-            recovery_window_in_days = 0
-            tags                    = merge(local.ownership_tags, { SecretPurpose = "database_password" })
-          }
-          resource "random_password" "database" {
-            count            = local.managed_database_enabled ? 1 : 0
-            length           = 32
-            special          = true
-            override_special = "_-"
-          }
-          resource "aws_secretsmanager_secret_version" "database_password" {
-            count         = local.managed_database_enabled ? 1 : 0
-            secret_id     = aws_secretsmanager_secret.database_password[0].id
-            secret_string = random_password.database[0].result
-            lifecycle { ignore_changes = [secret_string] }
-          }
-          resource "aws_service_discovery_private_dns_namespace" "database" {
-            count = local.managed_database_enabled ? 1 : 0
-            name  = "project-${var.project_id}.deployguard.local"
-            vpc   = var.vpc_id
-            tags  = merge(local.ownership_tags, { ServicePurpose = "database_namespace" })
-          }
-          resource "aws_service_discovery_service" "database" {
-            count = local.managed_database_enabled ? 1 : 0
-            name  = "db"
-            dns_config {
-              namespace_id = aws_service_discovery_private_dns_namespace.database[0].id
-              dns_records {
-                ttl  = 10
-                type = "A"
-              }
-              routing_policy = "MULTIVALUE"
-            }
-            health_check_custom_config { failure_threshold = 1 }
-            tags = merge(local.ownership_tags, { ServicePurpose = "database" })
-          }
-          resource "aws_secretsmanager_secret" "database_url" {
-            count                   = local.managed_database_enabled ? 1 : 0
-            name                    = "deployguard/${var.project_id}/${var.environment_name}/${var.generation_id}/database/url"
-            recovery_window_in_days = 0
-            tags                    = merge(local.ownership_tags, { SecretPurpose = "database_url" })
-          }
-          resource "aws_secretsmanager_secret_version" "database_url" {
-            count         = local.managed_database_enabled ? 1 : 0
-            secret_id     = aws_secretsmanager_secret.database_url[0].id
-            secret_string = "postgresql://${local.managed_database.databaseUser}:${urlencode(random_password.database[0].result)}@${local.managed_database.host}:${local.managed_database.port}/${local.managed_database.databaseName}"
-            lifecycle { ignore_changes = [secret_string] }
-          }
-          resource "aws_security_group" "database" {
-            count  = local.managed_database_enabled ? 1 : 0
-            name   = "${local.name}-db"
-            vpc_id = var.vpc_id
-            tags   = local.ownership_tags
-            ingress {
-              from_port       = local.managed_database.port
-              to_port         = local.managed_database.port
-              protocol        = "tcp"
-              security_groups = [aws_security_group.service.id]
-            }
-            egress {
-              from_port   = 0
-              to_port     = 0
-              protocol    = "-1"
-              cidr_blocks = ["0.0.0.0/0"]
-            }
-          }
-          resource "aws_security_group" "database_efs" {
-            count  = local.managed_database_enabled ? 1 : 0
-            name   = "${local.name}-db-efs"
-            vpc_id = var.vpc_id
-            tags   = local.ownership_tags
-            ingress {
-              from_port       = 2049
-              to_port         = 2049
-              protocol        = "tcp"
-              security_groups = [aws_security_group.database[0].id]
-            }
-            egress {
-              from_port   = 0
-              to_port     = 0
-              protocol    = "-1"
-              cidr_blocks = ["0.0.0.0/0"]
-            }
-          }
-          resource "aws_efs_file_system" "database" {
-            count          = local.managed_database_enabled ? 1 : 0
-            creation_token = "dg-efs-${substr(replace(lower(var.project_id), "_", "-"), 0, 8)}-${substr(replace(lower(var.environment_name), "_", "-"), 0, 8)}-${substr(sha256(join(":", [var.project_id, var.environment_name, var.generation_id])), 0, 32)}"
-            encrypted      = true
-            lifecycle_policy { transition_to_ia = "AFTER_30_DAYS" }
-            tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-${var.generation_id}-database", Persistence = "generation" })
-          }
-          resource "aws_efs_mount_target" "database" {
-            count           = local.managed_database_enabled ? length(var.public_subnet_ids) : 0
-            file_system_id  = aws_efs_file_system.database[0].id
-            subnet_id       = var.public_subnet_ids[count.index]
-            security_groups = [aws_security_group.database_efs[0].id]
-          }
-          resource "aws_efs_access_point" "database" {
-            count          = local.managed_database_enabled ? 1 : 0
-            file_system_id = aws_efs_file_system.database[0].id
-            posix_user {
-              uid = 999
-              gid = 999
-            }
-            root_directory {
-              path = "/database"
-              creation_info {
-                owner_uid   = 999
-                owner_gid   = 999
-                permissions = "700"
-              }
-            }
-            tags = merge(local.ownership_tags, { Name = "deployguard-${var.project_id}-${var.environment_name}-${var.generation_id}-database", Persistence = "generation" })
-          }
-          resource "aws_iam_role" "database_task" {
-            count              = local.managed_database_enabled ? 1 : 0
-            name               = "${local.name}-database-task"
-            assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "ecs-tasks.amazonaws.com" }, Action = "sts:AssumeRole" }] })
-            tags               = local.ownership_tags
-          }
-          resource "aws_iam_role_policy" "database_efs" {
-            count = local.managed_database_enabled ? 1 : 0
-            name  = "database-efs"
-            role  = aws_iam_role.database_task[0].id
-            policy = jsonencode({ Version = "2012-10-17", Statement = [{
-              Effect    = "Allow"
-              Action    = ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"]
-              Resource  = [aws_efs_file_system.database[0].arn]
-              Condition = { StringEquals = { "elasticfilesystem:AccessPointArn" = aws_efs_access_point.database[0].arn } }
-            }] })
-          }
-          resource "aws_ecs_task_definition" "database" {
-            count                    = local.managed_database_enabled ? 1 : 0
-            family                   = "${local.name}-database"
-            network_mode             = "awsvpc"
-            requires_compatibilities = ["FARGATE"]
-            cpu                      = "512"
-            memory                   = "1024"
-            execution_role_arn       = aws_iam_role.execution.arn
-            task_role_arn            = aws_iam_role.database_task[0].arn
-            skip_destroy             = true
-            tags                     = local.ownership_tags
-            container_definitions = jsonencode([{
-              name         = "database"
-              image        = "postgres:16@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b"
-              essential    = true
-              portMappings = [{ containerPort = local.managed_database.port, hostPort = local.managed_database.port, protocol = "tcp" }]
-              environment = [
-                { name = "POSTGRES_DB", value = local.managed_database.databaseName },
-                { name = "POSTGRES_USER", value = local.managed_database.databaseUser }
-              ]
-              secrets     = [{ name = "POSTGRES_PASSWORD", valueFrom = aws_secretsmanager_secret.database_password[0].arn }]
-              mountPoints = [{ sourceVolume = "database-data", containerPath = "/var/lib/postgresql/data", readOnly = false }]
-              healthCheck = { command = ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"], interval = 10, timeout = 5, retries = 6, startPeriod = 20 }
-              logConfiguration = { logDriver = "awslogs", options = {
-                awslogs-group = aws_cloudwatch_log_group.database.name, awslogs-region = var.aws_region, awslogs-stream-prefix = "database"
-              } }
-            }])
-            volume {
-              name = "database-data"
-              efs_volume_configuration {
-                file_system_id     = aws_efs_file_system.database[0].id
-                transit_encryption = "ENABLED"
-                authorization_config {
-                  access_point_id = aws_efs_access_point.database[0].id
-                  iam             = "ENABLED"
-                }
-              }
-            }
-          }
-          resource "aws_ecs_service" "database" {
-            count                 = local.managed_database_enabled ? 1 : 0
-            name                  = "${local.name}-database"
-            cluster               = aws_ecs_cluster.app.id
-            task_definition       = aws_ecs_task_definition.database[0].arn
-            desired_count         = 1
-            launch_type           = "FARGATE"
-            wait_for_steady_state = true
-            tags                  = local.ownership_tags
-            network_configuration {
-              subnets          = var.public_subnet_ids
-              security_groups  = [aws_security_group.database[0].id]
-              assign_public_ip = true
-            }
-            service_registries { registry_arn = aws_service_discovery_service.database[0].arn }
-            depends_on = [aws_secretsmanager_secret_version.database_password, aws_efs_mount_target.database, aws_iam_role_policy.database_efs, aws_iam_role_policy.runtime_secrets]
           }
           resource "aws_ecs_task_definition" "app" {
             family                   = local.name
@@ -706,7 +759,7 @@ jobs:
           }
           resource "aws_ecs_service" "app" {
             name                  = local.name
-            cluster               = aws_ecs_cluster.app.id
+            cluster               = local.runtime_config.platformFoundation.ecsClusterArn
             task_definition       = aws_ecs_task_definition.app.arn
             desired_count         = 1
             launch_type           = "FARGATE"
@@ -722,24 +775,31 @@ jobs:
               container_name   = "app"
               container_port   = var.app_port
             }
-            depends_on = [aws_lb_listener.http, aws_iam_role_policy.execution, aws_iam_role_policy.runtime_secrets, aws_ecs_service.database]
+            depends_on = [aws_lb_listener_rule.candidate, aws_iam_role_policy.execution, aws_iam_role_policy.runtime_secrets]
           }
-          output "deployed_url" { value = "http://${aws_lb.app.dns_name}" }
-          output "cluster_name" { value = aws_ecs_cluster.app.name }
+          output "deployed_url" { value = "http://${local.runtime_config.routing.candidateHost}" }
+          output "production_url" { value = "http://${local.runtime_config.routing.productionHost}" }
+          output "cluster_name" { value = local.runtime_config.platformFoundation.ecsClusterName }
           output "service_name" { value = aws_ecs_service.app.name }
+          output "ecs_service_arn" { value = aws_ecs_service.app.id }
+          output "target_group_arn" { value = aws_lb_target_group.app.arn }
+          output "candidate_listener_rule_arn" { value = aws_lb_listener_rule.candidate.arn }
           output "task_definition_arn" { value = aws_ecs_task_definition.app.arn }
-          output "database_internal_host" { value = local.managed_database_enabled ? local.managed_database.host : null }
-          output "database_service_arn" { value = local.managed_database_enabled ? aws_ecs_service.database[0].id : null }
-          output "database_cloud_map_service_arn" { value = local.managed_database_enabled ? aws_service_discovery_service.database[0].arn : null }
-          output "database_password_secret_arn" { value = local.managed_database_enabled ? aws_secretsmanager_secret.database_password[0].arn : null }
-          output "database_url_secret_arn" { value = local.managed_database_enabled ? aws_secretsmanager_secret.database_url[0].arn : null }
-          output "database_efs_file_system_id" { value = local.managed_database_enabled ? aws_efs_file_system.database[0].id : null }
-          output "database_efs_access_point_id" { value = local.managed_database_enabled ? aws_efs_access_point.database[0].id : null }
+          output "database_internal_host" { value = local.managed_database_configured ? var.project_persistence_outputs.database_internal_host : null }
+          output "database_service_arn" { value = local.managed_database_configured ? var.project_persistence_outputs.database_service_arn : null }
+          output "database_cloud_map_service_arn" { value = local.managed_database_configured ? var.project_persistence_outputs.database_cloud_map_service_arn : null }
+          output "database_password_secret_arn" { value = local.managed_database_configured ? var.project_persistence_outputs.database_password_secret_arn : null }
+          output "database_url_secret_arn" { value = local.managed_database_configured ? var.project_persistence_outputs.database_url_secret_arn : null }
+          output "database_efs_file_system_id" { value = local.managed_database_configured ? var.project_persistence_outputs.database_efs_file_system_id : null }
+          output "database_efs_access_point_id" { value = local.managed_database_configured ? var.project_persistence_outputs.database_efs_access_point_id : null }
 
           TERRAFORM
           IMAGE_URI="$IMAGE_URI" node <<'NODE'
           const fs = require("fs");
           const runtime = JSON.parse(fs.readFileSync(".deployguard/runtime-config.json", "utf8"));
+          const persistence = fs.existsSync(".deployguard/project-persistence-outputs.json")
+            ? JSON.parse(fs.readFileSync(".deployguard/project-persistence-outputs.json", "utf8"))
+            : {};
           fs.writeFileSync(".deployguard/terraform/terraform.tfvars.json", JSON.stringify({
             aws_region: process.env.AWS_REGION,
             project_id: process.env.PROJECT_ID,
@@ -752,11 +812,11 @@ jobs:
             health_check_path: process.env.HEALTH_CHECK_PATH,
             image_uri: process.env.IMAGE_URI,
             runtime_config: runtime,
+            project_persistence_outputs: persistence,
           }), { mode: 0o600 });
           NODE
 
       - name: Terraform plan and apply
-        if: inputs.deployment_action == 'deploy'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
@@ -768,456 +828,13 @@ jobs:
             -backend-config="region=$AWS_REGION" \
             -backend-config="encrypt=true" \
             -backend-config="use_lockfile=true"
-          STATE_JSON_FILE="$(mktemp)"
-          STATE_JSON_ERROR_FILE="$(mktemp)"
-          if ! terraform show -json >"$STATE_JSON_FILE" 2>"$STATE_JSON_ERROR_FILE"; then
-            echo "Terraform state JSON could not be read; refusing unsafe import preparation." >&2
-            sed -n '1,20p' "$STATE_JSON_ERROR_FILE" >&2
-            exit 1
-          fi
-          printf 'DEPLOYGUARD_STAGE=terraform_state_preparation\n'
-          if ! jq -e '
-            type == "object"
-            and (.format_version | type == "string")
-            and (
-              (has("values") | not)
-              or (
-                (.values | type == "object")
-                and (.values.root_module | type == "object")
-              )
-            )
-          ' "$STATE_JSON_FILE" >/dev/null; then
-            echo "Terraform returned malformed or incomplete state JSON; refusing unsafe import preparation." >&2
-            exit 1
-          fi
-          state_resource_json() {
-            local address="$1" match_count
-            if ! match_count="$(jq -r --arg address "$address" '
-              def modules: ., (.child_modules[]? | modules);
-              [(.values.root_module? | modules | .resources[]? | select(.address == $address))] | length
-            ' "$STATE_JSON_FILE")"; then
-              echo "Terraform state JSON could not be parsed while checking $address; refusing unsafe preparation." >&2
-              exit 1
-            fi
-            case "$match_count" in
-              0) return 1 ;;
-              1) ;;
-              *) echo "Terraform state contains an ambiguous address $address; refusing unsafe preparation." >&2; exit 1 ;;
-            esac
-            jq -ce --arg address "$address" '
-              def modules: ., (.child_modules[]? | modules);
-              .values.root_module? | modules | .resources[]? | select(.address == $address)
-            ' "$STATE_JSON_FILE" || {
-              echo "Terraform state identity could not be extracted for $address; refusing unsafe preparation." >&2
-              exit 1
-            }
-          }
-          state_has() {
-            state_resource_json "$1" >/dev/null
-          }
-          state_identity_is_owned() {
-            local address="$1" expected_identifier="$2" ownership_mode="${3:-owned}" state_json
-            state_json="$(state_resource_json "$address")"
-            printf '%s' "$state_json" | jq -e \
-              --arg expected "$expected_identifier" \
-              --arg project "$PROJECT_ID" \
-              --arg environment "$ENVIRONMENT_NAME" \
-              --arg generation "$GENERATION_ID" \
-              --arg ownership_mode "$ownership_mode" '
-                (.values // {}) as $attributes
-                | (($attributes.id // "") == $expected
-                  or ($attributes.arn // "") == $expected
-                  or ($attributes.name // "") == $expected)
-                and ($ownership_mode == "child" or (
-                  ($attributes.tags_all // $attributes.tags // {}) as $tags
-                  | $tags.ManagedBy == "DeployGuard"
-                    and $tags.DeployGuardProjectId == $project
-                    and $tags.Environment == $environment
-                    and $tags.DeployGuardGenerationId == $generation
-                ))
-              ' >/dev/null || {
-                echo "Terraform state address $address is bound to a foreign, stale, untagged, or unexpected object; refusing preparation." >&2
-                exit 1
-              }
-          }
-          trust_or_import_owned() {
-            local address="$1" import_identifier="$2" ownership_mode="${3:-owned}" state_identifier="${4:-$2}"
-            if state_has "$address"; then
-              state_identity_is_owned "$address" "$state_identifier" "$ownership_mode"
-              echo "Terraform already manages the verified current-generation object at $address; import skipped."
-              return 0
-            fi
-            terraform import -input=false "$address" "$import_identifier" >/dev/null
-          }
-          reconcile_log_group() {
-            local purpose="$1"
-            local address="aws_cloudwatch_log_group.$purpose"
-            local name="$INFRASTRUCTURE_NAMESPACE/$purpose"
-            local account_id arn tags error_file
-            account_id="$(aws sts get-caller-identity --query Account --output text)"
-            arn="arn:aws:logs:$AWS_REGION:$account_id:log-group:$name"
-            error_file="$(mktemp)"
-            if ! tags="$(aws logs list-tags-for-resource --resource-arn "$arn" --query tags --output json 2>"$error_file")"; then
-              if grep -q 'ResourceNotFoundException' "$error_file"; then
-                rm -f "$error_file"
-                state_has "$address" && { echo "Terraform state contains $address but the expected log group is absent." >&2; exit 1; }
-                return 0
-              fi
-              rm -f "$error_file"
-              echo "CloudWatch log group $name could not be verified." >&2
-              exit 1
-            fi
-            rm -f "$error_file"
-            printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg purpose "$purpose" \
-              '.ManagedBy == "DeployGuard" and .DeployGuardProjectId == $project and .Environment == $environment and .DeployGuardGenerationId == $generation and .LogPurpose == $purpose' >/dev/null || {
-                echo "CloudWatch log group $name failed DeployGuard ownership verification." >&2
-                exit 1
-              }
-            trust_or_import_owned "$address" "$name"
-          }
-          reconcile_log_group app
-          reconcile_log_group database
-          reconcile_log_group deployment
-          verify_owned_tags() {
-            local tags="$1"
-            printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-              map({key: (.key // .Key), value: (.value // .Value)}) | from_entries
-              | .ManagedBy == "DeployGuard"
-                and .DeployGuardProjectId == $project
-                and .Environment == $environment
-                and .DeployGuardGenerationId == $generation
-            ' >/dev/null
-          }
-          reconcile_managed_secret() {
-            local purpose="$1" address="$2" version_address="$3"
-            local name="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/database/$purpose"
-            local description error_file arn version_id
-            error_file="$(mktemp)"
-            if ! description="$(aws secretsmanager describe-secret --secret-id "$name" --output json 2>"$error_file")"; then
-              if grep -q 'ResourceNotFoundException' "$error_file"; then
-                rm -f "$error_file"
-                { state_has "$address" || state_has "$version_address"; } && { echo "Terraform state contains a managed-secret address but the expected secret is absent." >&2; exit 1; }
-                return 0
-              fi
-              rm -f "$error_file"
-              echo "Managed database secret identity could not be verified." >&2
-              exit 1
-            fi
-            rm -f "$error_file"
-            verify_owned_tags "$(printf '%s' "$description" | jq -c '.Tags // []')" || { echo "Managed database secret failed DeployGuard ownership verification." >&2; exit 1; }
-            if [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "true" ]; then
-              aws secretsmanager restore-secret --secret-id "$name" >/dev/null
-              for attempt in $(seq 1 10); do
-                description="$(aws secretsmanager describe-secret --secret-id "$name" --output json)"
-                [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "false" ] && break
-                [ "$attempt" -lt 10 ] && sleep 2
-              done
-              [ "$(printf '%s' "$description" | jq -r 'has("DeletedDate")')" = "false" ] || { echo "Managed database secret restoration did not complete in time." >&2; exit 1; }
-            fi
-            arn="$(printf '%s' "$description" | jq -r '.ARN')"
-            trust_or_import_owned "$address" "$arn"
-            version_id="$(printf '%s' "$description" | jq -r '.VersionIdsToStages | to_entries | map(select(.value | index("AWSCURRENT"))) | if length == 1 then .[0].key else empty end')"
-            [ -n "$version_id" ] || { echo "Managed database secret has no unambiguous current version." >&2; exit 1; }
-            if ! state_has "$version_address"; then
-              trust_or_import_owned "$version_address" "$arn|$version_id" child
-            elif state_identity_is_owned "$version_address" "$arn|$version_id" child && terraform state show -no-color "$version_address" 2>/dev/null | sed -n '1p' | grep -Fq '(tainted)'; then
-              terraform untaint "$version_address" >/dev/null
-            fi
-          }
-          reconcile_retained_database_efs() {
-            local filesystem_address='aws_efs_file_system.database[0]'
-            local access_point_address='aws_efs_access_point.database[0]'
-            local project_prefix environment_prefix identity_hash creation_token
-            local filesystems filesystem_count filesystem filesystem_id lifecycle
-            local access_points access_point_count access_point access_point_id
-            project_prefix="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
-            environment_prefix="$(printf '%s' "$ENVIRONMENT_NAME" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
-            identity_hash="$(printf '%s:%s:%s' "$PROJECT_ID" "$ENVIRONMENT_NAME" "$GENERATION_ID" | sha256sum | cut -c1-32)"
-            creation_token="dg-efs-$project_prefix-$environment_prefix-$identity_hash"
-            case "$filesystem_address|$access_point_address" in
-              'aws_efs_file_system.database[0]|aws_efs_access_point.database[0]') ;;
-              *) echo "Unexpected retained EFS Terraform address." >&2; exit 1 ;;
-            esac
-            filesystems="$(aws efs describe-file-systems --output json)"
-            filesystem_count="$(printf '%s' "$filesystems" | jq --arg token "$creation_token" '[.FileSystems[]? | select(.CreationToken == $token)] | length')"
-            if [ "$filesystem_count" -eq 0 ]; then
-              echo "The authoritative deployment context requires an established persistent filesystem, but AWS verification could not find it." >&2
-              exit 1
-            fi
-            [ "$filesystem_count" -eq 1 ] || { echo "Retained database filesystem identity is ambiguous." >&2; exit 1; }
-            filesystem="$(printf '%s' "$filesystems" | jq -c --arg token "$creation_token" '.FileSystems[] | select(.CreationToken == $token)')"
-            verify_owned_tags "$(printf '%s' "$filesystem" | jq -c '.Tags // []')" \
-              && printf '%s' "$filesystem" | jq -e '
-                .LifeCycleState == "available"
-                and .Encrypted == true
-                and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries).Persistence == "generation")
-              ' >/dev/null \
-              || { echo "Retained database filesystem failed ownership or lifecycle verification." >&2; exit 1; }
-            filesystem_id="$(printf '%s' "$filesystem" | jq -r '.FileSystemId')"
-            RECONCILED_DATABASE_FILESYSTEM_ID="$filesystem_id"
-            lifecycle="$(aws efs describe-lifecycle-configuration --file-system-id "$filesystem_id" --output json)"
-            printf '%s' "$lifecycle" | jq -e '[.LifecyclePolicies[]? | select(.TransitionToIA == "AFTER_30_DAYS")] | length == 1' >/dev/null \
-              || { echo "Retained database filesystem lifecycle configuration is incompatible." >&2; exit 1; }
-
-            access_points="$(aws efs describe-access-points --file-system-id "$filesystem_id" --output json)"
-            access_point_count="$(printf '%s' "$access_points" | jq --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg filesystem_id "$filesystem_id" '
-              [.AccessPoints[]? | select(
-                .FileSystemId == $filesystem_id
-                and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                  | $tags.ManagedBy == "DeployGuard"
-                    and $tags.DeployGuardProjectId == $project
-                    and $tags.Environment == $environment
-                    and $tags.DeployGuardGenerationId == $generation
-                    and $tags.Persistence == "generation")
-              )] | length
-            ')"
-            [ "$access_point_count" -eq 1 ] || {
-              [ "$access_point_count" -eq 0 ] \
-                && echo "A compatible retained database access point was not found." >&2 \
-                || echo "Retained database access-point identity is ambiguous." >&2
-              exit 1
-            }
-            access_point="$(printf '%s' "$access_points" | jq -c --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg filesystem_id "$filesystem_id" '
-              .AccessPoints[] | select(
-                .FileSystemId == $filesystem_id
-                and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                  | $tags.ManagedBy == "DeployGuard"
-                    and $tags.DeployGuardProjectId == $project
-                    and $tags.Environment == $environment
-                    and $tags.DeployGuardGenerationId == $generation
-                    and $tags.Persistence == "generation")
-              )
-            ')"
-            printf '%s' "$access_point" | jq -e --arg filesystem_id "$filesystem_id" '
-              .FileSystemId == $filesystem_id
-              and (.PosixUser.Uid | tostring) == "999"
-              and (.PosixUser.Gid | tostring) == "999"
-              and ((.PosixUser.SecondaryGids // []) | length) == 0
-              and .RootDirectory.Path == "/database"
-              and (.RootDirectory.CreationInfo.OwnerUid | tostring) == "999"
-              and (.RootDirectory.CreationInfo.OwnerGid | tostring) == "999"
-              and .RootDirectory.CreationInfo.Permissions == "700"
-            ' >/dev/null || { echo "Retained database access-point configuration is incompatible." >&2; exit 1; }
-            access_point_id="$(printf '%s' "$access_point" | jq -r '.AccessPointId')"
-
-            trust_or_import_owned "$filesystem_address" "$filesystem_id"
-            trust_or_import_owned "$access_point_address" "$access_point_id"
-          }
+          # A generation is authoritative only through its isolated state key.
+          # Fresh candidates use only authoritative identities created in this
+          # state; retries use the same immutable generation state.
           MANAGED_DATABASE_ENABLED="$(jq -r '.managedDatabase != null' ../runtime-config.json)"
-          DEPLOYMENT_MODE="$(jq -r '.deploymentContext.deploymentMode' ../runtime-config.json)"
-          PERSISTENT_STATE="$(jq -r '.deploymentContext.persistentState' ../runtime-config.json)"
-          RECOVERY_EVIDENCE_AVAILABLE="$(jq -r '.deploymentContext.recoveryEvidenceAvailable' ../runtime-config.json)"
-          if [ "$MANAGED_DATABASE_ENABLED" = "true" ]; then
-            # Existing secrets are reconciled only as Terraform resource
-            # identities. Their presence never establishes persistent data.
-            reconcile_managed_secret password 'aws_secretsmanager_secret.database_password[0]' 'aws_secretsmanager_secret_version.database_password[0]'
-            reconcile_managed_secret url 'aws_secretsmanager_secret.database_url[0]' 'aws_secretsmanager_secret_version.database_url[0]'
-            if [ "$PERSISTENT_STATE" = "PERSISTENT" ]; then
-              # The backend's immutable deployment context is the sole source
-              # of truth for whether retained database data must exist.
-              reconcile_retained_database_efs
-            else
-              echo "The authoritative deployment context does not contain an established persistent generation; retained EFS adoption is skipped."
-            fi
-          fi
-          reconcile_security_group() {
-            local address="$1" name="$2" result count identifier
-            result="$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$name" "Name=vpc-id,Values=$VPC_ID" --output json)"
-            count="$(printf '%s' "$result" | jq '.SecurityGroups | length')"
-            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected security group is absent." >&2; exit 1; }; return 0; fi
-            [ "$count" -eq 1 ] || { echo "Existing security-group identity is ambiguous." >&2; exit 1; }
-            verify_owned_tags "$(printf '%s' "$result" | jq -c '.SecurityGroups[0].Tags // []')" || { echo "Existing security group failed DeployGuard ownership verification." >&2; exit 1; }
-            identifier="$(printf '%s' "$result" | jq -r '.SecurityGroups[0].GroupId')"
-            trust_or_import_owned "$address" "$identifier"
-          }
-          reconcile_ecs_cluster() {
-            local result count arn
-            result="$(aws ecs describe-clusters --clusters "$RESOURCE_NAME" --include TAGS --output json)"
-            count="$(printf '%s' "$result" | jq '[.clusters[]? | select(.status == "ACTIVE")] | length')"
-            if [ "$count" -eq 0 ]; then state_has "aws_ecs_cluster.app" && { echo "Terraform state contains aws_ecs_cluster.app but the expected cluster is absent." >&2; exit 1; }; return 0; fi
-            [ "$count" -eq 1 ] || { echo "Existing ECS cluster identity is ambiguous." >&2; exit 1; }
-            verify_owned_tags "$(printf '%s' "$result" | jq -c '.clusters[0].tags // []')" || { echo "Existing ECS cluster failed DeployGuard ownership verification." >&2; exit 1; }
-            arn="$(printf '%s' "$result" | jq -r '.clusters[0].clusterArn')"
-            trust_or_import_owned "aws_ecs_cluster.app" "$arn"
-          }
-          reconcile_ecs_service() {
-            local result count arn error_file
-            error_file="$(mktemp)"
-            if ! result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" --include TAGS --output json 2>"$error_file")"; then
-              if grep -q 'ClusterNotFoundException' "$error_file"; then
-                rm -f "$error_file"
-                state_has "aws_ecs_service.app" && { echo "Terraform state contains aws_ecs_service.app but the expected service is absent." >&2; exit 1; }
-                return 0
-              fi
-              rm -f "$error_file"
-              echo "Existing ECS service could not be verified." >&2
-              exit 1
-            fi
-            rm -f "$error_file"
-            count="$(printf '%s' "$result" | jq '[.services[]? | select(.status == "ACTIVE")] | length')"
-            if [ "$count" -eq 0 ]; then state_has "aws_ecs_service.app" && { echo "Terraform state contains aws_ecs_service.app but the expected service is absent." >&2; exit 1; }; return 0; fi
-            [ "$count" -eq 1 ] || { echo "Existing ECS service identity is ambiguous." >&2; exit 1; }
-            verify_owned_tags "$(printf '%s' "$result" | jq -c '.services[0].tags // []')" || { echo "Existing ECS service failed DeployGuard ownership verification." >&2; exit 1; }
-            arn="$(printf '%s' "$result" | jq -r '.services[0].serviceArn')"
-            trust_or_import_owned "aws_ecs_service.app" "$RESOURCE_NAME/$RESOURCE_NAME" owned "$arn"
-          }
-          reconcile_load_balancer() {
-            local address="aws_lb.app" result arn tags error_file
-            error_file="$(mktemp)"
-            if ! result="$(aws elbv2 describe-load-balancers --names "$RESOURCE_NAME" --output json 2>"$error_file")"; then
-              if grep -q 'LoadBalancerNotFound' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the expected load balancer is absent." >&2; exit 1; }; return 0; fi
-              echo "Existing load balancer could not be verified." >&2
-              exit 1
-            fi
-            [ "$(printf '%s' "$result" | jq '.LoadBalancers | length')" -eq 1 ] || { echo "Existing load-balancer identity is ambiguous." >&2; exit 1; }
-            arn="$(printf '%s' "$result" | jq -r '.LoadBalancers[0].LoadBalancerArn')"
-            tags="$(aws elbv2 describe-tags --resource-arns "$arn" --output json | jq -c '.TagDescriptions[0].Tags // []')"
-            verify_owned_tags "$tags" || { echo "Existing load balancer failed DeployGuard ownership verification." >&2; exit 1; }
-            RECONCILED_LOAD_BALANCER_ARN="$arn"
-            trust_or_import_owned "$address" "$arn"
-          }
-          reconcile_target_group() {
-            local address="aws_lb_target_group.app" targets candidates='[]' count arn candidate tags
-            if state_has "$address"; then
-              arn="$(state_resource_json "$address" | jq -r '.values.arn // .values.id // empty')"
-              [ -n "$arn" ] || { echo "Terraform target-group state identity is missing." >&2; exit 1; }
-              targets="$(aws elbv2 describe-target-groups --target-group-arns "$arn" --output json)" || { echo "The state-managed target group could not be inspected." >&2; exit 1; }
-              [ "$(printf '%s' "$targets" | jq '.TargetGroups | length')" -eq 1 ] || { echo "The state-managed target group is absent or ambiguous." >&2; exit 1; }
-            else
-              [ -n "${RECONCILED_LOAD_BALANCER_ARN:-}" ] || return 0
-              targets="$(aws elbv2 describe-target-groups --load-balancer-arn "$RECONCILED_LOAD_BALANCER_ARN" --output json)" || { echo "Existing target groups could not be inspected." >&2; exit 1; }
-            fi
-            while IFS= read -r candidate; do
-              [ -n "$candidate" ] || continue
-              tags="$(aws elbv2 describe-tags --resource-arns "$candidate" --output json | jq -c '.TagDescriptions[0].Tags // []')" || { echo "Existing target-group tags could not be inspected." >&2; exit 1; }
-              if verify_owned_tags "$tags" && printf '%s' "$tags" | jq -e 'map({key:.Key,value:.Value}) | from_entries | .DeployGuardResource == "app-target-group"' >/dev/null; then
-                candidates="$(printf '%s' "$candidates" | jq -c --arg arn "$candidate" '. + [$arn]')"
-              fi
-            done < <(printf '%s' "$targets" | jq -r '.TargetGroups[]?.TargetGroupArn')
-            count="$(printf '%s' "$candidates" | jq 'length')"
-            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected target group is absent or foreign." >&2; exit 1; }; return 0; fi
-            [ "$count" -eq 1 ] || { echo "Existing target-group identity is ambiguous." >&2; exit 1; }
-            arn="$(printf '%s' "$candidates" | jq -r '.[0]')"
-            trust_or_import_owned "$address" "$arn"
-          }
-          reconcile_http_listener() {
-            local address="aws_lb_listener.http" listener count arn tags
-            if [ -z "${RECONCILED_LOAD_BALANCER_ARN:-}" ]; then
-              state_has "$address" && { echo "Terraform state contains $address but its expected load balancer is absent." >&2; exit 1; }
-              return 0
-            fi
-            listener="$(aws elbv2 describe-listeners --load-balancer-arn "$RECONCILED_LOAD_BALANCER_ARN" --output json)" || { echo "Existing listener identity could not be inspected." >&2; exit 1; }
-            count="$(printf '%s' "$listener" | jq '[.Listeners[]? | select(.Port == 80 and .Protocol == "HTTP")] | length')"
-            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected HTTP listener is absent." >&2; exit 1; }; return 0; fi
-            [ "$count" -eq 1 ] || { echo "Existing HTTP listener identity is ambiguous." >&2; exit 1; }
-            arn="$(printf '%s' "$listener" | jq -r '.Listeners[] | select(.Port == 80 and .Protocol == "HTTP") | .ListenerArn')"
-            if state_has "$address"; then
-              # Listener ownership is inherited from the already-verified
-              # exact load balancer for pre-tagging workflow generations.
-              state_identity_is_owned "$address" "$arn" child
-              echo "Terraform already manages the verified listener child at $address; import skipped."
-              return 0
-            fi
-            tags="$(aws elbv2 describe-tags --resource-arns "$arn" --output json | jq -c '.TagDescriptions[0].Tags // []')"
-            verify_owned_tags "$tags" || { echo "Existing HTTP listener failed DeployGuard ownership verification; explicit recovery is required." >&2; exit 1; }
-            trust_or_import_owned "$address" "$arn"
-          }
-          reconcile_execution_role() {
-            local address="aws_iam_role.execution" name="$RESOURCE_NAME-execution" result tags error_file
-            error_file="$(mktemp)"
-            if ! result="$(aws iam get-role --role-name "$name" --output json 2>"$error_file")"; then
-              if grep -q 'NoSuchEntity' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the expected execution role is absent." >&2; exit 1; }; return 0; fi
-              echo "Existing execution role could not be verified." >&2
-              exit 1
-            fi
-            tags="$(printf '%s' "$result" | jq -c '.Role.Tags // []')"
-            verify_owned_tags "$tags" || { echo "Existing execution role failed DeployGuard ownership verification." >&2; exit 1; }
-            trust_or_import_owned "$address" "$name"
-          }
-          reconcile_database_task_role() {
-            local address='aws_iam_role.database_task[0]' name="$RESOURCE_NAME-database-task" result tags error_file
-            error_file="$(mktemp)"
-            if ! result="$(aws iam get-role --role-name "$name" --output json 2>"$error_file")"; then
-              if grep -q 'NoSuchEntity' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the expected database task role is absent." >&2; exit 1; }; return 0; fi
-              echo "Existing database task role could not be verified." >&2; exit 1
-            fi
-            tags="$(printf '%s' "$result" | jq -c '.Role.Tags // []')"
-            verify_owned_tags "$tags" || { echo "Existing database task role failed DeployGuard ownership verification." >&2; exit 1; }
-            trust_or_import_owned "$address" "$name"
-          }
-          reconcile_database_discovery() {
-            local namespace_address='aws_service_discovery_private_dns_namespace.database[0]' service_address='aws_service_discovery_service.database[0]'
-            local namespace_name="project-$PROJECT_ID.deployguard.local" namespaces namespace_count namespace_id namespace_arn namespace_tags services service_count service_id service_arn service_tags
-            namespaces="$(aws servicediscovery list-namespaces --filters Name=TYPE,Values=DNS_PRIVATE,Condition=EQ --output json)" || { echo "Database namespace identity could not be inspected." >&2; exit 1; }
-            namespace_count="$(printf '%s' "$namespaces" | jq --arg name "$namespace_name" '[.Namespaces[]? | select(.Name == $name)] | length')"
-            if [ "$namespace_count" -eq 0 ]; then
-              { state_has "$namespace_address" || state_has "$service_address"; } && { echo "Terraform state contains database discovery resources but the expected namespace is absent." >&2; exit 1; }
-              return 0
-            fi
-            [ "$namespace_count" -eq 1 ] || { echo "Existing database namespace identity is ambiguous." >&2; exit 1; }
-            namespace_id="$(printf '%s' "$namespaces" | jq -r --arg name "$namespace_name" '.Namespaces[] | select(.Name == $name) | .Id')"
-            namespace_arn="$(printf '%s' "$namespaces" | jq -r --arg name "$namespace_name" '.Namespaces[] | select(.Name == $name) | .Arn')"
-            namespace_tags="$(aws servicediscovery list-tags-for-resource --resource-arn "$namespace_arn" --output json | jq -c '.Tags // []')"
-            verify_owned_tags "$namespace_tags" || { echo "Existing database namespace failed DeployGuard ownership verification." >&2; exit 1; }
-            trust_or_import_owned "$namespace_address" "$namespace_id"
-            services="$(aws servicediscovery list-services --filters Name=NAMESPACE_ID,Values="$namespace_id",Condition=EQ --output json)" || { echo "Database discovery-service identity could not be inspected." >&2; exit 1; }
-            service_count="$(printf '%s' "$services" | jq '[.Services[]? | select(.Name == "db")] | length')"
-            if [ "$service_count" -eq 0 ]; then state_has "$service_address" && { echo "Terraform state contains $service_address but the expected discovery service is absent." >&2; exit 1; }; return 0; fi
-            [ "$service_count" -eq 1 ] || { echo "Existing database discovery-service identity is ambiguous." >&2; exit 1; }
-            service_id="$(printf '%s' "$services" | jq -r '.Services[] | select(.Name == "db") | .Id')"
-            service_arn="$(printf '%s' "$services" | jq -r '.Services[] | select(.Name == "db") | .Arn')"
-            service_tags="$(aws servicediscovery list-tags-for-resource --resource-arn "$service_arn" --output json | jq -c '.Tags // []')"
-            verify_owned_tags "$service_tags" || { echo "Existing database discovery service failed DeployGuard ownership verification." >&2; exit 1; }
-            trust_or_import_owned "$service_address" "$service_id"
-          }
-          reconcile_database_ecs_service() {
-            local address='aws_ecs_service.database[0]' name="$RESOURCE_NAME-database" result count arn error_file
-            error_file="$(mktemp)"
-            if ! result="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$name" --include TAGS --output json 2>"$error_file")"; then
-              if grep -q 'ClusterNotFoundException' "$error_file"; then state_has "$address" && { echo "Terraform state contains $address but the application cluster is absent." >&2; exit 1; }; return 0; fi
-              echo "Existing database ECS service could not be verified." >&2; exit 1
-            fi
-            count="$(printf '%s' "$result" | jq '[.services[]? | select(.status == "ACTIVE")] | length')"
-            if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected database service is absent." >&2; exit 1; }; return 0; fi
-            [ "$count" -eq 1 ] || { echo "Existing database ECS service identity is ambiguous." >&2; exit 1; }
-            verify_owned_tags "$(printf '%s' "$result" | jq -c '.services[0].tags // []')" || { echo "Existing database ECS service failed DeployGuard ownership verification." >&2; exit 1; }
-            arn="$(printf '%s' "$result" | jq -r '.services[0].serviceArn')"
-            trust_or_import_owned "$address" "$RESOURCE_NAME/$name" owned "$arn"
-          }
-          reconcile_database_mount_targets() {
-            local filesystem_id="${RECONCILED_DATABASE_FILESYSTEM_ID:-}" mount_targets index subnet address matches count mount_target_id
-            [ -n "$filesystem_id" ] || return 0
-            mount_targets="$(aws efs describe-mount-targets --file-system-id "$filesystem_id" --output json)" || { echo "Database EFS mount-target identity could not be inspected." >&2; exit 1; }
-            index=0
-            while IFS= read -r subnet; do
-              address="aws_efs_mount_target.database[$index]"
-              matches="$(printf '%s' "$mount_targets" | jq -c --arg subnet "$subnet" '[.MountTargets[]? | select(.SubnetId == $subnet and .LifeCycleState != "deleted")]')"
-              count="$(printf '%s' "$matches" | jq 'length')"
-              if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but its expected mount target is absent." >&2; exit 1; }; index=$((index + 1)); continue; fi
-              [ "$count" -eq 1 ] || { echo "Database EFS mount-target identity is ambiguous." >&2; exit 1; }
-              mount_target_id="$(printf '%s' "$matches" | jq -r '.[0].MountTargetId')"
-              trust_or_import_owned "$address" "$mount_target_id" child
-              index=$((index + 1))
-            done < <(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -r '.[]')
-          }
-          reconcile_security_group "aws_security_group.alb" "$RESOURCE_NAME-alb"
-          reconcile_security_group "aws_security_group.service" "$RESOURCE_NAME-svc"
-          if [ "$MANAGED_DATABASE_ENABLED" = "true" ]; then
-            reconcile_security_group 'aws_security_group.database[0]' "$RESOURCE_NAME-db"
-            reconcile_security_group 'aws_security_group.database_efs[0]' "$RESOURCE_NAME-db-efs"
-            reconcile_database_task_role
-            reconcile_database_discovery
-            reconcile_database_ecs_service
-            reconcile_database_mount_targets
-          fi
-          reconcile_ecs_cluster
-          reconcile_load_balancer
-          reconcile_target_group
-          reconcile_http_listener
-          reconcile_execution_role
-          reconcile_ecs_service
-          # Capture bounded destroy verification scope from the initialized,
-          # reconciled state before Terraform removes normal resources.
+          DEPLOYMENT_MODE="$(jq -r '.deploymentContext.deploymentMode // "FRESH"' ../runtime-config.json)"
+          PERSISTENT_STATE="$(jq -r '.deploymentContext.persistentState // "NONE"' ../runtime-config.json)"
+          RECOVERY_EVIDENCE_AVAILABLE="$(jq -r '.deploymentContext.recoveryEvidenceAvailable // false' ../runtime-config.json)"
           if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             terraform show -json > pre-destroy-state.json
             jq -c '
@@ -1320,288 +937,196 @@ jobs:
           printf 'DEPLOYGUARD_STAGE=terraform_apply\n'
           terraform apply -input=false -auto-approve deployguard.tfplan
 
-      - name: Drain targeted generation runtime
-        if: always() && inputs.deployment_action == 'destroy'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -uo pipefail
-          [ -f .deployguard/operation-contract.valid ] || { echo "Immutable Destroy contract was not validated; refusing AWS mutation." >&2; exit 1; }
-          printf 'DEPLOYGUARD_STAGE=destroy_runtime_drain\n'
-          MANIFEST="$(jq -c '.extinction.resourceManifest // {}' .deployguard/runtime-config.json)"
-          service_arns="$(printf '%s' "$MANIFEST" | jq -r '.ecsServiceArns[]?')"
-          while IFS= read -r arn; do
-            [ -n "$arn" ] || continue
-            detail="${arn#*:service/}"; cluster="${detail%%/*}"; service="${detail#*/}"
-            description="$(aws ecs describe-services --cluster "$cluster" --services "$service" --include TAGS --output json 2>/dev/null || true)"
-            printf '%s' "$description" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-              any(.services[]?; ((.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
-                | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
-                  and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation))
-            ' >/dev/null || continue
-            aws ecs update-service --cluster "$cluster" --service "$service" --desired-count 0 >/dev/null 2>&1 || true
-            tasks="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service" --query 'taskArns[]' --output text 2>/dev/null || true)"
-            for task in $tasks; do aws ecs stop-task --cluster "$cluster" --task "$task" --reason "DeployGuard verified Destroy" >/dev/null 2>&1 || true; done
-          done <<< "$service_arns"
-
-      - name: Terraform state-only destroy
-        if: always() && inputs.deployment_action == 'destroy'
-        id: destroy_terraform
-        continue-on-error: true
-        working-directory: .deployguard/terraform
-        shell: bash
-        run: |
-          set -uo pipefail
-          [ -f ../operation-contract.valid ] || { echo "Immutable Destroy contract was not validated; refusing Terraform mutation." >&2; exit 1; }
-          printf 'DEPLOYGUARD_STAGE=terraform_state_only_destroy\n'
-          TF_STATUS="not_started"
-          TF_EXIT_CODE=0
-          TF_ERROR=""
-          write_terraform_evidence() {
-            jq -cn \
-              --arg status "$TF_STATUS" \
-              --argjson exitCode "$TF_EXIT_CODE" \
-              --arg error "$TF_ERROR" \
-              --arg stateKey "projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" \
-              '{status:$status,exitCode:$exitCode,error:$error,stateKey:$stateKey,importAttempted:false}' > terraform-destroy-evidence.json
-          }
-          terraform fmt -check -recursive -diff || {
-            TF_STATUS="format_failed"; TF_EXIT_CODE=$?; TF_ERROR="Generated Terraform is not fmt compliant."; write_terraform_evidence; exit "$TF_EXIT_CODE"
-          }
-          set +e
-          terraform init -input=false \
-            -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
-            -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" \
-            -backend-config="region=$AWS_REGION" \
-            -backend-config="encrypt=true" \
-            -backend-config="use_lockfile=true" >terraform-init.log 2>&1
-          TF_EXIT_CODE=$?
-          set -e
-          if [ "$TF_EXIT_CODE" -ne 0 ]; then
-            TF_STATUS="init_failed"
-            TF_ERROR="$(tail -n 20 terraform-init.log | tr '\n' ' ' | cut -c1-1000)"
-            write_terraform_evidence
-            exit "$TF_EXIT_CODE"
-          fi
-          TF_STATUS="initialized"
-          if terraform show -json > pre-destroy-state.json 2>terraform-show.log; then
-            jq -c '
-              def modules: ., (.child_modules[]? | modules);
-              def resources: [.values.root_module? | modules | .resources[]?];
-              {
-                ecsClusters: [resources[] | select(.type == "aws_ecs_cluster") | (.values.arn // .values.name) | select(type == "string" and length > 0)],
-                ecsServices: [resources[] | select(.type == "aws_ecs_service") | {cluster: .values.cluster, name: .values.name, arn:(.values.id // .values.arn // "")} | select(.cluster != null and .name != null)],
-                loadBalancerArns: [resources[] | select(.type == "aws_lb") | .values.arn | select(type == "string" and length > 0)],
-                listenerArns: [resources[] | select(.type == "aws_lb_listener") | .values.arn | select(type == "string" and length > 0)],
-                targetGroupArns: [resources[] | select(.type == "aws_lb_target_group") | .values.arn | select(type == "string" and length > 0)],
-                endpoint: (.values.outputs.deployed_url.value // "")
-              }
-            ' pre-destroy-state.json > destroy-verification-scope.json
-          else
-            printf '%s\n' '{"ecsClusters":[],"ecsServices":[],"loadBalancerArns":[],"listenerArns":[],"targetGroupArns":[],"endpoint":""}' > destroy-verification-scope.json
-          fi
-          set +e
-          terraform validate -no-color >terraform-validate.log 2>&1
-          TF_EXIT_CODE=$?
-          set -e
-          if [ "$TF_EXIT_CODE" -ne 0 ]; then
-            TF_STATUS="validate_failed"
-            TF_ERROR="$(tail -n 20 terraform-validate.log | tr '\n' ' ' | cut -c1-1000)"
-            write_terraform_evidence
-            exit "$TF_EXIT_CODE"
-          fi
-          # GitHub invokes bash with -e. Terraform's detailed exit code 2 is a
-          # successful plan with changes, so capture it outside errexit.
-          set +e
-          terraform plan -destroy -detailed-exitcode -input=false -no-color -out=deployguard-destroy.tfplan >terraform-plan.log 2>&1
-          TF_EXIT_CODE=$?
-          set -e
-          if [ "$TF_EXIT_CODE" -ne 0 ] && [ "$TF_EXIT_CODE" -ne 2 ]; then
-            TF_STATUS="plan_failed"
-            TF_ERROR="$(tail -n 20 terraform-plan.log | tr '\n' ' ' | cut -c1-1000)"
-            write_terraform_evidence
-            exit "$TF_EXIT_CODE"
-          fi
-          terraform show -json deployguard-destroy.tfplan > deployguard-plan.json
-          if ! jq -e '[.resource_changes[]? | select(any(.change.actions[]?; . == "create" or . == "update"))] | length == 0' deployguard-plan.json >/dev/null; then
-            TF_STATUS="plan_policy_failed"
-            TF_EXIT_CODE=1
-            TF_ERROR="Destroy plan contains create or update actions."
-            write_terraform_evidence
-            exit 1
-          fi
-          # Apply the saved plan even when detailed-exitcode is 0. A no-change
-          # destroy plan can still contain refresh evidence that removes
-          # already-absent objects from state; skipping apply would leave stale
-          # addresses in the generation state and permanently block extinction.
-          set +e
-          terraform apply -input=false -auto-approve deployguard-destroy.tfplan >terraform-apply.log 2>&1
-          TF_EXIT_CODE=$?
-          set -e
-          if [ "$TF_EXIT_CODE" -ne 0 ]; then
-            TF_STATUS="apply_failed"
-            TF_ERROR="$(tail -n 20 terraform-apply.log | tr '\n' ' ' | cut -c1-1000)"
-            write_terraform_evidence
-            exit "$TF_EXIT_CODE"
-          fi
-          TF_STATUS="completed"
-          TF_EXIT_CODE=0
-          write_terraform_evidence
-
-      - name: Run generation-scoped AWS scavenger
-        if: always() && inputs.deployment_action == 'destroy'
-        continue-on-error: true
+      - name: Destroy other recorded generations exactly
+        if: inputs.deployment_action == 'destroy'
         shell: bash
         run: |
           set -euo pipefail
+          [ -f .deployguard/operation-contract.valid ] || { echo "Immutable project deletion contract was not validated." >&2; exit 1; }
+          while IFS= read -r encoded; do
+            [ -n "$encoded" ] || continue
+            GENERATION="$(printf '%s' "$encoded" | base64 --decode)"
+            RECORDED_ID="$(printf '%s' "$GENERATION" | jq -r '.generationId')"
+            [ "$RECORDED_ID" != "$GENERATION_ID" ] || continue
+            STATE_KEY="$(printf '%s' "$GENERATION" | jq -r '.terraformStateKey')"
+            EXPECTED_KEY="projects/$PROJECT_ID/$ENVIRONMENT_NAME/$RECORDED_ID/terraform.tfstate"
+            [ "$STATE_KEY" = "$EXPECTED_KEY" ] || { echo "Recorded generation state identity mismatch." >&2; exit 1; }
+            WORK=".deployguard/delete-generation-$RECORDED_ID"
+            mkdir -p "$WORK"
+            cp .deployguard/terraform/main.tf "$WORK/main.tf"
+            jq --arg generation "$RECORDED_ID" --arg namespace "/deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$RECORDED_ID" '.generation_id=$generation | .infrastructure_namespace=$namespace | .image_uri="destroy.invalid"' .deployguard/terraform/terraform.tfvars.json > "$WORK/terraform.tfvars.json"
+            terraform -chdir="$WORK" fmt -check -recursive
+            terraform -chdir="$WORK" init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=$STATE_KEY" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+            terraform -chdir="$WORK" validate -no-color
+            terraform -chdir="$WORK" plan -destroy -input=false -no-color -out=destroy.tfplan
+            terraform -chdir="$WORK" show -json destroy.tfplan > "$WORK/destroy-plan.json"
+            jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$RECORDED_ID" '
+              [ .resource_changes[]? | select(
+                any(.change.actions[]?; . == "create" or . == "update")
+                or ((.change.before.tags // {}) as $tags | ($tags | length) > 0 and (
+                  $tags.ManagedBy != "DeployGuard"
+                  or $tags.DeployGuardProjectId != $project
+                  or $tags.Environment != $environment
+                  or $tags.DeployGuardGenerationId != $generation)))
+              ] | length == 0
+            ' "$WORK/destroy-plan.json" >/dev/null || { echo "Recorded generation Destroy plan crossed its ownership boundary." >&2; exit 1; }
+            terraform -chdir="$WORK" apply -input=false -auto-approve destroy.tfplan
+          done < <(jq -r '.projectDeletion.generations[] | @base64' .deployguard/runtime-config.json)
 
-          aws_error_is() {
-            local error_file="$1" code="$2"
-            grep -q "$code" "$error_file"
-          }
+      - name: Destroy project-scoped persistence
+        if: inputs.deployment_action == 'destroy'
+        working-directory: .deployguard/project-terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f ../operation-contract.valid ] || { echo "Immutable Destroy contract was not validated; refusing project-persistence mutation." >&2; exit 1; }
+          terraform fmt -check -recursive -diff
+          terraform init -input=false \
+            -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
+            -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/project/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+          terraform validate -no-color
+          terraform plan -destroy -input=false -no-color -out=project-destroy.tfplan
+          terraform show -json project-destroy.tfplan > project-destroy-plan.json
+          jq -e '[.resource_changes[]? | select(any(.change.actions[]?; . == "create" or . == "update"))] | length == 0' project-destroy-plan.json >/dev/null \
+            || { echo "Project persistence Destroy plan contains a non-delete mutation." >&2; exit 1; }
+          terraform apply -input=false -auto-approve project-destroy.tfplan
 
-          runtime_secret_owned() {
-            jq -e --arg name "$RUNTIME_SECRET" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-              .Name == $name
-              and ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
+      - name: Delete exact project-owned runtime artifacts
+        if: inputs.deployment_action == 'destroy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f .deployguard/operation-contract.valid ] || { echo "Immutable project deletion contract was not validated." >&2; exit 1; }
+
+          RUNTIME_SECRET="$(jq -r '.projectDeletion.projectResources.runtimeSecretName' .deployguard/runtime-config.json)"
+          SECRET_ERROR="$(mktemp)"
+          if SECRET="$(aws secretsmanager describe-secret --secret-id "$RUNTIME_SECRET" --output json 2>"$SECRET_ERROR")"; then
+            printf '%s' "$SECRET" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+              ((.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
                 | $tags.ManagedBy == "DeployGuard"
                   and $tags.DeployGuardProjectId == $project
                   and $tags.Environment == $environment
-                  and $tags.DeployGuardGenerationId == $generation
-                  and $tags.SecretPurpose == "application_runtime")
-            ' >/dev/null
-          }
+                  and $tags.DeployGuardScope == "project")
+            ' >/dev/null || { echo "Runtime secret ownership mismatch." >&2; exit 1; }
+            aws secretsmanager delete-secret --secret-id "$RUNTIME_SECRET" --force-delete-without-recovery >/dev/null
+          elif ! grep -q 'ResourceNotFoundException' "$SECRET_ERROR"; then
+            sed -n '1,20p' "$SECRET_ERROR" >&2
+            exit 1
+          fi
+          rm -f "$SECRET_ERROR"
 
-          delete_runtime_secret_if_owned() {
-            local description error_file delete_error
-            error_file="$(mktemp)"
-            if description="$(aws secretsmanager describe-secret --secret-id "$RUNTIME_SECRET" --output json 2>"$error_file")"; then
-              rm -f "$error_file"
-              printf '%s' "$description" | runtime_secret_owned || {
-                echo "DeployGuard refused to remove a runtime secret owned by another generation." >&2
-                return 1
-              }
-              if [ "$(printf '%s' "$description" | jq -r '.DeletedDate // empty')" = "" ]; then
-                error_file="$(mktemp)"
-                if ! aws secretsmanager delete-secret --secret-id "$RUNTIME_SECRET" --force-delete-without-recovery >/dev/null 2>"$error_file"; then
-                  if ! aws_error_is "$error_file" 'ResourceNotFoundException'; then
-                    delete_error="$(sed -n 's/.*(\([A-Za-z][A-Za-z]*Exception\)).*/\1/p' "$error_file" | head -n1)"
-                    rm -f "$error_file"
-                    echo "DeployGuard could not remove the owned generation runtime secret (${delete_error:-AWS error})." >&2
-                    return 1
-                  fi
-                fi
-                rm -f "$error_file"
-              fi
-              return 0
-            fi
-            if aws_error_is "$error_file" 'ResourceNotFoundException'; then
-              rm -f "$error_file"
-              return 0
-            fi
-            rm -f "$error_file"
-            echo "DeployGuard could not verify the generation runtime secret before cleanup." >&2
-            return 1
-          }
+          REPOSITORY_NAME="$(jq -r '.projectDeletion.projectResources.ecrRepositoryName' .deployguard/runtime-config.json)"
+          ECR_ERROR="$(mktemp)"
+          if REPOSITORY="$(aws ecr describe-repositories --repository-names "$REPOSITORY_NAME" --output json 2>"$ECR_ERROR")"; then
+            REPOSITORY_ARN="$(printf '%s' "$REPOSITORY" | jq -r '.repositories | if length == 1 then .[0].repositoryArn else empty end')"
+            [ -n "$REPOSITORY_ARN" ] || { echo "Project ECR identity is ambiguous." >&2; exit 1; }
+            aws ecr list-tags-for-resource --resource-arn "$REPOSITORY_ARN" --output json | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+              (.tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
+              | $tags.ManagedBy == "DeployGuard"
+                and $tags.DeployGuardProjectId == $project
+                and $tags.Environment == $environment
+                and $tags.DeployGuardScope == "project"
+            ' >/dev/null || { echo "Project ECR ownership mismatch." >&2; exit 1; }
+            aws ecr delete-repository --repository-name "$REPOSITORY_NAME" --force >/dev/null
+          elif ! grep -q 'RepositoryNotFoundException' "$ECR_ERROR"; then
+            sed -n '1,20p' "$ECR_ERROR" >&2
+            exit 1
+          fi
+          rm -f "$ECR_ERROR"
 
-          deregister_generation_task_definitions() {
-            local family task_definition task_definitions tags
-            for family in "$RESOURCE_NAME" "$RESOURCE_NAME-database"; do
-              task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text)" || {
-                echo "DeployGuard could not list active task definitions for generation cleanup." >&2
-                return 1
-              }
+          LISTENER_ARN="$(jq -r '.platformFoundation.listenerArn' .deployguard/runtime-config.json)"
+          PRIORITY="$(jq -r '.routing.listenerPriority' .deployguard/runtime-config.json)"
+          RULE_ARN="$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --output json | jq -r --arg priority "$PRIORITY" '.Rules[]? | select(.Priority == $priority) | .RuleArn' | head -1)"
+          if [ -n "$RULE_ARN" ]; then
+            aws elbv2 describe-tags --resource-arns "$RULE_ARN" --output json | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+              (.TagDescriptions[0].Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
+              | $tags.ManagedBy == "DeployGuard"
+                and $tags.DeployGuardProjectId == $project
+                and $tags.Environment == $environment
+                and $tags.DeployGuardScope == "project"
+            ' >/dev/null || { echo "Stable route ownership mismatch." >&2; exit 1; }
+            aws elbv2 delete-rule --rule-arn "$RULE_ARN" >/dev/null
+          fi
+
+          while IFS= read -r generation; do
+            [ -n "$generation" ] || continue
+            GENERATION_PREFIX="$(printf '%s' "$generation" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
+            FAMILY="dg-$PROJECT_PREFIX-$GENERATION_PREFIX"
+            for status in ACTIVE INACTIVE; do
               while IFS= read -r task_definition; do
                 [ -n "$task_definition" ] || continue
-                tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)"
-                if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+                TAGS="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)"
+                if ! printf '%s' "$TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$generation" '
                   (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
                   | $tags.ManagedBy == "DeployGuard"
                     and $tags.DeployGuardProjectId == $project
                     and $tags.Environment == $environment
                     and $tags.DeployGuardGenerationId == $generation
                 ' >/dev/null; then
+                  continue
+                fi
+                if [ "$status" = "ACTIVE" ]; then
                   aws ecs deregister-task-definition --task-definition "$task_definition" >/dev/null
                 fi
-              done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
+                aws ecs delete-task-definitions --task-definitions "$task_definition" >/dev/null
+              done < <(aws ecs list-task-definitions --family-prefix "$FAMILY" --status "$status" --output json | jq -r '.taskDefinitionArns[]?')
             done
-          }
-
-          delete_generation_image_repository() {
-            local safe_project repository_name repository repository_arn tags error_file
-            safe_project="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
-            repository_name="deployguard-${safe_project}"
-            error_file="$(mktemp)"
-            if repository="$(aws ecr describe-repositories --repository-names "$repository_name" --output json 2>"$error_file")"; then
-              rm -f "$error_file"
-              repository_arn="$(printf '%s' "$repository" | jq -r '.repositories | if length == 1 then .[0].repositoryArn else empty end')"
-              [ -n "$repository_arn" ] || { echo "The project image repository identity is ambiguous." >&2; return 1; }
-              tags="$(aws ecr list-tags-for-resource --resource-arn "$repository_arn" --output json)"
-              printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-                (.tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-                | $tags.ManagedBy == "DeployGuard"
-                  and $tags.DeployGuardProjectId == $project
-                  and $tags.Environment == $environment
-                  and $tags.DeployGuardGenerationId == $generation
-              ' >/dev/null || {
-                echo "DeployGuard refused to remove an unscoped or differently owned image repository." >&2
-                return 1
-              }
-              error_file="$(mktemp)"
-              if ! aws ecr delete-repository --repository-name "$repository_name" --force >/dev/null 2>"$error_file"; then
-                if ! aws_error_is "$error_file" 'RepositoryNotFoundException'; then
-                  rm -f "$error_file"
-                  echo "DeployGuard could not remove the owned generation image repository." >&2
-                  return 1
-                fi
-              fi
-              rm -f "$error_file"
-              return 0
-            fi
-            if aws_error_is "$error_file" 'RepositoryNotFoundException'; then
-              rm -f "$error_file"
-              return 0
-            fi
-            rm -f "$error_file"
-            echo "DeployGuard could not verify the generation image repository before cleanup." >&2
-            return 1
-          }
-
-          RUNTIME_SECRET="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/application/runtime"
-          delete_runtime_secret_if_owned || true
-          deregister_generation_task_definitions || true
-          delete_generation_image_repository || true
+          done < <(jq -r '.projectDeletion.generations[].generationId' .deployguard/runtime-config.json)
 
       - name: Verify ALB health and write result
-        if: inputs.deployment_action == 'deploy'
+        if: inputs.deployment_action != 'destroy'
         working-directory: .deployguard/terraform
         shell: bash
         env:
-          IMAGE_URI: ${{ steps.image.outputs.uri }}
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.rollback_image_uri }}
+          IMAGE_DIGEST: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.digest || '' }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
+          if [ -z "$IMAGE_DIGEST" ]; then IMAGE_DIGEST="${IMAGE_URI##*@}"; fi
           URL="$(terraform output -raw deployed_url)"
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then break; fi
             if [ "$attempt" -eq 30 ]; then echo "ALB health verification failed" >&2; exit 1; fi
             sleep 10
           done
+          TARGET_GROUP_ARN="$(terraform output -raw target_group_arn)"
+          LISTENER_ARN="$(jq -r '.platformFoundation.listenerArn' ../runtime-config.json)"
+          PRODUCTION_HOST="$(jq -r '.routing.productionHost' ../runtime-config.json)"
+          PRODUCTION_PRIORITY="$(jq -r '.routing.listenerPriority' ../runtime-config.json)"
+          EXISTING_RULE_ARN="$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --output json | jq -r --arg priority "$PRODUCTION_PRIORITY" '.Rules[]? | select(.Priority == $priority) | .RuleArn' | head -1)"
+          if [ -n "$EXISTING_RULE_ARN" ]; then
+            RULE_TAGS="$(aws elbv2 describe-tags --resource-arns "$EXISTING_RULE_ARN" --output json)"
+            printf '%s' "$RULE_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+              (.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags
+              | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
+                and $tags.Environment == $environment and $tags.DeployGuardScope == "project"
+            ' >/dev/null || { echo "Stable route priority is owned by another project environment." >&2; exit 1; }
+            aws elbv2 modify-rule --rule-arn "$EXISTING_RULE_ARN" --actions "Type=forward,TargetGroupArn=$TARGET_GROUP_ARN" --conditions "Field=host-header,Values=$PRODUCTION_HOST" >/dev/null
+            STABLE_RULE_ARN="$EXISTING_RULE_ARN"
+          else
+            STABLE_RULE_ARN="$(aws elbv2 create-rule --listener-arn "$LISTENER_ARN" --priority "$PRODUCTION_PRIORITY" --actions "Type=forward,TargetGroupArn=$TARGET_GROUP_ARN" --conditions "Field=host-header,Values=$PRODUCTION_HOST" --tags "Key=ManagedBy,Value=DeployGuard" "Key=DeployGuardProjectId,Value=$PROJECT_ID" "Key=Environment,Value=$ENVIRONMENT_NAME" "Key=DeployGuardScope,Value=project" --output json | jq -r '.Rules[0].RuleArn')"
+          fi
+          PRODUCTION_URL="$(terraform output -raw production_url)"
+          curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$HEALTH_CHECK_PATH" >/dev/null || { echo "Production route did not verify after candidate cutover." >&2; exit 1; }
           # Keep a bounded rollback window. The current and immediately prior
           # releases are always among the newest entries because operations
           # are serialized per project/generation. The exact previous LIVE
           # release is additionally protected because failed attempts can
           # create newer images/task definitions without becoming LIVE.
+          REPOSITORY_NAME="$(jq -r '.projectPersistence.ecrRepositoryName' ../runtime-config.json)"
           PROTECTED_IMAGE_DIGESTS="$(jq -c '.retentionProtectedRelease.imageDigests' ../runtime-config.json)"
           for batch in $(seq 1 10); do
-            DELETE_IMAGES="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --output json | jq -c --argjson protected "$PROTECTED_IMAGE_DIGESTS" '
+            DELETE_IMAGES="$(aws ecr describe-images --repository-name "$REPOSITORY_NAME" --output json | jq -c --argjson protected "$PROTECTED_IMAGE_DIGESTS" '
               [.imageDetails | sort_by(.imagePushedAt) | reverse | .[20:120][]?
                 | select(.imageDigest as $digest | ($protected | index($digest)) == null)
                 | {imageDigest}]
             ')"
             [ "$(printf '%s' "$DELETE_IMAGES" | jq 'length')" -gt 0 ] || break
-            aws ecr batch-delete-image --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids "$DELETE_IMAGES" >/dev/null
+            aws ecr batch-delete-image --repository-name "$REPOSITORY_NAME" --image-ids "$DELETE_IMAGES" >/dev/null
           done
           PROTECTED_TASK_DEFINITIONS="$(jq -c '.retentionProtectedRelease.taskDefinitionArns' ../runtime-config.json)"
           mapfile -t OLD_TASK_DEFINITIONS < <(aws ecs list-task-definitions --family-prefix "$RESOURCE_NAME" --status ACTIVE --sort DESC --output json | jq -r '.taskDefinitionArns[20:][]?')
@@ -1619,517 +1144,152 @@ jobs:
           CLUSTER_NAME="$(terraform output -raw cluster_name)"
           SERVICE_NAME="$(terraform output -raw service_name)"
           TASK_DEFINITION_ARN="$(terraform output -raw task_definition_arn)"
+          ECS_SERVICE_ARN="$(terraform output -raw ecs_service_arn)"
           CONFIGURATION_FINGERPRINT="$(jq -r '.configurationFingerprint' ../runtime-config.json)"
           CONFIGURATION_SNAPSHOT_ID="$(jq -r '.configurationSnapshotId' ../runtime-config.json)"
           DATABASE_BINDING_ID="$(jq -r '.managedDatabase.bindingId // empty' ../runtime-config.json)"
           SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
           DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" '{contractVersion:"deployguard.deployment-result/v1",deploymentOperationId:$operation,environmentName:$environmentName,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$PRODUCTION_URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId:$operation,generationId:$generationId,environmentName:$environmentName,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs}')"
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
-      - name: Roll back to immutable application release
-        if: inputs.deployment_action == 'rollback'
+      - name: Clean retired generation independently
+        if: inputs.deployment_action != 'destroy'
+        continue-on-error: true
         shell: bash
         run: |
-          set -euo pipefail
-          TASK_DEFINITION="$(aws ecs describe-task-definition --task-definition "$ROLLBACK_TASK_DEFINITION_ARN" --include TAGS --output json)"
-          [ "$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.taskDefinitionArn')" = "$ROLLBACK_TASK_DEFINITION_ARN" ] || { echo "Rollback task definition could not be resolved exactly." >&2; exit 1; }
-          [ "$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.family')" = "$RESOURCE_NAME" ] || { echo "Rollback task definition belongs to another service." >&2; exit 1; }
-          printf '%s' "$TASK_DEFINITION" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-            (.tags | map({key: .key, value: .value}) | from_entries) as $tags
-            | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation
-          ' >/dev/null || { echo "Rollback task definition failed DeployGuard ownership verification." >&2; exit 1; }
-          CONTAINER_IMAGE="$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.containerDefinitions[] | select(.name == "app") | .image')"
-          CONTAINER_PORT="$(printf '%s' "$TASK_DEFINITION" | jq -r '.taskDefinition.containerDefinitions[] | select(.name == "app") | .portMappings[0].containerPort')"
-          [ "$CONTAINER_IMAGE" = "$ROLLBACK_IMAGE_URI" ] || { echo "Rollback image does not match the immutable task definition." >&2; exit 1; }
-          [ "$CONTAINER_PORT" = "$APP_PORT" ] || { echo "Rollback port does not match the immutable task definition." >&2; exit 1; }
-          SERVICE="$(aws ecs describe-services --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" --include TAGS --output json)"
-          [ "$(printf '%s' "$SERVICE" | jq '[.services[]? | select(.status == "ACTIVE")] | length')" -eq 1 ] || { echo "Rollback ECS service identity is unavailable or ambiguous." >&2; exit 1; }
-          printf '%s' "$SERVICE" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
-            (.services[0].tags | map({key: .key, value: .value}) | from_entries) as $tags
-            | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation
-          ' >/dev/null || { echo "Rollback ECS service failed DeployGuard ownership verification." >&2; exit 1; }
-          PREVIOUS_TASK_DEFINITION_ARN="$(printf '%s' "$SERVICE" | jq -r '.services[0].taskDefinition')"
-          TARGET_GROUP_ARN="$(printf '%s' "$SERVICE" | jq -r '.services[0].loadBalancers[0].targetGroupArn')"
-          TARGET_GROUP="$(aws elbv2 describe-target-groups --target-group-arns "$TARGET_GROUP_ARN" --output json)"
-          [ "$(printf '%s' "$TARGET_GROUP" | jq -r '.TargetGroups[0].Port')" = "$APP_PORT" ] || { echo "Rollback target-group port differs from the historical release." >&2; exit 1; }
-          [ "$(printf '%s' "$TARGET_GROUP" | jq -r '.TargetGroups[0].HealthCheckPath')" = "$HEALTH_CHECK_PATH" ] || { echo "Rollback health path differs from the historical release." >&2; exit 1; }
-          restore_previous() {
-            aws ecs update-service --cluster "$RESOURCE_NAME" --service "$RESOURCE_NAME" --task-definition "$PREVIOUS_TASK_DEFINITION_ARN" --force-new-deployment >/dev/null || true
-            aws ecs wait services-stable --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME" || true
-          }
-          aws ecs update-service --cluster "$RESOURCE_NAME" --service "$RESOURCE_NAME" --task-definition "$ROLLBACK_TASK_DEFINITION_ARN" --force-new-deployment >/dev/null
-          if ! aws ecs wait services-stable --cluster "$RESOURCE_NAME" --services "$RESOURCE_NAME"; then
-            restore_previous
-            echo "Rollback service did not stabilize; the previously live task definition was restored." >&2
-            exit 1
+          set -uo pipefail
+          RETIRED_GENERATION_ID="$(jq -r '.retiredGenerationCleanup.generationId // empty' .deployguard/runtime-config.json)"
+          [ -n "$RETIRED_GENERATION_ID" ] || exit 0
+          RETIRED_STATE_KEY="$(jq -r '.retiredGenerationCleanup.terraformStateKey' .deployguard/runtime-config.json)"
+          EXPECTED_STATE_KEY="projects/$PROJECT_ID/$ENVIRONMENT_NAME/$RETIRED_GENERATION_ID/terraform.tfstate"
+          [ "$RETIRED_STATE_KEY" = "$EXPECTED_STATE_KEY" ] || { echo "Retired generation state identity mismatch." >&2; exit 1; }
+          mkdir -p .deployguard/retired-terraform
+          cp .deployguard/terraform/main.tf .deployguard/retired-terraform/main.tf
+          jq --arg generation "$RETIRED_GENERATION_ID" \
+            --arg namespace "/deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$RETIRED_GENERATION_ID" \
+            '.generation_id=$generation | .infrastructure_namespace=$namespace | .image_uri="destroy.invalid"' \
+            .deployguard/terraform/terraform.tfvars.json > .deployguard/retired-terraform/terraform.tfvars.json
+          set +e
+          (
+            set -euo pipefail
+            terraform -chdir=.deployguard/retired-terraform fmt -check -recursive
+            terraform -chdir=.deployguard/retired-terraform init -input=false \
+              -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
+              -backend-config="key=$RETIRED_STATE_KEY" \
+              -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+            terraform -chdir=.deployguard/retired-terraform validate -no-color
+            terraform -chdir=.deployguard/retired-terraform plan -destroy -input=false -no-color -out=cleanup.tfplan
+            terraform -chdir=.deployguard/retired-terraform show -json cleanup.tfplan > .deployguard/retired-terraform/cleanup-plan.json
+            jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$RETIRED_GENERATION_ID" '
+              [ .resource_changes[]? | select(
+                  any(.change.actions[]?; . == "create" or . == "update")
+                  or ((.change.before.tags // {}) as $tags
+                    | ($tags | length) > 0 and (
+                        $tags.ManagedBy != "DeployGuard"
+                        or $tags.DeployGuardProjectId != $project
+                        or $tags.Environment != $environment
+                        or $tags.DeployGuardGenerationId != $generation))
+                ) ] | length == 0
+            ' .deployguard/retired-terraform/cleanup-plan.json >/dev/null
+            terraform -chdir=.deployguard/retired-terraform apply -input=false -auto-approve cleanup.tfplan
+            # A retired generation owns its exact state object as well as its
+            # infrastructure. Remove every version and lock marker for only
+            # that immutable key before reporting CLEANED.
+            for attempt in $(seq 1 20); do
+              aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --prefix "$RETIRED_STATE_KEY" --output json \
+                | jq -c --arg state "$RETIRED_STATE_KEY" '
+                    {Objects: (([.Versions[]?, .DeleteMarkers[]?]
+                      | map(select(.Key == $state or .Key == ($state + ".tflock")) | {Key,VersionId}))[:1000]), Quiet:true}
+                  ' > .deployguard/retired-terraform/state-delete.json
+              [ "$(jq '.Objects | length' .deployguard/retired-terraform/state-delete.json)" -gt 0 ] || break
+              aws s3api delete-objects --bucket "$TERRAFORM_STATE_BUCKET" --delete file://.deployguard/retired-terraform/state-delete.json >/dev/null
+            done
+            aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --prefix "$RETIRED_STATE_KEY" --output json \
+              | jq -e --arg state "$RETIRED_STATE_KEY" '
+                  [.Versions[]?, .DeleteMarkers[]?]
+                  | map(select(.Key == $state or .Key == ($state + ".tflock")))
+                  | length == 0
+                ' >/dev/null
+          )
+          CLEANUP_EXIT="$?"
+          set -e
+          if [ "$CLEANUP_EXIT" -eq 0 ]; then
+            CLEANUP_STATUS="cleaned"
+            CLEANUP_ERROR=""
+          else
+            CLEANUP_STATUS="cleanup_pending"
+            CLEANUP_ERROR="Retired generation cleanup did not converge; the LIVE generation was not affected."
           fi
-          LOAD_BALANCER_ARN="$(printf '%s' "$TARGET_GROUP" | jq -r '.TargetGroups[0].LoadBalancerArns[0]')"
-          LOAD_BALANCER="$(aws elbv2 describe-load-balancers --load-balancer-arns "$LOAD_BALANCER_ARN" --output json)"
-          URL="http://$(printf '%s' "$LOAD_BALANCER" | jq -r '.LoadBalancers[0].DNSName')"
-          HEALTHY=false
-          for attempt in $(seq 1 30); do
-            TARGET_HEALTH="$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --output json)"
-            if printf '%s' "$TARGET_HEALTH" | jq -e '.TargetHealthDescriptions | length > 0 and all(.[]; .TargetHealth.State == "healthy")' >/dev/null \
-              && curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then
-              HEALTHY=true
-              break
-            fi
-            sleep 10
-          done
-          if [ "$HEALTHY" != "true" ]; then
-            restore_previous
-            echo "Rollback health verification failed; the previously live task definition was restored." >&2
-            exit 1
-          fi
-          CONFIGURATION_FINGERPRINT="$(printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -r '.configurationFingerprint')"
-          IMAGE_DIGEST="${ROLLBACK_IMAGE_URI##*@}"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$ROLLBACK_IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "${{ inputs.commit_sha }}" --arg cluster "$RESOURCE_NAME" --arg service "$RESOURCE_NAME" --arg taskDefinitionArn "$ROLLBACK_TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg rollbackSourceOperationId "$ROLLBACK_SOURCE_OPERATION_ID" '{contractVersion:"deployguard.deployment-result/v1",deploymentOperationId:$operation,environmentName:$environmentName,status:"succeeded",deployedUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,commitSha:$commit,clusterName:$cluster,serviceName:$service,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,rollbackSourceOperationId:$rollbackSourceOperationId}')"
-          mkdir -p .deployguard/terraform
-          printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
-          printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
+          CLEANUP_RESULT="$(jq -cn --arg generationId "$RETIRED_GENERATION_ID" --arg status "$CLEANUP_STATUS" --arg error "$CLEANUP_ERROR" '{generationId:$generationId,status:$status,error:(if $error == "" then null else $error end)}')"
+          printf 'DEPLOYGUARD_GENERATION_CLEANUP_RESULT=%s\n' "$CLEANUP_RESULT"
+          exit 0
 
-      - name: Verify destroyed infrastructure and write result
-        if: always() && inputs.deployment_action == 'destroy'
+      - name: Verify exact project deletion and write result
+        if: inputs.deployment_action == 'destroy'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
           set -euo pipefail
-          printf 'DEPLOYGUARD_STAGE=verify_destroyed_infrastructure_and_write_result\n'
-          MANIFEST="$(jq -c '.extinction.resourceManifest // {}' ../runtime-config.json)"
-          if [ ! -s destroy-verification-scope.json ]; then
-            printf '%s' "$MANIFEST" | jq -c '{
-              ecsClusters:(.ecsClusterArns // []),
-              ecsServices:[(.ecsServiceArns // [])[] as $arn | ($arn | capture("service/(?<cluster>[^/]+)/(?<name>.+)$")) | {cluster:.cluster,name:.name,arn:$arn}],
-              loadBalancerArns:(.loadBalancerArns // []),
-              listenerArns:(.listenerArns // []),
-              targetGroupArns:(.targetGroupArns // []),
-              endpoint:""
-            }' > destroy-verification-scope.json
-          fi
-          [ -s terraform-destroy-evidence.json ] || printf '%s\n' '{"status":"unavailable","exitCode":1,"error":"Terraform state-only cleanup did not produce evidence.","importAttempted":false}' > terraform-destroy-evidence.json
-          printf '%s\n' '[]' > destroy-remaining.json
-
-          aws_retry() {
-            local attempt=1 max_attempts=5 delay=1 output status
-            while true; do
-              set +e
-              output="$("$@" 2>&1)"; status=$?
-              set -e
-              if [ "$status" -eq 0 ]; then printf '%s' "$output"; return 0; fi
-              if ! printf '%s' "$output" | grep -Eqi 'Throttl|TooManyRequests|RequestLimitExceeded|ServiceUnavailable|InternalError|InternalFailure|RequestTimeout|PriorRequestNotComplete|temporar|connection reset|timed out'; then
-                printf '%s\n' "$output" >&2; return "$status"
-              fi
-              [ "$attempt" -lt "$max_attempts" ] || { printf '%s\n' "$output" >&2; return "$status"; }
-              sleep "$((delay + RANDOM % 3))"
-              attempt=$((attempt + 1)); delay=$((delay * 2))
-            done
-          }
-
-          add_remaining() {
-            local type="$1" id="$2" scope="$3" reason="$4" code="${5:-}" message="${6:-}" retryable="${7:-true}" now
-            now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            jq -c --arg resourceType "$type" --arg resourceId "$id" --arg ownershipScope "$scope" --arg reason "$reason" --arg errorCode "$code" --arg errorMessage "$message" --argjson retryable "$retryable" --arg now "$now" '
-              . + [{resourceType:$resourceType,resourceId:$resourceId,ownershipScope:$ownershipScope,reason:$reason,errorCode:$errorCode,errorMessage:$errorMessage,retryable:$retryable,attemptCount:1,firstSeenAt:$now,lastSeenAt:$now}]
-            ' destroy-remaining.json > destroy-remaining.next.json
-            mv destroy-remaining.next.json destroy-remaining.json
-          }
-
-          delete_owned() {
-            local type="$1" id="$2" output status code message
-            shift 2
-            set +e
-            output="$(aws_retry "$@" 2>&1)"; status=$?
-            set -e
-            [ "$status" -eq 0 ] && return 0
-            if printf '%s' "$output" | grep -Eqi 'NotFound|Invalid[A-Za-z]+\.NotFound|does not exist'; then return 0; fi
-            code="$(printf '%s' "$output" | sed -nE 's/.*\(([A-Za-z0-9._-]+)\) when calling.*/\1/p' | head -1)"
-            [ -n "$code" ] || code="AWS_DELETE_FAILED"
-            message="$(printf '%s' "$output" | sed -E 's/Encoded authorization failure message:.*$//' | tr '\n' ' ' | cut -c1-1000)"
-            add_remaining "$type" "$id" "generation" "Owned AWS resource deletion did not complete." "$code" "$message" true
-            return 0
-          }
-
-          aws_absent() {
-            local kind="$1" identifier="$2" error_file not_found
-            local -a command
-            error_file="$(mktemp)"
-            case "$kind" in
-              load_balancer) command=(aws elbv2 describe-load-balancers --load-balancer-arns "$identifier" --output json) ; not_found="LoadBalancerNotFound" ;;
-              listener) command=(aws elbv2 describe-listeners --listener-arns "$identifier" --output json) ; not_found="ListenerNotFound" ;;
-              target_group) command=(aws elbv2 describe-target-groups --target-group-arns "$identifier" --output json) ; not_found="TargetGroupNotFound" ;;
-              *) rm -f "$error_file"; return 2 ;;
+          printf 'DEPLOYGUARD_STAGE=verify_exact_project_deletion\n'
+          jq -r '.projectDeletion.generations[].terraformStateKey, .projectDeletion.projectResources.terraformStateKey' ../runtime-config.json > exact-state-keys.txt
+          while IFS= read -r state_key; do
+            [ -n "$state_key" ] || continue
+            case "$state_key" in
+              "projects/$PROJECT_ID/$ENVIRONMENT_NAME/"*/terraform.tfstate|"projects/$PROJECT_ID/$ENVIRONMENT_NAME/project/terraform.tfstate") ;;
+              *) echo "Refusing unexpected Terraform state key $state_key." >&2; exit 1 ;;
             esac
-            if "${command[@]}" >/dev/null 2>"$error_file"; then rm -f "$error_file"; return 1; fi
-            if grep -q "$not_found" "$error_file"; then rm -f "$error_file"; return 0; fi
-            rm -f "$error_file"
-            echo "AWS resource absence could not be verified." >&2
-            return 2
-          }
-
-          ecs_services_absent() {
-            local encoded cluster service response error_file
-            while IFS= read -r encoded; do
-              [ -n "$encoded" ] || continue
-              cluster="$(printf '%s' "$encoded" | base64 --decode | jq -r '.cluster')"
-              service="$(printf '%s' "$encoded" | base64 --decode | jq -r '.name')"
-              error_file="$(mktemp)"
-              if response="$(aws ecs describe-services --cluster "$cluster" --services "$service" --output json 2>"$error_file")"; then
-                rm -f "$error_file"
-                printf '%s' "$response" | jq -e '[.services[]? | select(.status == "ACTIVE")] | length == 0' >/dev/null || return 1
-              elif grep -q 'ClusterNotFoundException' "$error_file"; then
-                rm -f "$error_file"
-              else
-                rm -f "$error_file"
-                echo "ECS service absence could not be verified." >&2
-                return 2
-              fi
-            done < <(jq -r '.ecsServices[]? | @base64' destroy-verification-scope.json)
-          }
-
-          running_tasks_zero() {
-            local cluster response error_file
-            while IFS= read -r cluster; do
-              [ -n "$cluster" ] || continue
-              error_file="$(mktemp)"
-              if response="$(aws ecs list-tasks --cluster "$cluster" --desired-status RUNNING --output json 2>"$error_file")"; then
-                rm -f "$error_file"
-                printf '%s' "$response" | jq -e '.taskArns | length == 0' >/dev/null || return 1
-              elif grep -q 'ClusterNotFoundException' "$error_file"; then
-                rm -f "$error_file"
-              else
-                rm -f "$error_file"
-                echo "Running ECS task absence could not be verified." >&2
-                return 2
-              fi
-            done < <(jq -r '.ecsClusters[]?' destroy-verification-scope.json)
-          }
-
-          arns_absent() {
-            local kind="$1" selector="$2" arn result
-            while IFS= read -r arn; do
-              [ -n "$arn" ] || continue
-              set +e
-              aws_absent "$kind" "$arn"
-              result="$?"
-              set -e
-              [ "$result" -eq 0 ] || return "$result"
-            done < <(jq -r "$selector[]?" destroy-verification-scope.json)
-          }
-
-          image_repository_absent() {
-            local safe_project repository_name error_file
-            safe_project="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
-            repository_name="deployguard-$safe_project"
-            error_file="$(mktemp)"
-            if aws ecr describe-repositories --repository-names "$repository_name" --output json >/dev/null 2>"$error_file"; then
-              rm -f "$error_file"
-              return 1
-            fi
-            if grep -q 'RepositoryNotFoundException' "$error_file"; then rm -f "$error_file"; return 0; fi
-            rm -f "$error_file"
-            echo "Image repository absence could not be verified." >&2
-            return 2
-          }
-
-          runtime_secret_absent() {
-            local runtime_secret error_file
-            runtime_secret="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/application/runtime"
-            error_file="$(mktemp)"
-            if aws secretsmanager describe-secret --secret-id "$runtime_secret" --output json >/dev/null 2>"$error_file"; then
-              rm -f "$error_file"
-              return 1
-            fi
-            if grep -q 'ResourceNotFoundException' "$error_file"; then rm -f "$error_file"; return 0; fi
-            rm -f "$error_file"
-            echo "Runtime secret absence could not be verified." >&2
-            return 2
-          }
-
-          project_task_definitions_absent() {
-            local family status task_definition task_definitions tags
-            for family in "$RESOURCE_NAME" "$RESOURCE_NAME-database"; do
-              for status in ACTIVE INACTIVE DELETE_IN_PROGRESS; do
-                task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status "$status" --query 'taskDefinitionArns[]' --output text)" || return 2
-                while IFS= read -r task_definition; do
-                  [ -n "$task_definition" ] || continue
-                  tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)" || return 2
-                  if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '
-                    (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
-                    | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
-                  ' >/dev/null; then
-                    # AWS may retain a task-definition record after its final
-                    # delete request. ACTIVE or merely INACTIVE revisions are
-                    # still actionable residue and continue to block success.
-                    [ "$status" = "DELETE_IN_PROGRESS" ] || return 1
-                  fi
-                done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
-              done
+            for attempt in $(seq 1 20); do
+              aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --prefix "$state_key" --output json \
+                | jq -c --arg state "$state_key" '{
+                    Objects: (([.Versions[]?, .DeleteMarkers[]?]
+                      | map(select(.Key == $state or .Key == ($state + ".tflock")) | {Key,VersionId}))[:1000]),
+                    Quiet:true
+                  }' > exact-state-delete.json
+              [ "$(jq '.Objects | length' exact-state-delete.json)" -gt 0 ] || break
+              aws s3api delete-objects --bucket "$TERRAFORM_STATE_BUCKET" --delete file://exact-state-delete.json >/dev/null
             done
-            return 0
-          }
+            aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --prefix "$state_key" --output json \
+              | jq -e --arg state "$state_key" '
+                  [.Versions[]?, .DeleteMarkers[]?]
+                  | map(select(.Key == $state or .Key == ($state + ".tflock")))
+                  | length == 0
+                ' >/dev/null || { echo "Exact Terraform state artifacts remain for $state_key." >&2; exit 1; }
+          done < exact-state-keys.txt
 
-          purge_project_task_definitions() {
-            local family status task_definition task_definitions tags
-            for family in "$RESOURCE_NAME" "$RESOURCE_NAME-database"; do
-              for status in ACTIVE INACTIVE; do
-                task_definitions="$(aws ecs list-task-definitions --family-prefix "$family" --status "$status" --query 'taskDefinitionArns[]' --output text)" || return 2
-                while IFS= read -r task_definition; do
-                  [ -n "$task_definition" ] || continue
-                  tags="$(aws ecs list-tags-for-resource --resource-arn "$task_definition" --output json)" || return 2
-                  printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '(.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project' >/dev/null || continue
-                  [ "$status" = "INACTIVE" ] || aws ecs deregister-task-definition --task-definition "$task_definition" >/dev/null
-                  aws ecs delete-task-definitions --task-definitions "$task_definition" >/dev/null || true
-                done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
-              done
-            done
-          }
-
-          purge_project_secrets_and_logs() {
-            local secret log_group tags
-            while IFS= read -r secret; do
-              [ -n "$secret" ] || continue
-              tags="$(aws secretsmanager describe-secret --secret-id "$secret" --output json)" || continue
-              printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '(.Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project' >/dev/null || continue
-              aws secretsmanager delete-secret --secret-id "$secret" --force-delete-without-recovery >/dev/null || true
-            done < <(aws secretsmanager list-secrets --include-planned-deletion --filters Key=name,Values="deployguard/$PROJECT_ID/" --query 'SecretList[].ARN' --output text | tr '\t' '\n')
-            while IFS= read -r log_group; do
-              [ -n "$log_group" ] || continue
-              tags="$(aws logs list-tags-log-group --log-group-name "$log_group" --output json)" || continue
-              printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '.tags.ManagedBy == "DeployGuard" and .tags.DeployGuardProjectId == $project' >/dev/null || continue
-              aws logs delete-log-group --log-group-name "$log_group" >/dev/null || true
-            done < <(aws logs describe-log-groups --log-group-name-prefix "/deployguard/$PROJECT_ID/" --query 'logGroups[].logGroupName' --output text | tr '\t' '\n')
-          }
-
-          purge_tagged_project_resources() {
-            local mappings encoded mapping tags generation_ok known_generations arn detail role_name group_name user_name profile policy version group_id fs_id cluster service task target eni_id subnet_id route_id gateway_id vpc_id allocation_id nat_id
-            known_generations="$(jq -c '.extinction.knownGenerationIds' ../runtime-config.json)"
-            mappings="$(aws_retry aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json)" || return 2
-            while IFS= read -r encoded; do
-              [ -n "$encoded" ] || continue
-              mapping="$(printf '%s' "$encoded" | base64 --decode)"
-              arn="$(printf '%s' "$mapping" | jq -r '.ResourceARN')"
-              tags="$(printf '%s' "$mapping" | jq -c '.Tags // [] | map({key:.Key,value:.Value}) | from_entries')"
-              generation_ok="$(printf '%s' "$tags" | jq -r --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --argjson known "$known_generations" '
-                . as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment
-                and (($tags.DeployGuardGenerationId == null) or (($known | index($tags.DeployGuardGenerationId)) != null))
-              ')"
-              if [ "$generation_ok" != "true" ]; then
-                add_remaining "ownership_mismatch" "$arn" "platform_shared" "Foreign or differently scoped resource was not deleted." "OWNERSHIP_MISMATCH" "Canonical ownership tags do not match this Destroy generation." false
-                continue
-              fi
-              [ -n "$arn" ] || continue
-              case "$arn" in
-                arn:aws*:ecr:*:repository/*) aws ecr delete-repository --repository-name "${arn##*:repository/}" --force >/dev/null || true ;;
-                arn:aws*:ecs:*:service/*/*) detail="${arn##*:service/}"; cluster="${detail%%/*}"; service="${detail#*/}"; aws ecs update-service --cluster "$cluster" --service "$service" --desired-count 0 >/dev/null || true; aws ecs delete-service --cluster "$cluster" --service "$service" --force >/dev/null || true ;;
-                arn:aws*:ecs:*:task/*/*) detail="${arn##*:task/}"; cluster="${detail%%/*}"; task="${detail#*/}"; aws ecs stop-task --cluster "$cluster" --task "$task" >/dev/null || true ;;
-                arn:aws*:ecs:*:task-definition/*) aws ecs deregister-task-definition --task-definition "$arn" >/dev/null 2>&1 || true; aws ecs delete-task-definitions --task-definitions "$arn" >/dev/null || true ;;
-                arn:aws*:ecs:*:cluster/*) aws ecs delete-cluster --cluster "${arn##*:cluster/}" >/dev/null || true ;;
-                arn:aws*:elasticloadbalancing:*:listener/*) aws elbv2 delete-listener --listener-arn "$arn" >/dev/null || true ;;
-                arn:aws*:elasticloadbalancing:*:listener-rule/*) aws elbv2 delete-rule --rule-arn "$arn" >/dev/null || true ;;
-                arn:aws*:elasticloadbalancing:*:loadbalancer/*) aws elbv2 delete-load-balancer --load-balancer-arn "$arn" >/dev/null || true ;;
-                arn:aws*:elasticloadbalancing:*:targetgroup/*) aws elbv2 delete-target-group --target-group-arn "$arn" >/dev/null || true ;;
-                arn:aws*:logs:*:log-group:*) detail="${arn#*:log-group:}"; aws logs delete-log-group --log-group-name "${detail%:*}" >/dev/null || true ;;
-                arn:aws*:secretsmanager:*:secret:*) aws secretsmanager delete-secret --secret-id "$arn" --force-delete-without-recovery >/dev/null || true ;;
-                arn:aws*:elasticfilesystem:*:access-point/*) aws efs delete-access-point --access-point-id "${arn##*/}" >/dev/null || true ;;
-                arn:aws*:elasticfilesystem:*:file-system/*) fs_id="${arn##*/}"; for target in $(aws efs describe-mount-targets --file-system-id "$fs_id" --query 'MountTargets[].MountTargetId' --output text 2>/dev/null); do aws efs delete-mount-target --mount-target-id "$target" >/dev/null || true; done; aws efs delete-file-system --file-system-id "$fs_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:network-interface/*) eni_id="${arn##*/}"; delete_owned "network_interface" "$arn" aws ec2 delete-network-interface --network-interface-id "$eni_id" ;;
-                arn:aws*:ec2:*:natgateway/*) nat_id="${arn##*/}"; delete_owned "nat_gateway" "$arn" aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" ;;
-                arn:aws*:ec2:*:elastic-ip/*) allocation_id="${arn##*/}"; delete_owned "elastic_ip" "$arn" aws ec2 release-address --allocation-id "$allocation_id" ;;
-                arn:aws*:ec2:*:security-group/*) group_id="${arn##*/}"; delete_owned "security_group" "$arn" aws ec2 delete-security-group --group-id "$group_id" ;;
-                arn:aws*:ec2:*:subnet/*) subnet_id="${arn##*/}"; delete_owned "subnet" "$arn" aws ec2 delete-subnet --subnet-id "$subnet_id" ;;
-                arn:aws*:ec2:*:route-table/*) route_id="${arn##*/}"; for detail in $(aws ec2 describe-route-tables --route-table-ids "$route_id" --query 'RouteTables[0].Associations[?Main!=`true`].RouteTableAssociationId' --output text 2>/dev/null); do delete_owned "route_table_association" "$detail" aws ec2 disassociate-route-table --association-id "$detail"; done; delete_owned "route_table" "$arn" aws ec2 delete-route-table --route-table-id "$route_id" ;;
-                arn:aws*:ec2:*:internet-gateway/*) gateway_id="${arn##*/}"; for vpc_id in $(aws ec2 describe-internet-gateways --internet-gateway-ids "$gateway_id" --query 'InternetGateways[0].Attachments[].VpcId' --output text 2>/dev/null); do delete_owned "internet_gateway_attachment" "$gateway_id:$vpc_id" aws ec2 detach-internet-gateway --internet-gateway-id "$gateway_id" --vpc-id "$vpc_id"; done; delete_owned "internet_gateway" "$arn" aws ec2 delete-internet-gateway --internet-gateway-id "$gateway_id" ;;
-                arn:aws*:ec2:*:vpc/*) vpc_id="${arn##*/}"; delete_owned "vpc" "$arn" aws ec2 delete-vpc --vpc-id "$vpc_id" ;;
-                arn:aws*:iam::*:role/*) role_name="${arn##*/}"; for profile in $(aws iam list-instance-profiles-for-role --role-name "$role_name" --query 'InstanceProfiles[].InstanceProfileName' --output text 2>/dev/null); do aws iam remove-role-from-instance-profile --instance-profile-name "$profile" --role-name "$role_name" >/dev/null || true; aws iam delete-instance-profile --instance-profile-name "$profile" >/dev/null || true; done; for policy in $(aws iam list-role-policies --role-name "$role_name" --query 'PolicyNames[]' --output text 2>/dev/null); do aws iam delete-role-policy --role-name "$role_name" --policy-name "$policy" >/dev/null || true; done; for policy in $(aws iam list-attached-role-policies --role-name "$role_name" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do aws iam detach-role-policy --role-name "$role_name" --policy-arn "$policy" >/dev/null || true; done; aws iam delete-role --role-name "$role_name" >/dev/null || true ;;
-                arn:aws*:iam::*:policy/*) for role_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyRoles[].RoleName' --output text 2>/dev/null); do aws iam detach-role-policy --role-name "$role_name" --policy-arn "$arn" >/dev/null || true; done; for group_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyGroups[].GroupName' --output text 2>/dev/null); do aws iam detach-group-policy --group-name "$group_name" --policy-arn "$arn" >/dev/null || true; done; for user_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyUsers[].UserName' --output text 2>/dev/null); do aws iam detach-user-policy --user-name "$user_name" --policy-arn "$arn" >/dev/null || true; done; for version in $(aws iam list-policy-versions --policy-arn "$arn" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do aws iam delete-policy-version --policy-arn "$arn" --version-id "$version" >/dev/null || true; done; aws iam delete-policy --policy-arn "$arn" >/dev/null || true ;;
-                arn:aws*:servicediscovery:*:service/*) aws servicediscovery delete-service --id "${arn##*/}" >/dev/null || true ;;
-                arn:aws*:servicediscovery:*:namespace/*) aws servicediscovery delete-namespace --id "${arn##*/}" >/dev/null || true ;;
-                arn:aws*:backup:*:backup-vault:*) aws backup delete-backup-vault --backup-vault-name "${arn##*:backup-vault:}" >/dev/null || true ;;
-                arn:aws*:sns:*:*) aws sns delete-topic --topic-arn "$arn" >/dev/null || true ;;
-                arn:aws*:ssm:*:parameter/*) aws ssm delete-parameter --name "/${arn##*:parameter/}" >/dev/null || true ;;
-              esac
-            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]? | @base64')
-          }
-
-          purge_project_parameters_and_backups() {
-            local parameter vault recovery tags
-            while IFS= read -r parameter; do [ -z "$parameter" ] || aws ssm delete-parameter --name "$parameter" >/dev/null || true; done < <(aws ssm get-parameters-by-path --path "/deployguard/$PROJECT_ID" --recursive --query 'Parameters[].Name' --output text 2>/dev/null | tr '\t' '\n')
-            while IFS= read -r vault; do
-              [ -n "$vault" ] || continue
-              while IFS= read -r recovery; do
-                [ -n "$recovery" ] || continue
-                tags="$(aws backup list-tags --resource-arn "$recovery" --output json 2>/dev/null || true)"
-                printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '.Tags.ManagedBy == "DeployGuard" and .Tags.DeployGuardProjectId == $project' >/dev/null || continue
-                aws backup delete-recovery-point --backup-vault-name "$vault" --recovery-point-arn "$recovery" >/dev/null || true
-              done < <(aws backup list-recovery-points-by-backup-vault --backup-vault-name "$vault" --query 'RecoveryPoints[].RecoveryPointArn' --output text | tr '\t' '\n')
-            done < <(aws backup list-backup-vaults --query 'BackupVaultList[].BackupVaultName' --output text | tr '\t' '\n')
-          }
-
-          project_backups_absent() {
-            local vault recovery tags vaults recoveries
-            vaults="$(aws backup list-backup-vaults --query 'BackupVaultList[].BackupVaultName' --output text)" || return 2
-            while IFS= read -r vault; do
-              [ -n "$vault" ] || continue
-              recoveries="$(aws backup list-recovery-points-by-backup-vault --backup-vault-name "$vault" --query 'RecoveryPoints[].RecoveryPointArn' --output text)" || return 2
-              while IFS= read -r recovery; do
-                [ -n "$recovery" ] || continue
-                tags="$(aws backup list-tags --resource-arn "$recovery" --output json)" || return 2
-                if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '.Tags.ManagedBy == "DeployGuard" and .Tags.DeployGuardProjectId == $project' >/dev/null; then return 1; fi
-              done <<< "$(printf '%s' "$recoveries" | tr '\t' '\n')"
-            done <<< "$(printf '%s' "$vaults" | tr '\t' '\n')"
-            return 0
-          }
-
-          project_owned_resources_absent() {
-            local mappings secrets logs parameters arn resource cluster service response error_file
-            mappings="$(aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json)" || return 2
-            # Resource Groups Tagging API can retain ECS identities after AWS
-            # has accepted their final deletion. Accept only exact terminal
-            # provider states; every actionable or unknown resource blocks.
-            while IFS= read -r arn; do
-              [ -n "$arn" ] || continue
-              case "$arn" in
-                arn:aws:ecs:*:cluster/*)
-                  response="$(aws ecs describe-clusters --clusters "$arn" --output json)" || return 2
-                  printf '%s' "$response" | jq -e '((.clusters // []) | length) == 0 or all(.clusters[]; .status == "INACTIVE")' >/dev/null || return 1
-                  ;;
-                arn:aws:ecs:*:service/*/*)
-                  resource="${arn#*:service/}"
-                  cluster="${resource%%/*}"
-                  service="${resource#*/}"
-                  error_file="$(mktemp)"
-                  if response="$(aws ecs describe-services --cluster "$cluster" --services "$service" --output json 2>"$error_file")"; then
-                    rm -f "$error_file"
-                    printf '%s' "$response" | jq -e '[.services[]? | select(.status == "ACTIVE")] | length == 0' >/dev/null || return 1
-                  elif grep -q 'ClusterNotFoundException' "$error_file"; then
-                    rm -f "$error_file"
-                  else
-                    rm -f "$error_file"
-                    return 2
-                  fi
-                  ;;
-                arn:aws:ecs:*:task-definition/*)
-                  error_file="$(mktemp)"
-                  if response="$(aws ecs describe-task-definition --task-definition "$arn" --output json 2>"$error_file")"; then
-                    rm -f "$error_file"
-                    [ "$(printf '%s' "$response" | jq -r '.taskDefinition.status')" = "DELETE_IN_PROGRESS" ] || return 1
-                  elif grep -Eq 'ClientException|ResourceNotFoundException' "$error_file"; then
-                    rm -f "$error_file"
-                  else
-                    rm -f "$error_file"
-                    return 2
-                  fi
-                  ;;
-                *) return 1 ;;
-              esac
-            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]?.ResourceARN')
-            secrets="$(aws secretsmanager list-secrets --include-planned-deletion --filters Key=name,Values="deployguard/$PROJECT_ID/" --query 'SecretList | length(@)' --output text)" || return 2
-            [ "$secrets" -eq 0 ] || return 1
-            logs="$(aws logs describe-log-groups --log-group-name-prefix "/deployguard/$PROJECT_ID/" --query 'logGroups | length(@)' --output text)" || return 2
-            [ "$logs" -eq 0 ] || return 1
-            parameters="$(aws ssm get-parameters-by-path --path "/deployguard/$PROJECT_ID" --recursive --query 'Parameters | length(@)' --output text)" || return 2
-            [ "$parameters" -eq 0 ] || return 1
-            project_backups_absent || return $?
-            project_task_definitions_absent
-          }
-
-          endpoint_unavailable() {
-            local endpoint
-            endpoint="$(jq -r '.endpoint // ""' destroy-verification-scope.json)"
-            [ -z "$endpoint" ] && return 0
-            ! curl --silent --show-error --max-time 10 --output /dev/null "$endpoint"
-          }
-
-          purge_project_state_versions() {
-            local versions delete_count known_generations
-            known_generations="$(jq -c '.extinction.knownGenerationIds' ../runtime-config.json)"
-            for attempt in $(seq 1 100); do
-              versions="$(aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --output json)" || return 2
-              printf '%s' "$versions" | jq -c --arg project "$PROJECT_ID" --argjson generations "$known_generations" '
-                def owned: (.Key | contains($project)) or ([ $generations[] as $generation | .Key | contains($generation) ] | any);
-                {Objects: (([.Versions[]? | select(owned) | {Key,VersionId}]
-                  + [.DeleteMarkers[]? | select(owned) | {Key,VersionId}])[:1000]), Quiet: true}
-              ' > state-version-delete.json
-              delete_count="$(jq '.Objects | length' state-version-delete.json)"
-              [ "$delete_count" -gt 0 ] || return 0
-              aws s3api delete-objects --bucket "$TERRAFORM_STATE_BUCKET" --delete file://state-version-delete.json >/dev/null || return 2
-            done
-            echo "Terraform state version cleanup exceeded its bounded batch limit." >&2
-            return 2
-          }
-
-          project_state_versions_absent() {
-            local versions known_generations
-            known_generations="$(jq -c '.extinction.knownGenerationIds' ../runtime-config.json)"
-            versions="$(aws s3api list-object-versions --bucket "$TERRAFORM_STATE_BUCKET" --output json)" || return 2
-            printf '%s' "$versions" | jq -e --arg project "$PROJECT_ID" --argjson generations "$known_generations" '
-              def owned: (.Key | contains($project)) or ([ $generations[] as $generation | .Key | contains($generation) ] | any);
-              ([.Versions[]?, .DeleteMarkers[]?] | map(select(owned)) | length) == 0
-            ' >/dev/null
-          }
-
-          write_destroy_incomplete() {
-            local reason="$1" terraform_evidence remaining result now mappings arn
-            terraform_evidence="$(jq -c '.' terraform-destroy-evidence.json)"
-            mappings="$(aws_retry aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json 2>/dev/null || printf '{"ResourceTagMappingList":[]}')"
-            while IFS= read -r arn; do
-              [ -n "$arn" ] || continue
-              add_remaining "aws_resource" "$arn" "project" "$reason" "RESIDUE_PRESENT" "Owned resource remains after this bounded cleanup iteration." true
-            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]?.ResourceARN')
-            if [ "$(jq 'length' destroy-remaining.json)" -eq 0 ]; then
-              add_remaining "destroy_verification" "$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID" "generation" "$reason" "VERIFICATION_INCOMPLETE" "Exact-ID or provider verification did not converge in this execution." true
-            fi
-            remaining="$(jq -c 'unique_by(.resourceType + "|" + .resourceId)' destroy-remaining.json)"
-            now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            result="$(jq -cn --arg operation "$OPERATION_ID" --arg phase "DESTROY_VERIFYING" --arg verifiedAt "$now" --argjson remaining "$remaining" --argjson terraform "$terraform_evidence" '{deploymentOperationId:$operation,status:"DESTROY_INCOMPLETE",phase:$phase,remaining:$remaining,terraform:$terraform,verifiedAt:$verifiedAt}')"
-            printf 'DEPLOYGUARD_DESTROY_PROGRESS=%s\n' "$result"
-            printf '%s\n' "$result" | jq . > deployguard-result.json
-          }
-
-          for cleanup_pass in $(seq 1 20); do
-            purge_project_task_definitions
-            purge_project_secrets_and_logs
-            purge_project_parameters_and_backups
-            purge_tagged_project_resources
-            project_owned_resources_absent && break
-            [ "$cleanup_pass" -eq 20 ] || sleep 10
-          done
-
-          VERIFIED=false
-          for attempt in $(seq 1 30); do
-            if ecs_services_absent \
-              && running_tasks_zero \
-              && arns_absent load_balancer '.loadBalancerArns' \
-              && arns_absent listener '.listenerArns' \
-              && arns_absent target_group '.targetGroupArns' \
-              && endpoint_unavailable \
-              && image_repository_absent \
-              && runtime_secret_absent \
-              && project_owned_resources_absent; then
-              VERIFIED=true
-              break
-            fi
-            [ "$attempt" -eq 30 ] || sleep 10
-          done
-          if [ "$VERIFIED" != "true" ]; then
-            write_destroy_incomplete "Project infrastructure absence was not verified within the bounded consistency window."
+          REPOSITORY_NAME="$(jq -r '.projectDeletion.projectResources.ecrRepositoryName' ../runtime-config.json)"
+          ECR_ERROR="$(mktemp)"
+          if aws ecr describe-repositories --repository-names "$REPOSITORY_NAME" >/dev/null 2>"$ECR_ERROR"; then
+            echo "Exact project ECR repository remains." >&2
+            exit 1
+          elif ! grep -q 'RepositoryNotFoundException' "$ECR_ERROR"; then
+            sed -n '1,20p' "$ECR_ERROR" >&2
             exit 1
           fi
+          rm -f "$ECR_ERROR"
 
-          # State addresses may remain after their remote objects are already
-          # absent (for example after a partial prior cleanup). Exact service
-          # checks and ownership-tag orphan checks above are the AWS authority;
-          # only after they pass do we erase every exact project/generation
-          # state version, lock, and delete marker and verify storage absence.
-          if ! purge_project_state_versions || ! project_state_versions_absent; then
-            add_remaining "terraform_state" "projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" "generation" "Terraform state versions or lock artifacts remain." "STATE_RESIDUE" "Exact generation state cleanup did not converge." true
-            write_destroy_incomplete "Project Terraform artifacts remain in versioned state storage."
+          RUNTIME_SECRET="$(jq -r '.projectDeletion.projectResources.runtimeSecretName' ../runtime-config.json)"
+          SECRET_ERROR="$(mktemp)"
+          if SECRET="$(aws secretsmanager describe-secret --secret-id "$RUNTIME_SECRET" --output json 2>"$SECRET_ERROR")"; then
+            [ -n "$(printf '%s' "$SECRET" | jq -r '.DeletedDate // empty')" ] || {
+              echo "Exact project runtime secret remains active." >&2
+              exit 1
+            }
+          elif ! grep -q 'ResourceNotFoundException' "$SECRET_ERROR"; then
+            sed -n '1,20p' "$SECRET_ERROR" >&2
             exit 1
           fi
+          rm -f "$SECRET_ERROR"
 
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,imageRepositoryAbsent:true,runtimeSecretAbsent:true,activeGenerationTaskDefinitionsAbsent:true,normalResourcesAbsent:true,terraformStateVersionsAbsent:true,projectOwnedAwsResourcesAbsent:true,allProjectTerraformArtifactsAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
+          GENERATION_IDS="$(jq -c '[.projectDeletion.generations[].generationId] | unique | sort' ../runtime-config.json)"
+          RESULT="$(jq -cn \
+            --arg operation "$OPERATION_ID" \
+            --arg projectId "$PROJECT_ID" \
+            --arg environmentName "$ENVIRONMENT_NAME" \
+            --argjson generationIds "$GENERATION_IDS" \
+            --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{contractVersion:"deployguard.destroy-result/v2",deploymentOperationId:$operation,projectId:$projectId,environmentName:$environmentName,generationIds:$generationIds,status:"project_delete_ready",generationResourcesRemoved:true,projectResourcesRemoved:true,terraformStateArtifactsRemoved:true,sharedPlatformUntouched:true,verifiedAt:$verifiedAt}')"
           printf 'DEPLOYGUARD_DESTROY_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
