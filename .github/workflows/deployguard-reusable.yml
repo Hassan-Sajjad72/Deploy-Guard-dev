@@ -1422,15 +1422,17 @@ jobs:
             write_terraform_evidence
             exit 1
           fi
-          if [ "$TF_EXIT_CODE" -eq 2 ]; then
-            terraform apply -input=false -auto-approve deployguard-destroy.tfplan >terraform-apply.log 2>&1
-            TF_EXIT_CODE=$?
-            if [ "$TF_EXIT_CODE" -ne 0 ]; then
-              TF_STATUS="apply_failed"
-              TF_ERROR="$(tail -n 20 terraform-apply.log | tr '\n' ' ' | cut -c1-1000)"
-              write_terraform_evidence
-              exit "$TF_EXIT_CODE"
-            fi
+          # Apply the saved plan even when detailed-exitcode is 0. A no-change
+          # destroy plan can still contain refresh evidence that removes
+          # already-absent objects from state; skipping apply would leave stale
+          # addresses in the generation state and permanently block extinction.
+          terraform apply -input=false -auto-approve deployguard-destroy.tfplan >terraform-apply.log 2>&1
+          TF_EXIT_CODE=$?
+          if [ "$TF_EXIT_CODE" -ne 0 ]; then
+            TF_STATUS="apply_failed"
+            TF_ERROR="$(tail -n 20 terraform-apply.log | tr '\n' ' ' | cut -c1-1000)"
+            write_terraform_evidence
+            exit "$TF_EXIT_CODE"
           fi
           TF_STATUS="completed"
           TF_EXIT_CODE=0
