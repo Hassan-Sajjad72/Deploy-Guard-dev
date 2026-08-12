@@ -41,8 +41,8 @@ const service = readFileSync(resolve(__dirname, "../src/projects/github-actions-
 assert.match(workflow, /terraform plan -destroy/);
 assert.match(workflow, /A verified destroy removes the complete generation/);
 assert.doesNotMatch(workflow, /terraform state rm "\$address"/, "destroy must never orphan persistence by removing it from state");
-assert.match(workflow, /normal_state_resources_absent/);
-assert.match(workflow, /\[ -z "\$\(terraform state list/);
+assert.doesNotMatch(workflow, /normal_state_resources_absent/, "stale state addresses are artifacts to purge after exact AWS absence, not proof of live infrastructure");
+assert.match(workflow, /project_owned_resources_absent; then[\s\S]*?purge_project_state_versions[\s\S]*?project_state_versions_absent/, "exact AWS absence precedes exact state-version extinction");
 assert.match(workflow, /delete_runtime_secret_if_owned/);
 assert.match(workflow, /describe-secret --secret-id "\$RUNTIME_SECRET"/);
 assert.match(workflow, /delete-secret --secret-id "\$RUNTIME_SECRET" --force-delete-without-recovery/);

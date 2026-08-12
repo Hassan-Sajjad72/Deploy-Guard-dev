@@ -37,6 +37,7 @@ assert.match(verifier, /DESTROY_INCOMPLETE/);
 assert.match(verifier, /DEPLOYGUARD_DESTROY_PROGRESS/);
 assert.match(verifier, /destroy-remaining\.json/);
 assert.match(verifier, /project_state_versions_absent/);
+assert.doesNotMatch(verifier, /normal_state_resources_absent/, "stale Terraform addresses do not block exact AWS verification before the state artifact itself is purged");
 assert.match(verifier, /DELETE_IN_PROGRESS/);
 assert.match(workflow, /RESOURCE_NAME="dg-\$PROJECT_PREFIX-\$GENERATION_PREFIX"/, "mutable names are generation-qualified");
 
