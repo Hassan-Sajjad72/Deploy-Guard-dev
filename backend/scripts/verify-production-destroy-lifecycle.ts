@@ -27,6 +27,8 @@ const verifier = workflow.match(/- name: Verify destroyed infrastructure and wri
 assert.match(scavenger, /if: always\(\) && inputs\.deployment_action == 'destroy'/);
 assert.match(verifier, /if: always\(\) && inputs\.deployment_action == 'destroy'/);
 assert.match(verifier, /aws_retry\(\)/);
+assert.match(verifier, /delete_owned\(\)/);
+assert.match(verifier, /Encoded authorization failure message:/);
 assert.match(verifier, /DESTROY_INCOMPLETE/);
 assert.match(verifier, /DEPLOYGUARD_DESTROY_PROGRESS/);
 assert.match(verifier, /destroy-remaining\.json/);
