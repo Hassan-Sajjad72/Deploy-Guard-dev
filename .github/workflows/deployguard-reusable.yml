@@ -1818,10 +1818,6 @@ jobs:
             done < <(jq -r "$selector[]?" destroy-verification-scope.json)
           }
 
-          normal_state_resources_absent() {
-            [ -z "$(terraform state list 2>/dev/null || true)" ]
-          }
-
           image_repository_absent() {
             local safe_project repository_name error_file
             safe_project="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
@@ -2111,8 +2107,7 @@ jobs:
               && endpoint_unavailable \
               && image_repository_absent \
               && runtime_secret_absent \
-              && project_owned_resources_absent \
-              && normal_state_resources_absent; then
+              && project_owned_resources_absent; then
               VERIFIED=true
               break
             fi
@@ -2123,9 +2118,11 @@ jobs:
             exit 1
           fi
 
-          # State is deleted only after all project-owned AWS resources are
-          # absent. Every current, legacy and generation-scoped object version
-          # and delete marker containing a known project identity is removed.
+          # State addresses may remain after their remote objects are already
+          # absent (for example after a partial prior cleanup). Exact service
+          # checks and ownership-tag orphan checks above are the AWS authority;
+          # only after they pass do we erase every exact project/generation
+          # state version, lock, and delete marker and verify storage absence.
           if ! purge_project_state_versions || ! project_state_versions_absent; then
             add_remaining "terraform_state" "projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" "generation" "Terraform state versions or lock artifacts remain." "STATE_RESIDUE" "Exact generation state cleanup did not converge." true
             write_destroy_incomplete "Project Terraform artifacts remain in versioned state storage."
