@@ -1724,6 +1724,21 @@ jobs:
             mv destroy-remaining.next.json destroy-remaining.json
           }
 
+          delete_owned() {
+            local type="$1" id="$2" output status code message
+            shift 2
+            set +e
+            output="$(aws_retry "$@" 2>&1)"; status=$?
+            set -e
+            [ "$status" -eq 0 ] && return 0
+            if printf '%s' "$output" | grep -Eqi 'NotFound|Invalid[A-Za-z]+\.NotFound|does not exist'; then return 0; fi
+            code="$(printf '%s' "$output" | sed -nE 's/.*\(([A-Za-z0-9._-]+)\) when calling.*/\1/p' | head -1)"
+            [ -n "$code" ] || code="AWS_DELETE_FAILED"
+            message="$(printf '%s' "$output" | sed -E 's/Encoded authorization failure message:.*$//' | tr '\n' ' ' | cut -c1-1000)"
+            add_remaining "$type" "$id" "generation" "Owned AWS resource deletion did not complete." "$code" "$message" true
+            return 0
+          }
+
           aws_absent() {
             local kind="$1" identifier="$2" error_file not_found
             local -a command
@@ -1911,14 +1926,14 @@ jobs:
                 arn:aws*:secretsmanager:*:secret:*) aws secretsmanager delete-secret --secret-id "$arn" --force-delete-without-recovery >/dev/null || true ;;
                 arn:aws*:elasticfilesystem:*:access-point/*) aws efs delete-access-point --access-point-id "${arn##*/}" >/dev/null || true ;;
                 arn:aws*:elasticfilesystem:*:file-system/*) fs_id="${arn##*/}"; for target in $(aws efs describe-mount-targets --file-system-id "$fs_id" --query 'MountTargets[].MountTargetId' --output text 2>/dev/null); do aws efs delete-mount-target --mount-target-id "$target" >/dev/null || true; done; aws efs delete-file-system --file-system-id "$fs_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:network-interface/*) eni_id="${arn##*/}"; aws ec2 delete-network-interface --network-interface-id "$eni_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:natgateway/*) nat_id="${arn##*/}"; aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:elastic-ip/*) allocation_id="${arn##*/}"; aws ec2 release-address --allocation-id "$allocation_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:security-group/*) group_id="${arn##*/}"; aws ec2 delete-security-group --group-id "$group_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:subnet/*) subnet_id="${arn##*/}"; aws ec2 delete-subnet --subnet-id "$subnet_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:route-table/*) route_id="${arn##*/}"; for detail in $(aws ec2 describe-route-tables --route-table-ids "$route_id" --query 'RouteTables[0].Associations[?Main!=`true`].RouteTableAssociationId' --output text 2>/dev/null); do aws ec2 disassociate-route-table --association-id "$detail" >/dev/null || true; done; aws ec2 delete-route-table --route-table-id "$route_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:internet-gateway/*) gateway_id="${arn##*/}"; for vpc_id in $(aws ec2 describe-internet-gateways --internet-gateway-ids "$gateway_id" --query 'InternetGateways[0].Attachments[].VpcId' --output text 2>/dev/null); do aws ec2 detach-internet-gateway --internet-gateway-id "$gateway_id" --vpc-id "$vpc_id" >/dev/null || true; done; aws ec2 delete-internet-gateway --internet-gateway-id "$gateway_id" >/dev/null || true ;;
-                arn:aws*:ec2:*:vpc/*) vpc_id="${arn##*/}"; aws ec2 delete-vpc --vpc-id "$vpc_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:network-interface/*) eni_id="${arn##*/}"; delete_owned "network_interface" "$arn" aws ec2 delete-network-interface --network-interface-id "$eni_id" ;;
+                arn:aws*:ec2:*:natgateway/*) nat_id="${arn##*/}"; delete_owned "nat_gateway" "$arn" aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" ;;
+                arn:aws*:ec2:*:elastic-ip/*) allocation_id="${arn##*/}"; delete_owned "elastic_ip" "$arn" aws ec2 release-address --allocation-id "$allocation_id" ;;
+                arn:aws*:ec2:*:security-group/*) group_id="${arn##*/}"; delete_owned "security_group" "$arn" aws ec2 delete-security-group --group-id "$group_id" ;;
+                arn:aws*:ec2:*:subnet/*) subnet_id="${arn##*/}"; delete_owned "subnet" "$arn" aws ec2 delete-subnet --subnet-id "$subnet_id" ;;
+                arn:aws*:ec2:*:route-table/*) route_id="${arn##*/}"; for detail in $(aws ec2 describe-route-tables --route-table-ids "$route_id" --query 'RouteTables[0].Associations[?Main!=`true`].RouteTableAssociationId' --output text 2>/dev/null); do delete_owned "route_table_association" "$detail" aws ec2 disassociate-route-table --association-id "$detail"; done; delete_owned "route_table" "$arn" aws ec2 delete-route-table --route-table-id "$route_id" ;;
+                arn:aws*:ec2:*:internet-gateway/*) gateway_id="${arn##*/}"; for vpc_id in $(aws ec2 describe-internet-gateways --internet-gateway-ids "$gateway_id" --query 'InternetGateways[0].Attachments[].VpcId' --output text 2>/dev/null); do delete_owned "internet_gateway_attachment" "$gateway_id:$vpc_id" aws ec2 detach-internet-gateway --internet-gateway-id "$gateway_id" --vpc-id "$vpc_id"; done; delete_owned "internet_gateway" "$arn" aws ec2 delete-internet-gateway --internet-gateway-id "$gateway_id" ;;
+                arn:aws*:ec2:*:vpc/*) vpc_id="${arn##*/}"; delete_owned "vpc" "$arn" aws ec2 delete-vpc --vpc-id "$vpc_id" ;;
                 arn:aws*:iam::*:role/*) role_name="${arn##*/}"; for profile in $(aws iam list-instance-profiles-for-role --role-name "$role_name" --query 'InstanceProfiles[].InstanceProfileName' --output text 2>/dev/null); do aws iam remove-role-from-instance-profile --instance-profile-name "$profile" --role-name "$role_name" >/dev/null || true; aws iam delete-instance-profile --instance-profile-name "$profile" >/dev/null || true; done; for policy in $(aws iam list-role-policies --role-name "$role_name" --query 'PolicyNames[]' --output text 2>/dev/null); do aws iam delete-role-policy --role-name "$role_name" --policy-name "$policy" >/dev/null || true; done; for policy in $(aws iam list-attached-role-policies --role-name "$role_name" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do aws iam detach-role-policy --role-name "$role_name" --policy-arn "$policy" >/dev/null || true; done; aws iam delete-role --role-name "$role_name" >/dev/null || true ;;
                 arn:aws*:iam::*:policy/*) for role_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyRoles[].RoleName' --output text 2>/dev/null); do aws iam detach-role-policy --role-name "$role_name" --policy-arn "$arn" >/dev/null || true; done; for group_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyGroups[].GroupName' --output text 2>/dev/null); do aws iam detach-group-policy --group-name "$group_name" --policy-arn "$arn" >/dev/null || true; done; for user_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyUsers[].UserName' --output text 2>/dev/null); do aws iam detach-user-policy --user-name "$user_name" --policy-arn "$arn" >/dev/null || true; done; for version in $(aws iam list-policy-versions --policy-arn "$arn" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do aws iam delete-policy-version --policy-arn "$arn" --version-id "$version" >/dev/null || true; done; aws iam delete-policy --policy-arn "$arn" >/dev/null || true ;;
                 arn:aws*:servicediscovery:*:service/*) aws servicediscovery delete-service --id "${arn##*/}" >/dev/null || true ;;
