@@ -1193,7 +1193,25 @@ jobs:
             STABLE_RULE_ARN="$(aws elbv2 create-rule --listener-arn "$LISTENER_ARN" --priority "$PRODUCTION_PRIORITY" --actions "Type=forward,TargetGroupArn=$TARGET_GROUP_ARN" --conditions "Field=host-header,Values=$PRODUCTION_HOST" --tags "Key=ManagedBy,Value=DeployGuard" "Key=DeployGuardProjectId,Value=$PROJECT_ID" "Key=Environment,Value=$ENVIRONMENT_NAME" "Key=DeployGuardScope,Value=project" --output json | jq -r '.Rules[0].RuleArn')"
           fi
           PRODUCTION_URL="http://$PRODUCTION_HOST"
-          curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$HEALTH_CHECK_PATH" >/dev/null || { echo "Production route did not verify after exact candidate cutover." >&2; exit 1; }
+          ROUTE_VERIFIED=false
+          for attempt in $(seq 1 30); do
+            STABLE_RULE="$(aws elbv2 describe-rules --rule-arns "$STABLE_RULE_ARN" --output json)"
+            RULE_READY="$(printf '%s' "$STABLE_RULE" | jq -r --arg host "$PRODUCTION_HOST" --arg target "$TARGET_GROUP_ARN" '
+              (.Rules | length) == 1
+              and any(.Rules[0].Conditions[]?; .Field == "host-header" and any(.Values[]?; . == $host))
+              and any(.Rules[0].Actions[]?; .Type == "forward" and ((.TargetGroupArn // .ForwardConfig.TargetGroups[0].TargetGroupArn) == $target))
+            ')"
+            HTTP_READY=false
+            if [ "$RULE_READY" = "true" ] && curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$HEALTH_CHECK_PATH" >/dev/null; then
+              HTTP_READY=true
+            fi
+            if [ "$RULE_READY" = "true" ] && [ "$HTTP_READY" = "true" ]; then
+              ROUTE_VERIFIED=true
+              break
+            fi
+            sleep 5
+          done
+          [ "$ROUTE_VERIFIED" = "true" ] || { echo "Production route did not converge after exact candidate cutover." >&2; exit 1; }
           RESULT="$(printf '%s' "$CANDIDATE" | jq -c --arg url "$PRODUCTION_URL" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg intentFingerprint "$INTENT_FINGERPRINT" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId,generationId,environmentName,status:"succeeded",deployedUrl:$url,imageUri,imageDigest,commitSha,clusterName,serviceName,ecsServiceArn,targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,taskDefinitionArn,appPort,healthCheckPath,configurationFingerprint,configurationSnapshotId,databaseBindingId,secretReferenceNames,databaseOutputs,promotionIntentFingerprint:$intentFingerprint}')"
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           mkdir -p .deployguard/terraform
