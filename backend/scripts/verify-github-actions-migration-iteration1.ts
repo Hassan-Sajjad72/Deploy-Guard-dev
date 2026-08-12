@@ -55,11 +55,11 @@ async function run() {
     assert.deepEqual({ verified: generated.verified, generated: generated.generated, path: generated.path }, { verified: true, generated: true, path: DEPLOYGUARD_WORKFLOW_PATH });
     const put = calls.find((call) => call.method === "PUT");
     const pinnedValidation = calls.find((call) => call.url.includes("/Deploy-Guard-dev/contents/.github/workflows/deployguard-reusable.yml?ref="));
-    assert.ok(pinnedValidation?.url.endsWith("ref=b79d403dcbe0488b60f71bac2540b7620e0e709a"), "compatibility gate reads the exact immutable SHA");
+    assert.ok(pinnedValidation?.url.endsWith("ref=f76e58fad327145ba2e275efea5b6724f646a068"), "compatibility gate reads the exact immutable SHA");
     assert.ok(calls.indexOf(pinnedValidation!) < calls.indexOf(put!), "pinned reusable validates before customer workflow mutation");
     const workflow = Buffer.from(put?.body.content, "base64").toString("utf8");
     assert.match(workflow, /workflow_dispatch:/);
-    assert.match(workflow, /Hassan-Sajjad72\/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@b79d403dcbe0488b60f71bac2540b7620e0e709a/);
+    assert.match(workflow, /Hassan-Sajjad72\/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@f76e58fad327145ba2e275efea5b6724f646a068/);
     assert.match(workflow, /id-token:\s*write/);
     assert.equal(GITHUB_ACTIONS_CALLER_INPUT_NAMES.length, 21, "packed GitHub workflow_dispatch stays below 25 inputs");
     for (const input of GITHUB_ACTIONS_CALLER_INPUT_NAMES) assert.match(workflow, new RegExp(`\\b${input}:`));
