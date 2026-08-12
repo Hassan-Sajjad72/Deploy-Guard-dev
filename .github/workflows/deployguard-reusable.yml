@@ -99,7 +99,9 @@ jobs:
           [[ "$GENERATION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]] || { echo "Invalid deployment generation identity." >&2; exit 1; }
           [ "$INFRASTRUCTURE_NAMESPACE" = "/deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID" ] || { echo "Invalid infrastructure namespace." >&2; exit 1; }
           printf 'GENERATION_ID=%s\n' "$GENERATION_ID" >> "$GITHUB_ENV"
-          RESOURCE_NAME="dg-$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-25)"
+          PROJECT_PREFIX="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
+          GENERATION_PREFIX="$(printf '%s' "$GENERATION_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
+          RESOURCE_NAME="dg-$PROJECT_PREFIX-$GENERATION_PREFIX"
           printf 'RESOURCE_NAME=%s\n' "$RESOURCE_NAME" >> "$GITHUB_ENV"
           [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
           [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
@@ -174,17 +176,33 @@ jobs:
               and (.environment.DEPLOYGUARD_OPERATION_ID == $operation)
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable runtime configuration references." >&2; exit 1; }
           elif [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
-            jq -e --arg project "$PROJECT_ID" --arg generation "$GENERATION_ID" '
+            jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               type == "object"
               and (.configurationFingerprint | test("^[0-9a-f]{64}$"))
               and .extinction.projectId == $project
               and (.extinction.knownGenerationIds | type == "array" and length > 0 and length <= 1000)
               and all(.extinction.knownGenerationIds[]; test("^[0-9a-fA-F-]{36}$"))
               and (.extinction.knownGenerationIds | index($generation)) != null
+              and (.extinction.resourceManifest | type == "object")
+              and .extinction.resourceManifest.schemaVersion == 1
+              and .extinction.resourceManifest.projectId == $project
+              and .extinction.resourceManifest.environmentName == $environment
+              and .extinction.resourceManifest.generationId == $generation
+              and .extinction.resourceManifest.ownership.managedBy == "DeployGuard"
+              and .extinction.resourceManifest.ownership.projectId == $project
+              and .extinction.resourceManifest.ownership.generationId == $generation
+              and (. as $root | all([
+                "terraformStateKeys", "terraformStateBuckets", "taskDefinitionArns", "imageUris",
+                "ecrRepositoryNames", "efsFileSystemIds", "efsAccessPointIds", "secretArns",
+                "ecsClusterArns", "ecsServiceArns", "loadBalancerArns", "listenerArns",
+                "targetGroupArns", "securityGroupIds", "subnetIds", "routeTableIds",
+                "internetGatewayIds", "vpcIds", "resourceEvidence"
+              ][]; (. as $key | $root.extinction.resourceManifest[$key] | type == "array")))
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable project-extinction context." >&2; exit 1; }
           else
             jq -e 'type == "object" and (.configurationFingerprint | type == "string")' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable environment references." >&2; exit 1; }
           fi
+          touch .deployguard/operation-contract.valid
 
       - name: Derive immutable release identity
         if: inputs.deployment_action == 'deploy'
@@ -195,8 +213,9 @@ jobs:
           SHORT_SHA="${{ inputs.commit_sha }}"
           SHORT_SHA="${SHORT_SHA::12}"
           OPERATION_SUFFIX="$(printf '%s' "$OPERATION_ID" | tr -cd '[:alnum:]' | cut -c1-12)"
-          SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-28)"
-          REPOSITORY_NAME="deployguard-${SAFE_PROJECT}"
+          SAFE_PROJECT="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-12)"
+          SAFE_GENERATION="$(printf '%s' "$GENERATION_ID" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-12)"
+          REPOSITORY_NAME="deployguard-${SAFE_PROJECT}-${SAFE_GENERATION}"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           [ "${{ inputs.image_tag }}" = "${SHORT_SHA}-${OPERATION_SUFFIX}" ] || { echo "Immutable image tag does not match this operation." >&2; exit 1; }
           echo "image_tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
@@ -298,6 +317,7 @@ jobs:
 
       - name: Generate deployment Terraform
         if: inputs.deployment_action != 'rollback'
+        continue-on-error: ${{ inputs.deployment_action == 'destroy' }}
         shell: bash
         env:
           IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || 'destroy.invalid' }}
@@ -736,7 +756,7 @@ jobs:
           NODE
 
       - name: Terraform plan and apply
-        if: inputs.deployment_action != 'rollback'
+        if: inputs.deployment_action == 'deploy'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
@@ -1081,13 +1101,12 @@ jobs:
             trust_or_import_owned "$address" "$arn"
           }
           reconcile_http_listener() {
-            local address="aws_lb_listener.http" load_balancer listener count arn tags
-            load_balancer="$(aws elbv2 describe-load-balancers --names "$RESOURCE_NAME" --output json 2>/dev/null || true)"
-            if [ "$(printf '%s' "$load_balancer" | jq '.LoadBalancers | length' 2>/dev/null || printf 0)" -eq 0 ]; then
+            local address="aws_lb_listener.http" listener count arn tags
+            if [ -z "${RECONCILED_LOAD_BALANCER_ARN:-}" ]; then
               state_has "$address" && { echo "Terraform state contains $address but its expected load balancer is absent." >&2; exit 1; }
               return 0
             fi
-            listener="$(aws elbv2 describe-listeners --load-balancer-arn "$(printf '%s' "$load_balancer" | jq -r '.LoadBalancers[0].LoadBalancerArn')" --output json)" || { echo "Existing listener identity could not be inspected." >&2; exit 1; }
+            listener="$(aws elbv2 describe-listeners --load-balancer-arn "$RECONCILED_LOAD_BALANCER_ARN" --output json)" || { echo "Existing listener identity could not be inspected." >&2; exit 1; }
             count="$(printf '%s' "$listener" | jq '[.Listeners[]? | select(.Port == 80 and .Protocol == "HTTP")] | length')"
             if [ "$count" -eq 0 ]; then state_has "$address" && { echo "Terraform state contains $address but the expected HTTP listener is absent." >&2; exit 1; }; return 0; fi
             [ "$count" -eq 1 ] || { echo "Existing HTTP listener identity is ambiguous." >&2; exit 1; }
@@ -1236,11 +1255,11 @@ jobs:
               elif (($mask | type) == "array" and ($value | type) == "array") then
                 [range(0; $value | length) as $index | redact($value[$index]; ($mask[$index] // false))]
               else $value end;
-            .resource_changes |= map(
+            .resource_changes = ((.resource_changes // []) | map(
               .change.before = redact(.change.before; (.change.before_sensitive // false))
               | .change.after = redact(.change.after; (.change.after_sensitive // false))
               | del(.change.before_sensitive, .change.after_sensitive)
-            )
+            ))
           ' deployguard-plan.json > deployguard-cost-plan.json
           jq -c '
             reduce (.resource_changes[]? | {type: .type, actions: (.change.actions // [])}) as $change
@@ -1301,8 +1320,125 @@ jobs:
           printf 'DEPLOYGUARD_STAGE=terraform_apply\n'
           terraform apply -input=false -auto-approve deployguard.tfplan
 
-      - name: Remove immutable image repository after destroy
-        if: inputs.deployment_action == 'destroy'
+      - name: Drain targeted generation runtime
+        if: always() && inputs.deployment_action == 'destroy'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          [ -f .deployguard/operation-contract.valid ] || { echo "Immutable Destroy contract was not validated; refusing AWS mutation." >&2; exit 1; }
+          printf 'DEPLOYGUARD_STAGE=destroy_runtime_drain\n'
+          MANIFEST="$(jq -c '.extinction.resourceManifest // {}' .deployguard/runtime-config.json)"
+          service_arns="$(printf '%s' "$MANIFEST" | jq -r '.ecsServiceArns[]?')"
+          while IFS= read -r arn; do
+            [ -n "$arn" ] || continue
+            detail="${arn#*:service/}"; cluster="${detail%%/*}"; service="${detail#*/}"
+            description="$(aws ecs describe-services --cluster "$cluster" --services "$service" --include TAGS --output json 2>/dev/null || true)"
+            printf '%s' "$description" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+              any(.services[]?; ((.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
+                | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
+                  and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation))
+            ' >/dev/null || continue
+            aws ecs update-service --cluster "$cluster" --service "$service" --desired-count 0 >/dev/null 2>&1 || true
+            tasks="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service" --query 'taskArns[]' --output text 2>/dev/null || true)"
+            for task in $tasks; do aws ecs stop-task --cluster "$cluster" --task "$task" --reason "DeployGuard verified Destroy" >/dev/null 2>&1 || true; done
+          done <<< "$service_arns"
+
+      - name: Terraform state-only destroy
+        if: always() && inputs.deployment_action == 'destroy'
+        id: destroy_terraform
+        continue-on-error: true
+        working-directory: .deployguard/terraform
+        shell: bash
+        run: |
+          set -uo pipefail
+          [ -f ../operation-contract.valid ] || { echo "Immutable Destroy contract was not validated; refusing Terraform mutation." >&2; exit 1; }
+          printf 'DEPLOYGUARD_STAGE=terraform_state_only_destroy\n'
+          TF_STATUS="not_started"
+          TF_EXIT_CODE=0
+          TF_ERROR=""
+          write_terraform_evidence() {
+            jq -cn \
+              --arg status "$TF_STATUS" \
+              --argjson exitCode "$TF_EXIT_CODE" \
+              --arg error "$TF_ERROR" \
+              --arg stateKey "projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" \
+              '{status:$status,exitCode:$exitCode,error:$error,stateKey:$stateKey,importAttempted:false}' > terraform-destroy-evidence.json
+          }
+          terraform fmt -check -recursive -diff || {
+            TF_STATUS="format_failed"; TF_EXIT_CODE=$?; TF_ERROR="Generated Terraform is not fmt compliant."; write_terraform_evidence; exit "$TF_EXIT_CODE"
+          }
+          terraform init -input=false \
+            -backend-config="bucket=$TERRAFORM_STATE_BUCKET" \
+            -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true" >terraform-init.log 2>&1
+          TF_EXIT_CODE=$?
+          if [ "$TF_EXIT_CODE" -ne 0 ]; then
+            TF_STATUS="init_failed"
+            TF_ERROR="$(tail -n 20 terraform-init.log | tr '\n' ' ' | cut -c1-1000)"
+            write_terraform_evidence
+            exit "$TF_EXIT_CODE"
+          fi
+          TF_STATUS="initialized"
+          if terraform show -json > pre-destroy-state.json 2>terraform-show.log; then
+            jq -c '
+              def modules: ., (.child_modules[]? | modules);
+              def resources: [.values.root_module? | modules | .resources[]?];
+              {
+                ecsClusters: [resources[] | select(.type == "aws_ecs_cluster") | (.values.arn // .values.name) | select(type == "string" and length > 0)],
+                ecsServices: [resources[] | select(.type == "aws_ecs_service") | {cluster: .values.cluster, name: .values.name, arn:(.values.id // .values.arn // "")} | select(.cluster != null and .name != null)],
+                loadBalancerArns: [resources[] | select(.type == "aws_lb") | .values.arn | select(type == "string" and length > 0)],
+                listenerArns: [resources[] | select(.type == "aws_lb_listener") | .values.arn | select(type == "string" and length > 0)],
+                targetGroupArns: [resources[] | select(.type == "aws_lb_target_group") | .values.arn | select(type == "string" and length > 0)],
+                endpoint: (.values.outputs.deployed_url.value // "")
+              }
+            ' pre-destroy-state.json > destroy-verification-scope.json
+          else
+            printf '%s\n' '{"ecsClusters":[],"ecsServices":[],"loadBalancerArns":[],"listenerArns":[],"targetGroupArns":[],"endpoint":""}' > destroy-verification-scope.json
+          fi
+          terraform validate -no-color >terraform-validate.log 2>&1
+          TF_EXIT_CODE=$?
+          if [ "$TF_EXIT_CODE" -ne 0 ]; then
+            TF_STATUS="validate_failed"
+            TF_ERROR="$(tail -n 20 terraform-validate.log | tr '\n' ' ' | cut -c1-1000)"
+            write_terraform_evidence
+            exit "$TF_EXIT_CODE"
+          fi
+          terraform plan -destroy -detailed-exitcode -input=false -no-color -out=deployguard-destroy.tfplan >terraform-plan.log 2>&1
+          TF_EXIT_CODE=$?
+          if [ "$TF_EXIT_CODE" -ne 0 ] && [ "$TF_EXIT_CODE" -ne 2 ]; then
+            TF_STATUS="plan_failed"
+            TF_ERROR="$(tail -n 20 terraform-plan.log | tr '\n' ' ' | cut -c1-1000)"
+            write_terraform_evidence
+            exit "$TF_EXIT_CODE"
+          fi
+          terraform show -json deployguard-destroy.tfplan > deployguard-plan.json
+          if ! jq -e '[.resource_changes[]? | select(any(.change.actions[]?; . == "create" or . == "update"))] | length == 0' deployguard-plan.json >/dev/null; then
+            TF_STATUS="plan_policy_failed"
+            TF_EXIT_CODE=1
+            TF_ERROR="Destroy plan contains create or update actions."
+            write_terraform_evidence
+            exit 1
+          fi
+          if [ "$TF_EXIT_CODE" -eq 2 ]; then
+            terraform apply -input=false -auto-approve deployguard-destroy.tfplan >terraform-apply.log 2>&1
+            TF_EXIT_CODE=$?
+            if [ "$TF_EXIT_CODE" -ne 0 ]; then
+              TF_STATUS="apply_failed"
+              TF_ERROR="$(tail -n 20 terraform-apply.log | tr '\n' ' ' | cut -c1-1000)"
+              write_terraform_evidence
+              exit "$TF_EXIT_CODE"
+            fi
+          fi
+          TF_STATUS="completed"
+          TF_EXIT_CODE=0
+          write_terraform_evidence
+
+      - name: Run generation-scoped AWS scavenger
+        if: always() && inputs.deployment_action == 'destroy'
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -1420,9 +1556,9 @@ jobs:
           }
 
           RUNTIME_SECRET="deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/application/runtime"
-          delete_runtime_secret_if_owned
-          deregister_generation_task_definitions
-          delete_generation_image_repository
+          delete_runtime_secret_if_owned || true
+          deregister_generation_task_definitions || true
+          delete_generation_image_repository || true
 
       - name: Verify ALB health and write result
         if: inputs.deployment_action == 'deploy'
@@ -1543,12 +1679,50 @@ jobs:
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
 
       - name: Verify destroyed infrastructure and write result
-        if: inputs.deployment_action == 'destroy'
+        if: always() && inputs.deployment_action == 'destroy'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
           set -euo pipefail
-          [ -s destroy-verification-scope.json ] || { echo "Destroy verification scope is unavailable." >&2; exit 1; }
+          printf 'DEPLOYGUARD_STAGE=verify_destroyed_infrastructure_and_write_result\n'
+          MANIFEST="$(jq -c '.extinction.resourceManifest // {}' ../runtime-config.json)"
+          if [ ! -s destroy-verification-scope.json ]; then
+            printf '%s' "$MANIFEST" | jq -c '{
+              ecsClusters:(.ecsClusterArns // []),
+              ecsServices:[(.ecsServiceArns // [])[] as $arn | ($arn | capture("service/(?<cluster>[^/]+)/(?<name>.+)$")) | {cluster:.cluster,name:.name,arn:$arn}],
+              loadBalancerArns:(.loadBalancerArns // []),
+              listenerArns:(.listenerArns // []),
+              targetGroupArns:(.targetGroupArns // []),
+              endpoint:""
+            }' > destroy-verification-scope.json
+          fi
+          [ -s terraform-destroy-evidence.json ] || printf '%s\n' '{"status":"unavailable","exitCode":1,"error":"Terraform state-only cleanup did not produce evidence.","importAttempted":false}' > terraform-destroy-evidence.json
+          printf '%s\n' '[]' > destroy-remaining.json
+
+          aws_retry() {
+            local attempt=1 max_attempts=5 delay=1 output status
+            while true; do
+              set +e
+              output="$("$@" 2>&1)"; status=$?
+              set -e
+              if [ "$status" -eq 0 ]; then printf '%s' "$output"; return 0; fi
+              if ! printf '%s' "$output" | grep -Eqi 'Throttl|TooManyRequests|RequestLimitExceeded|ServiceUnavailable|InternalError|InternalFailure|RequestTimeout|PriorRequestNotComplete|temporar|connection reset|timed out'; then
+                printf '%s\n' "$output" >&2; return "$status"
+              fi
+              [ "$attempt" -lt "$max_attempts" ] || { printf '%s\n' "$output" >&2; return "$status"; }
+              sleep "$((delay + RANDOM % 3))"
+              attempt=$((attempt + 1)); delay=$((delay * 2))
+            done
+          }
+
+          add_remaining() {
+            local type="$1" id="$2" scope="$3" reason="$4" code="${5:-}" message="${6:-}" retryable="${7:-true}" now
+            now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            jq -c --arg resourceType "$type" --arg resourceId "$id" --arg ownershipScope "$scope" --arg reason "$reason" --arg errorCode "$code" --arg errorMessage "$message" --argjson retryable "$retryable" --arg now "$now" '
+              . + [{resourceType:$resourceType,resourceId:$resourceId,ownershipScope:$ownershipScope,reason:$reason,errorCode:$errorCode,errorMessage:$errorMessage,retryable:$retryable,attemptCount:1,firstSeenAt:$now,lastSeenAt:$now}]
+            ' destroy-remaining.json > destroy-remaining.next.json
+            mv destroy-remaining.next.json destroy-remaining.json
+          }
 
           aws_absent() {
             local kind="$1" identifier="$2" error_file not_found
@@ -1661,7 +1835,12 @@ jobs:
                   if printf '%s' "$tags" | jq -e --arg project "$PROJECT_ID" '
                     (.tags // [] | map({key:.key,value:.value}) | from_entries) as $tags
                     | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project
-                  ' >/dev/null; then return 1; fi
+                  ' >/dev/null; then
+                    # AWS may retain a task-definition record after its final
+                    # delete request. ACTIVE or merely INACTIVE revisions are
+                    # still actionable residue and continue to block success.
+                    [ "$status" = "DELETE_IN_PROGRESS" ] || return 1
+                  fi
                 done <<< "$(printf '%s' "$task_definitions" | tr '\t' '\n')"
               done
             done
@@ -1701,9 +1880,22 @@ jobs:
           }
 
           purge_tagged_project_resources() {
-            local mappings arn detail role_name group_name user_name profile policy version group_id fs_id cluster service task target
-            mappings="$(aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json)" || return 2
-            while IFS= read -r arn; do
+            local mappings encoded mapping tags generation_ok known_generations arn detail role_name group_name user_name profile policy version group_id fs_id cluster service task target eni_id subnet_id route_id gateway_id vpc_id allocation_id nat_id
+            known_generations="$(jq -c '.extinction.knownGenerationIds' ../runtime-config.json)"
+            mappings="$(aws_retry aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json)" || return 2
+            while IFS= read -r encoded; do
+              [ -n "$encoded" ] || continue
+              mapping="$(printf '%s' "$encoded" | base64 --decode)"
+              arn="$(printf '%s' "$mapping" | jq -r '.ResourceARN')"
+              tags="$(printf '%s' "$mapping" | jq -c '.Tags // [] | map({key:.Key,value:.Value}) | from_entries')"
+              generation_ok="$(printf '%s' "$tags" | jq -r --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --argjson known "$known_generations" '
+                . as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment
+                and (($tags.DeployGuardGenerationId == null) or (($known | index($tags.DeployGuardGenerationId)) != null))
+              ')"
+              if [ "$generation_ok" != "true" ]; then
+                add_remaining "ownership_mismatch" "$arn" "platform_shared" "Foreign or differently scoped resource was not deleted." "OWNERSHIP_MISMATCH" "Canonical ownership tags do not match this Destroy generation." false
+                continue
+              fi
               [ -n "$arn" ] || continue
               case "$arn" in
                 arn:aws*:ecr:*:repository/*) aws ecr delete-repository --repository-name "${arn##*:repository/}" --force >/dev/null || true ;;
@@ -1719,7 +1911,14 @@ jobs:
                 arn:aws*:secretsmanager:*:secret:*) aws secretsmanager delete-secret --secret-id "$arn" --force-delete-without-recovery >/dev/null || true ;;
                 arn:aws*:elasticfilesystem:*:access-point/*) aws efs delete-access-point --access-point-id "${arn##*/}" >/dev/null || true ;;
                 arn:aws*:elasticfilesystem:*:file-system/*) fs_id="${arn##*/}"; for target in $(aws efs describe-mount-targets --file-system-id "$fs_id" --query 'MountTargets[].MountTargetId' --output text 2>/dev/null); do aws efs delete-mount-target --mount-target-id "$target" >/dev/null || true; done; aws efs delete-file-system --file-system-id "$fs_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:network-interface/*) eni_id="${arn##*/}"; aws ec2 delete-network-interface --network-interface-id "$eni_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:natgateway/*) nat_id="${arn##*/}"; aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:elastic-ip/*) allocation_id="${arn##*/}"; aws ec2 release-address --allocation-id "$allocation_id" >/dev/null || true ;;
                 arn:aws*:ec2:*:security-group/*) group_id="${arn##*/}"; aws ec2 delete-security-group --group-id "$group_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:subnet/*) subnet_id="${arn##*/}"; aws ec2 delete-subnet --subnet-id "$subnet_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:route-table/*) route_id="${arn##*/}"; for detail in $(aws ec2 describe-route-tables --route-table-ids "$route_id" --query 'RouteTables[0].Associations[?Main!=`true`].RouteTableAssociationId' --output text 2>/dev/null); do aws ec2 disassociate-route-table --association-id "$detail" >/dev/null || true; done; aws ec2 delete-route-table --route-table-id "$route_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:internet-gateway/*) gateway_id="${arn##*/}"; for vpc_id in $(aws ec2 describe-internet-gateways --internet-gateway-ids "$gateway_id" --query 'InternetGateways[0].Attachments[].VpcId' --output text 2>/dev/null); do aws ec2 detach-internet-gateway --internet-gateway-id "$gateway_id" --vpc-id "$vpc_id" >/dev/null || true; done; aws ec2 delete-internet-gateway --internet-gateway-id "$gateway_id" >/dev/null || true ;;
+                arn:aws*:ec2:*:vpc/*) vpc_id="${arn##*/}"; aws ec2 delete-vpc --vpc-id "$vpc_id" >/dev/null || true ;;
                 arn:aws*:iam::*:role/*) role_name="${arn##*/}"; for profile in $(aws iam list-instance-profiles-for-role --role-name "$role_name" --query 'InstanceProfiles[].InstanceProfileName' --output text 2>/dev/null); do aws iam remove-role-from-instance-profile --instance-profile-name "$profile" --role-name "$role_name" >/dev/null || true; aws iam delete-instance-profile --instance-profile-name "$profile" >/dev/null || true; done; for policy in $(aws iam list-role-policies --role-name "$role_name" --query 'PolicyNames[]' --output text 2>/dev/null); do aws iam delete-role-policy --role-name "$role_name" --policy-name "$policy" >/dev/null || true; done; for policy in $(aws iam list-attached-role-policies --role-name "$role_name" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do aws iam detach-role-policy --role-name "$role_name" --policy-arn "$policy" >/dev/null || true; done; aws iam delete-role --role-name "$role_name" >/dev/null || true ;;
                 arn:aws*:iam::*:policy/*) for role_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyRoles[].RoleName' --output text 2>/dev/null); do aws iam detach-role-policy --role-name "$role_name" --policy-arn "$arn" >/dev/null || true; done; for group_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyGroups[].GroupName' --output text 2>/dev/null); do aws iam detach-group-policy --group-name "$group_name" --policy-arn "$arn" >/dev/null || true; done; for user_name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyUsers[].UserName' --output text 2>/dev/null); do aws iam detach-user-policy --user-name "$user_name" --policy-arn "$arn" >/dev/null || true; done; for version in $(aws iam list-policy-versions --policy-arn "$arn" --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do aws iam delete-policy-version --policy-arn "$arn" --version-id "$version" >/dev/null || true; done; aws iam delete-policy --policy-arn "$arn" >/dev/null || true ;;
                 arn:aws*:servicediscovery:*:service/*) aws servicediscovery delete-service --id "${arn##*/}" >/dev/null || true ;;
@@ -1728,7 +1927,7 @@ jobs:
                 arn:aws*:sns:*:*) aws sns delete-topic --topic-arn "$arn" >/dev/null || true ;;
                 arn:aws*:ssm:*:parameter/*) aws ssm delete-parameter --name "/${arn##*:parameter/}" >/dev/null || true ;;
               esac
-            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]?.ResourceARN')
+            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]? | @base64')
           }
 
           purge_project_parameters_and_backups() {
@@ -1761,9 +1960,48 @@ jobs:
           }
 
           project_owned_resources_absent() {
-            local mappings secrets logs parameters
+            local mappings secrets logs parameters arn resource cluster service response error_file
             mappings="$(aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json)" || return 2
-            [ "$(printf '%s' "$mappings" | jq '.ResourceTagMappingList | length')" -eq 0 ] || return 1
+            # Resource Groups Tagging API can retain ECS identities after AWS
+            # has accepted their final deletion. Accept only exact terminal
+            # provider states; every actionable or unknown resource blocks.
+            while IFS= read -r arn; do
+              [ -n "$arn" ] || continue
+              case "$arn" in
+                arn:aws:ecs:*:cluster/*)
+                  response="$(aws ecs describe-clusters --clusters "$arn" --output json)" || return 2
+                  printf '%s' "$response" | jq -e '((.clusters // []) | length) == 0 or all(.clusters[]; .status == "INACTIVE")' >/dev/null || return 1
+                  ;;
+                arn:aws:ecs:*:service/*/*)
+                  resource="${arn#*:service/}"
+                  cluster="${resource%%/*}"
+                  service="${resource#*/}"
+                  error_file="$(mktemp)"
+                  if response="$(aws ecs describe-services --cluster "$cluster" --services "$service" --output json 2>"$error_file")"; then
+                    rm -f "$error_file"
+                    printf '%s' "$response" | jq -e '[.services[]? | select(.status == "ACTIVE")] | length == 0' >/dev/null || return 1
+                  elif grep -q 'ClusterNotFoundException' "$error_file"; then
+                    rm -f "$error_file"
+                  else
+                    rm -f "$error_file"
+                    return 2
+                  fi
+                  ;;
+                arn:aws:ecs:*:task-definition/*)
+                  error_file="$(mktemp)"
+                  if response="$(aws ecs describe-task-definition --task-definition "$arn" --output json 2>"$error_file")"; then
+                    rm -f "$error_file"
+                    [ "$(printf '%s' "$response" | jq -r '.taskDefinition.status')" = "DELETE_IN_PROGRESS" ] || return 1
+                  elif grep -Eq 'ClientException|ResourceNotFoundException' "$error_file"; then
+                    rm -f "$error_file"
+                  else
+                    rm -f "$error_file"
+                    return 2
+                  fi
+                  ;;
+                *) return 1 ;;
+              esac
+            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]?.ResourceARN')
             secrets="$(aws secretsmanager list-secrets --include-planned-deletion --filters Key=name,Values="deployguard/$PROJECT_ID/" --query 'SecretList | length(@)' --output text)" || return 2
             [ "$secrets" -eq 0 ] || return 1
             logs="$(aws logs describe-log-groups --log-group-name-prefix "/deployguard/$PROJECT_ID/" --query 'logGroups | length(@)' --output text)" || return 2
@@ -1809,6 +2047,24 @@ jobs:
             ' >/dev/null
           }
 
+          write_destroy_incomplete() {
+            local reason="$1" terraform_evidence remaining result now mappings arn
+            terraform_evidence="$(jq -c '.' terraform-destroy-evidence.json)"
+            mappings="$(aws_retry aws resourcegroupstaggingapi get-resources --tag-filters Key=ManagedBy,Values=DeployGuard Key=DeployGuardProjectId,Values="$PROJECT_ID" --output json 2>/dev/null || printf '{"ResourceTagMappingList":[]}')"
+            while IFS= read -r arn; do
+              [ -n "$arn" ] || continue
+              add_remaining "aws_resource" "$arn" "project" "$reason" "RESIDUE_PRESENT" "Owned resource remains after this bounded cleanup iteration." true
+            done < <(printf '%s' "$mappings" | jq -r '.ResourceTagMappingList[]?.ResourceARN')
+            if [ "$(jq 'length' destroy-remaining.json)" -eq 0 ]; then
+              add_remaining "destroy_verification" "$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID" "generation" "$reason" "VERIFICATION_INCOMPLETE" "Exact-ID or provider verification did not converge in this execution." true
+            fi
+            remaining="$(jq -c 'unique_by(.resourceType + "|" + .resourceId)' destroy-remaining.json)"
+            now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            result="$(jq -cn --arg operation "$OPERATION_ID" --arg phase "DESTROY_VERIFYING" --arg verifiedAt "$now" --argjson remaining "$remaining" --argjson terraform "$terraform_evidence" '{deploymentOperationId:$operation,status:"DESTROY_INCOMPLETE",phase:$phase,remaining:$remaining,terraform:$terraform,verifiedAt:$verifiedAt}')"
+            printf 'DEPLOYGUARD_DESTROY_PROGRESS=%s\n' "$result"
+            printf '%s\n' "$result" | jq . > deployguard-result.json
+          }
+
           for cleanup_pass in $(seq 1 20); do
             purge_project_task_definitions
             purge_project_secrets_and_logs
@@ -1835,19 +2091,26 @@ jobs:
             fi
             [ "$attempt" -eq 30 ] || sleep 10
           done
-          [ "$VERIFIED" = "true" ] || { echo "Project infrastructure absence was not verified within the bounded window." >&2; exit 1; }
+          if [ "$VERIFIED" != "true" ]; then
+            write_destroy_incomplete "Project infrastructure absence was not verified within the bounded consistency window."
+            exit 1
+          fi
 
           # State is deleted only after all project-owned AWS resources are
           # absent. Every current, legacy and generation-scoped object version
           # and delete marker containing a known project identity is removed.
-          purge_project_state_versions
-          project_state_versions_absent || { echo "Project Terraform artifacts remain in versioned state storage." >&2; exit 1; }
+          if ! purge_project_state_versions || ! project_state_versions_absent; then
+            add_remaining "terraform_state" "projects/$PROJECT_ID/$ENVIRONMENT_NAME/$GENERATION_ID/terraform.tfstate" "generation" "Terraform state versions or lock artifacts remain." "STATE_RESIDUE" "Exact generation state cleanup did not converge." true
+            write_destroy_incomplete "Project Terraform artifacts remain in versioned state storage."
+            exit 1
+          fi
 
           RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{deploymentOperationId:$operation,status:"verified_destroyed",ecsServicesAbsent:true,runningTasksZero:true,loadBalancersAbsent:true,listenersAbsent:true,targetGroupsAbsent:true,endpointUnavailable:true,imageRepositoryAbsent:true,runtimeSecretAbsent:true,activeGenerationTaskDefinitionsAbsent:true,normalResourcesAbsent:true,terraformStateVersionsAbsent:true,projectOwnedAwsResourcesAbsent:true,allProjectTerraformArtifactsAbsent:true,retainedResourcesVerified:true,retainedTerraformAddresses:[],verifiedAt:$verifiedAt}')"
           printf 'DEPLOYGUARD_DESTROY_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
       - name: Upload DeployGuard result
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: deployguard-result-${{ inputs.deployment_operation_id }}
