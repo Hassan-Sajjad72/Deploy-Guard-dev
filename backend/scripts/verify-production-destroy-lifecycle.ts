@@ -21,6 +21,8 @@ assert.match(workflow, /operation-contract\.valid/, "Destroy mutations require t
 assert.match(destroyTerraform, /terraform plan -destroy/);
 assert.match(destroyTerraform, /create" or \. == "update"/);
 assert.match(destroyTerraform, /importAttempted:false/);
+assert.doesNotMatch(destroyTerraform, /if \[ "\$TF_EXIT_CODE" -eq 2 \]; then[\s\S]*?terraform apply/, "the saved plan is applied even after a no-change refresh so stale addresses are persisted as absent");
+assert.match(destroyTerraform, /# Apply the saved plan even when detailed-exitcode is 0[\s\S]*?terraform apply -input=false -auto-approve deployguard-destroy\.tfplan/);
 
 const scavenger = workflow.match(/- name: Run generation-scoped AWS scavenger[\s\S]*?- name: Verify ALB health/)?.[0] || "";
 const verifier = workflow.match(/- name: Verify destroyed infrastructure and write result[\s\S]*?- name: Upload DeployGuard result/)?.[0] || "";
