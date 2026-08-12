@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
 import { DataSource } from "typeorm";
+import { resolveBackendEnvFile } from "./config/backend-env-file";
 import { AuditLog } from "./audit-log/audit-log.entity";
 import { ProjectCostEstimate } from "./finops/project-cost-estimate.entity";
 import { ProjectCostResourceBreakdown } from "./finops/project-cost-resource-breakdown.entity";
@@ -30,17 +30,64 @@ import { ProjectPersistentStorage } from "./storage/project-persistent-storage.e
 import { ProjectStorageEvent } from "./storage/project-storage-event.entity";
 import { ProjectStorageRestoreRequest } from "./storage/project-storage-restore-request.entity";
 import { ProjectDetectionProfile } from "./projects/project-detection-profile.entity";
+import { ProjectDeploymentContract } from "./projects/project-deployment-contract.entity";
+import { ProjectDatabaseTier } from "./projects/project-database-tier.entity";
 import { ProjectEnvironmentVariable } from "./projects/project-environment-variable.entity";
+import { ProjectDeploymentRequirements } from "./projects/project-deployment-requirements.entity";
 import { ProjectPipelineEvent } from "./projects/project-pipeline-event.entity";
+import { ProjectUserActivity } from "./projects/project-user-activity.entity";
 import { ProjectPipelineRun } from "./projects/project-pipeline-run.entity";
+import { ProjectDeploymentGeneration } from "./projects/project-deployment-generation.entity";
 import { ProjectPreflightReport } from "./projects/project-preflight-report.entity";
 import { ProjectSecurityFinding } from "./projects/project-security-finding.entity";
 import { ProjectSecurityScan } from "./projects/project-security-scan.entity";
 import { Project } from "./projects/project.entity";
 import { User } from "./users/user.entity";
+import { AiAnalysisSession } from "./ai-troubleshooting/ai-analysis-session.entity";
+import { AiAnalysisMessage } from "./ai-troubleshooting/ai-analysis-message.entity";
+import { AiAnalysisResult } from "./ai-troubleshooting/ai-analysis-result.entity";
+import { BillingAccount } from "./billing/billing-account.entity";
+import { BillingSubscription } from "./billing/billing-subscription.entity";
+import { BillingUsageCounter } from "./billing/billing-usage-counter.entity";
+import { BillingUsageEvent } from "./billing/billing-usage-event.entity";
+import { BillingCheckoutSession } from "./billing/billing-checkout-session.entity";
+import { BillingInvoice } from "./billing/billing-invoice.entity";
+import { BillingWebhookEvent } from "./billing/billing-webhook-event.entity";
+import { NotificationPreference } from "./notifications/notification-preference.entity";
+import { NotificationSubscription } from "./notifications/notification-subscription.entity";
+import { NotificationDelivery } from "./notifications/notification-delivery.entity";
+import { DestroyChallenge } from "./infrastructure-lifecycle/destroy-challenge.entity";
+import { DestroyOperation } from "./infrastructure-lifecycle/destroy-operation.entity";
+import { CentralCloudResource } from "./infrastructure-lifecycle/central-cloud-resource.entity";
+import { CentralCleanupChallenge } from "./infrastructure-lifecycle/central-cleanup-challenge.entity";
+import { TerraformExportArtifact } from "./terraform-export/terraform-export-artifact.entity";
+import { CloudInventoryScan } from "./infrastructure-lifecycle/cloud-inventory-scan.entity";
+import { EmergencyCleanupOperation } from "./infrastructure-lifecycle/emergency-cleanup-operation.entity";
+import { CloudCleanupOperation } from "./infrastructure-lifecycle/cloud-cleanup-operation.entity";
+import { ProjectCloudState } from "./infrastructure-lifecycle/project-cloud-state.entity";
+import { ProjectStageCheckpoint } from "./projects/recovery/project-stage-checkpoint.entity";
+import { ProjectServiceBinding } from "./projects/project-service-binding.entity";
+import { ProjectConfigurationSnapshot } from "./projects/project-configuration-snapshot.entity";
+import { DeploymentIntent } from "./orchestration-contracts/entities/deployment-intent.entity";
+import { InfrastructureManifest } from "./orchestration-contracts/entities/infrastructure-manifest.entity";
+import { OrchestrationOutbox } from "./orchestration-contracts/entities/orchestration-outbox.entity";
+import { ProjectOperationLease } from "./orchestration-contracts/entities/project-operation-lease.entity";
+import { ProjectStateRevision } from "./orchestration-contracts/entities/project-state-revision.entity";
+import { ReleaseManifest } from "./orchestration-contracts/entities/release-manifest.entity";
+import { ReleaseImageProvenance } from "./orchestration-contracts/entities/release-image-provenance.entity";
+import { InitialReleaseDraft } from "./orchestration-contracts/entities/initial-release-draft.entity";
+import { WorkerCapability } from "./orchestration-contracts/entities/worker-capability.entity";
+import { DeploymentSideEffect } from "./orchestration-contracts/entities/deployment-side-effect.entity";
+import { DeploymentSideEffectReconciliation } from "./orchestration-contracts/entities/deployment-side-effect-reconciliation.entity";
+import { DeploymentSideEffectReconciliationLease } from "./orchestration-contracts/entities/deployment-side-effect-reconciliation-lease.entity";
+import { ProjectReleaseLaneOwnership } from "./orchestration-contracts/entities/release-lane-ownership.entity";
+import { ProjectReleaseLaneShadowObservation } from "./orchestration-contracts/entities/release-lane-shadow-observation.entity";
+import { ProjectPipelineJobFinality } from "./projects/pipeline/project-pipeline-job-finality.entity";
+import { GithubAppInstallation } from "./projects/github-app-installation.entity";
+import { ProjectDestroyLifecycle } from "./projects/project-destroy-lifecycle.entity";
 
 function loadBackendEnv() {
-  const envPath = resolve(__dirname, "..", ".env");
+  const envPath = resolveBackendEnvFile();
 
   if (!existsSync(envPath)) {
     return;
@@ -101,9 +148,17 @@ export default new DataSource({
     Project,
     ProjectEnvironmentVariable,
     ProjectDetectionProfile,
+    ProjectDeploymentContract,
+    ProjectDatabaseTier,
+    ProjectDeploymentRequirements,
     ProjectPreflightReport,
     ProjectPipelineRun,
+    ProjectDeploymentGeneration,
     ProjectPipelineEvent,
+    ProjectUserActivity,
+    ProjectStageCheckpoint,
+    ProjectServiceBinding,
+    ProjectConfigurationSnapshot,
     ProjectSecurityScan,
     ProjectSecurityFinding,
     ProjectCostEstimate,
@@ -132,6 +187,45 @@ export default new DataSource({
     ProjectRuntimeMetricSnapshot,
     ProjectLogStreamSession,
     ProjectObservabilityEvent,
+    AiAnalysisSession,
+    AiAnalysisMessage,
+    AiAnalysisResult,
+    BillingAccount,
+    BillingSubscription,
+    BillingUsageCounter,
+    BillingUsageEvent,
+    BillingCheckoutSession,
+    BillingInvoice,
+    BillingWebhookEvent,
+    NotificationPreference,
+    NotificationSubscription,
+    NotificationDelivery,
+    DestroyChallenge,
+    DestroyOperation,
+    CentralCloudResource,
+    CentralCleanupChallenge,
+    TerraformExportArtifact,
+    CloudInventoryScan,
+    EmergencyCleanupOperation,
+    CloudCleanupOperation,
+    ProjectCloudState,
+    InfrastructureManifest,
+    ReleaseManifest,
+    ReleaseImageProvenance,
+    InitialReleaseDraft,
+    DeploymentIntent,
+    OrchestrationOutbox,
+    ProjectOperationLease,
+    ProjectStateRevision,
+    WorkerCapability,
+    DeploymentSideEffect,
+    DeploymentSideEffectReconciliation,
+    DeploymentSideEffectReconciliationLease,
+    ProjectReleaseLaneOwnership,
+    ProjectReleaseLaneShadowObservation,
+    ProjectPipelineJobFinality,
+    GithubAppInstallation,
+    ProjectDestroyLifecycle,
   ],
   migrations: ["src/migrations/*.ts"],
 });
