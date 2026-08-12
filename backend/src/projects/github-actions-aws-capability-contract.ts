@@ -52,6 +52,13 @@ const platformOwnershipCondition = (prefix: "aws:RequestTag" | "aws:ResourceTag"
     [`${prefix}/DeployGuardGenerationId`]: "*",
   },
 });
+const legacyCompatiblePlatformOwnershipCondition = (prefix: "aws:ResourceTag") => ({
+  StringEquals: { [`${prefix}/ManagedBy`]: "DeployGuard" },
+  StringLike: {
+    [`${prefix}/DeployGuardProjectId`]: "*",
+    [`${prefix}/Environment`]: "*",
+  },
+});
 
 /**
  * Authoritative AWS capability contract for the published reusable workflow.
@@ -220,7 +227,12 @@ export const WORKFLOW_AWS_CAPABILITIES: readonly WorkflowAwsCapability[] = [
       `arn:aws:ec2:${scope.region}:${scope.accountId}:vpc/*`,
     ],
     condition: (scope) => ownershipCondition(scope, "aws:ResourceTag"),
-    policyCondition: () => platformOwnershipCondition("aws:ResourceTag"),
+    // Legacy generations predate GenerationId tags on some VPC graph
+    // resources. The workflow still proves exact project/environment and
+    // known-generation ownership before deletion; IAM retains the independent
+    // DeployGuard/project/environment boundary without making that historical
+    // missing tag an undeletable tombstone.
+    policyCondition: () => legacyCompatiblePlatformOwnershipCondition("aws:ResourceTag"),
     simulationContext: (scope) => ownershipContext(scope, "aws:ResourceTag"),
     simulationResources: (scope, action) => {
       const kind = action.includes("NetworkInterface") ? "network-interface"
