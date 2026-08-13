@@ -598,6 +598,21 @@ jobs:
           terraform -chdir=.deployguard/project-terraform validate
           if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
             terraform -chdir=.deployguard/project-terraform plan -input=false -out=project.tfplan
+            terraform -chdir=.deployguard/project-terraform show -json project.tfplan \
+              | jq '
+                  def redact($value; $mask):
+                    if $mask == true then null
+                    elif (($mask | type) == "object" and ($value | type) == "object") then
+                      reduce ($value | keys_unsorted[]) as $key ({}; .[$key] = redact($value[$key]; ($mask[$key] // false)))
+                    elif (($mask | type) == "array" and ($value | type) == "array") then
+                      [range(0; $value | length) as $index | redact($value[$index]; ($mask[$index] // false))]
+                    else $value end;
+                  .resource_changes = ((.resource_changes // []) | map(
+                    .change.before = redact(.change.before; (.change.before_sensitive // false))
+                    | .change.after = redact(.change.after; (.change.after_sensitive // false))
+                    | del(.change.before_sensitive, .change.after_sensitive)
+                  ))
+                ' > .deployguard/project-terraform/deployguard-project-cost-plan.json
             terraform -chdir=.deployguard/project-terraform apply -input=false -auto-approve project.tfplan
           fi
           if [ "$DEPLOYMENT_ACTION" != "destroy" ]; then
@@ -1454,4 +1469,5 @@ jobs:
           path: |
             .deployguard/terraform/deployguard-result.json
             .deployguard/terraform/deployguard-cost-plan.json
+            .deployguard/project-terraform/deployguard-project-cost-plan.json
           retention-days: 30
