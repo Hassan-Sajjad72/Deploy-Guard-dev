@@ -84,7 +84,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|destroy|rollback|promote|compensate)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
+          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|destroy|rollback|promote|compensate|cleanup)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = "deploy" ] || [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             [ "$GITHUB_REPOSITORY" = "${{ inputs.repository_full_name }}" ] || { echo "Immutable repository identity mismatch." >&2; exit 1; }
             [ "$GITHUB_REF_NAME" = "${{ inputs.repository_branch }}" ] || { echo "Immutable branch identity mismatch." >&2; exit 1; }
@@ -135,7 +135,7 @@ jobs:
             ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
-          if [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|promote|compensate)$ ]]; then
+          if [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|promote|compensate|cleanup)$ ]]; then
             jq -e --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               type == "object"
               and .schemaVersion == 1
@@ -335,14 +335,14 @@ jobs:
           echo "uri=$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install Terraform
-        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote' || inputs.deployment_action == 'cleanup'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
 
       - name: Prepare project-scoped persistence
-        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'cleanup'
         shell: bash
         run: |
           set -euo pipefail
@@ -1306,11 +1306,9 @@ jobs:
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
 
       - name: Clean retired generation independently
-        # Retired cleanup cannot run until the backend has committed LIVE.
-        # Project Destroy remains the exact, verified cleanup path; a retired
-        # generation is deliberately CLEANUP_PENDING and never blocks a later
-        # candidate.
-        if: ${{ false }}
+        # This action is dispatched only after the backend has committed the
+        # successor generation LIVE. It can never gate or undo that release.
+        if: inputs.deployment_action == 'cleanup'
         continue-on-error: true
         shell: bash
         run: |
