@@ -912,7 +912,7 @@ jobs:
                     and $tags.DeployGuardScope == "project"
                 ' >/dev/null || { echo "Stable route ownership mismatch." >&2; exit 1; }
                 aws elbv2 delete-rule --rule-arn "$STABLE_RULE_ARN" >/dev/null
-              elif ! grep -q 'ListenerRuleNotFound' "$RULE_ERROR"; then
+            elif ! grep -Eq 'ListenerRuleNotFound|RuleNotFound' "$RULE_ERROR"; then
                 sed -n '1,20p' "$RULE_ERROR" >&2
                 exit 1
               fi
