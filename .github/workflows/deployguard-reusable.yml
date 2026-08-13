@@ -150,7 +150,7 @@ jobs:
               and (.platformFoundation.ecsClusterArn | startswith("arn:"))
               and (.platformFoundation.listenerArn | startswith("arn:"))
               and (.routing.listenerPriority >= 1000 and .routing.listenerPriority <= 19999)
-              and .routing.verificationPriority == (.routing.listenerPriority + 20000)
+              and (.routing.verificationPriority >= 20000 and .routing.verificationPriority <= 50000)
               and .projectPersistence.stateKey == ("projects/" + $project + "/" + $environment + "/project/terraform.tfstate")
               and .projectPersistence.ownershipScope == "project"
               and (.retiredGenerationCleanup == null or (
@@ -1171,9 +1171,10 @@ jobs:
           CONFIGURATION_FINGERPRINT="$(jq -r '.configurationFingerprint' ../runtime-config.json)"
           CONFIGURATION_SNAPSHOT_ID="$(jq -r '.configurationSnapshotId' ../runtime-config.json)"
           DATABASE_BINDING_ID="$(jq -r '.managedDatabase.bindingId // empty' ../runtime-config.json)"
+          CANDIDATE_LISTENER_RULE_ARN="$(terraform output -raw candidate_listener_rule_arn)"
           SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
           DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg candidateListenerRuleArn "$CANDIDATE_LISTENER_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,candidateListenerRuleArn:$candidateListenerRuleArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
           printf 'DEPLOYGUARD_CANDIDATE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
@@ -1187,6 +1188,7 @@ jobs:
           CANDIDATE="$(jq -c '.promotion.candidate' .deployguard/runtime-config.json)"
           INTENT_FINGERPRINT="$(jq -r '.promotion.intentFingerprint' .deployguard/runtime-config.json)"
           TARGET_GROUP_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.targetGroupArn')"
+          CANDIDATE_RULE_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.candidateListenerRuleArn')"
           CLUSTER_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.clusterName')"
           SERVICE_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.serviceName')"
           TASK_DEFINITION_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.taskDefinitionArn')"
@@ -1245,7 +1247,17 @@ jobs:
             sleep 5
           done
           [ "$ROUTE_VERIFIED" = "true" ] || { echo "Production route did not converge after exact candidate cutover." >&2; exit 1; }
-          RESULT="$(printf '%s' "$CANDIDATE" | jq -c --arg url "$PRODUCTION_URL" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg intentFingerprint "$INTENT_FINGERPRINT" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId,generationId,environmentName,status:"succeeded",deployedUrl:$url,imageUri,imageDigest,commitSha,clusterName,serviceName,ecsServiceArn,targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,taskDefinitionArn,appPort,healthCheckPath,configurationFingerprint,configurationSnapshotId,databaseBindingId,secretReferenceNames,databaseOutputs,promotionIntentFingerprint:$intentFingerprint}')"
+          CANDIDATE_RULE_TAGS="$(aws elbv2 describe-tags --resource-arns "$CANDIDATE_RULE_ARN" --output json)"
+          printf '%s' "$CANDIDATE_RULE_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '(.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation and $tags.DeployGuardResource == "candidate-route"' >/dev/null || { echo "Candidate route is not owned by the exact immutable generation." >&2; exit 1; }
+          aws elbv2 delete-rule --rule-arn "$CANDIDATE_RULE_ARN" >/dev/null
+          CANDIDATE_RULE_ERROR="$(mktemp)"
+          if aws elbv2 describe-rules --rule-arns "$CANDIDATE_RULE_ARN" >/dev/null 2>"$CANDIDATE_RULE_ERROR"; then
+            echo "Candidate route remains after successful promotion." >&2
+            exit 1
+          fi
+          grep -Eq 'ListenerRuleNotFound|RuleNotFound' "$CANDIDATE_RULE_ERROR" || { sed -n '1,20p' "$CANDIDATE_RULE_ERROR" >&2; exit 1; }
+          rm -f "$CANDIDATE_RULE_ERROR"
+          RESULT="$(printf '%s' "$CANDIDATE" | jq -c --arg url "$PRODUCTION_URL" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg intentFingerprint "$INTENT_FINGERPRINT" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId,generationId,environmentName,status:"succeeded",deployedUrl:$url,imageUri,imageDigest,commitSha,clusterName,serviceName,ecsServiceArn,targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,candidateRouteRemoved:true,taskDefinitionArn,appPort,healthCheckPath,configurationFingerprint,configurationSnapshotId,databaseBindingId,secretReferenceNames,databaseOutputs,promotionIntentFingerprint:$intentFingerprint}')"
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           mkdir -p .deployguard/terraform
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
