@@ -225,6 +225,7 @@ jobs:
               and .projectDeletion.projectResources.terraformStateKey == ("projects/" + $project + "/" + $environment + "/project/terraform.tfstate")
               and .projectDeletion.projectResources.ecrRepositoryName == ("deployguard-" + ($project | ascii_downcase))
               and .projectDeletion.projectResources.runtimeSecretName == ("deployguard/" + $project + "/" + $environment + "/application/runtime")
+              and (.projectDeletion.projectResources.stableListenerRuleArn == null or (.projectDeletion.projectResources.stableListenerRuleArn | test("^arn:(aws|aws-us-gov|aws-cn):elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:listener-rule/")))
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable exact-scope project deletion context." >&2; exit 1; }
           else
             jq -e 'type == "object" and (.configurationFingerprint | type == "string")' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable environment references." >&2; exit 1; }
@@ -611,6 +612,30 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .deployguard/terraform
+          # Destroy consumes only the validated project-deletion context. The
+          # exact resources to remove come from its isolated Terraform state;
+          # deploy-only routing and shared-foundation values are not required.
+          if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
+            cat > .deployguard/terraform/main.tf <<'TERRAFORM'
+          terraform {
+            backend "s3" {}
+            required_providers {
+              aws = { source = "hashicorp/aws", version = "~> 5.0" }
+            }
+          }
+          variable "aws_region" { type = string }
+          provider "aws" { region = var.aws_region }
+          TERRAFORM
+            node <<'NODE'
+            const fs = require("fs");
+            fs.writeFileSync(
+              ".deployguard/terraform/terraform.tfvars.json",
+              JSON.stringify({ aws_region: process.env.AWS_REGION }),
+              { mode: 0o600 },
+            );
+          NODE
+            exit 0
+          fi
           cat > .deployguard/terraform/main.tf <<'TERRAFORM'
           terraform {
             backend "s3" {}
@@ -872,6 +897,27 @@ jobs:
 
             # A verified destroy removes the complete generation, including
             # database secrets, EFS, access points and application resources.
+            # The stable route is not Terraform-owned, so remove only its
+            # exact, persisted project-deletion identity before deleting its
+            # target group. An already absent rule is an idempotent success.
+            STABLE_RULE_ARN="$(jq -r '.projectDeletion.projectResources.stableListenerRuleArn // empty' ../runtime-config.json)"
+            if [ -n "$STABLE_RULE_ARN" ]; then
+              RULE_ERROR="$(mktemp)"
+              if RULE_TAGS="$(aws elbv2 describe-tags --resource-arns "$STABLE_RULE_ARN" --output json 2>"$RULE_ERROR")"; then
+                printf '%s' "$RULE_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+                  (.TagDescriptions[0].Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
+                  | $tags.ManagedBy == "DeployGuard"
+                    and $tags.DeployGuardProjectId == $project
+                    and $tags.Environment == $environment
+                    and $tags.DeployGuardScope == "project"
+                ' >/dev/null || { echo "Stable route ownership mismatch." >&2; exit 1; }
+                aws elbv2 delete-rule --rule-arn "$STABLE_RULE_ARN" >/dev/null
+              elif ! grep -q 'ListenerRuleNotFound' "$RULE_ERROR"; then
+                sed -n '1,20p' "$RULE_ERROR" >&2
+                exit 1
+              fi
+              rm -f "$RULE_ERROR"
+            fi
           fi
           terraform validate -no-color
           printf 'DEPLOYGUARD_STAGE=terraform_plan_and_apply\n'
@@ -975,7 +1021,7 @@ jobs:
             WORK=".deployguard/delete-generation-$RECORDED_ID"
             mkdir -p "$WORK"
             cp .deployguard/terraform/main.tf "$WORK/main.tf"
-            jq --arg generation "$RECORDED_ID" --arg namespace "/deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$RECORDED_ID" '.generation_id=$generation | .infrastructure_namespace=$namespace | .image_uri="destroy.invalid"' .deployguard/terraform/terraform.tfvars.json > "$WORK/terraform.tfvars.json"
+            jq -n --arg aws_region "$AWS_REGION" '{aws_region:$aws_region}' > "$WORK/terraform.tfvars.json"
             terraform -chdir="$WORK" fmt -check -recursive
             terraform -chdir="$WORK" init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=$STATE_KEY" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
             terraform -chdir="$WORK" validate -no-color
@@ -1057,20 +1103,6 @@ jobs:
             exit 1
           fi
           rm -f "$ECR_ERROR"
-
-          LISTENER_ARN="$(jq -r '.platformFoundation.listenerArn' .deployguard/runtime-config.json)"
-          PRIORITY="$(jq -r '.routing.listenerPriority' .deployguard/runtime-config.json)"
-          RULE_ARN="$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --output json | jq -r --arg priority "$PRIORITY" '.Rules[]? | select(.Priority == $priority) | .RuleArn' | head -1)"
-          if [ -n "$RULE_ARN" ]; then
-            aws elbv2 describe-tags --resource-arns "$RULE_ARN" --output json | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
-              (.TagDescriptions[0].Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-              | $tags.ManagedBy == "DeployGuard"
-                and $tags.DeployGuardProjectId == $project
-                and $tags.Environment == $environment
-                and $tags.DeployGuardScope == "project"
-            ' >/dev/null || { echo "Stable route ownership mismatch." >&2; exit 1; }
-            aws elbv2 delete-rule --rule-arn "$RULE_ARN" >/dev/null
-          fi
 
           while IFS= read -r generation; do
             [ -n "$generation" ] || continue
