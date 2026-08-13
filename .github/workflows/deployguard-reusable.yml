@@ -1067,6 +1067,7 @@ jobs:
         run: |
           set -euo pipefail
           [ -f .deployguard/operation-contract.valid ] || { echo "Immutable project deletion contract was not validated." >&2; exit 1; }
+          PROJECT_PREFIX="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
 
           RUNTIME_SECRET="$(jq -r '.projectDeletion.projectResources.runtimeSecretName' .deployguard/runtime-config.json)"
           SECRET_ERROR="$(mktemp)"
