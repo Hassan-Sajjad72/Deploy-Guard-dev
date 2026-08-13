@@ -1,0 +1,20 @@
+import * as assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ConfigService } from "@nestjs/config";
+import { NormalFirstReleaseInfrastructureApplyExecutionService } from "../src/orchestration-contracts/release-lane/normal-first-release-infrastructure-apply-execution.service";
+import { canonicalSha256 } from "../src/orchestration-contracts/contracts/canonical-json";
+import { workerEnvelopePayloadForHash } from "../src/orchestration-contracts/contracts/worker-envelope.validator";
+const projectId = "11111111-1111-4111-8111-111111111111"; const intentId = "22222222-2222-4222-8222-222222222222"; const manifestId = "33333333-3333-4333-8333-333333333333";
+const env = new ConfigService({ TWO_LANE_NORMAL_FIRST_RELEASE_PLANNING_ENABLED: "true", TWO_LANE_NORMAL_INFRASTRUCTURE_APPLY_EXECUTION_ENABLED: "true", TWO_LANE_NORMAL_INFRASTRUCTURE_APPLY_ENABLED: "true", TWO_LANE_RELEASE_PROJECT_ALLOWLIST: projectId, TWO_LANE_RELEASE_ENVIRONMENT_ALLOWLIST: "dev" });
+let dispatched = 0;
+const envelope: any = { protocol: { name: "deployguard.worker", schemaVersion: 1, messageType: "intent.infrastructure.apply", minimumWorkerProtocol: 1, maximumWorkerProtocol: 1 }, producer: { service: "deployguard-api", serviceVersion: "test", gitSha: "test", producedAt: new Date().toISOString() }, routing: { lane: "infrastructure", operation: "apply", queue: "deployguard-infrastructure-v1" }, identity: { projectId, environmentName: "dev", intentId, infrastructureManifestId: manifestId, releaseManifestId: null, pipelineRunId: null, destroyOperationId: null }, idempotency: { canonicalKey: "a".repeat(64), payloadSha256: "0".repeat(64), attempt: 1, replayOfJobId: null }, execution: { mode: "full", resumeFromStage: null, reusableCheckpointIds: [], invalidatedCheckpointIds: [], reasonCodes: ["FIRST_RELEASE"], fencingTokenRequired: true }, trace: { correlationId: intentId, causationId: null, actorUserId: 7 }, expiresAt: new Date(Date.now() + 60_000).toISOString() };
+envelope.idempotency.payloadSha256 = canonicalSha256(workerEnvelopePayloadForHash(envelope));
+const service = new NormalFirstReleaseInfrastructureApplyExecutionService(env, { dispatchExact: async () => { dispatched += 1; return { status: "published" }; } } as any,
+  { findOneBy: async () => ({ id: projectId, ownerUserId: 7 }) } as any,
+  { findOne: async () => ({ id: intentId, projectId, environmentName: "dev", kind: "apply", classification: "infrastructure_change", status: "planned", infrastructureManifestId: manifestId, releaseManifestId: null, canonicalIdempotencyKey: "a".repeat(64), requestPayload: { operation: "infrastructure_apply_continuation", parentPlanIntentId: "44444444-4444-4444-8444-444444444444" } }), findOneBy: async (q: any) => q.id ? ({ id: "44444444-4444-4444-8444-444444444444", status: "plan_completed", infrastructureManifestId: manifestId }) : null } as any,
+  { findOneBy: async () => ({ id: manifestId, projectId, environmentName: "dev", status: "planned" }) } as any,
+  { findOneBy: async () => ({ draftHash: canonicalSha256({}), releaseDraft: {} }) } as any,
+  { find: async () => [{ id: "55555555-5555-4555-8555-555555555555", status: "pending", attemptCount: 0, claimedBy: null, claimExpiresAt: null, publishedAt: null, publishedJobId: null, eventType: "intent.infrastructure.apply", workerEnvelope: envelope, payloadSha256: envelope.idempotency.payloadSha256 }] } as any,
+);
+void (async () => { const result = await service.dispatch({ id: 7, role: "developer" } as any, projectId) as any; if (result.state !== "dispatched") throw new Error(JSON.stringify(result)); assert.equal(dispatched, 1); const source = readFileSync(join(__dirname, "../src/orchestration-contracts/release-lane/normal-first-release-infrastructure-apply-execution.service.ts"), "utf8"); assert.doesNotMatch(source, /TerraformRunnerService|InactiveV1BullMqConsumerService|ECSClient|Docker/); process.stdout.write("Normal first-release infrastructure apply dispatch verification passed\n"); })().catch((error) => { process.stderr.write(`${error.stack || error}\n`); process.exitCode = 1; });
