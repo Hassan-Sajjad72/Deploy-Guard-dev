@@ -342,7 +342,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Prepare project-scoped persistence
-        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'cleanup'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
         shell: bash
         run: |
           set -euo pipefail
@@ -605,7 +605,7 @@ jobs:
           fi
 
       - name: Generate deployment Terraform
-        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'cleanup'
         shell: bash
         env:
           IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.deployment_action == 'rollback' && inputs.rollback_image_uri || 'destroy.invalid' }}
