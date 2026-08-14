@@ -84,7 +84,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|destroy|rollback|promote|compensate)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
+          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|destroy|rollback|promote|compensate|cleanup)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = "deploy" ] || [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             [ "$GITHUB_REPOSITORY" = "${{ inputs.repository_full_name }}" ] || { echo "Immutable repository identity mismatch." >&2; exit 1; }
             [ "$GITHUB_REF_NAME" = "${{ inputs.repository_branch }}" ] || { echo "Immutable branch identity mismatch." >&2; exit 1; }
@@ -135,7 +135,7 @@ jobs:
             ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
-          if [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|promote|compensate)$ ]]; then
+          if [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|promote|compensate|cleanup)$ ]]; then
             jq -e --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
               type == "object"
               and .schemaVersion == 1
@@ -150,7 +150,7 @@ jobs:
               and (.platformFoundation.ecsClusterArn | startswith("arn:"))
               and (.platformFoundation.listenerArn | startswith("arn:"))
               and (.routing.listenerPriority >= 1000 and .routing.listenerPriority <= 19999)
-              and .routing.verificationPriority == (.routing.listenerPriority + 20000)
+              and (.routing.verificationPriority >= 20000 and .routing.verificationPriority <= 50000)
               and .projectPersistence.stateKey == ("projects/" + $project + "/" + $environment + "/project/terraform.tfstate")
               and .projectPersistence.ownershipScope == "project"
               and (.retiredGenerationCleanup == null or (
@@ -200,11 +200,33 @@ jobs:
               )
               and (.managedDatabase == null or (
                 .managedDatabase.provider == "managed"
-                and .managedDatabase.engine == "postgres"
                 and .managedDatabase.persistenceEnabled == true
                 and (.managedDatabase.bindingId | test("^[0-9a-fA-F-]{36}$"))
                 and (.managedDatabase.bindingFingerprint | test("^[0-9a-f]{64}$"))
-                and (.managedDatabase.port == 5432)
+                and (
+                  (.managedDatabase.engine == "postgres" and .managedDatabase.port == 5432
+                    and ((.managedDatabase.image? // "postgres:16") == "postgres:16")
+                    and ((.managedDatabase.dataPath? // "/var/lib/postgresql/data") == "/var/lib/postgresql/data")
+                    and ((.managedDatabase.healthCheck? // ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]) == ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"])
+                    and ((.managedDatabase.initializationEnvironment? // [{"name":"POSTGRES_DB","valueSource":"databaseName"},{"name":"POSTGRES_USER","valueSource":"databaseUser"}]) == [{"name":"POSTGRES_DB","valueSource":"databaseName"},{"name":"POSTGRES_USER","valueSource":"databaseUser"}])
+                    and ((.managedDatabase.initializationSecretNames? // ["POSTGRES_PASSWORD"]) == ["POSTGRES_PASSWORD"])
+                    and ((.managedDatabase.urlScheme? // "postgresql") == "postgresql"))
+                  or (.managedDatabase.engine == "mysql" and .managedDatabase.port == 3306
+                    and .managedDatabase.image == "mysql:8"
+                    and .managedDatabase.dataPath == "/var/lib/mysql"
+                    and .managedDatabase.healthCheck == ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u\"$MYSQL_USER\" -p\"$MYSQL_PASSWORD\" --silent"]
+                    and .managedDatabase.initializationEnvironment == [{"name":"MYSQL_DATABASE","valueSource":"databaseName"},{"name":"MYSQL_USER","valueSource":"databaseUser"}]
+                    and .managedDatabase.initializationSecretNames == ["MYSQL_PASSWORD", "MYSQL_ROOT_PASSWORD"]
+                    and .managedDatabase.urlScheme == "mysql")
+                  or (.managedDatabase.engine == "mongodb" and .managedDatabase.port == 27017
+                    and .managedDatabase.image == "mongo:8"
+                    and .managedDatabase.dataPath == "/data/db"
+                    and .managedDatabase.healthCheck == ["CMD-SHELL", "mongosh --quiet --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null"]
+                    and .managedDatabase.initializationEnvironment == [{"name":"MONGO_INITDB_DATABASE","valueSource":"databaseName"},{"name":"MONGO_INITDB_ROOT_USERNAME","valueSource":"databaseUser"}]
+                    and .managedDatabase.initializationSecretNames == ["MONGO_INITDB_ROOT_PASSWORD"]
+                    and .managedDatabase.urlScheme == "mongodb"
+                    and .managedDatabase.urlQuery == "?authSource=admin")
+                )
               ))
               and (.environment.DEPLOYGUARD_OPERATION_ID == $operation)
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable runtime configuration references." >&2; exit 1; }
@@ -225,6 +247,7 @@ jobs:
               and .projectDeletion.projectResources.terraformStateKey == ("projects/" + $project + "/" + $environment + "/project/terraform.tfstate")
               and .projectDeletion.projectResources.ecrRepositoryName == ("deployguard-" + ($project | ascii_downcase))
               and .projectDeletion.projectResources.runtimeSecretName == ("deployguard/" + $project + "/" + $environment + "/application/runtime")
+              and (.projectDeletion.projectResources.stableListenerRuleArn == null or (.projectDeletion.projectResources.stableListenerRuleArn | test("^arn:(aws|aws-us-gov|aws-cn):elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:listener-rule/")))
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable exact-scope project deletion context." >&2; exit 1; }
           else
             jq -e 'type == "object" and (.configurationFingerprint | type == "string")' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable environment references." >&2; exit 1; }
@@ -334,7 +357,7 @@ jobs:
           echo "uri=$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install Terraform
-        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote' || inputs.deployment_action == 'cleanup'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.10.5
@@ -364,9 +387,30 @@ jobs:
           data "aws_vpc" "platform" { id = var.vpc_id }
           locals {
             database = try(var.runtime_config.managedDatabase, null)
-            enabled  = local.database != null && try(local.database.provider, "") == "managed"
-            prefix   = substr(replace(lower(var.project_id), "_", "-"), 0, 8)
-            name     = "dg-${local.prefix}-database"
+            database_profiles = {
+              postgres = {
+                image                       = "postgres:16", port = 5432, data_path = "/var/lib/postgresql/data",
+                health_check                = ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"],
+                initialization_environment  = [{ name = "POSTGRES_DB", value_source = "databaseName" }, { name = "POSTGRES_USER", value_source = "databaseUser" }],
+                initialization_secret_names = ["POSTGRES_PASSWORD"], url_scheme = "postgresql", url_query = ""
+              }
+              mysql = {
+                image                       = "mysql:8", port = 3306, data_path = "/var/lib/mysql",
+                health_check                = ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u\"$MYSQL_USER\" -p\"$MYSQL_PASSWORD\" --silent"],
+                initialization_environment  = [{ name = "MYSQL_DATABASE", value_source = "databaseName" }, { name = "MYSQL_USER", value_source = "databaseUser" }],
+                initialization_secret_names = ["MYSQL_PASSWORD", "MYSQL_ROOT_PASSWORD"], url_scheme = "mysql", url_query = ""
+              }
+              mongodb = {
+                image                       = "mongo:8", port = 27017, data_path = "/data/db",
+                health_check                = ["CMD-SHELL", "mongosh --quiet --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null"],
+                initialization_environment  = [{ name = "MONGO_INITDB_DATABASE", value_source = "databaseName" }, { name = "MONGO_INITDB_ROOT_USERNAME", value_source = "databaseUser" }],
+                initialization_secret_names = ["MONGO_INITDB_ROOT_PASSWORD"], url_scheme = "mongodb", url_query = "?authSource=admin"
+              }
+            }
+            database_profile = local.database == null ? null : try(local.database_profiles[local.database.engine], null)
+            enabled          = local.database != null && local.database_profile != null && try(local.database.provider, "") == "managed"
+            prefix           = substr(replace(lower(var.project_id), "_", "-"), 0, 8)
+            name             = "dg-${local.prefix}-database"
             tags = {
               ManagedBy            = "DeployGuard"
               DeployGuardProjectId = var.project_id
@@ -427,7 +471,7 @@ jobs:
           resource "aws_secretsmanager_secret_version" "url" {
             count         = local.enabled ? 1 : 0
             secret_id     = aws_secretsmanager_secret.url[0].id
-            secret_string = "postgresql://${local.database.databaseUser}:${urlencode(random_password.database[0].result)}@${local.database.host}:${local.database.port}/${local.database.databaseName}"
+            secret_string = "${local.database_profile.url_scheme}://${local.database.databaseUser}:${urlencode(random_password.database[0].result)}@${local.database.host}:${local.database_profile.port}/${local.database.databaseName}${local.database_profile.url_query}"
             lifecycle { ignore_changes = [secret_string] }
           }
           resource "aws_security_group" "database" {
@@ -436,8 +480,8 @@ jobs:
             vpc_id = var.vpc_id
             tags   = local.tags
             ingress {
-              from_port   = 5432
-              to_port     = 5432
+              from_port   = local.database_profile.port
+              to_port     = local.database_profile.port
               protocol    = "tcp"
               cidr_blocks = [data.aws_vpc.platform.cidr_block]
             }
@@ -535,12 +579,12 @@ jobs:
             skip_destroy             = true
             tags                     = local.tags
             container_definitions = jsonencode([{
-              name             = "database", image = "postgres:16@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b", essential = true,
-              portMappings     = [{ containerPort = 5432, hostPort = 5432, protocol = "tcp" }],
-              environment      = [{ name = "POSTGRES_DB", value = local.database.databaseName }, { name = "POSTGRES_USER", value = local.database.databaseUser }],
-              secrets          = [{ name = "POSTGRES_PASSWORD", valueFrom = aws_secretsmanager_secret.password[0].arn }],
-              mountPoints      = [{ sourceVolume = "database-data", containerPath = "/var/lib/postgresql/data", readOnly = false }],
-              healthCheck      = { command = ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"], interval = 10, timeout = 5, retries = 6, startPeriod = 20 },
+              name             = "database", image = local.database_profile.image, essential = true,
+              portMappings     = [{ containerPort = local.database_profile.port, hostPort = local.database_profile.port, protocol = "tcp" }],
+              environment      = [for item in local.database_profile.initialization_environment : { name = item.name, value = item.value_source == "databaseName" ? local.database.databaseName : local.database.databaseUser }],
+              secrets          = [for name in local.database_profile.initialization_secret_names : { name = name, valueFrom = aws_secretsmanager_secret.password[0].arn }],
+              mountPoints      = [{ sourceVolume = "database-data", containerPath = local.database_profile.data_path, readOnly = false }],
+              healthCheck      = { command = local.database_profile.health_check, interval = 10, timeout = 5, retries = 6, startPeriod = 20 },
               logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.aws_region, awslogs-stream-prefix = "database" } }
             }])
             volume {
@@ -597,6 +641,21 @@ jobs:
           terraform -chdir=.deployguard/project-terraform validate
           if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
             terraform -chdir=.deployguard/project-terraform plan -input=false -out=project.tfplan
+            terraform -chdir=.deployguard/project-terraform show -json project.tfplan \
+              | jq '
+                  def redact($value; $mask):
+                    if $mask == true then null
+                    elif (($mask | type) == "object" and ($value | type) == "object") then
+                      reduce ($value | keys_unsorted[]) as $key ({}; .[$key] = redact($value[$key]; ($mask[$key] // false)))
+                    elif (($mask | type) == "array" and ($value | type) == "array") then
+                      [range(0; $value | length) as $index | redact($value[$index]; ($mask[$index] // false))]
+                    else $value end;
+                  .resource_changes = ((.resource_changes // []) | map(
+                    .change.before = redact(.change.before; (.change.before_sensitive // false))
+                    | .change.after = redact(.change.after; (.change.after_sensitive // false))
+                    | del(.change.before_sensitive, .change.after_sensitive)
+                  ))
+                ' > .deployguard/project-terraform/deployguard-project-cost-plan.json
             terraform -chdir=.deployguard/project-terraform apply -input=false -auto-approve project.tfplan
           fi
           if [ "$DEPLOYMENT_ACTION" != "destroy" ]; then
@@ -604,13 +663,37 @@ jobs:
           fi
 
       - name: Generate deployment Terraform
-        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'cleanup'
         shell: bash
         env:
           IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.deployment_action == 'rollback' && inputs.rollback_image_uri || 'destroy.invalid' }}
         run: |
           set -euo pipefail
           mkdir -p .deployguard/terraform
+          # Destroy consumes only the validated project-deletion context. The
+          # exact resources to remove come from its isolated Terraform state;
+          # deploy-only routing and shared-foundation values are not required.
+          if [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
+            cat > .deployguard/terraform/main.tf <<'TERRAFORM'
+          terraform {
+            backend "s3" {}
+            required_providers {
+              aws = { source = "hashicorp/aws", version = "~> 5.0" }
+            }
+          }
+          variable "aws_region" { type = string }
+          provider "aws" { region = var.aws_region }
+          TERRAFORM
+            node <<'NODE'
+            const fs = require("fs");
+            fs.writeFileSync(
+              ".deployguard/terraform/terraform.tfvars.json",
+              JSON.stringify({ aws_region: process.env.AWS_REGION }),
+              { mode: 0o600 },
+            );
+          NODE
+            exit 0
+          fi
           cat > .deployguard/terraform/main.tf <<'TERRAFORM'
           terraform {
             backend "s3" {}
@@ -872,6 +955,27 @@ jobs:
 
             # A verified destroy removes the complete generation, including
             # database secrets, EFS, access points and application resources.
+            # The stable route is not Terraform-owned, so remove only its
+            # exact, persisted project-deletion identity before deleting its
+            # target group. An already absent rule is an idempotent success.
+            STABLE_RULE_ARN="$(jq -r '.projectDeletion.projectResources.stableListenerRuleArn // empty' ../runtime-config.json)"
+            if [ -n "$STABLE_RULE_ARN" ]; then
+              RULE_ERROR="$(mktemp)"
+              if RULE_TAGS="$(aws elbv2 describe-tags --resource-arns "$STABLE_RULE_ARN" --output json 2>"$RULE_ERROR")"; then
+                printf '%s' "$RULE_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
+                  (.TagDescriptions[0].Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
+                  | $tags.ManagedBy == "DeployGuard"
+                    and $tags.DeployGuardProjectId == $project
+                    and $tags.Environment == $environment
+                    and $tags.DeployGuardScope == "project"
+                ' >/dev/null || { echo "Stable route ownership mismatch." >&2; exit 1; }
+                aws elbv2 delete-rule --rule-arn "$STABLE_RULE_ARN" >/dev/null
+            elif ! grep -Eq 'ListenerRuleNotFound|RuleNotFound' "$RULE_ERROR"; then
+                sed -n '1,20p' "$RULE_ERROR" >&2
+                exit 1
+              fi
+              rm -f "$RULE_ERROR"
+            fi
           fi
           terraform validate -no-color
           printf 'DEPLOYGUARD_STAGE=terraform_plan_and_apply\n'
@@ -975,7 +1079,7 @@ jobs:
             WORK=".deployguard/delete-generation-$RECORDED_ID"
             mkdir -p "$WORK"
             cp .deployguard/terraform/main.tf "$WORK/main.tf"
-            jq --arg generation "$RECORDED_ID" --arg namespace "/deployguard/$PROJECT_ID/$ENVIRONMENT_NAME/$RECORDED_ID" '.generation_id=$generation | .infrastructure_namespace=$namespace | .image_uri="destroy.invalid"' .deployguard/terraform/terraform.tfvars.json > "$WORK/terraform.tfvars.json"
+            jq -n --arg aws_region "$AWS_REGION" '{aws_region:$aws_region}' > "$WORK/terraform.tfvars.json"
             terraform -chdir="$WORK" fmt -check -recursive
             terraform -chdir="$WORK" init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=$STATE_KEY" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" -backend-config="use_lockfile=true"
             terraform -chdir="$WORK" validate -no-color
@@ -1021,6 +1125,7 @@ jobs:
         run: |
           set -euo pipefail
           [ -f .deployguard/operation-contract.valid ] || { echo "Immutable project deletion contract was not validated." >&2; exit 1; }
+          PROJECT_PREFIX="$(printf '%s' "$PROJECT_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
 
           RUNTIME_SECRET="$(jq -r '.projectDeletion.projectResources.runtimeSecretName' .deployguard/runtime-config.json)"
           SECRET_ERROR="$(mktemp)"
@@ -1057,20 +1162,6 @@ jobs:
             exit 1
           fi
           rm -f "$ECR_ERROR"
-
-          LISTENER_ARN="$(jq -r '.platformFoundation.listenerArn' .deployguard/runtime-config.json)"
-          PRIORITY="$(jq -r '.routing.listenerPriority' .deployguard/runtime-config.json)"
-          RULE_ARN="$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --output json | jq -r --arg priority "$PRIORITY" '.Rules[]? | select(.Priority == $priority) | .RuleArn' | head -1)"
-          if [ -n "$RULE_ARN" ]; then
-            aws elbv2 describe-tags --resource-arns "$RULE_ARN" --output json | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" '
-              (.TagDescriptions[0].Tags // [] | map({key:.Key,value:.Value}) | from_entries) as $tags
-              | $tags.ManagedBy == "DeployGuard"
-                and $tags.DeployGuardProjectId == $project
-                and $tags.Environment == $environment
-                and $tags.DeployGuardScope == "project"
-            ' >/dev/null || { echo "Stable route ownership mismatch." >&2; exit 1; }
-            aws elbv2 delete-rule --rule-arn "$RULE_ARN" >/dev/null
-          fi
 
           while IFS= read -r generation; do
             [ -n "$generation" ] || continue
@@ -1138,9 +1229,10 @@ jobs:
           CONFIGURATION_FINGERPRINT="$(jq -r '.configurationFingerprint' ../runtime-config.json)"
           CONFIGURATION_SNAPSHOT_ID="$(jq -r '.configurationSnapshotId' ../runtime-config.json)"
           DATABASE_BINDING_ID="$(jq -r '.managedDatabase.bindingId // empty' ../runtime-config.json)"
+          CANDIDATE_LISTENER_RULE_ARN="$(terraform output -raw candidate_listener_rule_arn)"
           SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
           DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg candidateListenerRuleArn "$CANDIDATE_LISTENER_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,candidateListenerRuleArn:$candidateListenerRuleArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
           printf 'DEPLOYGUARD_CANDIDATE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
@@ -1154,6 +1246,7 @@ jobs:
           CANDIDATE="$(jq -c '.promotion.candidate' .deployguard/runtime-config.json)"
           INTENT_FINGERPRINT="$(jq -r '.promotion.intentFingerprint' .deployguard/runtime-config.json)"
           TARGET_GROUP_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.targetGroupArn')"
+          CANDIDATE_RULE_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.candidateListenerRuleArn')"
           CLUSTER_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.clusterName')"
           SERVICE_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.serviceName')"
           TASK_DEFINITION_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.taskDefinitionArn')"
@@ -1212,7 +1305,17 @@ jobs:
             sleep 5
           done
           [ "$ROUTE_VERIFIED" = "true" ] || { echo "Production route did not converge after exact candidate cutover." >&2; exit 1; }
-          RESULT="$(printf '%s' "$CANDIDATE" | jq -c --arg url "$PRODUCTION_URL" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg intentFingerprint "$INTENT_FINGERPRINT" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId,generationId,environmentName,status:"succeeded",deployedUrl:$url,imageUri,imageDigest,commitSha,clusterName,serviceName,ecsServiceArn,targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,taskDefinitionArn,appPort,healthCheckPath,configurationFingerprint,configurationSnapshotId,databaseBindingId,secretReferenceNames,databaseOutputs,promotionIntentFingerprint:$intentFingerprint}')"
+          CANDIDATE_RULE_TAGS="$(aws elbv2 describe-tags --resource-arns "$CANDIDATE_RULE_ARN" --output json)"
+          printf '%s' "$CANDIDATE_RULE_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '(.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags | $tags.ManagedBy == "DeployGuard" and $tags.DeployGuardProjectId == $project and $tags.Environment == $environment and $tags.DeployGuardGenerationId == $generation and $tags.DeployGuardResource == "candidate-route"' >/dev/null || { echo "Candidate route is not owned by the exact immutable generation." >&2; exit 1; }
+          aws elbv2 delete-rule --rule-arn "$CANDIDATE_RULE_ARN" >/dev/null
+          CANDIDATE_RULE_ERROR="$(mktemp)"
+          if aws elbv2 describe-rules --rule-arns "$CANDIDATE_RULE_ARN" >/dev/null 2>"$CANDIDATE_RULE_ERROR"; then
+            echo "Candidate route remains after successful promotion." >&2
+            exit 1
+          fi
+          grep -Eq 'ListenerRuleNotFound|RuleNotFound' "$CANDIDATE_RULE_ERROR" || { sed -n '1,20p' "$CANDIDATE_RULE_ERROR" >&2; exit 1; }
+          rm -f "$CANDIDATE_RULE_ERROR"
+          RESULT="$(printf '%s' "$CANDIDATE" | jq -c --arg url "$PRODUCTION_URL" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg intentFingerprint "$INTENT_FINGERPRINT" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId,generationId,environmentName,status:"succeeded",deployedUrl:$url,imageUri,imageDigest,commitSha,clusterName,serviceName,ecsServiceArn,targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,candidateRouteRemoved:true,taskDefinitionArn,appPort,healthCheckPath,configurationFingerprint,configurationSnapshotId,databaseBindingId,secretReferenceNames,databaseOutputs,promotionIntentFingerprint:$intentFingerprint}')"
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           mkdir -p .deployguard/terraform
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
@@ -1261,11 +1364,9 @@ jobs:
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
 
       - name: Clean retired generation independently
-        # Retired cleanup cannot run until the backend has committed LIVE.
-        # Project Destroy remains the exact, verified cleanup path; a retired
-        # generation is deliberately CLEANUP_PENDING and never blocks a later
-        # candidate.
-        if: ${{ false }}
+        # This action is dispatched only after the backend has committed the
+        # successor generation LIVE. It can never gate or undo that release.
+        if: inputs.deployment_action == 'cleanup'
         continue-on-error: true
         shell: bash
         run: |
@@ -1411,4 +1512,5 @@ jobs:
           path: |
             .deployguard/terraform/deployguard-result.json
             .deployguard/terraform/deployguard-cost-plan.json
+            .deployguard/project-terraform/deployguard-project-cost-plan.json
           retention-days: 30
