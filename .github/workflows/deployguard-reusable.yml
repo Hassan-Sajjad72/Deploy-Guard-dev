@@ -136,7 +136,8 @@ jobs:
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
           if [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|promote|compensate|cleanup)$ ]]; then
-            jq -e --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
+            MONGODB_HEALTH_CHECK="$(printf '%s' 'bW9uZ29zaCAtLXF1aWV0IC0tdXNlcm5hbWUgIiRNT05HT19JTklUREJfUk9PVF9VU0VSTkFNRSIgLS1wYXNzd29yZCAiJE1PTkdPX0lOSVREQl9ST09UX1BBU1NXT1JEIiAtLWF1dGhlbnRpY2F0aW9uRGF0YWJhc2UgYWRtaW4gLS1ldmFsICdkYi5hZG1pbkNvbW1hbmQoeyBwaW5nOiAxIH0pJyA+L2Rldi9udWxs' | base64 --decode)"
+            jq -e --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg mongodbHealthCheck "$MONGODB_HEALTH_CHECK" '
               type == "object"
               and .schemaVersion == 1
               and (.configurationSnapshotId | test("^[0-9a-fA-F-]{36}$"))
@@ -221,7 +222,7 @@ jobs:
                   or (.managedDatabase.engine == "mongodb" and .managedDatabase.port == 27017
                     and .managedDatabase.image == "mongo:8"
                     and .managedDatabase.dataPath == "/data/db"
-                    and .managedDatabase.healthCheck == ["CMD-SHELL", "mongosh --quiet --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null"]
+                    and .managedDatabase.healthCheck == ["CMD-SHELL", $mongodbHealthCheck]
                     and .managedDatabase.initializationEnvironment == [{"name":"MONGO_INITDB_DATABASE","valueSource":"databaseName"},{"name":"MONGO_INITDB_ROOT_USERNAME","valueSource":"databaseUser"}]
                     and .managedDatabase.initializationSecretNames == ["MONGO_INITDB_ROOT_PASSWORD"]
                     and .managedDatabase.urlScheme == "mongodb"
