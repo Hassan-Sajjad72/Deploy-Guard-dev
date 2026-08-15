@@ -14,7 +14,7 @@ async function run() {
     GITHUB_APP_ID: "12345",
     GITHUB_APP_SLUG: "deployguard-test",
     GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@9ee58449809cc398de4d9f5c3ea88e48ee769372",
+    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@4e4e7490f0aed8d735666977cb1a4506ef02eebf",
   };
   const rows: any[] = [];
   const repository = {
@@ -26,6 +26,7 @@ async function run() {
   const service = new GithubAppService(repository as never, { get: (key: string, fallback?: string) => configValues[key] ?? fallback } as never);
   const calls: Array<{ url: string; method: string; body?: any }> = [];
   let workflowExists = false;
+  let staleRemovalReads = 0;
   const originalFetch = global.fetch;
   const reusableWorkflowFixture = readFileSync(join(__dirname, "../../.github/workflows/deployguard-reusable.yml"), "utf8");
   global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -37,8 +38,13 @@ async function run() {
     if (url === "https://api.github.com/installation/repositories?per_page=100") return Response.json({ repositories: [{ id: 10, full_name: "sample-owner/sample-app", name: "sample-app", default_branch: "main", private: true }] });
     if (url === "https://api.github.com/repos/sample-owner/sample-app") return Response.json({ id: 10, full_name: "sample-owner/sample-app" });
     if (url.includes("/repos/Hassan-Sajjad72/Deploy-Guard-dev/contents/.github/workflows/deployguard-reusable.yml?ref=")) return Response.json({ encoding: "base64", content: Buffer.from(reusableWorkflowFixture).toString("base64") });
-    if (url.includes(`/contents/${DEPLOYGUARD_WORKFLOW_PATH}`) && method === "GET") return workflowExists ? Response.json({ path: DEPLOYGUARD_WORKFLOW_PATH, encoding: "base64", content: calls.find((call) => call.method === "PUT")?.body.content, sha: "workflow-sha" }) : new Response("", { status: 404 });
+    if (url.includes(`/contents/${DEPLOYGUARD_WORKFLOW_PATH}`) && method === "GET") {
+      if (!workflowExists && staleRemovalReads === 0) return new Response("", { status: 404 });
+      if (staleRemovalReads > 0) staleRemovalReads -= 1;
+      return Response.json({ path: DEPLOYGUARD_WORKFLOW_PATH, encoding: "base64", content: calls.find((call) => call.method === "PUT")?.body.content, sha: "workflow-sha" });
+    }
     if (url.endsWith(`/contents/${DEPLOYGUARD_WORKFLOW_PATH}`) && method === "PUT") { workflowExists = true; return Response.json({ content: { path: DEPLOYGUARD_WORKFLOW_PATH } }, { status: 201 }); }
+    if (url.endsWith(`/contents/${DEPLOYGUARD_WORKFLOW_PATH}`) && method === "DELETE") { workflowExists = false; staleRemovalReads = 1; return Response.json({ commit: { sha: "deleted-workflow-sha" } }); }
     throw new Error(`Unexpected GitHub request: ${method} ${url}`);
   }) as typeof fetch;
   try {
@@ -55,11 +61,11 @@ async function run() {
     assert.deepEqual({ verified: generated.verified, generated: generated.generated, path: generated.path }, { verified: true, generated: true, path: DEPLOYGUARD_WORKFLOW_PATH });
     const put = calls.find((call) => call.method === "PUT");
     const pinnedValidation = calls.find((call) => call.url.includes("/Deploy-Guard-dev/contents/.github/workflows/deployguard-reusable.yml?ref="));
-    assert.ok(pinnedValidation?.url.endsWith("ref=9ee58449809cc398de4d9f5c3ea88e48ee769372"), "compatibility gate reads the exact immutable SHA");
+    assert.ok(pinnedValidation?.url.endsWith("ref=4e4e7490f0aed8d735666977cb1a4506ef02eebf"), "compatibility gate reads the exact immutable SHA");
     assert.ok(calls.indexOf(pinnedValidation!) < calls.indexOf(put!), "pinned reusable validates before customer workflow mutation");
     const workflow = Buffer.from(put?.body.content, "base64").toString("utf8");
     assert.match(workflow, /workflow_dispatch:/);
-    assert.match(workflow, /Hassan-Sajjad72\/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@9ee58449809cc398de4d9f5c3ea88e48ee769372/);
+    assert.match(workflow, /Hassan-Sajjad72\/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@4e4e7490f0aed8d735666977cb1a4506ef02eebf/);
     assert.match(workflow, /id-token:\s*write/);
     assert.equal(GITHUB_ACTIONS_CALLER_INPUT_NAMES.length, 21, "packed GitHub workflow_dispatch stays below 25 inputs");
     for (const input of GITHUB_ACTIONS_CALLER_INPUT_NAMES) assert.match(workflow, new RegExp(`\\b${input}:`));
@@ -84,6 +90,8 @@ async function run() {
     assert.match(reusableWorkflow, /Configure AWS credentials through OIDC[\s\S]*role-to-assume: \$\{\{ inputs\.aws_role_arn \}\}/);
     const verified = await service.ensureWorkflow(42, "sample-owner/sample-app", "main", "9001");
     assert.equal(verified.generated, false);
+    await service.removeManagedWorkflow(42, "sample-owner/sample-app", "main", "9001");
+    assert.equal(workflowExists, false, "caller removal tolerates one stale GitHub Contents read and verifies eventual absence");
     const projectsController = readFileSync(join(__dirname, "../src/projects/projects.controller.ts"), "utf8");
     assert.match(projectsController, /@Controller\("api\/projects"\)/);
     assert.match(projectsController, /@Post\("github\/installations\/:installationId\/connect"\)/);

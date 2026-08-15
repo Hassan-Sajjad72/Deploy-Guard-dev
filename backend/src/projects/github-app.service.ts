@@ -9,7 +9,7 @@ import { BUILD_PLAN_WORKFLOW_INPUT_NAMES, GITHUB_ACTIONS_CALLER_INPUT_NAMES, GIT
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, GithubActionsWorkflowContractError, parsePinnedReusableWorkflow } from "./github-actions-workflow-contract";
 
 export const DEPLOYGUARD_WORKFLOW_PATH = ".github/workflows/deployguard.yml";
-export const DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW = "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@9ee58449809cc398de4d9f5c3ea88e48ee769372";
+export const DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW = "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@4e4e7490f0aed8d735666977cb1a4506ef02eebf";
 
 export function renderDeployguardCallerWorkflow(reusable: string) {
   const names = [...GITHUB_ACTIONS_CALLER_INPUT_NAMES];
@@ -175,9 +175,12 @@ export class GithubAppService {
       body: JSON.stringify({ message: "chore: remove deleted DeployGuard project workflow", sha: existing.sha, branch }),
     });
     if (!deletion.ok) throw new Error("The DeployGuard caller workflow could not be removed for project deletion.");
-    const verification = await fetch(url, { headers: this.headers(credential.token) });
-    if (verification.status !== 404) throw new Error("The DeployGuard caller workflow remains present after project deletion.");
-    return credential.token;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const verification = await fetch(url, { headers: this.headers(credential.token) });
+      if (verification.status === 404) return credential.token;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error("The DeployGuard caller workflow remains present after project deletion.");
   }
 
   private async validatePinnedReusableWorkflow(token: string, reusable: string, caller: string) {
