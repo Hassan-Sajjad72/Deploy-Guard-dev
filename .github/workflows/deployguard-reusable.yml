@@ -912,7 +912,7 @@ jobs:
               portMappings = [{ containerPort = tonumber(component.port), hostPort = tonumber(component.port), protocol = "tcp" }]
               dependsOn    = local.full_stack && component.role == "frontend" ? [{ containerName = local.backend_component.id, condition = "HEALTHY" }] : []
               healthCheck = {
-                command     = component.language == "python" ? ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:${component.port}${component.healthPath}', timeout=5)\""] : component.language == "static" ? ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${component.port}${component.healthPath} || exit 1"] : ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:${component.port}${component.healthPath}',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+                command     = component.language == "python" ? ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:${component.port}${component.healthPath}', timeout=5)\""] : component.runtimeType == "static" ? ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${component.port}${component.healthPath} || exit 1"] : ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:${component.port}${component.healthPath}',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
                 interval    = 30
                 timeout     = 5
                 retries     = 3
