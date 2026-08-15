@@ -125,13 +125,23 @@ jobs:
               and .repositoryFullName == $repository
               and .branch == $branch
               and .commitSha == $commit
-              and .appRoot == $appRoot
-              and .port == $port
-              and .healthPath == $health
-              and .dockerTemplate == $template
-              and ((.outputDirectory // "") == $output)
+              and ((if ((.components // []) | length) > 0 then ([.components[] | select(.role == "frontend")][0] // .components[0]).root else .appRoot end) == $appRoot)
+              and ((if ((.components // []) | length) > 0 then ([.components[] | select(.role == "frontend")][0] // .components[0]).port else .port end) == $port)
+              and ((if ((.components // []) | length) > 0 then ([.components[] | select(.role == "frontend")][0] // .components[0]).healthPath else .healthPath end) == $health)
+              and ((if ((.components // []) | length) > 0 then ([.components[] | select(.role == "frontend")][0] // .components[0]).dockerTemplate else .dockerTemplate end) == $template)
+              and (((if ((.components // []) | length) > 0 then ([.components[] | select(.role == "frontend")][0] // .components[0]).outputDirectory else .outputDirectory end) // "") == $output)
               and (.environmentOwnership | type == "array")
               and (.requiredInputs | type == "array")
+              and ((.components // []) | type == "array")
+              and ((.components // []) | length <= 2)
+              and ((.components // []) | all(.;
+                (.id | IN("application", "frontend", "backend"))
+                and (.role | IN("application", "frontend", "backend"))
+                and (.root | test("^(\\.|[A-Za-z0-9._/-]+)$"))
+                and (.buildContext | test("^(\\.|[A-Za-z0-9._/-]+)$"))
+                and (.port >= 1 and .port <= 65535)
+                and (.healthPath | startswith("/"))
+              ))
             ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
@@ -302,19 +312,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          case "$APPLICATION_ROOT" in ""|/*|*".."*) echo "Invalid application root." >&2; exit 1;; esac
-          APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$APPLICATION_ROOT"
-          [ -d "$APPLICATION_DIRECTORY" ] || { echo "Contract application root does not exist." >&2; exit 1; }
-          cd "$APPLICATION_DIRECTORY"
+          COMPONENTS_FILE="$GITHUB_WORKSPACE/.deployguard/components.json"
+          jq -c 'if ((.components // []) | length) > 0 then .components else [{id:"app",role:"application",root:.appRoot,buildContext:.appRoot,port:.port,healthPath:.healthPath,dockerStrategy:.dockerStrategy}] end' "$GITHUB_WORKSPACE/.deployguard/build-plan.json" > "$COMPONENTS_FILE"
+          GENERATED_FILE="$GITHUB_WORKSPACE/.deployguard/generated-dockerfiles"
           if [ -n "$GENERATED_DOCKERFILE_BASE64" ]; then
-            printf '%s' "$GENERATED_DOCKERFILE_BASE64" | base64 --decode > Dockerfile
-            [ -s Dockerfile ] || { echo "Generated Dockerfile payload is empty." >&2; exit 1; }
-          elif [ ! -f Dockerfile ]; then
-            echo "Deployment contract supplied neither a generated nor repository Dockerfile." >&2
-            exit 1
+            printf '%s' "$GENERATED_DOCKERFILE_BASE64" | base64 --decode > "$GENERATED_FILE"
           fi
-          grep -q '${{ inputs.commit_sha }}' Dockerfile || [ -z "$GENERATED_DOCKERFILE_BASE64" ] || { echo "Generated Dockerfile does not match the immutable commit contract." >&2; exit 1; }
-          cat > .dockerignore <<'DOCKERIGNORE'
+          COMPONENT_COUNT="$(jq 'length' "$COMPONENTS_FILE")"
+          while IFS= read -r component; do
+            COMPONENT_ID="$(printf '%s' "$component" | jq -r '.id')"
+            BUILD_CONTEXT="$(printf '%s' "$component" | jq -r '.buildContext')"
+            case "$BUILD_CONTEXT" in ""|/*|*".."*) echo "Invalid component build context." >&2; exit 1;; esac
+            APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$BUILD_CONTEXT"
+            [ -d "$APPLICATION_DIRECTORY" ] || { echo "Component build context does not exist: $COMPONENT_ID." >&2; exit 1; }
+            cd "$APPLICATION_DIRECTORY"
+            if [ -n "$GENERATED_DOCKERFILE_BASE64" ]; then
+              if [ "$COMPONENT_COUNT" -gt 1 ]; then
+                jq -er --arg id "$COMPONENT_ID" '.components[$id] | select(type == "string" and length > 0)' "$GENERATED_FILE" > Dockerfile
+              else
+                cp "$GENERATED_FILE" Dockerfile
+              fi
+              [ -s Dockerfile ] || { echo "Generated Dockerfile payload is empty for $COMPONENT_ID." >&2; exit 1; }
+              grep -q '${{ inputs.commit_sha }}' Dockerfile || { echo "Generated Dockerfile does not match the immutable commit contract for $COMPONENT_ID." >&2; exit 1; }
+            elif [ ! -f Dockerfile ]; then
+              echo "Deployment contract supplied neither a generated nor repository Dockerfile for $COMPONENT_ID." >&2
+              exit 1
+            fi
+            if [ "$COMPONENT_COUNT" -gt 1 ] && [ "$(printf '%s' "$component" | jq -r '.role')" = "frontend" ]; then
+              BACKEND_PORT="$(jq -r '.[] | select(.role == "backend") | .port' "$COMPONENTS_FILE")"
+              [ -n "$BACKEND_PORT" ] || { echo "Full-stack frontend has no backend port contract." >&2; exit 1; }
+              STRIP_PREFIX="$(jq -r '.relationships[0].stripPathPrefix // false' "$GITHUB_WORKSPACE/.deployguard/build-plan.json")"
+              PROXY_SUFFIX=""; if [ "$STRIP_PREFIX" = "true" ]; then PROXY_SUFFIX="/"; fi
+              cat > .deployguard-nginx.conf <<NGINX
+          server {
+            listen 8080;
+            server_name _;
+            root /usr/share/nginx/html;
+            location / { try_files \$uri \$uri/ /index.html; }
+            location /api/ { proxy_pass http://127.0.0.1:$BACKEND_PORT$PROXY_SUFFIX; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; }
+          }
+          NGINX
+            fi
+            cat > .dockerignore <<'DOCKERIGNORE'
           .git
           .github
           .env
@@ -325,6 +364,7 @@ jobs:
           .venv
           .deployguard
           DOCKERIGNORE
+          done < <(jq -c '.[]' "$COMPONENTS_FILE")
 
       - name: Build and push immutable image
         if: inputs.deployment_action == 'deploy'
@@ -334,10 +374,7 @@ jobs:
           set -euo pipefail
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-          IMAGE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:${{ steps.release.outputs.image_tag }}"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
-          APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$APPLICATION_ROOT"
-          cd "$APPLICATION_DIRECTORY"
           BUILD_ARGS=()
           if [ -n "$BUILD_TIME_PUBLIC_CONFIG_BASE64" ]; then
             CONFIG_FILE="$(mktemp)"
@@ -349,12 +386,26 @@ jobs:
               BUILD_ARGS+=(--build-arg "$key=$value")
             done < <(jq -r 'keys[]' "$CONFIG_FILE")
           fi
-          docker build --pull "${BUILD_ARGS[@]}" -t "$IMAGE_URI" .
-          docker push "$IMAGE_URI"
-          IMAGE_DIGEST="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids imageTag="${{ steps.release.outputs.image_tag }}" --query 'imageDetails[0].imageDigest' --output text)"
-          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "The immutable image digest could not be resolved." >&2; exit 1; }
-          echo "digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
-          echo "uri=$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          COMPONENTS_FILE="$GITHUB_WORKSPACE/.deployguard/components.json"
+          COMPONENT_IMAGES='[]'
+          while IFS= read -r component; do
+            COMPONENT_ID="$(printf '%s' "$component" | jq -r '.id')"
+            BUILD_CONTEXT="$(printf '%s' "$component" | jq -r '.buildContext')"
+            COMPONENT_TAG="${{ steps.release.outputs.image_tag }}-$COMPONENT_ID"
+            TAGGED_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:$COMPONENT_TAG"
+            cd "$GITHUB_WORKSPACE/$BUILD_CONTEXT"
+            docker build --pull "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .
+            docker push "$TAGGED_URI"
+            IMAGE_DIGEST="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids imageTag="$COMPONENT_TAG" --query 'imageDetails[0].imageDigest' --output text)"
+            [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "The immutable image digest could not be resolved for $COMPONENT_ID." >&2; exit 1; }
+            IMMUTABLE_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}@$IMAGE_DIGEST"
+            COMPONENT_IMAGES="$(printf '%s' "$COMPONENT_IMAGES" | jq -c --argjson component "$component" --arg uri "$IMMUTABLE_URI" --arg digest "$IMAGE_DIGEST" '. + [$component + {imageUri:$uri,imageDigest:$digest}]')"
+          done < <(jq -c '.[]' "$COMPONENTS_FILE")
+          PRIMARY="$(printf '%s' "$COMPONENT_IMAGES" | jq -c 'map(select(.role == "frontend"))[0] // .[0]')"
+          printf '%s\n' "$COMPONENT_IMAGES" > "$GITHUB_WORKSPACE/.deployguard/component-images.json"
+          echo "digest=$(printf '%s' "$PRIMARY" | jq -r '.imageDigest')" >> "$GITHUB_OUTPUT"
+          echo "uri=$(printf '%s' "$PRIMARY" | jq -r '.imageUri')" >> "$GITHUB_OUTPUT"
+          echo "components=$(printf '%s' "$COMPONENT_IMAGES" | jq -c .)" >> "$GITHUB_OUTPUT"
 
       - name: Install Terraform
         if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote' || inputs.deployment_action == 'cleanup'
@@ -713,6 +764,8 @@ jobs:
           variable "app_port" { type = number }
           variable "health_check_path" { type = string }
           variable "image_uri" { type = string }
+          variable "component_images" { type = map(string) }
+          variable "build_plan" { type = any }
           variable "runtime_config" {
             type = any
           }
@@ -734,6 +787,10 @@ jobs:
               DeployGuardGenerationId = var.generation_id
             }
             runtime_config              = var.runtime_config
+            components                  = try(var.build_plan.components, [{ id = "application", role = "application", port = var.app_port, healthPath = var.health_check_path, language = var.build_plan.language }])
+            primary_component           = try([for component in local.components : component if component.role == "frontend"][0], local.components[0])
+            backend_component           = try([for component in local.components : component if component.role == "backend"][0], null)
+            full_stack                  = local.backend_component != null && local.primary_component.role == "frontend"
             managed_database            = try(local.runtime_config.managedDatabase, null)
             managed_database_configured = local.managed_database != null && try(local.managed_database.provider, "") == "managed"
             application_secret_arns     = distinct([for reference in values(try(local.runtime_config.secretReferences, {})) : join(":", slice(split(":", reference), 0, 7))])
@@ -767,8 +824,8 @@ jobs:
             vpc_id = var.vpc_id
             tags   = local.ownership_tags
             ingress {
-              from_port       = var.app_port
-              to_port         = var.app_port
+              from_port       = tonumber(local.primary_component.port)
+              to_port         = tonumber(local.primary_component.port)
               protocol        = "tcp"
               security_groups = [local.runtime_config.platformFoundation.albSecurityGroupId]
             }
@@ -781,14 +838,14 @@ jobs:
           }
           resource "aws_lb_target_group" "app" {
             name_prefix = substr(local.name, 0, 6)
-            port        = var.app_port
+            port        = tonumber(local.primary_component.port)
             protocol    = "HTTP"
             vpc_id      = var.vpc_id
             target_type = "ip"
             tags        = merge(local.ownership_tags, { DeployGuardResource = "app-target-group" })
             lifecycle { create_before_destroy = true }
             health_check {
-              path                = var.health_check_path
+              path                = local.primary_component.healthPath
               matcher             = "200-399"
               interval            = 30
               timeout             = 10
@@ -846,17 +903,25 @@ jobs:
             execution_role_arn       = aws_iam_role.execution.arn
             skip_destroy             = true
             tags                     = local.ownership_tags
-            container_definitions = jsonencode([{
-              name         = "app"
-              image        = var.image_uri
+            container_definitions = jsonencode([for component in local.components : {
+              name         = component.id
+              image        = var.component_images[component.id]
               essential    = true
-              environment  = local.app_environment
-              secrets      = concat(local.app_project_secrets, local.app_database_secrets)
-              portMappings = [{ containerPort = var.app_port, hostPort = var.app_port, protocol = "tcp" }]
+              environment  = component.role == "backend" || component.role == "application" ? local.app_environment : []
+              secrets      = component.role == "backend" || component.role == "application" ? concat(local.app_project_secrets, local.app_database_secrets) : []
+              portMappings = [{ containerPort = tonumber(component.port), hostPort = tonumber(component.port), protocol = "tcp" }]
+              dependsOn    = local.full_stack && component.role == "frontend" ? [{ containerName = local.backend_component.id, condition = "HEALTHY" }] : []
+              healthCheck = {
+                command     = component.language == "python" ? ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:${component.port}${component.healthPath}', timeout=5)\""] : component.language == "static" ? ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${component.port}${component.healthPath} || exit 1"] : ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:${component.port}${component.healthPath}',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+                interval    = 30
+                timeout     = 5
+                retries     = 3
+                startPeriod = 30
+              }
               logConfiguration = { logDriver = "awslogs", options = {
                 awslogs-group         = aws_cloudwatch_log_group.app.name
                 awslogs-region        = var.aws_region
-                awslogs-stream-prefix = "ecs"
+                awslogs-stream-prefix = component.id
               } }
             }])
           }
@@ -875,8 +940,8 @@ jobs:
             }
             load_balancer {
               target_group_arn = aws_lb_target_group.app.arn
-              container_name   = "app"
-              container_port   = var.app_port
+              container_name   = local.primary_component.id
+              container_port   = tonumber(local.primary_component.port)
             }
             depends_on = [aws_lb_listener_rule.candidate, aws_iam_role_policy.execution, aws_iam_role_policy.runtime_secrets]
           }
@@ -888,6 +953,8 @@ jobs:
           output "target_group_arn" { value = aws_lb_target_group.app.arn }
           output "candidate_listener_rule_arn" { value = aws_lb_listener_rule.candidate.arn }
           output "task_definition_arn" { value = aws_ecs_task_definition.app.arn }
+          output "component_images" { value = var.component_images }
+          output "component_contract" { value = local.components }
           output "database_internal_host" { value = local.managed_database_configured ? var.project_persistence_outputs.database_internal_host : null }
           output "database_service_arn" { value = local.managed_database_configured ? var.project_persistence_outputs.database_service_arn : null }
           output "database_cloud_map_service_arn" { value = local.managed_database_configured ? var.project_persistence_outputs.database_cloud_map_service_arn : null }
@@ -897,9 +964,36 @@ jobs:
           output "database_efs_access_point_id" { value = local.managed_database_configured ? var.project_persistence_outputs.database_efs_access_point_id : null }
 
           TERRAFORM
+          if [ "$DEPLOYMENT_ACTION" = "rollback" ]; then
+            aws ecs describe-task-definition --task-definition "$ROLLBACK_TASK_DEFINITION_ARN" --output json > .deployguard/rollback-task-definition.json
+          fi
           IMAGE_URI="$IMAGE_URI" node <<'NODE'
           const fs = require("fs");
           const runtime = JSON.parse(fs.readFileSync(".deployguard/runtime-config.json", "utf8"));
+          const buildPlan = JSON.parse(fs.readFileSync(".deployguard/build-plan.json", "utf8"));
+          const components = Array.isArray(buildPlan.components) && buildPlan.components.length
+            ? buildPlan.components
+            : [{ id: "app", role: "application", port: buildPlan.port, healthPath: buildPlan.healthPath, language: buildPlan.language }];
+          let componentImages;
+          if (process.env.DEPLOYMENT_ACTION === "rollback") {
+            const task = JSON.parse(fs.readFileSync(".deployguard/rollback-task-definition.json", "utf8"));
+            const byName = new Map((task.taskDefinition?.containerDefinitions || []).map((container) => [container.name, container.image]));
+            componentImages = Object.fromEntries(components.map((component) => {
+              const image = byName.get(component.id);
+              if (!image) throw new Error(`Rollback task definition omits component ${component.id}.`);
+              return [component.id, image];
+            }));
+          } else if (process.env.DEPLOYMENT_ACTION === "deploy") {
+            const evidence = JSON.parse(fs.readFileSync(".deployguard/component-images.json", "utf8"));
+            componentImages = Object.fromEntries(evidence.map((component) => [component.id, component.imageUri]));
+          } else if (runtime.promotion?.candidate) {
+            const evidence = Array.isArray(runtime.promotion.candidate.components) && runtime.promotion.candidate.components.length
+              ? runtime.promotion.candidate.components
+              : [{ id: "app", imageUri: runtime.promotion.candidate.imageUri }];
+            componentImages = Object.fromEntries(evidence.map((component) => [component.id, component.imageUri]));
+          } else {
+            componentImages = Object.fromEntries(components.map((component) => [component.id, "destroy.invalid"]));
+          }
           const persistence = fs.existsSync(".deployguard/project-persistence-outputs.json")
             ? JSON.parse(fs.readFileSync(".deployguard/project-persistence-outputs.json", "utf8"))
             : {};
@@ -914,6 +1008,8 @@ jobs:
             app_port: Number(process.env.APP_PORT),
             health_check_path: process.env.HEALTH_CHECK_PATH,
             image_uri: process.env.IMAGE_URI,
+            component_images: componentImages,
+            build_plan: buildPlan,
             runtime_config: runtime,
             project_persistence_outputs: persistence,
           }), { mode: 0o600 });
@@ -1205,6 +1301,8 @@ jobs:
           SERVICE_NAME="$(terraform output -raw service_name)"
           TASK_DEFINITION_ARN="$(terraform output -raw task_definition_arn)"
           ECS_SERVICE_ARN="$(terraform output -raw ecs_service_arn)"
+          COMPONENT_IMAGES="$(terraform output -json component_images)"
+          COMPONENT_CONTRACT="$(terraform output -json component_contract)"
           TARGET_TAGS="$(aws elbv2 describe-tags --resource-arns "$TARGET_GROUP_ARN" --output json)"
           printf '%s' "$TARGET_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
             (.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags
@@ -1214,14 +1312,22 @@ jobs:
           ' >/dev/null || { echo "Candidate target group ownership does not match the immutable generation." >&2; exit 1; }
           for attempt in $(seq 1 30); do
             SERVICE="$(aws ecs describe-services --cluster "$CLUSTER_NAME" --services "$SERVICE_NAME" --output json)"
-            TASK_IMAGE="$(aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_ARN" --query 'taskDefinition.containerDefinitions[?name==`app`].image | [0]' --output text)"
+            TASK_DEFINITION="$(aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_ARN" --output json)"
+            COMPONENTS_READY="$(jq -n --argjson expected "$COMPONENT_IMAGES" --argjson actual "$(printf '%s' "$TASK_DEFINITION" | jq '.taskDefinition.containerDefinitions | map({key:.name,value:.image}) | from_entries')" '$expected == $actual')"
             TARGET_HEALTH="$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --output json)"
             ECS_READY="$(printf '%s' "$SERVICE" | jq -r --arg task "$TASK_DEFINITION_ARN" '(.services | length) == 1 and .services[0].taskDefinition == $task and .services[0].desiredCount > 0 and .services[0].runningCount == .services[0].desiredCount and (.services[0].pendingCount // 0) == 0 and any(.services[0].deployments[]?; .status == "PRIMARY" and .rolloutState == "COMPLETED" and .taskDefinition == $task)')"
             TG_READY="$(printf '%s' "$TARGET_HEALTH" | jq -r '(.TargetHealthDescriptions | length) > 0 and all(.TargetHealthDescriptions[]; .TargetHealth.State == "healthy")')"
             HTTP_READY=false
             if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then HTTP_READY=true; fi
-            if [ "$ECS_READY" = "true" ] && [ "$TASK_IMAGE" = "$IMAGE_URI" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ]; then break; fi
-            if [ "$attempt" -eq 30 ]; then echo "Candidate ECS, immutable image, target-group health, and HTTP verification did not converge." >&2; exit 1; fi
+            RELATIONSHIP_READY=true
+            if [ "$(printf '%s' "$COMPONENT_CONTRACT" | jq '[.[] | select(.role == "backend")] | length')" -eq 1 ]; then
+              BACKEND_HEALTH="$(printf '%s' "$COMPONENT_CONTRACT" | jq -r '.[] | select(.role == "backend") | .healthPath')"
+              STRIP_PREFIX="$(jq -r '.relationships[0].stripPathPrefix // false' ../build-plan.json)"
+              BACKEND_PUBLIC_HEALTH="$BACKEND_HEALTH"; if [ "$STRIP_PREFIX" = "true" ]; then BACKEND_PUBLIC_HEALTH="/api$BACKEND_HEALTH"; fi
+              if ! curl --fail --silent --show-error --max-time 15 "$URL$BACKEND_PUBLIC_HEALTH" >/dev/null; then RELATIONSHIP_READY=false; fi
+            fi
+            if [ "$ECS_READY" = "true" ] && [ "$COMPONENTS_READY" = "true" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ] && [ "$RELATIONSHIP_READY" = "true" ]; then break; fi
+            if [ "$attempt" -eq 30 ]; then echo "The complete candidate component set, immutable images, routing, or frontend/backend relationship did not converge." >&2; exit 1; fi
             sleep 10
           done
           TARGET_STATES="$(printf '%s' "$TARGET_HEALTH" | jq -c '[.TargetHealthDescriptions[].TargetHealth.State] | sort')"
@@ -1232,7 +1338,8 @@ jobs:
           CANDIDATE_LISTENER_RULE_ARN="$(terraform output -raw candidate_listener_rule_arn)"
           SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
           DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg candidateListenerRuleArn "$CANDIDATE_LISTENER_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,candidateListenerRuleArn:$candidateListenerRuleArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
+          COMPONENT_EVIDENCE="$(jq -cn --argjson contract "$COMPONENT_CONTRACT" --argjson images "$COMPONENT_IMAGES" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --arg serviceName "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" '[ $contract[] | . as $component | {id,role,root,buildContext,framework,frameworkMode,imageUri:$images[$component.id],imageDigest:($images[$component.id] | split("@") | .[1]),taskDefinitionArn:$taskDefinitionArn,serviceName:$serviceName,ecsServiceArn:$ecsServiceArn,port,healthPath,verified:true} ]')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg candidateListenerRuleArn "$CANDIDATE_LISTENER_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" --argjson components "$COMPONENT_EVIDENCE" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,components:$components,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,candidateListenerRuleArn:$candidateListenerRuleArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,componentSetVerified:true,relationshipVerified:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
           printf 'DEPLOYGUARD_CANDIDATE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
@@ -1251,6 +1358,7 @@ jobs:
           SERVICE_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.serviceName')"
           TASK_DEFINITION_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.taskDefinitionArn')"
           IMAGE_URI="$(printf '%s' "$CANDIDATE" | jq -r '.imageUri')"
+          EXPECTED_COMPONENT_IMAGES="$(printf '%s' "$CANDIDATE" | jq -c 'if ((.components // []) | length) > 0 then (.components | map({key:.id,value:.imageUri}) | from_entries) else {app:.imageUri} end')"
           URL="$(printf '%s' "$CANDIDATE" | jq -r '.candidateUrl')"
           TARGET_TAGS="$(aws elbv2 describe-tags --resource-arns "$TARGET_GROUP_ARN" --output json)"
           printf '%s' "$TARGET_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
@@ -1261,12 +1369,20 @@ jobs:
           ' >/dev/null || { echo "Promotion candidate target group is not owned by the exact immutable generation." >&2; exit 1; }
           for attempt in $(seq 1 30); do
             SERVICE="$(aws ecs describe-services --cluster "$CLUSTER_NAME" --services "$SERVICE_NAME" --output json)"
-            TASK_IMAGE="$(aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_ARN" --query 'taskDefinition.containerDefinitions[?name==`app`].image | [0]' --output text)"
+            TASK_DEFINITION="$(aws ecs describe-task-definition --task-definition "$TASK_DEFINITION_ARN" --output json)"
+            COMPONENTS_READY="$(jq -n --argjson expected "$EXPECTED_COMPONENT_IMAGES" --argjson actual "$(printf '%s' "$TASK_DEFINITION" | jq '.taskDefinition.containerDefinitions | map({key:.name,value:.image}) | from_entries')" '$expected == $actual')"
             TARGET_HEALTH="$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --output json)"
             ECS_READY="$(printf '%s' "$SERVICE" | jq -r --arg task "$TASK_DEFINITION_ARN" '(.services | length) == 1 and .services[0].taskDefinition == $task and .services[0].desiredCount > 0 and .services[0].runningCount == .services[0].desiredCount and (.services[0].pendingCount // 0) == 0 and any(.services[0].deployments[]?; .status == "PRIMARY" and .rolloutState == "COMPLETED" and .taskDefinition == $task)')"
             TG_READY="$(printf '%s' "$TARGET_HEALTH" | jq -r '(.TargetHealthDescriptions | length) > 0 and all(.TargetHealthDescriptions[]; .TargetHealth.State == "healthy")')"
             HTTP_READY=false; if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then HTTP_READY=true; fi
-            if [ "$ECS_READY" = "true" ] && [ "$TASK_IMAGE" = "$IMAGE_URI" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ]; then break; fi
+            RELATIONSHIP_READY=true
+            if [ "$(printf '%s' "$CANDIDATE" | jq '[(.components // [])[] | select(.role == "backend")] | length')" -eq 1 ]; then
+              BACKEND_HEALTH="$(printf '%s' "$CANDIDATE" | jq -r '.components[] | select(.role == "backend") | .healthPath')"
+              STRIP_PREFIX="$(jq -r '.relationships[0].stripPathPrefix // false' .deployguard/build-plan.json)"
+              BACKEND_PUBLIC_HEALTH="$BACKEND_HEALTH"; if [ "$STRIP_PREFIX" = "true" ]; then BACKEND_PUBLIC_HEALTH="/api$BACKEND_HEALTH"; fi
+              if ! curl --fail --silent --show-error --max-time 15 "$URL$BACKEND_PUBLIC_HEALTH" >/dev/null; then RELATIONSHIP_READY=false; fi
+            fi
+            if [ "$ECS_READY" = "true" ] && [ "$COMPONENTS_READY" = "true" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ] && [ "$RELATIONSHIP_READY" = "true" ]; then break; fi
             if [ "$attempt" -eq 30 ]; then echo "Candidate ceased to be healthy before promotion." >&2; exit 1; fi
             sleep 10
           done
@@ -1298,6 +1414,12 @@ jobs:
             if [ "$RULE_READY" = "true" ] && curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$HEALTH_CHECK_PATH" >/dev/null; then
               HTTP_READY=true
             fi
+            if [ "$HTTP_READY" = "true" ] && [ "$(printf '%s' "$CANDIDATE" | jq '[(.components // [])[] | select(.role == "backend")] | length')" -eq 1 ]; then
+              BACKEND_HEALTH="$(printf '%s' "$CANDIDATE" | jq -r '.components[] | select(.role == "backend") | .healthPath')"
+              STRIP_PREFIX="$(jq -r '.relationships[0].stripPathPrefix // false' .deployguard/build-plan.json)"
+              BACKEND_PUBLIC_HEALTH="$BACKEND_HEALTH"; if [ "$STRIP_PREFIX" = "true" ]; then BACKEND_PUBLIC_HEALTH="/api$BACKEND_HEALTH"; fi
+              if ! curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$BACKEND_PUBLIC_HEALTH" >/dev/null; then HTTP_READY=false; fi
+            fi
             if [ "$RULE_READY" = "true" ] && [ "$HTTP_READY" = "true" ]; then
               ROUTE_VERIFIED=true
               break
@@ -1315,7 +1437,7 @@ jobs:
           fi
           grep -Eq 'ListenerRuleNotFound|RuleNotFound' "$CANDIDATE_RULE_ERROR" || { sed -n '1,20p' "$CANDIDATE_RULE_ERROR" >&2; exit 1; }
           rm -f "$CANDIDATE_RULE_ERROR"
-          RESULT="$(printf '%s' "$CANDIDATE" | jq -c --arg url "$PRODUCTION_URL" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg intentFingerprint "$INTENT_FINGERPRINT" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId,generationId,environmentName,status:"succeeded",deployedUrl:$url,imageUri,imageDigest,commitSha,clusterName,serviceName,ecsServiceArn,targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,candidateRouteRemoved:true,taskDefinitionArn,appPort,healthCheckPath,configurationFingerprint,configurationSnapshotId,databaseBindingId,secretReferenceNames,databaseOutputs,promotionIntentFingerprint:$intentFingerprint}')"
+          RESULT="$(printf '%s' "$CANDIDATE" | jq -c --arg url "$PRODUCTION_URL" --arg listenerRuleArn "$STABLE_RULE_ARN" --arg intentFingerprint "$INTENT_FINGERPRINT" '{contractVersion:"deployguard.deployment-result/v2",deploymentOperationId,generationId,environmentName,status:"succeeded",deployedUrl:$url,imageUri,imageDigest,components:(.components // []),commitSha,clusterName,serviceName,ecsServiceArn,targetGroupArn,listenerRuleArn:$listenerRuleArn,routingVerified:true,candidateRouteRemoved:true,taskDefinitionArn,appPort,healthCheckPath,configurationFingerprint,configurationSnapshotId,databaseBindingId,secretReferenceNames,databaseOutputs,promotionIntentFingerprint:$intentFingerprint}')"
           printf 'DEPLOYGUARD_RELEASE_RESULT=%s\n' "$RESULT"
           mkdir -p .deployguard/terraform
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
