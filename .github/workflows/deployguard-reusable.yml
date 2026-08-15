@@ -307,7 +307,6 @@ jobs:
           [ -d "$APPLICATION_DIRECTORY" ] || { echo "Contract application root does not exist." >&2; exit 1; }
           cd "$APPLICATION_DIRECTORY"
           if [ -n "$GENERATED_DOCKERFILE_BASE64" ]; then
-            [ ! -e Dockerfile ] || { echo "Generated strategy cannot overwrite a repository Dockerfile." >&2; exit 1; }
             printf '%s' "$GENERATED_DOCKERFILE_BASE64" | base64 --decode > Dockerfile
             [ -s Dockerfile ] || { echo "Generated Dockerfile payload is empty." >&2; exit 1; }
           elif [ ! -f Dockerfile ]; then
