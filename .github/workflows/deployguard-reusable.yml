@@ -134,7 +134,7 @@ jobs:
               and (.requiredInputs | type == "array")
               and ((.components // []) | type == "array")
               and ((.components // []) | length <= 2)
-              and ((.components // []) | all(.;
+              and ((.components // []) | all(.[];
                 (.id | IN("application", "frontend", "backend"))
                 and (.role | IN("application", "frontend", "backend"))
                 and (.root | test("^(\\.|[A-Za-z0-9._/-]+)$"))
