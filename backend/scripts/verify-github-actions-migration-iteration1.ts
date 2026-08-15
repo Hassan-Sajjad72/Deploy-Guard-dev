@@ -14,7 +14,7 @@ async function run() {
     GITHUB_APP_ID: "12345",
     GITHUB_APP_SLUG: "deployguard-test",
     GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@96f60c0a32cef2317c1bcd1fdc79fe9079f9ca3a",
+    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@9ee58449809cc398de4d9f5c3ea88e48ee769372",
   };
   const rows: any[] = [];
   const repository = {
@@ -55,11 +55,11 @@ async function run() {
     assert.deepEqual({ verified: generated.verified, generated: generated.generated, path: generated.path }, { verified: true, generated: true, path: DEPLOYGUARD_WORKFLOW_PATH });
     const put = calls.find((call) => call.method === "PUT");
     const pinnedValidation = calls.find((call) => call.url.includes("/Deploy-Guard-dev/contents/.github/workflows/deployguard-reusable.yml?ref="));
-    assert.ok(pinnedValidation?.url.endsWith("ref=96f60c0a32cef2317c1bcd1fdc79fe9079f9ca3a"), "compatibility gate reads the exact immutable SHA");
+    assert.ok(pinnedValidation?.url.endsWith("ref=9ee58449809cc398de4d9f5c3ea88e48ee769372"), "compatibility gate reads the exact immutable SHA");
     assert.ok(calls.indexOf(pinnedValidation!) < calls.indexOf(put!), "pinned reusable validates before customer workflow mutation");
     const workflow = Buffer.from(put?.body.content, "base64").toString("utf8");
     assert.match(workflow, /workflow_dispatch:/);
-    assert.match(workflow, /Hassan-Sajjad72\/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@96f60c0a32cef2317c1bcd1fdc79fe9079f9ca3a/);
+    assert.match(workflow, /Hassan-Sajjad72\/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@9ee58449809cc398de4d9f5c3ea88e48ee769372/);
     assert.match(workflow, /id-token:\s*write/);
     assert.equal(GITHUB_ACTIONS_CALLER_INPUT_NAMES.length, 21, "packed GitHub workflow_dispatch stays below 25 inputs");
     for (const input of GITHUB_ACTIONS_CALLER_INPUT_NAMES) assert.match(workflow, new RegExp(`\\b${input}:`));
