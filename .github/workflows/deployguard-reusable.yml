@@ -142,6 +142,14 @@ jobs:
                 and (.port >= 1 and .port <= 65535)
                 and (.healthPath | startswith("/"))
               ))
+              and ((.relationships // []) | type == "array" and length <= 1)
+              and ((.relationships // []) | all(.[];
+                .from == "frontend" and .to == "backend" and .kind == "http"
+                and (.mode | IN("same-origin", "build-time-url"))
+                and (.pathPrefix | test("^/[A-Za-z0-9._~!$&()*+,;=:@%/-]+$"))
+                and (.stripPathPrefix | type == "boolean")
+                and (.verificationPath | test("^/[A-Za-z0-9._~!$&()*+,;=:@%/-]+$"))
+              ))
             ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
@@ -341,6 +349,7 @@ jobs:
             if [ "$COMPONENT_COUNT" -gt 1 ] && [ "$(printf '%s' "$component" | jq -r '.role')" = "frontend" ]; then
               BACKEND_PORT="$(jq -r '.[] | select(.role == "backend") | .port' "$COMPONENTS_FILE")"
               [ -n "$BACKEND_PORT" ] || { echo "Full-stack frontend has no backend port contract." >&2; exit 1; }
+              PATH_PREFIX="$(jq -er '.relationships[0].pathPrefix' "$GITHUB_WORKSPACE/.deployguard/build-plan.json")"
               STRIP_PREFIX="$(jq -r '.relationships[0].stripPathPrefix // false' "$GITHUB_WORKSPACE/.deployguard/build-plan.json")"
               PROXY_SUFFIX=""; if [ "$STRIP_PREFIX" = "true" ]; then PROXY_SUFFIX="/"; fi
               cat > .deployguard-nginx.conf <<NGINX
@@ -349,7 +358,7 @@ jobs:
             server_name _;
             root /usr/share/nginx/html;
             location / { try_files \$uri \$uri/ /index.html; }
-            location /api/ { proxy_pass http://127.0.0.1:$BACKEND_PORT$PROXY_SUFFIX; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; }
+            location ${PATH_PREFIX%/}/ { proxy_pass http://127.0.0.1:$BACKEND_PORT$PROXY_SUFFIX; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; }
           }
           NGINX
             fi
@@ -1303,6 +1312,7 @@ jobs:
           ECS_SERVICE_ARN="$(terraform output -raw ecs_service_arn)"
           COMPONENT_IMAGES="$(terraform output -json component_images)"
           COMPONENT_CONTRACT="$(terraform output -json component_contract)"
+          FULL_STACK="$(printf '%s' "$COMPONENT_CONTRACT" | jq -r '([.[] | select(.role == "frontend")] | length) == 1 and ([.[] | select(.role == "backend")] | length) == 1')"
           TARGET_TAGS="$(aws elbv2 describe-tags --resource-arns "$TARGET_GROUP_ARN" --output json)"
           printf '%s' "$TARGET_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
             (.TagDescriptions[0].Tags | map({key:.Key,value:.Value}) | from_entries) as $tags
@@ -1320,13 +1330,19 @@ jobs:
             HTTP_READY=false
             if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then HTTP_READY=true; fi
             RELATIONSHIP_READY=true
-            if [ "$(printf '%s' "$COMPONENT_CONTRACT" | jq '[.[] | select(.role == "backend")] | length')" -eq 1 ]; then
-              BACKEND_HEALTH="$(printf '%s' "$COMPONENT_CONTRACT" | jq -r '.[] | select(.role == "backend") | .healthPath')"
-              STRIP_PREFIX="$(jq -r '.relationships[0].stripPathPrefix // false' ../build-plan.json)"
-              BACKEND_PUBLIC_HEALTH="$BACKEND_HEALTH"; if [ "$STRIP_PREFIX" = "true" ]; then BACKEND_PUBLIC_HEALTH="/api$BACKEND_HEALTH"; fi
-              if ! curl --fail --silent --show-error --max-time 15 "$URL$BACKEND_PUBLIC_HEALTH" >/dev/null; then RELATIONSHIP_READY=false; fi
+            BACKEND_COMPONENT_READY=true
+            if [ "$FULL_STACK" = "true" ]; then
+              BACKEND_ID="$(printf '%s' "$COMPONENT_CONTRACT" | jq -r '.[] | select(.role == "backend") | .id')"
+              TASK_ARNS="$(aws ecs list-tasks --cluster "$CLUSTER_NAME" --service-name "$SERVICE_NAME" --desired-status RUNNING --output json | jq -c '.taskArns')"
+              BACKEND_COMPONENT_READY=false
+              if [ "$(printf '%s' "$TASK_ARNS" | jq 'length')" -gt 0 ]; then
+                TASKS="$(aws ecs describe-tasks --cluster "$CLUSTER_NAME" --tasks $(printf '%s' "$TASK_ARNS" | jq -r '.[]') --output json)"
+                BACKEND_COMPONENT_READY="$(printf '%s' "$TASKS" | jq -r --arg backend "$BACKEND_ID" '(.tasks | length) > 0 and all(.tasks[]; any(.containers[]?; .name == $backend and .healthStatus == "HEALTHY"))')"
+              fi
+              RELATIONSHIP_PATH="$(jq -er '.relationships[0].verificationPath' ../build-plan.json)"
+              if ! curl --fail --silent --show-error --max-time 15 "$URL$RELATIONSHIP_PATH" >/dev/null; then RELATIONSHIP_READY=false; fi
             fi
-            if [ "$ECS_READY" = "true" ] && [ "$COMPONENTS_READY" = "true" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ] && [ "$RELATIONSHIP_READY" = "true" ]; then break; fi
+            if [ "$ECS_READY" = "true" ] && [ "$COMPONENTS_READY" = "true" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ] && [ "$BACKEND_COMPONENT_READY" = "true" ] && [ "$RELATIONSHIP_READY" = "true" ]; then break; fi
             if [ "$attempt" -eq 30 ]; then echo "The complete candidate component set, immutable images, routing, or frontend/backend relationship did not converge." >&2; exit 1; fi
             sleep 10
           done
@@ -1339,7 +1355,7 @@ jobs:
           SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
           DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
           COMPONENT_EVIDENCE="$(jq -cn --argjson contract "$COMPONENT_CONTRACT" --argjson images "$COMPONENT_IMAGES" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --arg serviceName "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" '[ $contract[] | . as $component | {id,role,root,buildContext,framework,frameworkMode,imageUri:$images[$component.id],imageDigest:($images[$component.id] | split("@") | .[1]),taskDefinitionArn:$taskDefinitionArn,serviceName:$serviceName,ecsServiceArn:$ecsServiceArn,port,healthPath,verified:true} ]')"
-          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg candidateListenerRuleArn "$CANDIDATE_LISTENER_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" --argjson components "$COMPONENT_EVIDENCE" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,components:$components,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,candidateListenerRuleArn:$candidateListenerRuleArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,componentSetVerified:true,relationshipVerified:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
+          RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg candidateListenerRuleArn "$CANDIDATE_LISTENER_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" --argjson components "$COMPONENT_EVIDENCE" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,components:$components,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,candidateListenerRuleArn:$candidateListenerRuleArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,componentSetVerified:true,frontendHttpVerified:true,backendComponentHealthVerified:true,relationshipVerified:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
           printf 'DEPLOYGUARD_CANDIDATE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
@@ -1359,6 +1375,7 @@ jobs:
           TASK_DEFINITION_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.taskDefinitionArn')"
           IMAGE_URI="$(printf '%s' "$CANDIDATE" | jq -r '.imageUri')"
           EXPECTED_COMPONENT_IMAGES="$(printf '%s' "$CANDIDATE" | jq -c 'if ((.components // []) | length) > 0 then (.components | map({key:.id,value:.imageUri}) | from_entries) else {app:.imageUri} end')"
+          FULL_STACK="$(printf '%s' "$CANDIDATE" | jq -r '([(.components // [])[] | select(.role == "frontend")] | length) == 1 and ([(.components // [])[] | select(.role == "backend")] | length) == 1')"
           URL="$(printf '%s' "$CANDIDATE" | jq -r '.candidateUrl')"
           TARGET_TAGS="$(aws elbv2 describe-tags --resource-arns "$TARGET_GROUP_ARN" --output json)"
           printf '%s' "$TARGET_TAGS" | jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
@@ -1376,13 +1393,19 @@ jobs:
             TG_READY="$(printf '%s' "$TARGET_HEALTH" | jq -r '(.TargetHealthDescriptions | length) > 0 and all(.TargetHealthDescriptions[]; .TargetHealth.State == "healthy")')"
             HTTP_READY=false; if curl --fail --silent --show-error --max-time 15 "$URL$HEALTH_CHECK_PATH" >/dev/null; then HTTP_READY=true; fi
             RELATIONSHIP_READY=true
-            if [ "$(printf '%s' "$CANDIDATE" | jq '[(.components // [])[] | select(.role == "backend")] | length')" -eq 1 ]; then
-              BACKEND_HEALTH="$(printf '%s' "$CANDIDATE" | jq -r '.components[] | select(.role == "backend") | .healthPath')"
-              STRIP_PREFIX="$(jq -r '.relationships[0].stripPathPrefix // false' .deployguard/build-plan.json)"
-              BACKEND_PUBLIC_HEALTH="$BACKEND_HEALTH"; if [ "$STRIP_PREFIX" = "true" ]; then BACKEND_PUBLIC_HEALTH="/api$BACKEND_HEALTH"; fi
-              if ! curl --fail --silent --show-error --max-time 15 "$URL$BACKEND_PUBLIC_HEALTH" >/dev/null; then RELATIONSHIP_READY=false; fi
+            BACKEND_COMPONENT_READY=true
+            if [ "$FULL_STACK" = "true" ]; then
+              BACKEND_ID="$(printf '%s' "$CANDIDATE" | jq -r '.components[] | select(.role == "backend") | .id')"
+              TASK_ARNS="$(aws ecs list-tasks --cluster "$CLUSTER_NAME" --service-name "$SERVICE_NAME" --desired-status RUNNING --output json | jq -c '.taskArns')"
+              BACKEND_COMPONENT_READY=false
+              if [ "$(printf '%s' "$TASK_ARNS" | jq 'length')" -gt 0 ]; then
+                TASKS="$(aws ecs describe-tasks --cluster "$CLUSTER_NAME" --tasks $(printf '%s' "$TASK_ARNS" | jq -r '.[]') --output json)"
+                BACKEND_COMPONENT_READY="$(printf '%s' "$TASKS" | jq -r --arg backend "$BACKEND_ID" '(.tasks | length) > 0 and all(.tasks[]; any(.containers[]?; .name == $backend and .healthStatus == "HEALTHY"))')"
+              fi
+              RELATIONSHIP_PATH="$(jq -er '.relationships[0].verificationPath' .deployguard/build-plan.json)"
+              if ! curl --fail --silent --show-error --max-time 15 "$URL$RELATIONSHIP_PATH" >/dev/null; then RELATIONSHIP_READY=false; fi
             fi
-            if [ "$ECS_READY" = "true" ] && [ "$COMPONENTS_READY" = "true" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ] && [ "$RELATIONSHIP_READY" = "true" ]; then break; fi
+            if [ "$ECS_READY" = "true" ] && [ "$COMPONENTS_READY" = "true" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ] && [ "$BACKEND_COMPONENT_READY" = "true" ] && [ "$RELATIONSHIP_READY" = "true" ]; then break; fi
             if [ "$attempt" -eq 30 ]; then echo "Candidate ceased to be healthy before promotion." >&2; exit 1; fi
             sleep 10
           done
@@ -1414,11 +1437,9 @@ jobs:
             if [ "$RULE_READY" = "true" ] && curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$HEALTH_CHECK_PATH" >/dev/null; then
               HTTP_READY=true
             fi
-            if [ "$HTTP_READY" = "true" ] && [ "$(printf '%s' "$CANDIDATE" | jq '[(.components // [])[] | select(.role == "backend")] | length')" -eq 1 ]; then
-              BACKEND_HEALTH="$(printf '%s' "$CANDIDATE" | jq -r '.components[] | select(.role == "backend") | .healthPath')"
-              STRIP_PREFIX="$(jq -r '.relationships[0].stripPathPrefix // false' .deployguard/build-plan.json)"
-              BACKEND_PUBLIC_HEALTH="$BACKEND_HEALTH"; if [ "$STRIP_PREFIX" = "true" ]; then BACKEND_PUBLIC_HEALTH="/api$BACKEND_HEALTH"; fi
-              if ! curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$BACKEND_PUBLIC_HEALTH" >/dev/null; then HTTP_READY=false; fi
+            if [ "$HTTP_READY" = "true" ] && [ "$FULL_STACK" = "true" ]; then
+              RELATIONSHIP_PATH="$(jq -er '.relationships[0].verificationPath' .deployguard/build-plan.json)"
+              if ! curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$RELATIONSHIP_PATH" >/dev/null; then HTTP_READY=false; fi
             fi
             if [ "$RULE_READY" = "true" ] && [ "$HTTP_READY" = "true" ]; then
               ROUTE_VERIFIED=true
