@@ -2,25 +2,18 @@
 
 This distribution runs the complete local DeployGuard control plane without a host Node.js or PostgreSQL installation. It starts five services: the React/nginx frontend, NestJS backend, PostgreSQL metadata store, Prometheus, and Grafana. Redis, BullMQ workers, and Trivy are not retained startup services and are not included.
 
-## Start from published images
+## Start from cloned source
 
 Prerequisite: Docker Engine/Desktop with Docker Compose. Copy the safe template and replace every `CHANGE_ME` value that applies to your authorized environment:
 
 ```bash
 cp .env.example .env
-docker compose pull
-docker compose up -d --wait
-```
-
-Set `DEPLOYGUARD_IMAGE_NAMESPACE` to the Docker Hub user or organization that publishes DeployGuard and set `DEPLOYGUARD_IMAGE_TAG` to an immutable release version. PostgreSQL, Prometheus, and Grafana use their pinned official upstream images.
-
-For source development, build the two DeployGuard images locally:
-
-```bash
-cp .env.example .env
-# Replace CHANGE_ME values, and use DEPLOYGUARD_IMAGE_TAG=local if desired.
 docker compose up -d --build --wait
 ```
+
+Compose builds the two DeployGuard images directly from this checkout. No
+DeployGuard Docker Hub images or account are required. PostgreSQL, Prometheus,
+Grafana, Node, and nginx use pinned official upstream images.
 
 Migrations run automatically in the one-shot `migrate` service after PostgreSQL is healthy. The backend starts only after migrations succeed; the frontend and monitoring services start through health-gated dependencies.
 
@@ -68,25 +61,6 @@ Delete all local Compose data (destructive only to this local control plane; it 
 ```bash
 docker compose down -v
 ```
-
-## Publish multi-platform images
-
-```bash
-export IMAGE_NAMESPACE=your-dockerhub-user
-export IMAGE_TAG=1.0.0
-
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -f backend/Dockerfile \
-  -t "$IMAGE_NAMESPACE/deployguard-backend:$IMAGE_TAG" \
-  --push .
-
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -f frontend/Dockerfile \
-  -t "$IMAGE_NAMESPACE/deployguard-frontend:$IMAGE_TAG" \
-  --push .
-```
-
-Do not publish `latest` as the only supported reference. Teammates should pin a version with `DEPLOYGUARD_IMAGE_TAG`.
 
 ## Diagnostics
 
