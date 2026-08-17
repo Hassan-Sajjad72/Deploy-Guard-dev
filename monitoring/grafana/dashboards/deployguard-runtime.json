@@ -1,0 +1,24 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    { "type": "timeseries", "title": "ECS CPU %", "id": 1, "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }, "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] }, "targets": [{ "expr": "deployguard_ecs_cpu_utilization_percent{project_id=~\"$project\"}", "legendFormat": "{{service}}", "refId": "A" }] },
+    { "type": "timeseries", "title": "ECS Memory %", "id": 2, "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }, "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] }, "targets": [{ "expr": "deployguard_ecs_memory_utilization_percent{project_id=~\"$project\"}", "legendFormat": "{{service}}", "refId": "A" }] },
+    { "type": "timeseries", "title": "HTTP / ALB Response Latency", "id": 3, "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }, "targets": [{ "expr": "deployguard_http_target_response_time_seconds{project_id=~\"$project\"}", "legendFormat": "{{service}}", "refId": "A" }] },
+    { "type": "timeseries", "title": "Healthy and Unhealthy Targets", "id": 4, "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }, "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] }, "targets": [{ "expr": "deployguard_healthy_target_count{project_id=~\"$project\"}", "legendFormat": "Healthy", "refId": "A" }, { "expr": "deployguard_unhealthy_target_count{project_id=~\"$project\"}", "legendFormat": "Unhealthy", "refId": "B" }] },
+    { "type": "stat", "title": "Runtime Availability", "id": 5, "gridPos": { "h": 5, "w": 24, "x": 0, "y": 16 }, "fieldConfig": { "defaults": { "mappings": [{ "options": { "0": { "text": "Unavailable", "color": "red" }, "1": { "text": "Available", "color": "green" } }, "type": "value" }], "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] }, "targets": [{ "expr": "deployguard_runtime_available{project_id=~\"$project\"}", "refId": "A" }] }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["deployguard", "aws", "ecs", "cloudwatch"],
+  "templating": { "list": [{ "name": "project", "label": "Project", "type": "query", "datasource": "Prometheus", "query": { "query": "label_values(deployguard_runtime_available, project_id)", "refId": "PrometheusVariableQueryEditor-VariableQuery" }, "refresh": 1, "includeAll": true, "allValue": ".*", "current": { "text": "All", "value": "$__all" } }] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "DeployGuard Runtime",
+  "uid": "deployguard-runtime",
+  "version": 1
+}
