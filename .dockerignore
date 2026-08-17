@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+**/node_modules
+**/dist
+**/.deployguard
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/backend.hcl
+**/terraform.tfvars.json
+**/*.log
+.codex
+attachments
