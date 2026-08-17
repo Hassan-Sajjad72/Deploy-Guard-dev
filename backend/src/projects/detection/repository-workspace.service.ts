@@ -35,7 +35,7 @@ export class RepositoryWorkspaceService {
     );
 
     try {
-      const token = input.accessToken?.trim() || process.env.GITHUB_TOKEN?.trim();
+      const token = input.accessToken?.trim();
       const env = token
         ? {
             ...process.env,
@@ -89,6 +89,31 @@ export class RepositoryWorkspaceService {
       );
       throw new RepositoryCloneError(cloneError, cloneError, branchError);
     }
+  }
+
+  async resolveRemoteCommit(input: {
+    repositoryUrl: string;
+    targetBranch: string;
+    accessToken?: string | null;
+  }) {
+    this.validateRepositoryUrl(input.repositoryUrl);
+    const token = input.accessToken?.trim();
+    const env = token
+      ? {
+          ...process.env,
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+          GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+        }
+      : process.env;
+    const { stdout } = await execFileAsync(
+      "git",
+      ["ls-remote", "--refs", input.repositoryUrl, `refs/heads/${input.targetBranch}`],
+      { timeout: 30000, maxBuffer: 1024 * 1024, env }
+    );
+    const commitSha = stdout.trim().split(/\s+/)[0] || null;
+    if (!commitSha) throw new RepositoryCloneError("Selected branch was not found.", "Repository branch could not be resolved.", `Branch '${input.targetBranch}' was not found in the repository.`);
+    return commitSha;
   }
 
   async cleanup(workspacePath: string) {

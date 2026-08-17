@@ -12,14 +12,17 @@ import {
 } from "crypto";
 import { UsersService } from "../users/users.service";
 import { User } from "../users/user.entity";
+import { UserRole } from "../users/user.entity";
 import { SignupDto } from "./dto/signup.dto";
 import { LoginDto } from "./dto/login.dto";
 
 export const SESSION_COOKIE_NAME = "deploy_guard_session";
+export const ADMIN_SESSION_COOKIE_NAME = "deploy_guard_admin_session";
 export const GITHUB_STATE_COOKIE_NAME = "deploy_guard_github_state";
 
 type SessionPayload = {
   sub: number;
+  audience: "developer" | "admin";
   iat: number;
   exp: number;
 };
@@ -51,29 +54,40 @@ export class AuthService {
   async login(dto: LoginDto): Promise<User> {
     const user = await this.usersService.findByEmailWithPassword(dto.email);
 
-    if (!user?.passwordHash || !this.verifyPassword(dto.password, user.passwordHash)) {
+    if (!user?.passwordHash || user.disabledAt || !this.verifyPassword(dto.password, user.passwordHash)) {
       throw new UnauthorizedException("Invalid email or password");
     }
 
     return this.usersService.markLoggedIn(user);
   }
 
-  async getUserFromSessionToken(token?: string): Promise<User | null> {
+  async adminLogin(dto: LoginDto): Promise<User> {
+    const user = await this.login(dto);
+    if (user.role !== UserRole.ADMIN || user.githubId) throw new UnauthorizedException("Invalid admin credentials");
+    return user;
+  }
+
+  async getUserFromSessionToken(token?: string, audience: "developer" | "admin" = "developer"): Promise<User | null> {
     const payload = this.verifySessionToken(token);
 
     if (!payload) {
       return null;
     }
 
-    return this.usersService.findById(payload.sub);
+    if (payload.audience !== audience) return null;
+    const user = await this.usersService.findById(payload.sub);
+    if (!user || user.disabledAt) return null;
+    if (audience === "admin") return user.role === UserRole.ADMIN && !user.githubId ? user : null;
+    return user.githubId && user.role !== UserRole.ADMIN ? user : null;
   }
 
-  createSessionToken(user: User): string {
+  createSessionToken(user: User, audience: "developer" | "admin" = "developer"): string {
     const now = Math.floor(Date.now() / 1000);
     const payload: SessionPayload = {
       sub: user.id,
+      audience,
       iat: now,
-      exp: now + 7 * 24 * 60 * 60,
+      exp: now + (audience === "admin" ? 8 * 60 * 60 : 7 * 24 * 60 * 60),
     };
     const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
     const signature = this.sign(encodedPayload);
@@ -156,6 +170,10 @@ export class AuthService {
       login: profile.login || "",
     });
 
+    if (user.role === UserRole.ADMIN) {
+      throw new UnauthorizedException("Administrator accounts must use the separate admin login.");
+    }
+
     await this.usersService.storeGithubAccessToken(user.id, accessToken);
 
     return user;
@@ -225,7 +243,7 @@ export class AuthService {
         Buffer.from(encodedPayload, "base64url").toString("utf8")
       ) as SessionPayload;
 
-      if (!payload.sub || payload.exp < Math.floor(Date.now() / 1000)) {
+      if (!payload.sub || !["developer", "admin"].includes(payload.audience) || payload.exp < Math.floor(Date.now() / 1000)) {
         return null;
       }
 

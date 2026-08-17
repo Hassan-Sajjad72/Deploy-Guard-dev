@@ -16,7 +16,7 @@ export class ProjectBackupRecord {
   id: string;
 
   @Index()
-  @Column({ name: "project_id" })
+  @Column({ name: "project_id", type: "uuid" })
   projectId: string;
 
   @Column({ name: "persistent_storage_id" })
@@ -50,9 +50,9 @@ export class ProjectBackupRecord {
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

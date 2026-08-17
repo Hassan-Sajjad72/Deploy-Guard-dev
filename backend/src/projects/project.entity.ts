@@ -23,12 +23,24 @@ export enum ProjectVisibility {
   WORKSPACE = "workspace",
 }
 
+export type ProjectDeploymentOverrides = {
+  installCommand?: string;
+  buildCommand?: string;
+  startCommand?: string;
+  outputDirectory?: string;
+  port?: number;
+  healthCheckPath?: string;
+  runtimeType?: "static" | "server";
+  requiredEnvironmentVariables?: string[];
+  dockerfileMode?: "generated" | "custom";
+};
+
 @Entity("projects")
 export class Project {
   @PrimaryGeneratedColumn("uuid")
   id: string;
 
-  @Index()
+  @Index("IDX_projects_deletion_intent")
   @Column({ name: "owner_user_id" })
   ownerUserId: number;
 
@@ -49,14 +61,28 @@ export class Project {
   repositoryProvider: string;
 
   @Index()
+  @Column({ nullable: true, name: "github_repository_id" })
+  githubRepositoryId: string | null;
+
+  @Index()
+  @Column({ nullable: true, name: "github_installation_id", type: "bigint" })
+  githubInstallationId: string | null;
+
+  @Index()
   @Column({ nullable: true, name: "repository_full_name" })
   repositoryFullName: string;
 
   @Column({ default: "main", name: "target_branch" })
   targetBranch: string;
 
+  @Column({ default: "dev", name: "environment_name" })
+  environmentName: string;
+
   @Column({ nullable: true, name: "app_directory" })
   appDirectory: string;
+
+  @Column({ type: "jsonb", default: {}, name: "deployment_overrides" })
+  deploymentOverrides: ProjectDeploymentOverrides;
 
   @Column({
     type: "enum",
@@ -75,12 +101,22 @@ export class Project {
   @OneToMany(() => ProjectEnvironmentVariable, (variable) => variable.project)
   environmentVariables: ProjectEnvironmentVariable[];
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 
-  @Column({ nullable: true, name: "archived_at", type: "timestamp" })
+  @Column({ nullable: true, name: "archived_at", type: "timestamptz" })
   archivedAt: Date;
+
+  @Column({ nullable: true, name: "deletion_fence_token", type: "bigint" })
+  deletionFenceToken: string | null;
+
+  @Index()
+  @Column({ nullable: true, name: "deletion_intent_id", type: "uuid" })
+  deletionIntentId: string | null;
+
+  @Column({ nullable: true, name: "deletion_started_at", type: "timestamptz" })
+  deletionStartedAt: Date | null;
 }

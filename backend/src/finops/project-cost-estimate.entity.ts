@@ -46,6 +46,13 @@ export class ProjectCostEstimate {
   project: Project;
 
   @Index()
+  @Column({ nullable: true, name: "generation_id", type: "uuid" })
+  generationId: string | null;
+
+  @Column({ default: "dev", name: "environment_name" })
+  environmentName: string;
+
+  @Index()
   @Column({ nullable: true, name: "pipeline_run_id" })
   pipelineRunId: string;
 
@@ -114,13 +121,13 @@ export class ProjectCostEstimate {
   @Column({ nullable: true, name: "approved_by_user_id" })
   approvedByUserId: number;
 
-  @Column({ nullable: true, name: "approved_at", type: "timestamp" })
+  @Column({ nullable: true, name: "approved_at", type: "timestamptz" })
   approvedAt: Date;
 
   @Column({ nullable: true, name: "rejected_by_user_id" })
   rejectedByUserId: number;
 
-  @Column({ nullable: true, name: "rejected_at", type: "timestamp" })
+  @Column({ nullable: true, name: "rejected_at", type: "timestamptz" })
   rejectedAt: Date;
 
   @Column({ nullable: true, name: "rejection_reason", type: "text" })
@@ -129,9 +136,9 @@ export class ProjectCostEstimate {
   @OneToMany(() => ProjectCostResourceBreakdown, (breakdown) => breakdown.estimate)
   breakdowns: ProjectCostResourceBreakdown[];
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

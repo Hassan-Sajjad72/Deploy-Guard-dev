@@ -13,7 +13,6 @@ import { AlbService } from "./alb.service";
 import { AutoscalingService } from "./autoscaling.service";
 import { OrchestrationDeploymentReadinessService } from "./deployment-readiness.service";
 import { EcsService } from "./ecs.service";
-import { OrchestrationController } from "./orchestration.controller";
 import { OrchestrationService } from "./orchestration.service";
 import { ProjectDeployment } from "./project-deployment.entity";
 import { ProjectOrchestrationEvent } from "./project-orchestration-event.entity";
@@ -22,6 +21,8 @@ import { ProjectSpotInterruptionEvent } from "./project-spot-interruption-event.
 import { ProjectStableRelease } from "./project-stable-release.entity";
 import { RollbackService } from "./rollback.service";
 import { SpotInterruptionService } from "./spot-interruption.service";
+import { NotificationsModule } from "../notifications/notifications.module";
+import { OrchestrationContractsModule } from "../orchestration-contracts/orchestration-contracts.module";
 
 @Module({
   imports: [
@@ -41,8 +42,9 @@ import { SpotInterruptionService } from "./spot-interruption.service";
     ]),
     AuditLogModule,
     InfrastructureModule,
+    NotificationsModule,
+    OrchestrationContractsModule,
   ],
-  controllers: [OrchestrationController],
   providers: [
     OrchestrationService,
     EcsService,

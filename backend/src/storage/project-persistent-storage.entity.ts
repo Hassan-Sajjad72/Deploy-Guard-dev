@@ -139,15 +139,15 @@ export class ProjectPersistentStorage {
   @Column({ nullable: true, name: "error_message", type: "text" })
   errorMessage: string;
 
-  @Column({ nullable: true, name: "provisioned_at", type: "timestamp" })
+  @Column({ nullable: true, name: "provisioned_at", type: "timestamptz" })
   provisionedAt: Date;
 
-  @Column({ nullable: true, name: "failed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "failed_at", type: "timestamptz" })
   failedAt: Date;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

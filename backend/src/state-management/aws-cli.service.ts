@@ -24,6 +24,7 @@ export class AwsCliService {
           AWS_REGION: stateConfig.region,
           AWS_ACCESS_KEY_ID: this.config.get<string>("AWS_ACCESS_KEY_ID", ""),
           AWS_SECRET_ACCESS_KEY: this.config.get<string>("AWS_SECRET_ACCESS_KEY", ""),
+          AWS_SESSION_TOKEN: this.config.get<string>("AWS_SESSION_TOKEN", ""),
         },
         timeout: 120000,
         maxBuffer: 16 * 1024 * 1024,
@@ -44,8 +45,40 @@ export class AwsCliService {
     }
   }
 
+  async validateCredentials() {
+    const accessKey = this.config.get<string>("AWS_ACCESS_KEY_ID", "").trim();
+    const secretKey = this.config.get<string>("AWS_SECRET_ACCESS_KEY", "").trim();
+    const region = this.config.get<string>("AWS_REGION", "").trim();
+    if (!accessKey || !secretKey || !region) {
+      throw new Error("AWS credentials are missing or invalid. Configure backend AWS credentials before deployment.");
+    }
+    try {
+      const result = await execFileAsync(
+        "aws",
+        ["sts", "get-caller-identity", "--output", "json"],
+        {
+          env: {
+            ...process.env,
+            AWS_REGION: region,
+            AWS_ACCESS_KEY_ID: accessKey,
+            AWS_SECRET_ACCESS_KEY: secretKey,
+            AWS_SESSION_TOKEN: this.config.get<string>("AWS_SESSION_TOKEN", ""),
+          },
+          timeout: 30000,
+          maxBuffer: 1024 * 1024,
+        }
+      );
+      const identity = JSON.parse(String(result.stdout || "{}")) as { Account?: string; Arn?: string };
+      if (!identity.Account || !identity.Arn) throw new Error("Invalid AWS identity response");
+      return true;
+    } catch {
+      throw new Error("AWS credentials are missing or invalid. Configure backend AWS credentials before deployment.");
+    }
+  }
+
   sanitize(value: string) {
     return value
+      .replace(/AIza[0-9A-Za-z_-]{20,}/g, "[REDACTED_GOOGLE_AI_KEY]")
       .replace(/AWS_ACCESS_KEY_ID[=:\s]+[^\s"]+/gi, "AWS_ACCESS_KEY_ID=[REDACTED]")
       .replace(/AWS_SECRET_ACCESS_KEY[=:\s]+[^\s"]+/gi, "AWS_SECRET_ACCESS_KEY=[REDACTED]")
       .replace(/token[=:\s]+[^\s"]+/gi, "token=[REDACTED]");

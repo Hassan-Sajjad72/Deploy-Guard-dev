@@ -13,6 +13,7 @@ import { Project } from "./project.entity";
 
 export enum DetectionStatus {
   SUCCESS = "success",
+  MANUAL_INPUT_REQUIRED = "manual_input_required",
   NEEDS_MANUAL_DOCKERFILE = "needs_manual_dockerfile",
   FAILED = "failed",
 }
@@ -48,6 +49,9 @@ export class ProjectDetectionProfile {
 
   @Column({ nullable: true, name: "commit_sha" })
   commitSha: string;
+
+  @Column({ nullable: true, name: "input_fingerprint" })
+  inputFingerprint: string;
 
   @Column()
   ecosystem: string;
@@ -115,9 +119,9 @@ export class ProjectDetectionProfile {
   @Column({ type: "jsonb", nullable: true, name: "raw_profile" })
   rawProfile: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

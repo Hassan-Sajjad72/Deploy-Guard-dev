@@ -11,6 +11,10 @@ import {
 export class AuditLogQueryDto {
   @IsString()
   @IsOptional()
+  category?: string;
+
+  @IsString()
+  @IsOptional()
   action?: string;
 
   @IsString()
@@ -23,7 +27,21 @@ export class AuditLogQueryDto {
 
   @IsString()
   @IsOptional()
-  actorUserId?: string;
+  projectId?: string;
+
+  @IsString()
+  @IsOptional()
+  severity?: "info" | "warning" | "error";
+
+  @IsString()
+  @IsOptional()
+  search?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  actorUserId?: number;
 
   @IsString()
   @IsOptional()

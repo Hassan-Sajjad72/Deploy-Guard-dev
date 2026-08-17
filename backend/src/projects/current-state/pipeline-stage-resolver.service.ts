@@ -3,46 +3,14 @@ import { ProjectPipelineEvent } from "../project-pipeline-event.entity";
 import { PipelineRunStatus, ProjectPipelineRun } from "../project-pipeline-run.entity";
 import { isPipelineInProgress } from "../pipeline/pipeline-status";
 import { PipelineStageStatus, ResolvedPipelineStage } from "./project-current-state.types";
-
-type StageDefinition = {
-  stage: string;
-  label: string;
-  required: boolean;
-  canSkip: boolean;
-  source: string;
-  matches: (eventStage: string) => boolean;
-};
-
-const STAGES: StageDefinition[] = [
-  definition("validate_inputs", "Validate Inputs", true, false, "pipeline", ["queued", "preparing", "readiness_check"]),
-  definition("clone_repository", "Clone Repository", true, false, "pipeline", ["cloning", "clone_repository"]),
-  definition("stack_detection_snapshot", "Stack Detection Snapshot", true, false, "detection", ["stack_detection_snapshot"]),
-  definition("template_generation", "Template Generation", true, false, "templates", ["template_generation", "dockerfile_generated", "dockerignore_generated"]),
-  definition("docker_build", "Docker Build", true, false, "docker", ["building_image", "docker_build"]),
-  definition("trivy_scan", "Checking Dockerfile", true, false, "dockerfile", ["dockerfile_check"]),
-  definition("security_gate", "Advisory Vulnerability Review", false, true, "security", ["security_scan", "security_policy", "security_gate"]),
-  definition("ecr_push", "ECR Push", true, false, "ecr", ["tagging_image", "ecr_"]),
-  definition("terraform_plan", "Terraform Plan", true, true, "terraform", ["terraform_stage", "terraform_plan", "infrastructure_plan"]),
-  definition("finops_estimate", "FinOps Estimate", true, false, "finops", ["cost_analysis", "cost_breakdown", "cost_policy"]),
-  definition("cost_gate", "Cost Gate", true, false, "finops", ["cost_approval", "cost_threshold", "deployment_blocked_by_cost", "cost_approved", "cost_analysis_passed"]),
-  definition("terraform_apply_gate", "Terraform Apply Gate", true, false, "configuration", ["terraform_apply_gate", "infrastructure_apply_disabled_by_config"]),
-  definition("state_lock", "State Lock", true, false, "state", ["state_lock", "state_heartbeat", "state_backend", "state_validation"]),
-  definition("terraform_apply", "Terraform Apply", true, false, "terraform", ["infrastructure_apply_started", "infrastructure_apply_completed", "terraform_apply_started", "terraform_apply_completed"]),
-  definition("efs", "Persistent Storage / EFS", false, true, "storage", ["storage_", "persistent_storage", "efs_", "backup_plan"]),
-  definition("ecs_deploy", "ECS Deploy", true, false, "orchestration", ["ecs_cluster", "ecs_task", "ecs_service", "fargate_spot", "autoscaling", "spot_interruption"]),
-  definition("alb_health", "ALB Health", true, false, "orchestration", ["alb_"]),
-  definition("stable_release", "Stable Release", true, false, "orchestration", ["stable_release", "deployment_completed"]),
-  definition("observability", "Observability", false, true, "observability", ["observability"]),
-];
-
-const EXTERNAL_CI: StageDefinition = definition(
-  "external_ci_validation",
-  "Optional External CI",
-  false,
-  true,
-  "github_actions",
-  ["external_ci_validation", "github_actions"]
-);
+import {
+  matchesPipelineStage,
+  PIPELINE_LIFECYCLE_REGISTRY,
+  PIPELINE_STAGE_REGISTRY,
+  PipelineStageDefinition,
+  pipelineStageDefinition,
+} from "../pipeline/pipeline-stage-registry";
+import { ResolvedLifecycleStage } from "./project-current-state.types";
 
 type ResolveInput = {
   run: ProjectPipelineRun | null;
@@ -58,14 +26,18 @@ type ResolveInput = {
 @Injectable()
 export class PipelineStageResolverService {
   resolve(input: ResolveInput): ResolvedPipelineStage[] {
-    const stages = STAGES.map((definition) => {
+    const stages = PIPELINE_STAGE_REGISTRY.map((definition) => {
+      if (definition.key === "external_ci_validation") {
+        return this.resolveExternalCi(input);
+      }
       if (!input.run) return this.emptyStage(definition);
-      const events = input.events.filter((event) => definition.matches(normalize(event.stage)));
+      const events = input.events.filter((event) => matchesPipelineStage(definition, normalize(event.stage)));
       return this.resolveEvents(definition, events, input.run);
     });
 
     this.applyKnownState(stages, input);
-    const externalCi = this.resolveExternalCi(input);
+    this.flagStagesMissingCompletionEvidence(stages);
+    const externalCi = stageByName(stages, "external_ci_validation");
     if (externalCi.required && externalCi.status === "failed") {
       this.blockAfterExternalCi(stages, externalCi);
     }
@@ -87,19 +59,60 @@ export class PipelineStageResolverService {
     return stages;
   }
 
+  private flagStagesMissingCompletionEvidence(stages: ResolvedPipelineStage[]) {
+    for (let index = 0; index < stages.length; index += 1) {
+      const stage = stages[index];
+      if (stage.status !== "running") continue;
+      const downstreamReached = stages.slice(index + 1).some((later) =>
+        ["passed", "running", "failed", "requires_approval"].includes(later.status)
+      );
+      if (!downstreamReached) continue;
+      stage.status = "warning";
+      stage.endedAt = null;
+      stage.error = null;
+      stage.canRetry = false;
+      stage.message = "A downstream stage ran, but this stage has no explicit success event.";
+    }
+  }
+
+  resolveLifecycle(stages: ResolvedPipelineStage[]): ResolvedLifecycleStage[] {
+    return PIPELINE_LIFECYCLE_REGISTRY.map((lifecycle) => {
+      const matching = stages.filter((stage) => pipelineStageDefinition(stage.stage)?.lifecycleKey === lifecycle.key);
+      const required = matching.some((stage) => stage.required);
+      const strongest = [...matching].sort((left, right) => statusRank(right.status) - statusRank(left.status))[0];
+      const startedAt = matching.map((stage) => stage.startedAt).filter(Boolean).sort((a, b) => new Date(a!).getTime() - new Date(b!).getTime())[0] || null;
+      const endedAt = matching.map((stage) => stage.endedAt).filter(Boolean).sort((a, b) => new Date(a!).getTime() - new Date(b!).getTime()).at(-1) || null;
+      const status = strongest?.status || "not_started";
+      return {
+        ...(strongest || this.emptyLifecycleStage(lifecycle.key, lifecycle.label)),
+        stage: lifecycle.key,
+        label: lifecycle.label,
+        order: lifecycle.order,
+        status,
+        required,
+        canSkip: !required,
+        startedAt,
+        endedAt,
+        durationMs: startedAt && endedAt ? Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime()) : null,
+        technicalStages: matching.map((stage) => stage.stage),
+      } as ResolvedLifecycleStage;
+    });
+  }
+
   resolveExternalCi(input: ResolveInput): ResolvedPipelineStage {
     const required = input.githubActionsRequired;
-    const definition = { ...EXTERNAL_CI, required };
+    const registryDefinition = pipelineStageDefinition("external_ci_validation")!;
+    const definition = { ...registryDefinition, required };
     if (!input.run) return this.emptyStage(definition);
 
-    const events = input.events.filter((event) => definition.matches(normalize(event.stage)));
+    const events = input.events.filter((event) => matchesPipelineStage(definition, normalize(event.stage)));
     if (!events.length) {
       return {
         ...this.emptyStage(definition),
-        status: required && isPipelineInProgress(input.run.status) ? "pending" : "not_started",
+        status: required && isPipelineInProgress(input.run.status) ? "pending" : required ? "not_started" : "skipped",
         message: required
           ? "Required external CI validation has not run yet."
-          : "External CI is optional and has not been requested.",
+          : "External CI is optional and was intentionally omitted.",
       };
     }
 
@@ -111,7 +124,7 @@ export class PipelineStageResolverService {
     const metadata = (terminal.metadata || {}) as Record<string, unknown>;
 
     return {
-      stage: definition.stage,
+      stage: definition.key,
       label: definition.label,
       status,
       required,
@@ -131,7 +144,7 @@ export class PipelineStageResolverService {
     };
   }
 
-  private resolveEvents(definition: StageDefinition, events: ProjectPipelineEvent[], run: ProjectPipelineRun): ResolvedPipelineStage {
+  private resolveEvents(definition: PipelineStageDefinition, events: ProjectPipelineEvent[], run: ProjectPipelineRun): ResolvedPipelineStage {
     if (!events.length) {
       return {
         ...this.emptyStage(definition),
@@ -142,29 +155,27 @@ export class PipelineStageResolverService {
 
     const first = events[0];
     const last = events[events.length - 1];
-    const failed = [...events].reverse().find((event) => event.status === "failed");
-    const disabled = [...events].reverse().find((event) => event.status === "disabled_by_config");
-    const approval = [...events].reverse().find((event) => /approval_required/.test(event.stage));
-    const skipped = [...events].reverse().find((event) => event.status === "skipped");
-    const running = [...events].reverse().find((event) => ["running", "started"].includes(event.status));
-    const queued = [...events].reverse().find((event) => ["queued", "waiting", "pending"].includes(event.status));
-    const succeeded = [...events].reverse().find((event) => event.status === "success");
     let status: PipelineStageStatus = "not_started";
     let terminal = last;
-
-    if (disabled) { status = "disabled_by_config"; terminal = disabled; }
-    else if (approval) { status = "requires_approval"; terminal = approval; }
-    else if (failed) { status = "failed"; terminal = failed; }
-    else if (skipped) { status = "skipped"; terminal = skipped; }
-    else if (succeeded && events.indexOf(succeeded) >= events.indexOf(running || first)) { status = "passed"; terminal = succeeded; }
-    else if (running) { status = "running"; terminal = running; }
-    else if (queued) { status = "pending"; terminal = queued; }
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const candidate = events[index];
+      if (candidate.status === "disabled_by_config") status = "disabled_by_config";
+      else if (/approval_required/.test(candidate.stage) && ["waiting", "pending", "approval_required"].includes(candidate.status)) status = "requires_approval";
+      else if (candidate.status === "failed") status = "failed";
+      else if (candidate.status === "skipped" || candidate.metadata?.status === "reused") status = "skipped";
+      else if (candidate.status === "success") status = "passed";
+      else if (["running", "started"].includes(candidate.status)) status = "running";
+      else if (["queued", "waiting", "pending"].includes(candidate.status)) status = "pending";
+      else continue;
+      terminal = candidate;
+      break;
+    }
 
     const startedAt = first.createdAt || null;
     const endedAt = ["passed", "failed", "skipped", "disabled_by_config"].includes(status) ? terminal.createdAt || null : null;
     const metadata = (terminal.metadata || {}) as Record<string, unknown>;
     return {
-      stage: definition.stage,
+      stage: definition.key,
       label: definition.label,
       status,
       required: definition.required,
@@ -198,10 +209,11 @@ export class PipelineStageResolverService {
       costGate.message = "Cost approval is required before deployment can continue.";
     }
 
-    const stateLock = stageByName(stages, "state_lock");
     if (input.run?.status === PipelineRunStatus.WAITING_FOR_STATE_LOCK) {
-      stateLock.status = "pending";
-      stateLock.message = "Waiting for the active Terraform state lock to be released.";
+      const applyLock = input.events.some((event) => /apply/.test(String(event.metadata?.operation || event.stage)));
+      const lockStage = stageByName(stages, applyLock ? "terraform_apply" : "terraform_plan");
+      lockStage.status = "pending";
+      lockStage.message = `Waiting for the Terraform state lock before ${applyLock ? "apply" : "plan"}.`;
     }
 
     const applyGate = stageByName(stages, "terraform_apply_gate");
@@ -209,6 +221,8 @@ export class PipelineStageResolverService {
     const reachedApplyGate = input.events.some((event) =>
       [
         "terraform_apply_gate_passed",
+        "terraform_apply_approval_required",
+        "terraform_apply_approval_queued",
         "terraform_apply_gate_disabled_by_config",
         "infrastructure_apply_disabled_by_config",
         "infrastructure_apply_started",
@@ -242,20 +256,24 @@ export class PipelineStageResolverService {
   private blockDownstreamStages(stages: ResolvedPipelineStage[]) {
     let blocker: ResolvedPipelineStage | null = null;
     for (const stage of stages) {
-      if (blocker && ["not_started", "pending"].includes(stage.status)) {
+      if (blocker) {
         stage.status = "blocked";
         stage.blockedByStage = blocker.stage;
         stage.blockedReason = blocker.message;
         stage.message = blocker.stage === "terraform_apply_gate" ? "Blocked at Terraform Apply Gate." : `Blocked by ${blocker.label}.`;
+        stage.startedAt = null;
+        stage.endedAt = null;
+        stage.durationMs = null;
+        stage.error = null;
         stage.canRetry = false;
       }
       if (!blocker && stage.required && ["failed", "requires_approval", "disabled_by_config"].includes(stage.status)) blocker = stage;
     }
   }
 
-  private emptyStage(definition: StageDefinition): ResolvedPipelineStage {
+  private emptyStage(definition: PipelineStageDefinition): ResolvedPipelineStage {
     return {
-      stage: definition.stage,
+      stage: definition.key,
       label: definition.label,
       status: "not_started",
       required: definition.required,
@@ -272,10 +290,26 @@ export class PipelineStageResolverService {
       diagnosticCode: null,
     };
   }
-}
 
-function definition(stage: string, label: string, required: boolean, canSkip: boolean, source: string, tokens: string[]): StageDefinition {
-  return { stage, label, required, canSkip, source, matches: (eventStage) => tokens.some((token) => eventStage.includes(token)) };
+  private emptyLifecycleStage(stage: string, label: string): ResolvedPipelineStage {
+    return {
+      stage,
+      label,
+      status: "not_started",
+      required: false,
+      startedAt: null,
+      endedAt: null,
+      durationMs: null,
+      message: "This stage has not been reached.",
+      error: null,
+      blockedByStage: null,
+      blockedReason: null,
+      canRetry: false,
+      canSkip: true,
+      source: "pipeline",
+      diagnosticCode: null,
+    };
+  }
 }
 
 function normalize(value: unknown) {
@@ -284,4 +318,20 @@ function normalize(value: unknown) {
 
 function stageByName(stages: ResolvedPipelineStage[], name: string) {
   return stages.find((stage) => stage.stage === name)!;
+}
+
+function statusRank(status: PipelineStageStatus) {
+  return {
+    failed: 100,
+    requires_approval: 95,
+    blocked: 90,
+    disabled_by_config: 80,
+    running: 70,
+    pending: 60,
+    warning: 50,
+    passed: 40,
+    skipped: 30,
+    not_started: 20,
+    unavailable: 10,
+  }[status] || 0;
 }

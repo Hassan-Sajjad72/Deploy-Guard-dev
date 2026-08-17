@@ -13,10 +13,14 @@ export class ProjectStateValidationResult {
   id: string;
 
   @Index()
-  @Column({ name: "project_id" })
+  @Column({ name: "project_id", type: "uuid" })
   projectId: string;
 
-  @Column({ nullable: true, name: "infrastructure_environment_id" })
+  @Column({
+    nullable: true,
+    name: "infrastructure_environment_id",
+    type: "uuid",
+  })
   infrastructureEnvironmentId: string;
 
   @Column({ default: "dev", name: "environment_name" })
@@ -52,6 +56,6 @@ export class ProjectStateValidationResult {
   @Column({ nullable: true, type: "jsonb" })
   issues: string[] | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

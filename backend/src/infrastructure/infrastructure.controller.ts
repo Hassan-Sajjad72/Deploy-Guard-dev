@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Controller, Get, Param, Req, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { requireRole } from "../common/rbac/require-role.guard";
 import { UserRole } from "../users/user.entity";
@@ -10,6 +10,7 @@ export class InfrastructureController {
   constructor(private readonly infrastructureService: InfrastructureService) {}
 
   @Get("deployment-readiness")
+  @UseGuards(requireRole([UserRole.ADMIN]))
   async getDeploymentReadiness(
     @Req() req: Request,
     @Param("projectId") projectId: string
@@ -17,22 +18,8 @@ export class InfrastructureController {
     return this.infrastructureService.getDeploymentReadiness(req.user!, projectId, req);
   }
 
-  @Post("deploy")
-  async deploy(@Req() req: Request, @Param("projectId") projectId: string) {
-    return this.infrastructureService.deploy(req.user!, projectId, req);
-  }
-
-  @Post("infrastructure/plan")
-  async plan(@Req() req: Request, @Param("projectId") projectId: string) {
-    return this.infrastructureService.queuePlan(req.user!, projectId, req);
-  }
-
-  @Post("infrastructure/apply")
-  async apply(@Req() req: Request, @Param("projectId") projectId: string) {
-    return this.infrastructureService.queueApply(req.user!, projectId, req);
-  }
-
   @Get("infrastructure")
+  @UseGuards(requireRole([UserRole.ADMIN]))
   async getInfrastructure(@Req() req: Request, @Param("projectId") projectId: string) {
     return {
       environment: await this.infrastructureService.getInfrastructureStatus(
@@ -43,6 +30,7 @@ export class InfrastructureController {
   }
 
   @Get("infrastructure/events")
+  @UseGuards(requireRole([UserRole.ADMIN]))
   async getInfrastructureEvents(
     @Req() req: Request,
     @Param("projectId") projectId: string
@@ -56,6 +44,7 @@ export class InfrastructureController {
   }
 
   @Get("service-discovery")
+  @UseGuards(requireRole([UserRole.ADMIN]))
   async getServiceDiscovery(
     @Req() req: Request,
     @Param("projectId") projectId: string

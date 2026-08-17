@@ -48,6 +48,7 @@ import { User } from "../users/user.entity";
 import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
 import { ProjectInfrastructureEvent } from "../infrastructure/project-infrastructure-event.entity";
 import { ProjectCostEstimate } from "../finops/project-cost-estimate.entity";
+import { ProjectCostSettings } from "../finops/project-cost-settings.entity";
 import { ProjectTerraformLock } from "../state-management/project-terraform-lock.entity";
 import { ProjectPersistentStorage } from "../storage/project-persistent-storage.entity";
 import { ProjectDeployment } from "../orchestration/project-deployment.entity";
@@ -60,17 +61,15 @@ import { ManagedDatabaseReconciliationService } from "./managed-database-reconci
 import { ManagedDatabaseResetService } from "./managed-database-reset.service";
 import { DeploymentRecoveryDecisionService } from "./deployment-recovery-decision.service";
 import { ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
+import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
 import { DeploymentGenerationService } from "./deployment-generation.service";
-import { LegacyDestroyReadVerifierService } from "./legacy-destroy-read-verifier.service";
-import { LegacyDestroyReconciliationService } from "./legacy-destroy-reconciliation.service";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
 import { InfracostService } from "../finops/infracost.service";
 import { GenerationRetentionService } from "./generation-retention.service";
 import { NotificationSubscription } from "../notifications/notification-subscription.entity";
-import { ProjectExtinctionService } from "./project-extinction.service";
-import { ProjectDestroyLifecycle } from "./project-destroy-lifecycle.entity";
-import { DestroyLifecycleService } from "./destroy-lifecycle.service";
+import { ProjectDeletionService } from "./project-deletion.service";
+import { SharedPlatformFoundationService } from "./shared-platform-foundation.service";
 
 @Module({
   imports: [
@@ -83,12 +82,12 @@ import { DestroyLifecycleService } from "./destroy-lifecycle.service";
       // Read-only historical evidence remains queryable, but none of its
       // retired mutation providers is registered in this module.
       ProjectInfrastructureEnvironment, ProjectInfrastructureEvent,
-      ProjectPersistentStorage, ProjectCostEstimate, ProjectTerraformLock,
+      ProjectPersistentStorage, ProjectCostEstimate, ProjectCostSettings, ProjectTerraformLock,
       ProjectDeployment, ProjectStableRelease, ProjectRuntimeMetricSnapshot,
       ProjectBackupRecord,
       ProjectDeploymentGeneration,
+      ProjectEnvironmentRoute,
       NotificationSubscription,
-      ProjectDestroyLifecycle,
     ]),
     AuditLogModule,
     InfrastructureModule,
@@ -110,14 +109,12 @@ import { DestroyLifecycleService } from "./destroy-lifecycle.service";
     ManagedDatabaseResetService,
     DeploymentRecoveryDecisionService,
     DeploymentGenerationService,
-    LegacyDestroyReadVerifierService,
-    LegacyDestroyReconciliationService,
     InfracostService,
     GithubActionsCostEvidenceService,
     GenerationRetentionService,
-    ProjectExtinctionService,
-    DestroyLifecycleService,
+    ProjectDeletionService,
+    SharedPlatformFoundationService,
   ],
-  exports: [ProjectActivityService],
+  exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService],
 })
 export class ProjectsModule {}

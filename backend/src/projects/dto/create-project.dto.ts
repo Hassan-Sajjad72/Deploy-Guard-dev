@@ -29,6 +29,11 @@ export class CreateProjectDto {
 
   @IsString()
   @IsOptional()
+  @Matches(/^[a-z0-9][a-z0-9-]{0,39}$/, { message: "environmentName must use lowercase letters, numbers, and hyphens" })
+  environmentName?: string;
+
+  @IsString()
+  @IsOptional()
   @Matches(/^(?:|\.|(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+)$/, {
     message: "appDirectory must be a repository-relative path",
   })

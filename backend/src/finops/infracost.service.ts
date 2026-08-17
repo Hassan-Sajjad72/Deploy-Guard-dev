@@ -31,11 +31,12 @@ export class InfracostService {
     }
 
     const planJsonPath = join(workdir, "tfplan.json");
-    await writeFile(planJsonPath, planJson, "utf8");
+    await writeFile(planJsonPath, planJson, { encoding: "utf8", mode: 0o600 });
+    const executable = this.config.get<string>("INFRACOST_CLI_PATH", "infracost").trim() || "infracost";
 
     try {
       const { stdout } = await execFileAsync(
-        "infracost",
+        executable,
         ["breakdown", "--path", planJsonPath, "--format", "json"],
         {
           cwd: workdir,
@@ -50,7 +51,7 @@ export class InfracostService {
       const err = error as NodeJS.ErrnoException;
 
       if (err.code === "ENOENT") {
-        throw new Error("infracost CLI is not installed or not available in PATH.");
+        throw new Error("The configured official Infracost CLI is not installed or executable.");
       }
 
       throw new Error("Infracost cost breakdown failed.");

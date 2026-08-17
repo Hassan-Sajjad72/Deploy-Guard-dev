@@ -1,5 +1,4 @@
 import { Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
@@ -25,7 +24,6 @@ export class GithubActionsMetricsService {
   constructor(
     @InjectRepository(ProjectPipelineRun)
     private readonly runRepository: Repository<ProjectPipelineRun>,
-    private readonly config: ConfigService,
     private readonly metrics: PipelineMetricsService,
     private readonly sanitizer: LogSanitizerService
   ) {}
@@ -33,23 +31,7 @@ export class GithubActionsMetricsService {
   async fetchWorkflowRun(projectId: string, pipelineRunId: string) {
     const run = await this.runRepository.findOne({ where: { id: pipelineRunId, projectId } });
 
-    if (!run?.githubWorkflowRunId || !run.repositoryFullName || !this.config.get<string>("GITHUB_TOKEN")) {
-      return this.fallback(run);
-    }
-
-    const response = await fetch(`https://api.github.com/repos/${run.repositoryFullName}/actions/runs/${run.githubWorkflowRunId}`, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${this.config.get<string>("GITHUB_TOKEN")}`,
-        "User-Agent": "Deploy-Guard",
-      },
-    });
-
-    if (!response.ok) {
-      return this.fallback(run, `github_api_${response.status}`);
-    }
-
-    return response.json() as Promise<GitHubWorkflowRun>;
+    return this.fallback(run, "github_metrics_disabled");
   }
 
   async resolveWorkflowRunAfterDispatch(projectId: string, pipelineRunId: string) {

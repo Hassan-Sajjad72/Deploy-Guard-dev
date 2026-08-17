@@ -3,6 +3,8 @@ import { SubscriptionTier } from "./project-cost-settings.entity";
 
 export type FinopsConfig = {
   mockMode: boolean;
+  infracostEnabled: boolean;
+  bypassCostGate: boolean;
   enforceTierLimits: boolean;
   currency: string;
   defaultWarningThreshold: number;
@@ -12,8 +14,22 @@ export type FinopsConfig = {
 };
 
 export function getFinopsConfig(config: ConfigService): FinopsConfig {
+  const enabled = (key: string, defaultValue: boolean) => {
+    const value = config.get<string>(key)?.trim().toLowerCase();
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return defaultValue;
+  };
+  const infracostEnabled = enabled("INFRACOST_ENABLED", false);
+  const costGateMode = config.get<string>("COST_GATE_MODE", "enforce").trim().toLowerCase();
+  const mockMode =
+    enabled("FINOPS_MOCK_MODE", true) ||
+    !infracostEnabled ||
+    costGateMode === "bypass";
   return {
-    mockMode: config.get<string>("FINOPS_MOCK_MODE", "true") !== "false",
+    mockMode,
+    infracostEnabled,
+    bypassCostGate: mockMode || costGateMode === "bypass",
     enforceTierLimits:
       config.get<string>("FINOPS_ENFORCE_TIER_LIMITS", "false") === "true",
     currency: config.get<string>("INFRACOST_CURRENCY", "USD"),

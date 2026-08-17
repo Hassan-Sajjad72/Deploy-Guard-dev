@@ -22,12 +22,12 @@ export const ACTIVE_PIPELINE_STATUSES: readonly PipelineRunStatus[] = [
   PipelineRunStatus.ECS_WAITING_FOR_STABILITY,
   PipelineRunStatus.ECS_SERVICE_HEALTHY,
   PipelineRunStatus.ROLLBACK_STARTED,
-  PipelineRunStatus.ROLLBACK_SUCCEEDED,
   PipelineRunStatus.SPOT_INTERRUPTION_HANDLED,
 ];
 
 export const PAUSED_PIPELINE_STATUSES: readonly PipelineRunStatus[] = [
   PipelineRunStatus.WAITING_FOR_COST_APPROVAL,
+  PipelineRunStatus.APPLY_DISABLED,
 ];
 
 export const FAILED_PIPELINE_STATUSES: readonly PipelineRunStatus[] = [
@@ -47,6 +47,7 @@ export const FAILED_PIPELINE_STATUSES: readonly PipelineRunStatus[] = [
 export const TERMINAL_PIPELINE_STATUSES: readonly PipelineRunStatus[] = [
   PipelineRunStatus.COMPLETED,
   PipelineRunStatus.CANCELLED,
+  PipelineRunStatus.ROLLBACK_SUCCEEDED,
   ...FAILED_PIPELINE_STATUSES,
 ];
 

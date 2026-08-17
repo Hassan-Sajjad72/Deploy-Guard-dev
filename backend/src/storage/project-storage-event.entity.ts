@@ -8,10 +8,10 @@ export class ProjectStorageEvent {
   id: string;
 
   @Index()
-  @Column({ name: "project_id" })
+  @Column({ name: "project_id", type: "uuid" })
   projectId: string;
 
-  @Column({ nullable: true, name: "pipeline_run_id" })
+  @Column({ nullable: true, name: "pipeline_run_id", type: "uuid" })
   pipelineRunId: string;
 
   @Column({ nullable: true, name: "persistent_storage_id" })
@@ -40,6 +40,6 @@ export class ProjectStorageEvent {
   @JoinColumn({ name: "actor_user_id" })
   actorUser: User;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

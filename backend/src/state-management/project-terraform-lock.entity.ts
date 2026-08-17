@@ -28,11 +28,11 @@ export class ProjectTerraformLock {
   lockId: string;
 
   @Index()
-  @Column({ name: "project_id" })
+  @Column({ name: "project_id", type: "uuid" })
   projectId: string;
 
-  @Column({ name: "pipeline_run_id" })
-  pipelineRunId: string;
+  @Column({ name: "pipeline_run_id", type: "uuid", nullable: true })
+  pipelineRunId: string | null;
 
   @Column({ nullable: true, name: "deployment_id" })
   deploymentId: string;
@@ -52,10 +52,10 @@ export class ProjectTerraformLock {
   @Column({ nullable: true, name: "terraform_pid" })
   terraformPid: number;
 
-  @Column({ name: "acquired_at", type: "timestamp" })
+  @Column({ name: "acquired_at", type: "timestamptz" })
   acquiredAt: Date;
 
-  @Column({ nullable: true, name: "heartbeat_at", type: "timestamp" })
+  @Column({ nullable: true, name: "heartbeat_at", type: "timestamptz" })
   heartbeatAt: Date;
 
   @Column({ default: 30, name: "heartbeat_interval_seconds" })
@@ -64,18 +64,18 @@ export class ProjectTerraformLock {
   @Column({ default: 300, name: "stale_after_seconds" })
   staleAfterSeconds: number;
 
-  @Column({ nullable: true, name: "released_at", type: "timestamp" })
+  @Column({ nullable: true, name: "released_at", type: "timestamptz" })
   releasedAt: Date;
 
-  @Column({ nullable: true, name: "force_released_at", type: "timestamp" })
+  @Column({ nullable: true, name: "force_released_at", type: "timestamptz" })
   forceReleasedAt: Date;
 
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

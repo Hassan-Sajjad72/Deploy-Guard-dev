@@ -1,4 +1,5 @@
 import {
+  Check,
   Entity,
   PrimaryGeneratedColumn,
   Column,
@@ -24,6 +25,7 @@ export enum UserRole {
  * id, github_id, name, email, image, github_login, last_login_at, created_at, updated_at
  */
 @Entity("users") // Table name in PostgreSQL
+@Check("CHK_users_admin_not_github", `"github_id" IS NULL OR "role" <> 'admin'`)
 export class User {
   /**
    * Auto-incrementing primary key.
@@ -83,8 +85,12 @@ export class User {
    * Timestamp of the most recent login.
    * We update this every time the user signs in.
    */
-  @Column({ nullable: true, name: "last_login_at", type: "timestamp" })
+  @Column({ nullable: true, name: "last_login_at", type: "timestamptz" })
   lastLoginAt: Date;
+
+  /** Disabled accounts retain their audit history but cannot authenticate. */
+  @Column({ nullable: true, name: "disabled_at", type: "timestamptz" })
+  disabledAt: Date | null;
 
   /**
    * Role used by RBAC-protected API routes.
@@ -100,13 +106,13 @@ export class User {
    * TypeORM auto-sets this when the row is FIRST created.
    * You never set this manually.
    */
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
   /**
    * TypeORM auto-updates this whenever the row changes.
    * You never set this manually.
    */
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

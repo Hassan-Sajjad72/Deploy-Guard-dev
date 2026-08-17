@@ -65,18 +65,19 @@ export class StateCorruptionService {
   validateDependencyGraph(stateJson: string) {
     try {
       const parsed = JSON.parse(stateJson || "{}") as {
-        resources?: Array<{ mode?: string; type?: string; name?: string; instances?: Array<{ dependencies?: string[] }> }>;
+        resources?: Array<{ module?: string; mode?: string; type?: string; name?: string; instances?: Array<{ dependencies?: string[] }> }>;
       };
       const resources = parsed.resources || [];
       const resourceNames = new Set(
-        resources.map((resource) => `${resource.mode || "managed"}.${resource.type}.${resource.name}`)
+        resources.map((resource) => this.resourceAddress(resource))
       );
 
       for (const resource of resources) {
         for (const instance of resource.instances || []) {
           for (const dependency of instance.dependencies || []) {
-            const normalized = dependency.split("[")[0];
-            if (normalized.includes(".") && !resourceNames.has(normalized)) {
+            const normalized = dependency.replace(/\[[^\]]+\]/g, "");
+            const moduleExists = [...resourceNames].some((address) => address.startsWith(`${normalized}.`));
+            if (normalized.includes(".") && !resourceNames.has(normalized) && !moduleExists) {
               return false;
             }
           }
@@ -106,13 +107,20 @@ export class StateCorruptionService {
       : true;
     const resourceCountValid = this.validateResourceCountConsistency(resourceCount, state?.resourceCount);
     const dependencyGraphValid = this.validateDependencyGraph(stateJson);
-    const issues = [
+    const blockingIssues = [
       !jsonSchemaValid ? "Terraform state JSON schema is invalid." : null,
       !checksumValid ? "Terraform state checksum does not match the last known checksum." : null,
       !resourceCountValid ? "Terraform state resource count dropped beyond configured threshold." : null,
-      !dependencyGraphValid ? "Terraform state dependency graph has missing references." : null,
     ].filter(Boolean) as string[];
-    const status = issues.length > 0 ? StateValidationStatus.CORRUPTED : StateValidationStatus.VALID;
+    const warningIssues = [
+      !dependencyGraphValid ? "Terraform state dependency graph contains unresolved advisory references." : null,
+    ].filter(Boolean) as string[];
+    const issues = [...blockingIssues, ...warningIssues];
+    const status = blockingIssues.length
+      ? StateValidationStatus.CORRUPTED
+      : warningIssues.length
+        ? StateValidationStatus.WARNING
+        : StateValidationStatus.VALID;
 
     const result = await this.resultRepository.save(
       this.resultRepository.create({
@@ -160,6 +168,12 @@ export class StateCorruptionService {
       (resource.instances || []).flatMap((instance) => instance.dependencies || [])
     );
     return this.sha256(JSON.stringify(dependencies.sort()));
+  }
+
+  private resourceAddress(resource: { module?: string; mode?: string; type?: string; name?: string }) {
+    const prefix = resource.module ? `${resource.module}.` : "";
+    const mode = resource.mode === "data" ? "data." : "";
+    return `${prefix}${mode}${resource.type}.${resource.name}`;
   }
 
   private safeParse(value: string) {

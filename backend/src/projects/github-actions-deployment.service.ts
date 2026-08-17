@@ -28,6 +28,8 @@ import {
   immutableDispatchFingerprint,
   immutableImageTag,
   requireRetryInputs,
+  retryOperationEligibility,
+  runtimeConfigurationWithPromotionCandidate,
 } from "./github-actions-operation-contract";
 import { extractGithubActionsTerraformPlanSummary } from "./github-actions-terraform-plan-evidence";
 import { DeploymentProfileService } from "./detection/deployment-profile.service";
@@ -38,7 +40,7 @@ import {
   sanitizedRuntimeEvidenceFailure,
   validateGithubActionsRuntimeEvidence,
 } from "./github-actions-release-evidence";
-import { extractGithubActionsDestroyEvidence, extractGithubActionsDestroyProgress } from "./github-actions-destroy-evidence";
+import { extractGithubActionsDestroyEvidence } from "./github-actions-destroy-evidence";
 import { DatabaseServiceBindingService, EffectiveDeploymentConfiguration } from "../infrastructure/database-service-binding.service";
 import { GithubActionsRuntimeSecretService, RuntimeSecretMaterialization } from "./github-actions-runtime-secret.service";
 import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.entity";
@@ -46,7 +48,7 @@ import { ProjectStableRelease, StableReleaseStatus } from "../orchestration/proj
 import { ProjectServiceBinding } from "./project-service-binding.entity";
 import { GithubActionsRuntimeConfiguration } from "./github-actions-operation-contract";
 import { canonicalEnvironmentName } from "./canonical-environment";
-import { BuildPlan, requireBuildPlan } from "./build-plan";
+import { BuildPlan, buildPlanComponents, requireBuildPlan } from "./build-plan";
 import { evaluateBuildPlanReadiness } from "./build-plan-readiness";
 import { refreshDeploymentAnalysisIfStale } from "./deployment-analysis-refresh";
 import { ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
@@ -54,19 +56,38 @@ import { DeploymentRecoveryDecision } from "./deployment-recovery-decision";
 import { DeploymentRecoveryDecisionService } from "./deployment-recovery-decision.service";
 import { ManagedDatabaseResetService } from "./managed-database-reset.service";
 import { DeploymentGenerationService } from "./deployment-generation.service";
-import { LegacyDestroyReconciliationService } from "./legacy-destroy-reconciliation.service";
 import { materializeStableRelease } from "./stable-release-projection";
 import { NotificationDispatcherService } from "../notifications/notification-dispatcher.service";
 import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
 import { GenerationRetentionService } from "./generation-retention.service";
-import { ProjectExtinctionIncompleteError, ProjectExtinctionService } from "./project-extinction.service";
+import { ProjectDeletionIncompleteError, ProjectDeletionService } from "./project-deletion.service";
 import { ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
-import { DestroyLifecycleService } from "./destroy-lifecycle.service";
-import { ProjectDestroyPhase } from "./project-destroy-lifecycle.entity";
+import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
+import {
+  extractGithubActionsCandidateEvidence,
+  extractGithubActionsCompensationEvidence,
+  GithubActionsCandidateEvidence,
+  PromotionIntent,
+  promotionIntentFingerprint,
+} from "./github-actions-promotion-evidence";
+import { managedDatabaseProfile } from "./managed-database-engine";
+import { serviceAlias } from "./configuration-ownership";
+import { SharedPlatformFoundationService } from "./shared-platform-foundation.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 const MAX_STABLE_RELEASE_RECONCILIATION_ATTEMPTS = 3;
-const LEGACY_STABLE_RELEASE_FAILURE_MESSAGE = "The healthy workflow result did not satisfy the immutable runtime-configuration evidence contract.";
+const RUNTIME_CONFIGURATION_EVIDENCE_FAILURE_MESSAGE = "The healthy workflow result did not satisfy the immutable runtime-configuration evidence contract.";
+
+function generationCleanupEvidence(log: string) {
+  const line = log.split(/\r?\n/).filter((value) => value.includes("DEPLOYGUARD_GENERATION_CLEANUP_RESULT=")).pop();
+  if (!line) return null;
+  try {
+    const value = JSON.parse(line.slice(line.indexOf("DEPLOYGUARD_GENERATION_CLEANUP_RESULT=") + "DEPLOYGUARD_GENERATION_CLEANUP_RESULT=".length)) as Record<string, unknown>;
+    return typeof value.generationId === "string" && ["cleaned", "cleanup_pending"].includes(String(value.status))
+      ? { generationId: value.generationId, status: String(value.status), error: typeof value.error === "string" ? value.error : null }
+      : null;
+  } catch { return null; }
+}
 
 export class StableReleasePersistenceError extends Error {
   constructor(public readonly cause: unknown) {
@@ -102,12 +123,11 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     private readonly deploymentRecovery: DeploymentRecoveryDecisionService,
     private readonly managedDatabaseReset: ManagedDatabaseResetService,
     private readonly deploymentGenerations: DeploymentGenerationService,
-    private readonly legacyDestroyReconciliation: LegacyDestroyReconciliationService,
     private readonly notifications: NotificationDispatcherService,
     private readonly costEvidence: GithubActionsCostEvidenceService,
     private readonly retention: GenerationRetentionService,
-    private readonly extinction: ProjectExtinctionService,
-    private readonly destroyLifecycles: DestroyLifecycleService,
+    private readonly projectDeletion: ProjectDeletionService,
+    private readonly sharedPlatformFoundation: SharedPlatformFoundationService,
     @InjectRepository(ProjectConfigurationSnapshot) private readonly configurationSnapshots: Repository<ProjectConfigurationSnapshot>,
     @InjectRepository(ProjectStableRelease) private readonly stableReleases: Repository<ProjectStableRelease>,
   ) {}
@@ -148,90 +168,30 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           this.logger.warn(`GitHub Actions operation ${operation.id} did not converge in this bounded sweep: ${error instanceof Error ? error.message : "unknown error"}`);
         }
       }
-      const dueDestroy = await this.destroyLifecycles.due(limit);
-      for (const lifecycle of dueDestroy) {
-        if (lifecycle.remaining.some((item) => item.retryable === false && /ownership|foreign|validation/i.test(`${item.reason} ${item.errorCode || ""}`))) continue;
-        try {
-          await this.resumeDestroyLifecycle(lifecycle.projectId, lifecycle.operationId);
-          reconciled += 1;
-        } catch (error) {
-          this.logger.warn(`Destroy lifecycle ${lifecycle.id} did not resume in this bounded sweep: ${error instanceof Error ? error.message : "unknown error"}`);
-        }
-      }
+      await this.retryPendingRetiredGenerationCleanup();
       return { skipped: false, reconciled };
     } finally {
       this.reconciliationSweepRunning = false;
     }
   }
 
-  private async resumeDestroyLifecycle(projectId: string, sourceOperationId: string) {
-    const project = await this.projects.findOne({ where: { id: projectId } });
-    if (!project) return;
-    const source = await this.runs.findOne({ where: { id: sourceOperationId, projectId }, relations: { triggeredByUser: true } });
-    if (!source || source.metadata?.deploymentAction !== "destroy" || !source.triggeredByUser) return;
-    const environmentName = canonicalEnvironmentName(project);
-    const lifecycle = await this.destroyLifecycles.active(project.id, environmentName);
-    if (!lifecycle) return;
-    if (lifecycle.phase !== ProjectDestroyPhase.AWS_CLEANUP) {
-      const lease = await this.destroyLifecycles.acquire(project.id, environmentName, source.id);
-      if (!lease) return;
-      const credential = await this.githubApp.tokenForRepository(
-        source.triggeredByUser.id,
-        project.repositoryFullName,
-        project.githubInstallationId,
-      );
-      const heartbeat = setInterval(() => {
-        void this.destroyLifecycles.heartbeat(project.id, environmentName, source.id);
-      }, 30_000);
-      heartbeat.unref();
-      try {
-        await this.extinction.extinguish(project, source, credential.token, async (phase) => {
-          await this.destroyLifecycles.phase(project.id, environmentName, source.id, phase);
-        });
-      } catch (error) {
-        const currentLifecycle = await this.destroyLifecycles.active(project.id, environmentName) || lifecycle;
-        await this.destroyLifecycles.recordIncomplete({
-          projectId: project.id,
-          environmentName,
-          operationId: source.id,
-          phase: currentLifecycle.phase,
-          remaining: [{
-            resourceType: "control_plane_extinction",
-            resourceId: `${project.id}:${currentLifecycle.phase}`,
-            ownershipScope: "project",
-            reason: "The verified AWS Destroy completed, but control-plane extinction is incomplete.",
-            errorCode: error instanceof ProjectExtinctionIncompleteError ? error.code : "CONTROL_PLANE_EXTINCTION_FAILED",
-            errorMessage: error instanceof Error ? error.message : "Control-plane extinction could not be verified.",
-            retryable: true,
-            attemptCount: currentLifecycle.retryCount + 1,
-            firstSeenAt: currentLifecycle.firstStartedAt.toISOString(),
-            lastSeenAt: new Date().toISOString(),
-          }],
-        });
-      } finally {
-        clearInterval(heartbeat);
-      }
-      return;
-    }
-    if (source.status !== PipelineRunStatus.FAILED) return;
-    await this.withProjectLock(projectId, async (runRepository) => {
-      const active = await runRepository.findOne({ where: { projectId, status: In(ACTIVE) } });
-      if (active) return;
-      const generation = await this.deploymentGenerations.requireActiveGeneration(source.generationId, project.id, canonicalEnvironmentName(project), runRepository.manager);
-      await this.redispatch(source.triggeredByUser, project, runRepository, source, generation.id);
-    });
-  }
-
   async deploy(user: User, projectId: string) {
     const project = await this.project(user, projectId);
+    const foundation = this.platformFoundation();
+    await this.sharedPlatformFoundation.assertActive(foundation);
     return this.withProjectLock(projectId, async (runRepository) => {
-      await this.assertNoDestroyLifecycle(project, runRepository);
       const active = await this.reconcileActive(user, project, runRepository);
       if (active) return this.result("no_op", "This deployment is already progressing.", active);
       const environmentName = canonicalEnvironmentName(project);
-      const generation = await this.deploymentGenerations.ensureActive(projectId, environmentName, runRepository.manager);
-      const previousStable = await this.currentLiveRun(projectId, runRepository, generation.id);
-      return this.dispatch(user, projectId, runRepository, "deploy", previousStable?.id || null, { generationId: generation.id });
+      const previousLive = await this.deploymentGenerations.live(projectId, environmentName, runRepository.manager);
+      const previousStable = previousLive ? await this.currentLiveRun(projectId, runRepository, previousLive.id) : null;
+      const generation = await this.deploymentGenerations.createCandidate(projectId, environmentName, runRepository.manager);
+      try {
+        return await this.dispatch(user, projectId, runRepository, "deploy", previousStable?.id || null, { generationId: generation.id });
+      } catch (error) {
+        await this.failCandidateBeforeDispatch(user, project, runRepository, generation.id, error, { requestedMode: "DEPLOY" });
+        throw error;
+      }
     });
   }
 
@@ -242,9 +202,11 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       if (active) return this.result("no_op", "This deployment is already progressing.", active);
       const failed = await this.latestRun(projectId, runRepository);
       if (!failed || failed.status !== PipelineRunStatus.FAILED) throw new BadRequestException("Only the latest failed GitHub Actions deployment can be retried.");
-      const generation = await this.deploymentGenerations.requireActiveGeneration(failed.generationId, project.id, canonicalEnvironmentName(project), runRepository.manager);
       const action = String(failed.metadata?.deploymentAction || "deploy");
-      if (action !== "destroy") await this.assertNoDestroyLifecycle(project, runRepository);
+      if (action !== "destroy") await this.sharedPlatformFoundation.assertActive(this.platformFoundation());
+      const generation = action === "destroy"
+        ? await this.deploymentGenerations.requireActiveGeneration(failed.generationId, project.id, canonicalEnvironmentName(project), runRepository.manager)
+        : await this.deploymentGenerations.requireRetryableGeneration(failed.generationId, project.id, canonicalEnvironmentName(project), runRepository.manager);
       if (action === "deploy") {
         let retryInputs: GithubActionsOperationInputs;
         try {
@@ -258,7 +220,8 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         } catch (error) {
           throw this.operationContractException(error);
         }
-        const previousStable = await this.currentLiveRun(projectId, runRepository, generation.id);
+        const live = await this.deploymentGenerations.live(projectId, canonicalEnvironmentName(project), runRepository.manager);
+        const previousStable = live ? await this.currentLiveRun(projectId, runRepository, live.id) : null;
         try {
           return await this.dispatch(user, projectId, runRepository, "deploy", previousStable?.id || null, {
             requestedMode: "RETRY",
@@ -268,17 +231,50 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
             generationId: generation.id,
           });
         } catch (error) {
-          if (error instanceof WorkflowAwsCapabilityError) throw error;
           const persisted = await runRepository.createQueryBuilder("run")
             .where("run.projectId = :projectId", { projectId })
             .andWhere("run.metadata ->> 'retryOfOperationId' = :sourceId", { sourceId: failed.id })
             .orderBy("run.createdAt", "DESC")
             .getOne();
-          if (persisted) return this.result("rejected", persisted.errorMessage || "Retry failed before GitHub Actions dispatch.", persisted);
-          return this.persistRejectedRetry(user, project, runRepository, failed, retryInputs, error);
+          if (persisted) {
+            await this.failCandidateBeforeDispatch(user, project, runRepository, generation.id, error, {
+              requestedMode: "RETRY",
+              retryOfOperationId: failed.id,
+              source: failed,
+            });
+            return this.result("rejected", persisted.errorMessage || "Retry failed before GitHub Actions dispatch.", persisted);
+          }
+          const rejected = await this.persistRejectedRetry(user, project, runRepository, failed, retryInputs, error);
+          await this.failCandidateBeforeDispatch(user, project, runRepository, generation.id, error, {
+            requestedMode: "RETRY",
+            retryOfOperationId: failed.id,
+            source: failed,
+          });
+          return rejected;
         }
       }
-      return this.redispatch(user, project, runRepository, failed, generation.id);
+      const retryEligibility = retryOperationEligibility(failed, project);
+      if (retryEligibility === "undispatched_destroy_recovery") {
+        return this.dispatch(user, projectId, runRepository, "destroy", null, {
+          retryOfOperationId: failed.id,
+          retryDetectionProfileId: failed.detectionProfileId,
+          generationId: generation.id,
+          recoveryCommitSha: failed.commitSha,
+        });
+      }
+      try {
+        return await this.redispatch(user, project, runRepository, failed, generation.id);
+      } catch (error) {
+        if (action !== "destroy") {
+          await this.failCandidateBeforeDispatch(user, project, runRepository, generation.id, error, {
+            requestedMode: "RETRY",
+            retryOfOperationId: failed.id,
+            source: failed,
+            action: action === "rollback" ? "rollback" : "deploy",
+          });
+        }
+        throw error;
+      }
     });
   }
 
@@ -286,14 +282,19 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     if (confirmationPhrase !== "RESET AND DEPLOY FRESH") {
       throw new BadRequestException("Type RESET AND DEPLOY FRESH to confirm a new empty managed-database generation.");
     }
+    await this.sharedPlatformFoundation.assertActive(this.platformFoundation());
     await this.managedDatabaseReset.reset(user, projectId, "RESET MANAGED DATABASE", req);
     const project = await this.project(user, projectId);
     return this.withProjectLock(projectId, async (runRepository) => {
-      await this.assertNoDestroyLifecycle(project, runRepository);
       const active = await this.reconcileActive(user, project, runRepository);
       if (active) return this.result("no_op", "A GitHub Actions operation is already progressing.", active);
-      const generation = await this.deploymentGenerations.ensureActive(projectId, canonicalEnvironmentName(project), runRepository.manager);
-      return this.dispatch(user, projectId, runRepository, "deploy", null, { requestedMode: "RESET_FRESH", generationId: generation.id });
+      const generation = await this.deploymentGenerations.createCandidate(projectId, canonicalEnvironmentName(project), runRepository.manager);
+      try {
+        return await this.dispatch(user, projectId, runRepository, "deploy", null, { requestedMode: "RESET_FRESH", generationId: generation.id });
+      } catch (error) {
+        await this.failCandidateBeforeDispatch(user, project, runRepository, generation.id, error, { requestedMode: "RESET_FRESH" });
+        throw error;
+      }
     });
   }
 
@@ -334,14 +335,17 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
 
   async rollback(user: User, projectId: string, targetOperationId: string) {
     const project = await this.project(user, projectId);
+    const platformFoundation = this.platformFoundation();
+    await this.sharedPlatformFoundation.assertActive(platformFoundation);
     return this.withProjectLock(projectId, async (runRepository) => {
-      await this.assertNoDestroyLifecycle(project, runRepository);
       const active = await this.reconcileActive(user, project, runRepository);
       if (active) return this.result("no_op", "A GitHub Actions operation is already progressing.", active);
-      const generation = await this.deploymentGenerations.active(projectId, canonicalEnvironmentName(project), runRepository.manager);
-      if (!generation) throw new BadRequestException({ code: "generation_missing", message: "There is no active deployment generation to roll back." });
-      const current = await this.currentLiveRun(projectId, runRepository, generation.id);
+      const liveGeneration = await this.deploymentGenerations.live(projectId, canonicalEnvironmentName(project), runRepository.manager);
+      if (!liveGeneration) throw new BadRequestException({ code: "generation_missing", message: "There is no live deployment generation to roll back." });
+      const current = await this.currentLiveRun(projectId, runRepository, liveGeneration.id);
       if (!current) throw new BadRequestException({ code: "rollback_live_release_missing", message: "A verified current live release is required for rollback." });
+      const currentEvidence = this.releaseEvidence(current);
+      if (!currentEvidence) throw new BadRequestException({ code: "rollback_live_evidence_missing", message: "The current LIVE release does not contain immutable routing evidence." });
       const target = await this.rollbackTarget(projectId, current, runRepository);
       if (!target || target.id !== targetOperationId) {
         throw new BadRequestException({ code: "rollback_target_ineligible", message: "The selected release is not the previous eligible release." });
@@ -357,6 +361,9 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       ) {
         throw new BadRequestException({ code: "rollback_evidence_mismatch", message: "The selected release runtime evidence is inconsistent." });
       }
+      const generation = await this.deploymentGenerations.createCandidate(projectId, canonicalEnvironmentName(project), runRepository.manager);
+      const route = await this.deploymentGenerations.route(projectId, canonicalEnvironmentName(project), runRepository.manager);
+      if (!route) throw new BadRequestException("The project environment has no collision-safe routing allocation.");
       const oidcTrustSubject = await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId);
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, oidcTrustSubject);
       const capability = await this.awsCapabilities.ensure({
@@ -368,10 +375,49 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       const workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
       const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
       const operationId = randomUUID();
+      const sourceRuntime = decodeEnvironmentReferencesBase64(targetInputs.environment_references_base64);
+      const rollbackRuntime: GithubActionsRuntimeConfiguration = {
+        ...sourceRuntime,
+        platformFoundation,
+        projectId,
+        generationId: generation.id,
+        generationStateKey: generation.terraformStateKey,
+        routing: {
+          listenerPriority: route.listenerPriority,
+          verificationPriority: this.deploymentGenerations.verificationPriority(generation, route),
+          productionHost: `p-${projectId}.${this.config.get<string>("DEPLOYGUARD_ROUTING_DOMAIN", "deployguard.local")}`,
+          candidateHost: `g-${generation.id}.${this.config.get<string>("DEPLOYGUARD_ROUTING_DOMAIN", "deployguard.local")}`,
+        },
+        retiredGenerationCleanup: {
+          generationId: liveGeneration.id,
+          terraformStateKey: liveGeneration.terraformStateKey,
+          resourceManifest: liveGeneration.resourceManifest || {},
+        },
+        environment: {
+          ...sourceRuntime.environment,
+          DEPLOYGUARD_OPERATION_ID: operationId,
+          DEPLOYGUARD_GENERATION_ID: generation.id,
+        },
+        promotion: {
+          contractVersion: "deployguard.promotion-intent/v1",
+          operationId,
+          projectId,
+          environmentName: canonicalEnvironmentName(project),
+          generationId: generation.id,
+          candidate: null,
+          previousLiveGenerationId: liveGeneration.id,
+          previousTargetGroupArn: currentEvidence.targetGroupArn,
+          previousListenerRuleArn: currentEvidence.listenerRuleArn,
+          previousProductionUrl: typeof current.metadata?.deployedUrl === "string" ? current.metadata.deployedUrl : null,
+          intentFingerprint: null,
+        },
+      };
       const inputs: GithubActionsOperationInputs = {
         ...targetInputs,
         deployment_action: "rollback",
         deployment_operation_id: operationId,
+        infrastructure_namespace: `/deployguard/${projectId}/${canonicalEnvironmentName(project)}/${generation.id}`,
+        environment_references_base64: environmentReferencesBase64(rollbackRuntime),
         rollback_source_operation_id: target.id,
         rollback_image_uri: targetEvidence.imageUri,
         rollback_task_definition_arn: targetEvidence.taskDefinitionArn,
@@ -391,6 +437,8 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         commitSha: target.commitSha,
         imageTag: target.imageTag,
         ecrImageUri: targetEvidence.imageUri,
+        configurationSnapshotId: sourceRuntime.configurationSnapshotId,
+        databaseServiceBindingId: sourceRuntime.managedDatabase?.bindingId || null,
         status: PipelineRunStatus.QUEUED,
         currentStage: "workflow_dispatch",
         startedAt: new Date(),
@@ -408,9 +456,18 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           immutableDispatchInputs: inputs,
           immutableDispatchFingerprint: immutableDispatchFingerprint(inputs),
           immutableDispatchInputNames: Object.keys(githubWorkflowDispatchInputs(inputs) || {}).sort(),
+          workflowPhase: "candidate",
+          promotionState: "awaiting_candidate_evidence",
+          promotionIntent: rollbackRuntime.promotion,
         },
       }));
-      await this.scheduleOperation(runRepository, operation, credential.token, inputs);
+      await this.deploymentGenerations.bindCreatingOperation(generation.id, operation.id, runRepository.manager);
+      try {
+        await this.scheduleOperation(runRepository, operation, credential.token, inputs);
+      } catch (error) {
+        await this.deploymentGenerations.markFailed(generation.id, operation.id, error instanceof Error ? error.message : "Rollback candidate dispatch failed.", runRepository.manager);
+        throw error;
+      }
       return this.result("accepted", `Rollback to release ${Number(target.metadata?.attempt || 1)} was dispatched.`, operation);
     });
   }
@@ -420,7 +477,6 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     let operation = await this.latestRun(projectId, this.runs);
     if (!operation) return { operation: null };
     await this.reconcile(user, project, operation);
-    operation = await this.legacyDestroyReconciliation.reconcile(project, operation);
     const stableUrl = await this.stableUrl(projectId, operation.generationId, operation.id);
     return { operation: this.response(operation, stableUrl) };
   }
@@ -430,10 +486,10 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     const operations = await this.runs.createQueryBuilder("run")
       .where("run.projectId = :projectId", { projectId })
       .andWhere("run.metadata ->> 'executionEngine' = 'github_actions'")
+      .andWhere("COALESCE(run.metadata ->> 'internalMaintenance', 'false') != 'true'")
       .orderBy("run.createdAt", "DESC").getMany();
     for (const operation of operations.filter((run) => ACTIVE.includes(run.status))) await this.reconcile(user, project, operation);
     for (let index = 0; index < operations.length; index += 1) {
-      operations[index] = await this.legacyDestroyReconciliation.reconcile(project, operations[index]);
     }
     let workflowToken: string | null = null;
     if (operations.some((run) => run.githubWorkflowRunId)) {
@@ -461,6 +517,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       expectedRetryInputs?: GithubActionsOperationInputs;
       retryDetectionProfileId?: string | null;
       generationId?: string;
+      recoveryCommitSha?: string;
     } = {},
   ) {
     let project = await this.project(user, projectId);
@@ -546,7 +603,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     const stableUrl = await this.stableUrl(projectId, generation.id);
     const operationId = randomUUID();
     const buildTimePublicConfig = action === "deploy" ? await this.buildTimePublicConfig(plan, contract.projectId, environmentName) : {};
-    const operationCommit = options.expectedRetryInputs?.commit_sha || contract.commitSha || profile?.commitSha || "";
+    const operationCommit = options.expectedRetryInputs?.commit_sha || options.recoveryCommitSha || contract.commitSha || profile?.commitSha || "";
     const operation = await runRepository.save(runRepository.create({
       id: operationId, projectId, generationId: generation.id, triggeredByUserId: user.id, detectionProfileId: options.retryDetectionProfileId || profile?.id || undefined,
       repositoryUrl: project.repositoryUrl, repositoryFullName: project.repositoryFullName,
@@ -562,7 +619,9 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         ...(stableUrl ? { stableDeployedUrl: stableUrl } : {}),
       },
     }));
-    await this.deploymentGenerations.bindCreatingOperation(generation.id, operation.id, runRepository.manager);
+    if (action === "deploy") {
+      await this.deploymentGenerations.bindCreatingOperation(generation.id, operation.id, runRepository.manager);
+    }
     let runtimeConfiguration: GithubActionsRuntimeConfiguration | null = null;
     if (action === "deploy") {
       try {
@@ -570,7 +629,6 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           ? await runRepository.manager.getRepository(ProjectStableRelease).findOne({
             where: {
               projectId,
-              generationId: generation.id,
               environmentName,
               deployedByPipelineRunId: previousStableOperationId,
               status: StableReleaseStatus.STABLE,
@@ -590,7 +648,12 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           configurationFingerprint: snapshot.configurationFingerprint,
           secretValues: effective.projectSecretValues,
         });
-        runtimeConfiguration = this.runtimeConfiguration(snapshot, effective, materialized, deploymentContext!, generation.id, protectedRelease);
+        const route = await this.deploymentGenerations.route(project.id, environmentName, runRepository.manager);
+        if (!route) throw new BadRequestException("The project environment has no collision-safe routing allocation.");
+        const previousGeneration = protectedRelease?.generationId
+          ? await runRepository.manager.getRepository(ProjectDeploymentGeneration).findOne({ where: { id: protectedRelease.generationId, projectId: project.id } })
+          : null;
+        runtimeConfiguration = this.runtimeConfiguration(snapshot, effective, materialized, deploymentContext!, generation, route, protectedRelease, previousGeneration, operationId, stableUrl);
         snapshot.secretReferences = {
           ...snapshot.secretReferences,
           ...(materialized?.valueFromByName || {}),
@@ -618,7 +681,10 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       }
     }
     const destroyContext = action === "destroy"
-      ? await this.destroyEnvironmentReferences(project.id, environmentName, generation.id, contract, runRepository)
+      ? await this.destroyEnvironmentReferences(project.id, environmentName, generation.id, {
+        publicNames: contract.ecsPlan.environmentMappings.map((item) => item.name),
+        secretNames: contract.ecsPlan.secretMappings.map((item) => item.name),
+      }, runRepository)
       : null;
     const inputs: GithubActionsOperationInputs = {
       deployment_action: action,
@@ -663,30 +729,19 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       immutableDispatchInputs: inputs,
       immutableDispatchFingerprint: immutableDispatchFingerprint(inputs),
       immutableDispatchInputNames: Object.keys(githubWorkflowDispatchInputs(inputs) || {}).sort(),
+      dispatchStartedAt: new Date().toISOString(),
+      dispatchState: "dispatch_prepared",
+      ...(runtimeConfiguration ? {
+        workflowPhase: "candidate",
+        promotionState: "awaiting_candidate_evidence",
+        promotionIntent: runtimeConfiguration.promotion,
+      } : {}),
     };
     await runRepository.save(operation);
-    if (action === "destroy") {
-      await this.destroyLifecycles.begin({
-        projectId: project.id,
-        environmentName,
-        generationId: generation.id,
-        operationId: operation.id,
-        resourceManifest: destroyContext!.resourceManifest,
-      }, runRepository.manager);
-      const lease = await this.destroyLifecycles.acquire(project.id, environmentName, operation.id);
-      if (!lease) throw new ServiceUnavailableException("Another valid Destroy cleanup execution owns this generation lease.");
-      operation.metadata = {
-        ...(operation.metadata || {}),
-        destroyLifecycleId: lease.id,
-        destroyStatus: lease.status,
-        extinctionPhase: lease.phase,
-      };
-      await runRepository.save(operation);
-    }
     const credential = deployCredential || await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
     if (action === "destroy") {
-      this.schedulePersistedOperation(operation, credential.token, inputs);
-      return this.result("accepted", "Confirmed destroy queued for GitHub Actions.", operation);
+      await this.scheduleNewOperation(runRepository, operation, credential.token, inputs);
+      return this.result("accepted", "Confirmed destroy dispatched to GitHub Actions.", operation);
     }
     await this.scheduleOperation(runRepository, operation, credential.token, inputs);
     return this.result(
@@ -700,6 +755,175 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
             : "Deployment dispatched to GitHub Actions.",
       operation,
     );
+  }
+
+  private async failCandidateOperation(
+    operation: ProjectPipelineRun,
+    jobs: { jobs?: Array<{ conclusion?: string; steps?: Array<{ conclusion?: string; name?: string }> }> },
+    log: string | null,
+    message = "Candidate provisioning or health verification failed.",
+  ) {
+    const failedJob = jobs.jobs?.find((job) => job.conclusion === "failure");
+    const failedStep = failedJob?.steps?.find((step) => step.conclusion === "failure");
+    operation.status = PipelineRunStatus.FAILED;
+    operation.failedAt = new Date();
+    operation.completedAt = null;
+    operation.currentStage = this.stage(failedStep?.name || "candidate_health_verification");
+    operation.errorMessage = message;
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      conclusion: "failure",
+      failedStage: operation.currentStage,
+      promotionState: "candidate_failed_before_cutover",
+      safeLog: this.sanitizer.sanitize(log || message).slice(-24_000),
+    };
+    const saved = await this.runs.save(operation);
+    if (saved.generationId) await this.deploymentGenerations.markFailed(saved.generationId, saved.id, message);
+    return saved;
+  }
+
+  private async beginPromotion(operation: ProjectPipelineRun, candidate: GithubActionsCandidateEvidence, token: string) {
+    const originalInputs = this.releaseInputs(operation);
+    if (!originalInputs) return this.failCandidateOperation(operation, { jobs: [] }, null, "Immutable candidate inputs are unavailable.");
+    const runtime = decodeEnvironmentReferencesBase64(originalInputs.environment_references_base64);
+    let immutablePlan: BuildPlan | null = null;
+    try { immutablePlan = JSON.parse(Buffer.from(originalInputs.build_plan_base64, "base64").toString("utf8")) as BuildPlan; } catch { /* fail closed below */ }
+    const plannedComponents = immutablePlan ? buildPlanComponents(immutablePlan) : [];
+    const candidateComponents = candidate.components || [];
+    const componentEvidenceMatches = !immutablePlan?.components
+      ? candidateComponents.length === 0 || candidateComponents.length === 1
+      : candidateComponents.length === plannedComponents.length
+        && plannedComponents.every((planned) => candidateComponents.some((actual) => actual.id === planned.id
+          && actual.role === planned.role
+          && actual.root === planned.root
+          && actual.buildContext === planned.buildContext
+          && actual.port === planned.port
+          && actual.healthPath === planned.healthPath
+          && actual.taskDefinitionArn === candidate.taskDefinitionArn
+          && actual.ecsServiceArn === candidate.ecsServiceArn
+          && actual.verified === true));
+    const expectedSecretNames = Object.keys(runtime.secretReferences).sort();
+    if (
+      !componentEvidenceMatches
+      || candidate.deploymentOperationId !== operation.id
+      || candidate.projectId !== operation.projectId
+      || candidate.generationId !== operation.generationId
+      || candidate.environmentName !== runtime.environmentName
+      || candidate.commitSha !== operation.commitSha
+      || candidate.configurationSnapshotId !== (operation.configurationSnapshotId || null)
+      || candidate.configurationFingerprint !== runtime.configurationFingerprint
+      || candidate.databaseBindingId !== (operation.databaseServiceBindingId || null)
+      || JSON.stringify(candidate.secretReferenceNames) !== JSON.stringify(expectedSecretNames)
+      || candidate.appPort !== Number(originalInputs.app_port)
+      || candidate.healthCheckPath !== originalInputs.health_check_path
+    ) {
+      return this.failCandidateOperation(operation, { jobs: [] }, null, "Candidate evidence does not match the immutable operation and generation.");
+    }
+    const promotionRuntime = runtimeConfigurationWithPromotionCandidate(runtime, candidate);
+    const intent = promotionRuntime.promotion;
+    const promotionInputs: GithubActionsOperationInputs = {
+      ...originalInputs,
+      deployment_action: "promote",
+      environment_references_base64: environmentReferencesBase64(promotionRuntime),
+    };
+    await this.awsCapabilities.ensure({
+      action: "promote",
+      projectId: operation.projectId,
+      environmentName: runtime.environmentName,
+      generationId: operation.generationId!,
+    });
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      candidateWorkflowRunId: operation.githubWorkflowRunId,
+      candidateEvidence: candidate,
+      promotionIntent: intent,
+      promotionIntentFingerprint: intent.intentFingerprint,
+      promotionState: "route_change_pending",
+      workflowPhase: "promotion",
+      promotionDispatchInputs: promotionInputs,
+    };
+    operation.status = PipelineRunStatus.QUEUED;
+    operation.currentStage = "promotion_dispatch";
+    operation.githubWorkflowRunId = null;
+    operation.githubWorkflowStatus = "dispatching";
+    await this.runs.save(operation);
+    try {
+      await this.scheduleOperation(this.runs, operation, token, promotionInputs);
+    } catch {
+      // scheduleOperation persisted a safe terminal dispatch failure. No stable
+      // route was changed because the promotion workflow never started.
+    }
+    return operation;
+  }
+
+  private async beginCompensation(operation: ProjectPipelineRun, token: string, reason: string) {
+    const promotionInputs = operation.metadata?.promotionDispatchInputs as GithubActionsOperationInputs | undefined;
+    const intent = operation.metadata?.promotionIntent as PromotionIntent | undefined;
+    if (!promotionInputs || !intent?.intentFingerprint) {
+      operation.status = PipelineRunStatus.FAILED;
+      operation.currentStage = "promotion_compensation_required";
+      operation.failedAt = new Date();
+      operation.errorMessage = "Stable routing may have changed, but immutable compensation evidence is unavailable.";
+      operation.metadata = { ...(operation.metadata || {}), promotionState: "compensation_blocked", failureCategory: "promotion_compensation" };
+      const saved = await this.runs.save(operation);
+      if (saved.generationId) await this.deploymentGenerations.markFailed(saved.generationId, saved.id, saved.errorMessage || "Promotion compensation is blocked.");
+      return saved;
+    }
+    const compensationInputs: GithubActionsOperationInputs = { ...promotionInputs, deployment_action: "compensate" };
+    await this.awsCapabilities.ensure({
+      action: "compensate",
+      projectId: operation.projectId,
+      environmentName: intent.environmentName,
+      generationId: operation.generationId!,
+    });
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      promotionWorkflowRunId: operation.githubWorkflowRunId,
+      promotionState: "compensation_pending",
+      promotionFailureReason: reason,
+      workflowPhase: "compensation",
+      compensationDispatchInputs: compensationInputs,
+    };
+    operation.status = PipelineRunStatus.QUEUED;
+    operation.currentStage = "promotion_compensation_dispatch";
+    operation.githubWorkflowRunId = null;
+    operation.githubWorkflowStatus = "dispatching";
+    await this.runs.save(operation);
+    try {
+      await this.scheduleOperation(this.runs, operation, token, compensationInputs);
+    } catch {
+      operation.metadata = { ...(operation.metadata || {}), promotionState: "compensation_dispatch_failed" };
+      await this.runs.save(operation);
+    }
+    return operation;
+  }
+
+  private async finishCompensation(operation: ProjectPipelineRun, evidence: Record<string, unknown> | null, workflowSucceeded: boolean) {
+    const expectedFingerprint = String(operation.metadata?.promotionIntentFingerprint || "");
+    const valid = workflowSucceeded
+      && evidence?.deploymentOperationId === operation.id
+      && evidence?.generationId === operation.generationId
+      && evidence?.intentFingerprint === expectedFingerprint
+      && evidence?.status === "compensated";
+    operation.status = PipelineRunStatus.FAILED;
+    operation.failedAt = new Date();
+    operation.completedAt = null;
+    operation.currentStage = valid ? "promotion_compensated" : "promotion_compensation_failed";
+    operation.errorMessage = valid
+      ? "Candidate routing was compensated because authoritative LIVE promotion could not be finalized."
+      : "Candidate routing compensation did not produce matching recovery evidence.";
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      conclusion: "failure",
+      promotionState: valid ? "compensated" : "compensation_failed",
+      compensationEvidence: valid ? evidence : null,
+      failedStage: operation.currentStage,
+      failureCategory: "promotion_compensation",
+      safeLog: operation.errorMessage,
+    };
+    const saved = await this.runs.save(operation);
+    if (saved.generationId) await this.deploymentGenerations.markFailed(saved.generationId, saved.id, saved.errorMessage || "Promotion compensation failed.");
+    return saved;
   }
 
   private retryBuildPlan(inputs: GithubActionsOperationInputs, project: Project) {
@@ -781,6 +1005,71 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     return this.result("rejected", failure.message, operation);
   }
 
+  /**
+   * A candidate exists before several admission checks can fail. Always leave
+   * that generation terminal through the operation that records the failure;
+   * never use the pre-dispatch generation object's stale creator field.
+   */
+  private async failCandidateBeforeDispatch(
+    user: User,
+    project: Project,
+    runRepository: Repository<ProjectPipelineRun>,
+    generationId: string,
+    error: unknown,
+    options: {
+      requestedMode: "DEPLOY" | "RETRY" | "RESET_FRESH";
+      retryOfOperationId?: string;
+      source?: ProjectPipelineRun;
+      action?: "deploy" | "rollback";
+    },
+  ) {
+    const message = error instanceof Error ? error.message : "Candidate preparation failed.";
+    let operationQuery = runRepository.createQueryBuilder("run")
+      .where("run.projectId = :projectId", { projectId: project.id })
+      .andWhere("run.generationId = :generationId", { generationId });
+    if (options.retryOfOperationId) {
+      operationQuery = operationQuery.andWhere("run.metadata ->> 'retryOfOperationId' = :retryOfOperationId", {
+        retryOfOperationId: options.retryOfOperationId,
+      });
+    }
+    let operation = await operationQuery.orderBy("run.createdAt", "DESC").getOne();
+    if (!operation) {
+      const now = new Date();
+      const source = options.source;
+      operation = await runRepository.save(runRepository.create({
+        id: randomUUID(),
+        projectId: project.id,
+        generationId,
+        triggeredByUserId: user.id,
+        detectionProfileId: source?.detectionProfileId || null,
+        repositoryUrl: source?.repositoryUrl || project.repositoryUrl,
+        repositoryFullName: source?.repositoryFullName || project.repositoryFullName,
+        targetBranch: source?.targetBranch || project.targetBranch,
+        commitSha: source?.commitSha || null,
+        imageTag: null,
+        status: PipelineRunStatus.FAILED,
+        currentStage: "candidate_preparation",
+        startedAt: now,
+        failedAt: now,
+        githubWorkflowStatus: "not_dispatched",
+        errorMessage: message.slice(0, 1000),
+        metadata: {
+          executionEngine: "github_actions",
+          deploymentAction: options.action || "deploy",
+          deploymentMode: options.requestedMode,
+          attempt: await this.nextAttempt(runRepository, project.id),
+          ...(options.retryOfOperationId ? { retryOfOperationId: options.retryOfOperationId } : {}),
+          conclusion: "failure",
+          failedStage: "candidate_preparation",
+          safeLog: "DeployGuard rejected candidate preparation before GitHub Actions dispatch.",
+        },
+      }));
+    }
+    await this.deploymentGenerations.bindCreatingOperation(generationId, operation.id, runRepository.manager);
+    await this.deploymentGenerations.markFailed(generationId, operation.id, message, runRepository.manager);
+    return operation;
+  }
+
   private retryAdmissionFailure(error: unknown) {
     const response = error instanceof HttpException ? error.getResponse() : null;
     const detail = response && typeof response === "object" ? response as Record<string, unknown> : null;
@@ -823,7 +1112,15 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     const oidcTrustSubject = await this.githubApp.oidcTrustSubject(user.id, inputs.repository_full_name, project.githubInstallationId);
     await this.oidcTrust.ensureRepositoryAuthorized(inputs.repository_full_name, oidcTrustSubject);
     const capability = await this.awsCapabilities.ensure({
-      action: inputs.deployment_action === "destroy" ? "destroy" : inputs.deployment_action === "rollback" ? "rollback" : "deploy",
+      action: inputs.deployment_action === "destroy"
+        ? "destroy"
+        : inputs.deployment_action === "rollback"
+          ? "rollback"
+          : inputs.deployment_action === "promote"
+            ? "promote"
+            : inputs.deployment_action === "compensate"
+              ? "compensate"
+              : "deploy",
       projectId: project.id,
       environmentName: canonicalEnvironmentName(project),
       generationId,
@@ -836,12 +1133,19 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       ...inputs,
       deployment_operation_id: operationId,
       image_tag: retryImageTag,
-      ...(inputs.deployment_action === "destroy" ? {
-        environment_references_base64: await this.refreshDestroyExtinctionReferences(
-          project.id, canonicalEnvironmentName(project), generationId, inputs.environment_references_base64, runRepository,
-        ),
-      } : {}),
     };
+    if (retryInputs.deployment_action === "destroy") {
+      const references = this.destroyReferenceNames(inputs.environment_references_base64);
+      retryInputs.environment_references_base64 = (
+        await this.destroyEnvironmentReferences(
+          project.id,
+          canonicalEnvironmentName(project),
+          generationId,
+          references,
+          runRepository,
+        )
+      ).encoded;
+    }
     const retry = await runRepository.save(runRepository.create({
       id: operationId, projectId: project.id, generationId, triggeredByUserId: user.id,
       detectionProfileId: operation.detectionProfileId, repositoryUrl: operation.repositoryUrl,
@@ -860,36 +1164,30 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       workflowAwsCapabilityContract: capability,
       immutableDispatchInputs: retryInputs,
       immutableDispatchFingerprint: immutableDispatchFingerprint(retryInputs),
+      dispatchStartedAt: new Date().toISOString(),
+      dispatchState: "dispatch_prepared",
     }}));
     if (retryInputs.deployment_action === "destroy") {
-      const context = JSON.parse(Buffer.from(retryInputs.environment_references_base64, "base64").toString("utf8")) as Record<string, unknown>;
-      const manifest = ((context.extinction as Record<string, unknown> | undefined)?.resourceManifest || {}) as Record<string, unknown>;
-      const environmentName = canonicalEnvironmentName(project);
-      await this.destroyLifecycles.begin({
-        projectId: project.id,
-        environmentName,
-        generationId,
-        operationId: retry.id,
-        resourceManifest: manifest,
-      }, runRepository.manager);
-      const lease = await this.destroyLifecycles.acquire(project.id, environmentName, retry.id);
-      if (!lease) throw new ServiceUnavailableException("Another valid Destroy cleanup execution owns this generation lease.");
-      retry.metadata = { ...(retry.metadata || {}), destroyLifecycleId: lease.id, destroyStatus: lease.status, extinctionPhase: lease.phase };
-      await runRepository.save(retry);
-      this.schedulePersistedOperation(retry, credential.token, retryInputs);
-      return this.result("accepted", "Destroy retry queued as a new immutable attempt.", retry);
+      await this.scheduleNewOperation(runRepository, retry, credential.token, retryInputs);
+      return this.result("accepted", "Destroy retry dispatched as a new immutable attempt.", retry);
     }
     await this.scheduleOperation(runRepository, retry, credential.token, retryInputs);
     return this.result("accepted", "Retry dispatched as a new immutable attempt.", retry);
   }
 
-  private schedulePersistedOperation(operation: ProjectPipelineRun, token: string, inputs: GithubActionsOperationInputs) {
-    setImmediate(() => {
-      void this.scheduleOperation(this.runs, operation, token, inputs).catch(() => {
-        // scheduleOperation persists a sanitized terminal failure before it
-        // rejects. The immediate HTTP response remains the queued operation.
-      });
-    });
+  private async scheduleNewOperation(runRepository: Repository<ProjectPipelineRun>, operation: ProjectPipelineRun, token: string, inputs: GithubActionsOperationInputs) {
+    const runner = this.dataSource.createQueryRunner();
+    await runner.connect();
+    try {
+      await runner.query("SELECT pg_advisory_lock(hashtext($1))", [`github-actions-reconcile:${operation.id}`]);
+      await this.scheduleOperation(runRepository, operation, token, inputs);
+    } finally {
+      try {
+        await runner.query("SELECT pg_advisory_unlock(hashtext($1))", [`github-actions-reconcile:${operation.id}`]);
+      } finally {
+        await runner.release();
+      }
+    }
   }
 
   private async scheduleOperation(runRepository: Repository<ProjectPipelineRun>, operation: ProjectPipelineRun, token: string, inputs: GithubActionsOperationInputs) {
@@ -901,13 +1199,14 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         inputs,
       });
       operation.githubWorkflowRunId = result.workflowRunId;
-      operation.githubWorkflowStatus = result.workflowRunId ? "queued" : "run_pending";
+      operation.githubWorkflowStatus = "queued";
       operation.status = PipelineRunStatus.RUNNING;
-      operation.currentStage = result.workflowRunId ? "github_actions" : "workflow_run_discovery";
+      operation.currentStage = "github_actions";
       operation.metadata = {
         ...(operation.metadata || {}),
         dispatchAcceptedAt: new Date().toISOString(),
-        dispatchState: result.workflowRunId ? "run_discovered" : "dispatch_accepted",
+        dispatchState: "run_discovered",
+        dispatchReceipt: result.receipt,
       };
       await runRepository.save(operation);
     } catch (error) {
@@ -978,22 +1277,59 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
   }
 
   private async buildTimePublicConfig(plan: BuildPlan, projectId: string, environment: string) {
-    if (!plan.buildTimeEnvVars.length) return {};
+    const relationshipVariables = new Map((plan.relationships || [])
+      .filter((relationship) => relationship.mode === "build-time-url" && relationship.buildTimeVariable)
+      .map((relationship) => [relationship.buildTimeVariable!, relationship.pathPrefix]));
+    const names = [...new Set([...plan.buildTimeEnvVars, ...relationshipVariables.keys()])];
+    if (!names.length) return {};
     const rows = await this.environmentVariables.createQueryBuilder("variable")
       .addSelect("variable.value")
-      .where({ projectId, environment, isActive: true, key: In(plan.buildTimeEnvVars) })
+      .where({ projectId, environment, isActive: true, key: In(names) })
       .getMany();
     const byKey = new Map(rows.map((row) => [row.key, row]));
+    const required = new Set(plan.requiredInputs);
     const config: Record<string, string> = {};
-    for (const key of plan.buildTimeEnvVars) {
+    for (const key of names) {
       if (!/^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$/.test(key) || plan.secretEnvVars.includes(key)) {
         throw new ForbiddenException(`Build-time variable ${key} is not proven public.`);
       }
+      if (relationshipVariables.has(key)) {
+        config[key] = relationshipVariables.get(key)!;
+        continue;
+      }
       const row = byKey.get(key);
-      if (!row || row.isSecret) throw new ForbiddenException(`Required public build configuration is missing: ${key}.`);
+      if (!row) {
+        if (required.has(key)) throw new ForbiddenException(`Required public build configuration is missing: ${key}.`);
+        continue;
+      }
+      if (row.isSecret) throw new ForbiddenException(`Build-time variable ${key} is not proven public.`);
       config[key] = this.environmentCrypto.decrypt(row.value);
     }
     return config;
+  }
+
+  private platformFoundation(): GithubActionsRuntimeConfiguration["platformFoundation"] {
+    const routingDomain = this.config.get<string>("DEPLOYGUARD_ROUTING_DOMAIN", "").trim();
+    const foundation = {
+      vpcId: this.config.get<string>("DEPLOYGUARD_VPC_ID", "").trim(),
+      publicSubnetIds: this.config.get<string>("DEPLOYGUARD_PUBLIC_SUBNET_IDS", "").split(",").map((item) => item.trim()).filter(Boolean),
+      ecsClusterArn: this.config.get<string>("DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN", "").trim(),
+      ecsClusterName: this.config.get<string>("DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME", "").trim(),
+      albArn: this.config.get<string>("DEPLOYGUARD_SHARED_ALB_ARN", "").trim(),
+      albDnsName: this.config.get<string>("DEPLOYGUARD_SHARED_ALB_DNS_NAME", "").trim(),
+      listenerArn: this.config.get<string>("DEPLOYGUARD_SHARED_ALB_LISTENER_ARN", "").trim(),
+      albSecurityGroupId: this.config.get<string>("DEPLOYGUARD_SHARED_ALB_SECURITY_GROUP_ID", "").trim(),
+    };
+    if (!foundation.vpcId || foundation.publicSubnetIds.length < 2
+      || !foundation.ecsClusterArn.startsWith("arn:") || !foundation.ecsClusterName
+      || !foundation.albArn.startsWith("arn:") || !foundation.albDnsName
+      || !foundation.listenerArn.startsWith("arn:") || !foundation.albSecurityGroupId || !routingDomain) {
+      throw new ServiceUnavailableException({
+        code: "shared_platform_foundation_unconfigured",
+        message: "DeployGuard shared VPC, ECS cluster and ALB routing configuration must be complete before creating a deployment generation.",
+      });
+    }
+    return foundation;
   }
 
   private runtimeConfiguration(
@@ -1001,8 +1337,12 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     effective: EffectiveDeploymentConfiguration,
     materialized: RuntimeSecretMaterialization | null,
     deploymentContext: DeploymentRecoveryDecision,
-    generationId: string,
+    generation: ProjectDeploymentGeneration,
+    route: ProjectEnvironmentRoute,
     protectedRelease: ProjectStableRelease | null,
+    previousGeneration: ProjectDeploymentGeneration | null,
+    operationId: string,
+    previousProductionUrl: string | null,
   ): GithubActionsRuntimeConfiguration {
     const binding = effective.binding;
     const runtimeAliases = binding
@@ -1013,7 +1353,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     const secretAliases = binding
       ? Object.fromEntries(Object.entries(effective.ownership)
           .filter(([, owner]) => owner.serviceBindingId === binding.id && owner.secret)
-          .map(([key]) => [key, key.includes("URL") ? "url" : "password"] as const)
+          .map(([key]) => [key, serviceAlias(key, binding.engine)?.property === "url" ? "url" : "password"] as const)
           .sort(([left], [right]) => left.localeCompare(right)))
       : {};
     const existingReferences = Object.fromEntries(Object.entries(effective.secretReferences)
@@ -1025,28 +1365,74 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     if (Object.keys(effective.projectSecretValues).some((key) => !secretReferences[key])) {
       throw new BadRequestException("A required application secret could not be converted to an ECS secret reference.");
     }
-    if (binding && (binding.provider !== "managed" || binding.engine !== "postgres" || !binding.usernameReference)) {
-      throw new BadRequestException("GitHub Actions currently requires the canonical managed PostgreSQL binding for this database-backed release.");
+    const databaseProfile = binding ? managedDatabaseProfile(binding.engine) : null;
+    if (binding && (binding.provider !== "managed" || !databaseProfile || !binding.usernameReference)) {
+      throw new BadRequestException("GitHub Actions requires a canonical supported managed database binding for this database-backed release.");
     }
     const protectedImageDigest = protectedRelease?.imageUri.match(/@(sha256:[0-9a-f]{64})$/)?.[1] || null;
+    const protectedComponentDigests = Array.isArray(protectedRelease?.metadata?.components)
+      ? (protectedRelease.metadata.components as Array<Record<string, unknown>>)
+          .map((component) => String(component.imageDigest || ""))
+          .filter((digest) => /^sha256:[0-9a-f]{64}$/.test(digest))
+      : [];
     return {
       schemaVersion: 1,
       configurationSnapshotId: snapshot.id,
       configurationFingerprint: snapshot.configurationFingerprint,
       environmentName: snapshot.environment,
-      generationId,
+      projectId: generation.projectId,
+      generationId: generation.id,
+      generationStateKey: generation.terraformStateKey,
+      platformFoundation: this.platformFoundation(),
+      routing: {
+        listenerPriority: route.listenerPriority,
+        verificationPriority: this.deploymentGenerations.verificationPriority(generation, route),
+        productionHost: `p-${generation.projectId}.${this.config.get<string>("DEPLOYGUARD_ROUTING_DOMAIN", "deployguard.local")}`,
+        candidateHost: `g-${generation.id}.${this.config.get<string>("DEPLOYGUARD_ROUTING_DOMAIN", "deployguard.local")}`,
+      },
+      projectPersistence: {
+        stateKey: `projects/${generation.projectId}/${snapshot.environment}/project/terraform.tfstate`,
+        ecrRepositoryName: `deployguard-${generation.projectId}`,
+        runtimeSecretName: `deployguard/${generation.projectId}/${snapshot.environment}/application/runtime`,
+        ownershipScope: "project",
+      },
+      retiredGenerationCleanup: previousGeneration && previousGeneration.id !== generation.id ? {
+        generationId: previousGeneration.id,
+        terraformStateKey: previousGeneration.terraformStateKey,
+        resourceManifest: previousGeneration.resourceManifest || {},
+      } : null,
       environment: { ...snapshot.plainValues },
       secretReferences,
       deploymentContext,
       retentionProtectedRelease: {
-        imageDigests: protectedImageDigest ? [protectedImageDigest] : [],
+        imageDigests: [...new Set([...(protectedImageDigest ? [protectedImageDigest] : []), ...protectedComponentDigests])],
         taskDefinitionArns: protectedRelease?.taskDefinitionArn ? [protectedRelease.taskDefinitionArn] : [],
+      },
+      promotion: {
+        contractVersion: "deployguard.promotion-intent/v1",
+        operationId,
+        projectId: generation.projectId,
+        environmentName: snapshot.environment,
+        generationId: generation.id,
+        candidate: null,
+        previousLiveGenerationId: protectedRelease?.generationId || null,
+        previousTargetGroupArn: typeof protectedRelease?.metadata?.targetGroupArn === "string" ? protectedRelease.metadata.targetGroupArn : null,
+        previousListenerRuleArn: typeof protectedRelease?.metadata?.listenerRuleArn === "string" ? protectedRelease.metadata.listenerRuleArn : null,
+        previousProductionUrl,
+        intentFingerprint: null,
       },
       managedDatabase: binding ? {
         bindingId: binding.id,
         bindingFingerprint: binding.configurationFingerprint,
         provider: "managed",
-        engine: "postgres",
+        engine: binding.engine,
+        image: databaseProfile!.image,
+        dataPath: databaseProfile!.dataPath,
+        healthCheck: databaseProfile!.healthCheck,
+        initializationEnvironment: databaseProfile!.initializationEnvironment,
+        initializationSecretNames: databaseProfile!.initializationSecretNames,
+        urlScheme: databaseProfile!.urlScheme,
+        urlQuery: databaseProfile!.urlQuery,
         host: binding.hostReference,
         port: binding.port,
         databaseName: binding.databaseName,
@@ -1062,104 +1448,79 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     projectId: string,
     environmentName: string,
     generationId: string,
-    contract: Awaited<ReturnType<DeploymentContractService["requireForProject"]>>,
+    references: { publicNames: string[]; secretNames: string[] },
     runRepository: Repository<ProjectPipelineRun>,
   ) {
-    const publicNames = [...new Set(contract.ecsPlan.environmentMappings.map((item) => item.name))].sort();
-    const secretNames = [...new Set(contract.ecsPlan.secretMappings.map((item) => item.name))].sort();
-    const generationIds = (await runRepository.manager.getRepository(ProjectDeploymentGeneration).find({
-      where: { projectId },
-      select: { id: true },
+    const publicNames = [...new Set(references.publicNames)].sort();
+    const secretNames = [...new Set(references.secretNames)].sort();
+    const generations = await runRepository.manager.getRepository(ProjectDeploymentGeneration).find({
+      where: { projectId, environmentName },
+      select: { id: true, status: true, terraformStateKey: true, resourceManifest: true },
       order: { ordinal: "ASC" },
-    })).map((generation) => generation.id);
-    const resourceManifest = await this.destroyResourceManifest(projectId, environmentName, generationId, runRepository);
-    const encoded = Buffer.from(JSON.stringify({
-      public: publicNames,
-      secret: secretNames,
-      configurationFingerprint: createHash("sha256").update(JSON.stringify({ public: publicNames, secret: secretNames })).digest("hex"),
-      extinction: { projectId, knownGenerationIds: generationIds, resourceManifest },
-    }), "utf8").toString("base64");
-    return { encoded, resourceManifest };
-  }
-
-  private async refreshDestroyExtinctionReferences(
-    projectId: string,
-    environmentName: string,
-    generationId: string,
-    encoded: string,
-    runRepository: Repository<ProjectPipelineRun>,
-  ) {
-    let immutable: Record<string, unknown>;
-    try {
-      immutable = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-    } catch {
-      throw new BadRequestException("The failed Destroy has invalid immutable environment references.");
+    });
+    if (!generations.some((generation) => generation.id === generationId)) {
+      throw new BadRequestException("The active generation is missing from the project deletion context.");
     }
-    if (!Array.isArray(immutable.public) || !Array.isArray(immutable.secret)
-      || typeof immutable.configurationFingerprint !== "string") {
-      throw new BadRequestException("The failed Destroy has incomplete immutable environment references.");
+    const stableRelease = await runRepository.manager.getRepository(ProjectStableRelease).findOne({
+      where: { projectId, environmentName, status: StableReleaseStatus.STABLE },
+      order: { deployedAt: "DESC" },
+    });
+    const stableListenerRuleArn = stableRelease?.metadata?.listenerRuleArn;
+    if (
+      stableListenerRuleArn != null
+      && (
+        typeof stableListenerRuleArn !== "string"
+        || !/^arn:(aws|aws-us-gov|aws-cn):elasticloadbalancing:[a-z0-9-]+:\d{12}:listener-rule\/.+$/i.test(stableListenerRuleArn)
+      )
+    ) {
+      throw new BadRequestException("The authoritative stable listener route is invalid for exact project deletion.");
     }
-    const generationIds = (await runRepository.manager.getRepository(ProjectDeploymentGeneration).find({
-      where: { projectId }, select: { id: true }, order: { ordinal: "ASC" },
-    })).map((generation) => generation.id);
-    const resourceManifest = await this.destroyResourceManifest(projectId, environmentName, generationId, runRepository);
-    return Buffer.from(JSON.stringify({
-      public: immutable.public,
-      secret: immutable.secret,
-      configurationFingerprint: immutable.configurationFingerprint,
-      extinction: { projectId, knownGenerationIds: generationIds, resourceManifest },
-    }), "utf8").toString("base64");
-  }
-
-  private async destroyResourceManifest(projectId: string, environmentName: string, generationId: string, runRepository: Repository<ProjectPipelineRun>) {
-    const manager = runRepository.manager;
-    const [releases, runs, bindings, terraformStates, environments] = await Promise.all([
-      manager.query(`SELECT task_definition_arn AS "taskDefinitionArn", image_uri AS "imageUri" FROM project_stable_releases WHERE project_id=$1 AND generation_id=$2`, [projectId, generationId]),
-      manager.query(`SELECT ecr_repository_name AS "ecrRepositoryName", ecr_image_uri AS "ecrImageUri", metadata->'releaseEvidence' AS "releaseEvidence" FROM project_pipeline_runs WHERE project_id=$1 AND generation_id=$2`, [projectId, generationId]),
-      manager.query(`SELECT efs_file_system_id AS "efsFileSystemId", efs_access_point_id AS "efsAccessPointId", password_secret_reference AS "passwordSecretReference", database_url_secret_reference AS "databaseUrlSecretReference", cloud_map_service_arn AS "cloudMapServiceArn", ecs_database_service_arn AS "ecsDatabaseServiceArn" FROM project_service_bindings WHERE project_id=$1 AND generation_id=$2`, [projectId, generationId]),
-      manager.query(`SELECT state_bucket AS "stateBucket", state_key AS "stateKey", current_version_id AS "currentVersionId", previous_version_id AS "previousVersionId" FROM project_terraform_states WHERE project_id=$1`, [projectId]),
-      manager.query(`SELECT terraform_outputs AS "terraformOutputs" FROM project_infrastructure_environments WHERE project_id=$1`, [projectId]),
-    ]);
-    const exact = (values: unknown[]) => [...new Set(values.flatMap((value) => this.manifestStrings(value)).filter(Boolean))].sort();
-    const resourceEvidence = exact([
-      ...runs.map((row: Record<string, unknown>) => row.releaseEvidence),
-      ...environments.map((row: Record<string, unknown>) => row.terraformOutputs),
-    ]);
-    const matching = (pattern: RegExp) => resourceEvidence.filter((value) => pattern.test(value));
-    return {
-      schemaVersion: 1,
+    const projectDeletion = {
+      contractVersion: "deployguard.project-delete/v2",
       projectId,
       environmentName,
-      generationId,
-      ownership: { managedBy: "DeployGuard", projectId, generationId },
-      terraformStateKeys: exact(terraformStates.map((row: Record<string, unknown>) => row.stateKey)),
-      terraformStateBuckets: exact(terraformStates.map((row: Record<string, unknown>) => row.stateBucket)),
-      taskDefinitionArns: exact(releases.map((row: Record<string, unknown>) => row.taskDefinitionArn)),
-      imageUris: exact([...releases.map((row: Record<string, unknown>) => row.imageUri), ...runs.map((row: Record<string, unknown>) => row.ecrImageUri)]),
-      ecrRepositoryNames: exact(runs.map((row: Record<string, unknown>) => row.ecrRepositoryName)),
-      efsFileSystemIds: exact(bindings.map((row: Record<string, unknown>) => row.efsFileSystemId)),
-      efsAccessPointIds: exact(bindings.map((row: Record<string, unknown>) => row.efsAccessPointId)),
-      secretArns: exact(bindings.flatMap((row: Record<string, unknown>) => [row.passwordSecretReference, row.databaseUrlSecretReference])),
-      ecsClusterArns: matching(/^arn:aws[^:]*:ecs:[^:]+:\d{12}:cluster\//),
-      ecsServiceArns: exact([...matching(/^arn:aws[^:]*:ecs:[^:]+:\d{12}:service\//), ...bindings.map((row: Record<string, unknown>) => row.ecsDatabaseServiceArn)]),
-      loadBalancerArns: matching(/^arn:aws[^:]*:elasticloadbalancing:[^:]+:\d{12}:loadbalancer\//),
-      listenerArns: matching(/^arn:aws[^:]*:elasticloadbalancing:[^:]+:\d{12}:listener\//),
-      targetGroupArns: matching(/^arn:aws[^:]*:elasticloadbalancing:[^:]+:\d{12}:targetgroup\//),
-      securityGroupIds: matching(/^sg-[0-9a-f]+$/),
-      subnetIds: matching(/^subnet-[0-9a-f]+$/),
-      routeTableIds: matching(/^rtb-[0-9a-f]+$/),
-      internetGatewayIds: matching(/^igw-[0-9a-f]+$/),
-      vpcIds: matching(/^vpc-[0-9a-f]+$/),
-      resourceEvidence,
-      capturedAt: new Date().toISOString(),
+      targetGenerationId: generationId,
+      generations: generations.map((generation) => ({
+        generationId: generation.id,
+        status: generation.status,
+        terraformStateKey: generation.terraformStateKey,
+        resourceManifest: generation.resourceManifest || {},
+      })),
+      projectResources: {
+        terraformStateKey: `projects/${projectId}/${environmentName}/project/terraform.tfstate`,
+        ecrRepositoryName: `deployguard-${projectId}`,
+        runtimeSecretName: `deployguard/${projectId}/${environmentName}/application/runtime`,
+        stableListenerRuleArn: stableListenerRuleArn || null,
+      },
+    };
+    return {
+      encoded: Buffer.from(JSON.stringify({
+        public: publicNames,
+        secret: secretNames,
+        configurationFingerprint: createHash("sha256").update(JSON.stringify({ public: publicNames, secret: secretNames })).digest("hex"),
+        projectDeletion,
+      }), "utf8").toString("base64"),
     };
   }
 
-  private manifestStrings(value: unknown): string[] {
-    if (typeof value === "string" && value.length > 0 && value.length <= 2_048) return [value];
-    if (Array.isArray(value)) return value.flatMap((item) => this.manifestStrings(item));
-    if (value && typeof value === "object") return Object.values(value as Record<string, unknown>).flatMap((item) => this.manifestStrings(item));
-    return [];
+  private destroyReferenceNames(encoded: string) {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+    } catch {
+      throw new GithubActionsOperationContractError("invalid_contract", "Immutable Destroy deletion context is invalid.");
+    }
+    const value = decoded && typeof decoded === "object" && !Array.isArray(decoded)
+      ? decoded as Record<string, unknown>
+      : null;
+    const names = (key: "public" | "secret") => {
+      const candidate = value?.[key];
+      if (!Array.isArray(candidate) || !candidate.every((name) => typeof name === "string" && /^[A-Z][A-Z0-9_]{0,127}$/.test(name))) {
+        throw new GithubActionsOperationContractError("invalid_contract", "Immutable Destroy deletion context is invalid.");
+      }
+      return candidate as string[];
+    };
+    return { publicNames: names("public"), secretNames: names("secret") };
   }
 
   private async reconcile(user: User, project: Project, operation: ProjectPipelineRun) {
@@ -1184,25 +1545,14 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     const metadata = (operation.metadata || {}) as Record<string, unknown>;
     const attempts = Number(metadata.stableReleaseReconciliationAttempts || 0);
     const classifiedPersistenceFailure = metadata.failureCategory === "stable_release_persistence";
-    const legacyMisclassifiedPersistenceFailure = operation.currentStage === "stable_release_evidence"
-      && operation.errorMessage === LEGACY_STABLE_RELEASE_FAILURE_MESSAGE
-      && metadata.conclusion === "success"
-      && Boolean(metadata.releaseEvidence);
     return operation.status === PipelineRunStatus.FAILED
-      && metadata.deploymentAction === "deploy"
+      && ["deploy", "rollback"].includes(String(metadata.deploymentAction || ""))
       && operation.githubWorkflowStatus === "completed"
       && attempts < MAX_STABLE_RELEASE_RECONCILIATION_ATTEMPTS
-      && (classifiedPersistenceFailure || legacyMisclassifiedPersistenceFailure);
+      && classifiedPersistenceFailure;
   }
 
   private async reconcileLocked(user: User, project: Project, operation: ProjectPipelineRun) {
-    if (ACTIVE.includes(operation.status) && operation.metadata?.deploymentAction === "destroy") {
-      const environmentName = canonicalEnvironmentName(project);
-      if (!await this.destroyLifecycles.heartbeat(project.id, environmentName, operation.id)) {
-        const lease = await this.destroyLifecycles.acquire(project.id, environmentName, operation.id);
-        if (!lease) return operation;
-      }
-    }
     if (!ACTIVE.includes(operation.status)) {
       if (this.stableReleaseReconciliationCandidate(operation)) {
         operation.metadata = {
@@ -1214,7 +1564,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       if (
         operation.status === PipelineRunStatus.COMPLETED
         && operation.currentStage === "healthy"
-        && operation.metadata?.deploymentAction === "deploy"
+        && ["deploy", "rollback"].includes(String(operation.metadata?.deploymentAction || ""))
         && operation.errorMessage
       ) {
         const materialized = await this.stableReleases.findOne({
@@ -1232,24 +1582,37 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           await this.runs.save(operation);
         }
       }
-      if (
-        operation.status === PipelineRunStatus.COMPLETED
-        && operation.metadata?.deploymentAction === "rollback"
-      ) {
-        await this.verifyAndReconcileRollbackStableRelease(
-          operation,
-          this.releaseEvidence(operation),
-        );
-      }
       return operation;
       }
     }
     const immutableInputs = operation.metadata?.immutableDispatchInputs as Partial<GithubActionsOperationInputs> | undefined;
     const repositoryFullName = immutableInputs?.repository_full_name || operation.repositoryFullName || project.repositoryFullName;
     const targetBranch = immutableInputs?.repository_branch || operation.targetBranch || project.targetBranch;
-    const credential = await this.githubApp.tokenForRepository(user.id, repositoryFullName, project.githubInstallationId);
     if (!operation.githubWorkflowRunId) {
-      const known = (await this.runs.createQueryBuilder("run").select("run.githubWorkflowRunId", "id").where("run.projectId = :projectId", { projectId: project.id }).andWhere("run.githubWorkflowRunId IS NOT NULL").getRawMany()).map((row) => String(row.id));
+      const dispatchAgeMs = Date.now() - new Date(operation.startedAt || operation.createdAt).getTime();
+      if (operation.githubWorkflowStatus === "dispatching" && !operation.metadata?.dispatchAcceptedAt) {
+        if (dispatchAgeMs < 300_000) return operation;
+        operation.status = PipelineRunStatus.FAILED;
+        operation.githubWorkflowStatus = "dispatch_interrupted";
+        operation.currentStage = "workflow_dispatch";
+        operation.failedAt = new Date();
+        operation.errorMessage = "GitHub Actions dispatch did not complete, and no workflow run identity was recorded.";
+        operation.metadata = {
+          ...(operation.metadata || {}),
+          conclusion: "failure",
+          failedStage: "workflow_dispatch",
+          safeLog: "The dispatch process ended before GitHub returned an immutable run identity. No GitHub Actions run is claimed for this operation.",
+        };
+        return this.runs.save(operation);
+      }
+      const credential = await this.githubApp.tokenForRepository(user.id, repositoryFullName, project.githubInstallationId);
+      const knownRows = await this.runs.createQueryBuilder("run")
+        .select("run.githubWorkflowRunId", "current")
+        .addSelect("run.metadata ->> 'candidateWorkflowRunId'", "candidate")
+        .addSelect("run.metadata ->> 'promotionWorkflowRunId'", "promotion")
+        .where("run.projectId = :projectId", { projectId: project.id })
+        .getRawMany<{ current: string | null; candidate: string | null; promotion: string | null }>();
+      const known = [...new Set(knownRows.flatMap((row) => [row.current, row.candidate, row.promotion]).filter((value): value is string => Boolean(value)))];
       operation.githubWorkflowRunId = await this.actions.findWorkflowRunAfter(repositoryFullName, targetBranch, operation.startedAt || operation.createdAt, credential.token, known);
       if (!operation.githubWorkflowRunId) {
         const ageMs = Date.now() - new Date(operation.startedAt || operation.createdAt).getTime();
@@ -1265,6 +1628,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         return operation;
       }
     }
+    const credential = await this.githubApp.tokenForRepository(user.id, repositoryFullName, project.githubInstallationId);
     const remote = await this.actions.getWorkflowRun(repositoryFullName, operation.githubWorkflowRunId, credential.token);
     operation.githubWorkflowStatus = String(remote.status || "unknown");
     const remoteRepository = (remote.head_repository && typeof remote.head_repository === "object")
@@ -1284,6 +1648,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     const jobs = await this.actions.getWorkflowJobs(repositoryFullName, operation.githubWorkflowRunId, credential.token);
     const currentStep = jobs.jobs?.flatMap((job) => job.steps || []).find((step) => step.status === "in_progress");
     if (currentStep?.name) operation.currentStage = this.stage(currentStep.name);
+    let retiredCleanup: ReturnType<typeof generationCleanupEvidence> = null;
     if (remote.status === "completed") {
       const success = remote.conclusion === "success";
       const evidenceJob = jobs.jobs?.find((job) => job.id && (job.conclusion === "success" || job.conclusion === "failure"));
@@ -1295,13 +1660,47 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       try {
         const artifact = await this.actions.getResultArtifact(repositoryFullName, operation.githubWorkflowRunId, operation.id, credential.token);
         if (artifact) {
-          const marker = operation.metadata?.deploymentAction === "destroy" ? "DEPLOYGUARD_DESTROY_RESULT" : "DEPLOYGUARD_RELEASE_RESULT";
+          const marker = operation.metadata?.workflowPhase === "candidate"
+            ? "DEPLOYGUARD_CANDIDATE_RESULT"
+            : operation.metadata?.workflowPhase === "compensation"
+              ? "DEPLOYGUARD_COMPENSATION_RESULT"
+              : operation.metadata?.deploymentAction === "destroy"
+                ? "DEPLOYGUARD_DESTROY_RESULT"
+                : "DEPLOYGUARD_RELEASE_RESULT";
           durableResultLog = `${marker}=${artifact.trim()}`;
         }
       } catch (error) {
         this.logger.warn(`Durable result artifact for operation ${operation.id} was unavailable: ${error instanceof Error ? error.message : "unknown error"}`);
       }
       const completionEvidence = [completedJobLog || "", durableResultLog].filter(Boolean).join("\n");
+      const workflowPhase = String(operation.metadata?.workflowPhase || "candidate");
+      const releaseAction = ["deploy", "rollback"].includes(String(operation.metadata?.deploymentAction || ""));
+      if (releaseAction && workflowPhase === "candidate") {
+        if (remote.conclusion !== "success") return this.failCandidateOperation(operation, jobs, completedJobLog);
+        const candidate = extractGithubActionsCandidateEvidence(completionEvidence);
+        if (!candidate) return this.failCandidateOperation(operation, jobs, completedJobLog, "Exact healthy-candidate evidence was missing or invalid.");
+        try {
+          return await this.beginPromotion(operation, candidate, credential.token);
+        } catch (error) {
+          if (error instanceof GithubActionsOperationContractError && error.code === "invalid_contract") {
+            return this.failCandidateOperation(
+              operation,
+              jobs,
+              completedJobLog,
+              "Promotion rejected the persisted immutable runtime configuration.",
+            );
+          }
+          throw error;
+        }
+      }
+      if (releaseAction && workflowPhase === "compensation") {
+        const compensation = extractGithubActionsCompensationEvidence(completionEvidence);
+        return this.finishCompensation(operation, compensation, remote.conclusion === "success");
+      }
+      if (releaseAction && workflowPhase === "promotion" && remote.conclusion !== "success") {
+        return this.beginCompensation(operation, credential.token, "Stable-route promotion failed or could not be verified.");
+      }
+      retiredCleanup = generationCleanupEvidence(completionEvidence);
       const terraformPlanSummary = extractGithubActionsTerraformPlanSummary(completedJobLog || "");
       if (terraformPlanSummary) {
         operation.metadata = { ...(operation.metadata || {}), terraformPlanSummary, terraformPlanSafety: "passed" };
@@ -1321,17 +1720,11 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       const destroyEvidence = destroyRequested
         ? extractGithubActionsDestroyEvidence(completionEvidence)
         : null;
-      const destroyProgress = destroyRequested
-        ? extractGithubActionsDestroyProgress(completionEvidence)
-        : null;
       const destroyEvidenceValid = Boolean(
         destroyEvidence && destroyEvidence.deploymentOperationId === operation.id,
       );
       if (destroyEvidenceValid) {
         operation.metadata = { ...(operation.metadata || {}), destroyVerification: destroyEvidence };
-      }
-      if (destroyProgress?.deploymentOperationId === operation.id) {
-        operation.metadata = { ...(operation.metadata || {}), destroyProgress };
       }
       const rollbackEvidenceMissing = success
         && operation.metadata?.deploymentAction === "rollback"
@@ -1341,6 +1734,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       let runtimeEvidenceFailure: string | null = null;
       let stableReleasePersistenceFailure: string | null = null;
       let runtimeEvidenceError: RuntimeEvidenceContractError | null = releaseEvidenceContractError;
+      let stableReleaseFinalized = false;
       if (
         effectiveSuccess
         && ["deploy", "rollback"].includes(
@@ -1348,23 +1742,33 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         )
       ) {
         try {
-          if (operation.metadata?.deploymentAction === "rollback") {
-            await this.verifyAndReconcileRollbackStableRelease(
-              operation,
-              releaseEvidence,
-            );
-          } else {
-            await this.verifyAndPersistStableRelease(operation, releaseEvidence);
-          }
+          await this.verifyAndPersistStableRelease(operation, releaseEvidence);
+          stableReleaseFinalized = true;
         } catch (error) {
+          if (workflowPhase === "promotion") {
+            return this.beginCompensation(
+              operation,
+              credential.token,
+              error instanceof RuntimeEvidenceContractError
+                ? "Promoted route evidence failed the immutable contract."
+                : "Authoritative LIVE finalization failed after route cutover.",
+            );
+          }
           effectiveSuccess = false;
           if (error instanceof RuntimeEvidenceContractError) {
             runtimeEvidenceError = error;
-            runtimeEvidenceFailure = LEGACY_STABLE_RELEASE_FAILURE_MESSAGE;
+            runtimeEvidenceFailure = RUNTIME_CONFIGURATION_EVIDENCE_FAILURE_MESSAGE;
           } else {
             stableReleasePersistenceFailure = "The workflow and runtime evidence succeeded, but DeployGuard could not persist the authoritative stable release.";
           }
         }
+      }
+      if (stableReleaseFinalized) {
+        // Cleanup dispatch is intentionally outside finalization's failure
+        // boundary: a retired cleanup problem can never compensate a route
+        // that is already authoritatively LIVE.
+        await this.scheduleRetiredGenerationCleanup(project, operation, credential.token)
+          .catch((error) => this.logger.warn(`Retired cleanup scheduling failed after ${operation.id} became LIVE: ${error instanceof Error ? error.message : "unknown error"}`));
       }
       if (releaseEvidenceContractError) {
         runtimeEvidenceFailure = "The healthy workflow result did not satisfy the immutable runtime-configuration evidence contract.";
@@ -1387,13 +1791,18 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         delete successfulMetadata.failedStage;
         delete successfulMetadata.safeLog;
         delete successfulMetadata.advancedSafeLog;
-        operation.metadata = { ...successfulMetadata, conclusion: "success", rollbackAvailable, ...(destroyed ? { destroyedAt: new Date().toISOString() } : url ? { deployedUrl: url, stableDeployedUrl: url } : {}) };
+        operation.metadata = {
+          ...successfulMetadata,
+          conclusion: "success",
+          rollbackAvailable,
+          ...(!destroyed && workflowPhase === "promotion" ? { promotionState: "finalized" } : {}),
+          ...(destroyed ? { destroyedAt: new Date().toISOString() } : url ? { deployedUrl: url, stableDeployedUrl: url } : {}),
+        };
         if (destroyed && !operation.generationId) throw new Error("Verified destroy has no immutable generation identity.");
       } else {
         const failedJob = jobs.jobs?.find((job) => job.conclusion === "failure");
         const failedStep = failedJob?.steps?.find((step) => step.conclusion === "failure");
-        operation.currentStage = destroyProgress ? "destroy_incomplete"
-          : stableReleasePersistenceFailure ? "stable_release_persistence"
+        operation.currentStage = stableReleasePersistenceFailure ? "stable_release_persistence"
           : runtimeEvidenceFailure ? "stable_release_evidence"
           : rollbackEvidenceMissing
           ? "rollback_evidence_validation"
@@ -1424,13 +1833,12 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           operation.currentStage,
           operation.metadata?.deploymentAction === "destroy" ? "destroy" : operation.metadata?.deploymentAction === "rollback" ? "rollback" : "deploy",
         );
-        operation.errorMessage = destroyProgress ? "DESTROY_INCOMPLETE"
-          : stableReleasePersistenceFailure || runtimeEvidenceFailure || (platformCapabilityFailure
+        operation.errorMessage = stableReleasePersistenceFailure || runtimeEvidenceFailure || (platformCapabilityFailure
           ? `DeployGuard execution role is missing the platform-required AWS permission ${platformCapabilityFailure.action}.`
           : rollbackEvidenceMissing
           ? "Rollback completed without immutable release evidence and was not promoted."
           : destroyEvidenceMissing
-            ? "Terraform completed, but DeployGuard could not verify that project infrastructure is absent."
+            ? "Project deletion cleanup did not produce matching exact-scope evidence."
           : operation.currentStage === "configure_aws_credentials_through_oidc"
           ? "DeployGuard could not connect securely to AWS. This is a platform configuration defect; no application credential or project setting is required."
           : `GitHub Actions failed during ${failedPresentation.label}.`);
@@ -1441,7 +1849,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           safeLog = "Stable release persistence failed after runtime evidence validation passed. No immutable runtime evidence was rejected.";
         }
         if (destroyEvidenceMissing) {
-          safeLog = "Destroy completion was rejected because the bounded infrastructure-absence attestation was missing or did not match this operation.";
+          safeLog = "Project deletion was rejected because exact project/generation cleanup evidence was missing or did not match this operation.";
         }
         operation.metadata = {
           ...(operation.metadata || {}),
@@ -1456,98 +1864,233 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       }
     }
     const saved = await this.runs.save(operation);
-    const destroyProgress = saved.metadata?.destroyProgress as NonNullable<ReturnType<typeof extractGithubActionsDestroyProgress>> | undefined;
-    if (saved.status === PipelineRunStatus.FAILED && saved.metadata?.deploymentAction === "destroy" && destroyProgress) {
-      const lifecycle = await this.destroyLifecycles.recordIncomplete({
-        projectId: saved.projectId,
-        environmentName: canonicalEnvironmentName(project),
-        operationId: saved.id,
-        remaining: destroyProgress.remaining,
-        terraformEvidence: destroyProgress.terraform,
-        verificationEvidence: { verifiedAt: destroyProgress.verifiedAt, phase: destroyProgress.phase },
-      });
-      saved.metadata = {
-        ...(saved.metadata || {}),
-        destroyStatus: lifecycle.status,
-        extinctionPhase: lifecycle.phase,
-        remaining: lifecycle.remaining,
-        nextRetryAt: lifecycle.nextRetryAt?.toISOString() || null,
-        escalation: lifecycle.escalation,
-      };
-      return this.runs.save(saved);
+    if (saved.status === PipelineRunStatus.COMPLETED && saved.metadata?.deploymentAction !== "destroy" && retiredCleanup) {
+      if (retiredCleanup.status === "cleaned") {
+        await this.deploymentGenerations.markCleaned(retiredCleanup.generationId, { cleanupOperationId: saved.id });
+      } else {
+        await this.deploymentGenerations.markCleanupPending(retiredCleanup.generationId, { cleanupOperationId: saved.id, error: retiredCleanup.error });
+      }
+    }
+    if (saved.status === PipelineRunStatus.FAILED && ["deploy", "rollback"].includes(String(saved.metadata?.deploymentAction)) && saved.generationId) {
+      await this.deploymentGenerations.markFailed(
+        saved.generationId,
+        saved.id,
+        saved.errorMessage || "Candidate release verification failed.",
+      );
     }
     if (saved.status === PipelineRunStatus.COMPLETED && saved.metadata?.deploymentAction === "destroy") {
       try {
-        const environmentName = canonicalEnvironmentName(project);
-        await this.destroyLifecycles.recordAwsVerified(project.id, environmentName, saved.id, saved.metadata?.destroyVerification as Record<string, unknown>);
-        await this.extinction.extinguish(project, saved, credential.token, async (phase) => {
-          await this.destroyLifecycles.phase(project.id, environmentName, saved.id, phase);
-        });
-        saved.metadata = { ...(saved.metadata || {}), projectExtinction: "verified_extinct" };
+        await this.notifications.dispatch({
+          projectId: saved.projectId,
+          pipelineRunId: saved.id,
+          eventId: `${saved.id}:completed:destroyed`,
+          stage: "destroy_completed",
+          status: "completed",
+          message: "Project deletion completed successfully.",
+          action: "destroy",
+          environmentName: canonicalEnvironmentName(project),
+          generationId: saved.generationId,
+          commitSha: saved.commitSha,
+          projectUrl: `${this.config.get<string>("FRONTEND_URL", "http://localhost:5173").replace(/\/$/, "")}/projects/${saved.projectId}`,
+        }).catch((error) => this.logger.warn(`Destroy success notification failed for ${saved.id}: ${error instanceof Error ? error.message : "unknown error"}`));
+        await this.projectDeletion.finalize(project, saved);
         return saved;
       } catch (error) {
-        const environmentName = canonicalEnvironmentName(project);
-        const lifecycle = await this.destroyLifecycles.active(project.id, environmentName);
         saved.status = PipelineRunStatus.FAILED;
         saved.completedAt = null;
         saved.failedAt = new Date();
-        saved.currentStage = "project_extinction";
-        saved.errorMessage = "DESTROY_INCOMPLETE";
+        saved.currentStage = "project_delete_cleanup";
+        saved.errorMessage = "PROJECT_DELETE_INCOMPLETE";
         saved.metadata = {
           ...(saved.metadata || {}),
           conclusion: "failure",
-          failedStage: "project_extinction",
-          failureCategory: "project_extinction_incomplete",
-          safeLog: error instanceof ProjectExtinctionIncompleteError ? error.message : "DESTROY_INCOMPLETE: final project extinction could not be verified.",
+          failedStage: "project_delete_cleanup",
+          failureCategory: "project_delete_incomplete",
+          safeLog: error instanceof ProjectDeletionIncompleteError
+            ? error.message
+            : "PROJECT_DELETE_INCOMPLETE: final control-plane cleanup did not complete.",
         };
-        if (lifecycle) {
-          const message = error instanceof Error ? error.message : "Final project extinction could not be verified.";
-          const incomplete = await this.destroyLifecycles.recordIncomplete({
-            projectId: project.id,
-            environmentName,
-            operationId: saved.id,
-            phase: lifecycle.phase,
-            remaining: [{
-              resourceType: "control_plane_extinction",
-              resourceId: `${project.id}:${lifecycle.phase}`,
-              ownershipScope: "project",
-              reason: "AWS absence is verified, but control-plane extinction is incomplete.",
-              errorCode: error instanceof ProjectExtinctionIncompleteError ? error.code : "CONTROL_PLANE_EXTINCTION_FAILED",
-              errorMessage: message,
-              retryable: true,
-              attemptCount: lifecycle.retryCount + 1,
-              firstSeenAt: lifecycle.firstStartedAt.toISOString(),
-              lastSeenAt: new Date().toISOString(),
-            }],
-          });
-          saved.metadata = {
-            ...saved.metadata,
-            destroyStatus: incomplete.status,
-            extinctionPhase: incomplete.phase,
-            remaining: incomplete.remaining,
-            nextRetryAt: incomplete.nextRetryAt?.toISOString() || null,
-            escalation: incomplete.escalation,
-          };
-        }
-        return this.runs.save(saved);
+        const failed = await this.runs.save(saved);
+        await this.notifications.dispatch({
+          projectId: failed.projectId,
+          pipelineRunId: failed.id,
+          eventId: `${failed.id}:failed:project_delete_cleanup`,
+          stage: "destroy_failed",
+          status: "failed",
+          message: failed.errorMessage,
+          action: "destroy",
+          environmentName: canonicalEnvironmentName(project),
+          generationId: failed.generationId,
+          commitSha: failed.commitSha,
+          failedStage: failed.currentStage,
+          projectUrl: `${this.config.get<string>("FRONTEND_URL", "http://localhost:5173").replace(/\/$/, "")}/projects/${failed.projectId}/pipeline`,
+        }).catch((notificationError) => this.logger.warn(`Destroy failure notification failed for ${failed.id}: ${notificationError instanceof Error ? notificationError.message : "unknown error"}`));
+        return failed;
       }
     }
-    if (saved.status === PipelineRunStatus.COMPLETED) {
+    if (saved.status === PipelineRunStatus.COMPLETED && saved.metadata?.internalMaintenance !== true) {
       await this.costEvidence.capture(saved, repositoryFullName, credential.token, canonicalEnvironmentName(project));
       if (saved.generationId) await this.retention.apply(saved.projectId, saved.generationId);
     }
     const deploymentAction = String(saved.metadata?.deploymentAction || "deploy");
+    const notificationAction = deploymentAction === "deploy" && ["UPDATE", "REDEPLOY"].includes(String(saved.metadata?.deploymentMode || "").toUpperCase())
+      ? "redeploy"
+      : deploymentAction;
+    if (saved.metadata?.internalMaintenance === true) return saved;
     await this.notifications.dispatch({
       projectId: saved.projectId,
       pipelineRunId: saved.id,
       eventId: `${saved.id}:${saved.status}:${saved.currentStage}`,
-      stage: `${deploymentAction}_${saved.currentStage || saved.status}`,
+      stage: `${notificationAction}_${saved.currentStage || saved.status}`,
       status: saved.status,
       message: saved.status === PipelineRunStatus.COMPLETED
         ? `${deploymentAction} completed successfully.`
         : saved.errorMessage || `${deploymentAction} failed.`,
+      action: notificationAction,
+      environmentName: canonicalEnvironmentName(project),
+      generationId: saved.generationId,
+      commitSha: saved.commitSha,
+      failedStage: saved.status === PipelineRunStatus.FAILED ? String(saved.metadata?.failedStage || saved.currentStage || "") : null,
+      projectUrl: `${this.config.get<string>("FRONTEND_URL", "http://localhost:5173").replace(/\/$/, "")}/projects/${saved.projectId}/${saved.status === PipelineRunStatus.FAILED ? "pipeline" : ""}`.replace(/\/$/, ""),
     }).catch((error) => this.logger.warn(`Notification dispatch failed for ${saved.id}: ${error instanceof Error ? error.message : "unknown error"}`));
     return saved;
+  }
+
+  /**
+   * Cleanup is deliberately a separate, internal operation. The caller is
+   * created only after promoteVerified has committed the successor LIVE, so a
+   * cleanup failure can leave only the retired generation CLEANUP_PENDING and
+   * can never roll back, block, or become the visible result of that release.
+   */
+  private async scheduleRetiredGenerationCleanup(project: Project, release: ProjectPipelineRun, token: string) {
+    const inputs = this.releaseInputs(release);
+    if (!inputs) return;
+    let runtime: GithubActionsRuntimeConfiguration;
+    try {
+      runtime = decodeEnvironmentReferencesBase64(inputs.environment_references_base64);
+    } catch {
+      this.logger.warn(`Retired cleanup was not scheduled for ${release.id}: immutable runtime configuration is unavailable.`);
+      return;
+    }
+    const retired = runtime.retiredGenerationCleanup;
+    if (!retired) return;
+    // This validates the exact state key and rejects any project/shared
+    // persistence manifest before an IAM-capable workflow is dispatched.
+    try {
+      await this.deploymentGenerations.cleanupTarget(retired.generationId);
+    } catch (error) {
+      this.logger.warn(`Retired cleanup target ${retired.generationId} was rejected: ${error instanceof Error ? error.message : "unknown error"}`);
+      return;
+    }
+
+    const cleanupId = randomUUID();
+    const cleanupRuntime: GithubActionsRuntimeConfiguration = {
+      ...runtime,
+      environment: { ...runtime.environment, DEPLOYGUARD_OPERATION_ID: cleanupId },
+      promotion: {
+        ...runtime.promotion,
+        operationId: cleanupId,
+        candidate: null,
+        intentFingerprint: null,
+      },
+    };
+    const cleanupInputs: GithubActionsOperationInputs = {
+      ...inputs,
+      deployment_action: "cleanup",
+      deployment_operation_id: cleanupId,
+      image_tag: immutableImageTag(release.commitSha, cleanupId),
+      environment_references_base64: environmentReferencesBase64(cleanupRuntime),
+    };
+    const cleanup = await this.runs.save(this.runs.create({
+      id: cleanupId,
+      projectId: release.projectId,
+      generationId: retired.generationId,
+      triggeredByUserId: release.triggeredByUserId,
+      // Detection is a mutable project-level readiness projection, not part of
+      // a retired generation's immutable cleanup identity. The source entity
+      // can still carry a profile ID that PostgreSQL has already SET NULL after
+      // that profile was replaced/deleted, so maintenance operations must not
+      // copy the stale in-memory association.
+      detectionProfileId: null,
+      repositoryUrl: release.repositoryUrl,
+      repositoryFullName: release.repositoryFullName,
+      targetBranch: release.targetBranch,
+      commitSha: release.commitSha,
+      imageTag: cleanupInputs.image_tag,
+      configurationSnapshotId: release.configurationSnapshotId,
+      databaseServiceBindingId: release.databaseServiceBindingId,
+      status: PipelineRunStatus.QUEUED,
+      currentStage: "retired_generation_cleanup_dispatch",
+      startedAt: new Date(),
+      githubWorkflowStatus: "dispatching",
+      metadata: {
+        executionEngine: "github_actions",
+        deploymentAction: "cleanup",
+        internalMaintenance: true,
+        cleanupGenerationId: retired.generationId,
+        sourceReleaseOperationId: release.id,
+        immutableDispatchInputs: cleanupInputs,
+        immutableDispatchFingerprint: immutableDispatchFingerprint(cleanupInputs),
+      },
+    }));
+    await this.deploymentGenerations.markCleanupPending(retired.generationId, {
+      cleanupOperationId: cleanup.id,
+      sourceReleaseOperationId: release.id,
+      dispatchState: "prepared",
+    });
+    try {
+      // The cleanup workflow destroys only the retired generation's exact
+      // state/ownership scope. It receives Destroy's generation-scoped AWS
+      // capability admission, never project-delete instructions.
+      await this.awsCapabilities.ensure({
+        action: "destroy",
+        projectId: project.id,
+        environmentName: runtime.environmentName,
+        generationId: retired.generationId,
+      });
+      await this.scheduleNewOperation(this.runs, cleanup, token, cleanupInputs);
+    } catch (error) {
+      await this.deploymentGenerations.markCleanupPending(retired.generationId, {
+        cleanupOperationId: cleanup.id,
+        sourceReleaseOperationId: release.id,
+        error: error instanceof Error ? error.message.slice(0, 1000) : "Retired generation cleanup dispatch failed.",
+      });
+      this.logger.warn(`Retired cleanup dispatch failed for ${retired.generationId}: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+  }
+
+  /** Retry a retired cleanup at a bounded cadence. It is intentionally not in
+   * the developer operation lane, so a temporary cleanup failure never holds
+   * a later Deploy/Rollback hostage. */
+  private async retryPendingRetiredGenerationCleanup() {
+    const retryAfterMs = 5 * 60 * 1_000;
+    const pending = await this.dataSource.getRepository(ProjectDeploymentGeneration).find({
+      where: { status: "cleanup_pending" as ProjectDeploymentGeneration["status"] },
+      order: { updatedAt: "ASC" },
+      take: 10,
+    });
+    for (const generation of pending) {
+      const metadata = generation.cleanupMetadata || {};
+      const lastAttempt = typeof metadata.lastAttemptAt === "string" ? Date.parse(metadata.lastAttemptAt) : Number.NaN;
+      if (Number.isFinite(lastAttempt) && Date.now() - lastAttempt < retryAfterMs) continue;
+      const existing = await this.runs.createQueryBuilder("run")
+        .where("run.generationId = :generationId", { generationId: generation.id })
+        .andWhere("COALESCE(run.metadata ->> 'internalMaintenance', 'false') = 'true'")
+        .andWhere("run.status IN (:...statuses)", { statuses: ACTIVE })
+        .getOne();
+      if (existing) continue;
+      const sourceId = typeof metadata.sourceReleaseOperationId === "string" ? metadata.sourceReleaseOperationId : null;
+      if (!sourceId) continue;
+      const release = await this.runs.findOne({ where: { id: sourceId, projectId: generation.projectId } });
+      const project = await this.projects.findOne({ where: { id: generation.projectId } });
+      if (!release || !project) continue;
+      try {
+        const credential = await this.githubApp.tokenForRepository(release.triggeredByUserId, project.repositoryFullName, project.githubInstallationId);
+        await this.scheduleRetiredGenerationCleanup(project, release, credential.token);
+      } catch (error) {
+        this.logger.warn(`Retired cleanup retry could not be scheduled for ${generation.id}: ${error instanceof Error ? error.message : "unknown error"}`);
+      }
+    }
   }
 
   private async withProjectLock<T>(projectId: string, work: (runs: Repository<ProjectPipelineRun>) => Promise<T>) {
@@ -1561,23 +2104,10 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     }
   }
 
-  private async assertNoDestroyLifecycle(project: Project, runRepository: Repository<ProjectPipelineRun>) {
-    const lifecycle = await this.destroyLifecycles.active(project.id, canonicalEnvironmentName(project), runRepository.manager);
-    if (lifecycle) {
-      throw new BadRequestException({
-        code: "destroy_in_progress",
-        message: "Project extinction is unresolved. Deploy, redeploy and rollback remain frozen until Destroy reaches verified extinction.",
-        destroyOperationId: lifecycle.operationId,
-        generationId: lifecycle.generationId,
-        status: lifecycle.status,
-        phase: lifecycle.phase,
-        remaining: lifecycle.remaining,
-      });
-    }
-  }
-
   private latestRun(projectId: string, repository: Repository<ProjectPipelineRun>, statuses?: PipelineRunStatus[]) {
-    const query = repository.createQueryBuilder("run").where("run.projectId = :projectId", { projectId }).andWhere("run.metadata ->> 'executionEngine' = 'github_actions'");
+    const query = repository.createQueryBuilder("run").where("run.projectId = :projectId", { projectId })
+      .andWhere("run.metadata ->> 'executionEngine' = 'github_actions'")
+      .andWhere("COALESCE(run.metadata ->> 'internalMaintenance', 'false') != 'true'");
     if (statuses?.length) query.andWhere("run.status IN (:...statuses)", { statuses });
     return query.orderBy("run.createdAt", "DESC").getOne();
   }
@@ -1602,20 +2132,6 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       : null;
   }
 
-  private isVerifiedDestroyed(operation: ProjectPipelineRun | null) {
-    const metadata = (operation?.metadata || {}) as Record<string, unknown>;
-    const verification = metadata.destroyVerification as Record<string, unknown> | undefined;
-    return Boolean(
-      operation
-      && operation.status === PipelineRunStatus.COMPLETED
-      && metadata.deploymentAction === "destroy"
-      && verification?.status === "verified_destroyed"
-      && verification.deploymentOperationId === operation.id
-      && verification.projectOwnedAwsResourcesAbsent === true
-      && verification.allProjectTerraformArtifactsAbsent === true,
-    );
-  }
-
   private async rollbackTarget(projectId: string, current: ProjectPipelineRun, repository: Repository<ProjectPipelineRun>) {
     const targetId = current.metadata?.previousStableOperationId;
     if (typeof targetId !== "string" || !targetId || targetId === current.id) return null;
@@ -1624,7 +2140,6 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     if (
       !target
       || target.status !== PipelineRunStatus.COMPLETED
-      || target.generationId !== current.generationId
       || target.currentStage !== "healthy"
       || !["deploy", "rollback"].includes(String(metadata.deploymentAction || ""))
       || typeof metadata.deployedUrl !== "string"
@@ -1665,7 +2180,10 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
   }
 
   private async reconcileActive(user: User, project: Project, repository: Repository<ProjectPipelineRun>) {
-    const active = await repository.createQueryBuilder("run").where("run.projectId = :projectId", { projectId: project.id }).andWhere("run.metadata ->> 'executionEngine' = 'github_actions'").andWhere("run.status IN (:...statuses)", { statuses: ACTIVE }).orderBy("run.createdAt", "DESC").getMany();
+    const active = await repository.createQueryBuilder("run").where("run.projectId = :projectId", { projectId: project.id })
+      .andWhere("run.metadata ->> 'executionEngine' = 'github_actions'")
+      .andWhere("COALESCE(run.metadata ->> 'internalMaintenance', 'false') != 'true'")
+      .andWhere("run.status IN (:...statuses)", { statuses: ACTIVE }).orderBy("run.createdAt", "DESC").getMany();
     for (const operation of active) {
       await this.reconcile(user, project, operation);
       if (ACTIVE.includes(operation.status)) return operation;
@@ -1674,7 +2192,13 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
   }
 
   private async stableUrl(projectId: string, generationId: string | null, excludingId?: string) {
-    const query = this.runs.createQueryBuilder("run").where("run.projectId = :projectId", { projectId }).andWhere("run.generationId = :generationId", { generationId }).andWhere("run.status = :status", { status: PipelineRunStatus.COMPLETED }).andWhere("run.metadata ->> 'executionEngine' = 'github_actions'").andWhere("run.metadata ->> 'deployedUrl' IS NOT NULL");
+    const stableRelease = await this.dataSource.getRepository(ProjectStableRelease).findOne({
+      where: { projectId, status: StableReleaseStatus.STABLE },
+      order: { deployedAt: "DESC" },
+    });
+    const authoritativeGenerationId = stableRelease?.generationId || generationId;
+    if (!authoritativeGenerationId) return null;
+    const query = this.runs.createQueryBuilder("run").where("run.projectId = :projectId", { projectId }).andWhere("run.generationId = :generationId", { generationId: authoritativeGenerationId }).andWhere("run.status = :status", { status: PipelineRunStatus.COMPLETED }).andWhere("run.metadata ->> 'executionEngine' = 'github_actions'").andWhere("run.metadata ->> 'deployedUrl' IS NOT NULL");
     if (excludingId) query.andWhere("run.id != :excludingId", { excludingId });
     const stable = await query.orderBy("run.completedAt", "DESC").getOne();
     return typeof stable?.metadata?.deployedUrl === "string" ? stable.metadata.deployedUrl : null;
@@ -1684,8 +2208,11 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     const inputs = this.releaseInputs(operation);
     if (!inputs) throw new RuntimeEvidenceContractError([{ field: "immutableReleaseInputs", reason: "missing" }]);
     const runtime = decodeEnvironmentReferencesBase64(inputs.environment_references_base64);
+    let buildPlan: BuildPlan | null = null;
+    try { buildPlan = JSON.parse(Buffer.from(inputs.build_plan_base64, "base64").toString("utf8")) as BuildPlan; } catch { /* validation records the mismatch */ }
     const issues = validateGithubActionsRuntimeEvidence(evidence, {
       deploymentOperationId: operation.id,
+      generationId: operation.generationId,
       commitSha: operation.commitSha,
       environmentName: inputs.environment_name,
       configurationSnapshotId: operation.configurationSnapshotId ?? null,
@@ -1693,9 +2220,25 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       databaseBindingId: operation.databaseServiceBindingId ?? null,
       runtimeDatabaseBindingId: runtime.managedDatabase?.bindingId ?? null,
       secretReferenceNames: Object.keys(runtime.secretReferences),
+      promotionIntentFingerprint: String(operation.metadata?.promotionIntentFingerprint || ""),
     });
     if (runtime.environmentName !== inputs.environment_name) issues.push({ field: "runtime.environmentName", reason: "mismatched" });
     if (runtime.configurationSnapshotId !== (operation.configurationSnapshotId ?? null)) issues.push({ field: "runtime.configurationSnapshotId", reason: "mismatched" });
+    if (buildPlan?.components) {
+      const components = evidence?.components || [];
+      const planned = buildPlanComponents(buildPlan);
+      if (components.length !== planned.length || planned.some((item) => !components.some((component) => component.id === item.id
+        && component.role === item.role
+        && component.root === item.root
+        && component.buildContext === item.buildContext
+        && component.port === item.port
+        && component.healthPath === item.healthPath
+        && component.taskDefinitionArn === evidence?.taskDefinitionArn
+        && component.ecsServiceArn === evidence?.ecsServiceArn
+        && component.verified === true))) {
+        issues.push({ field: "components", reason: "mismatched" });
+      }
+    }
     if (issues.length) throw new RuntimeEvidenceContractError(issues);
     if (!evidence) throw new RuntimeEvidenceContractError([{ field: "deploymentResult", reason: "missing" }]);
     if (runtime.managedDatabase) {
@@ -1716,7 +2259,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     if (runtime.managedDatabase) await this.databaseBindings.markVerified(operation.projectId, operation.id);
     try {
       await this.dataSource.transaction(async (manager) => {
-        return materializeStableRelease(manager, {
+        const stableRelease = await materializeStableRelease(manager, {
           operationId: operation.id,
           projectId: operation.projectId,
           generationId: operation.generationId,
@@ -1724,11 +2267,16 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           commitSha: operation.commitSha,
           imageUri: evidence.imageUri,
           taskDefinitionArn: evidence.taskDefinitionArn,
+          ecsServiceArn: evidence.ecsServiceArn,
           healthCheckPath: evidence.healthCheckPath,
           appPort: evidence.appPort,
           metadata: {
             operationId: operation.id,
           imageDigest: evidence.imageDigest,
+          targetGroupArn: evidence.targetGroupArn,
+          listenerRuleArn: evidence.listenerRuleArn,
+          routingVerified: evidence.routingVerified,
+          candidateRouteRemoved: evidence.candidateRouteRemoved,
           configurationSnapshotId: runtime.configurationSnapshotId,
           configurationFingerprint: runtime.configurationFingerprint,
           deploymentContext: runtime.deploymentContext,
@@ -1739,10 +2287,20 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
             provider: runtime.managedDatabase.provider,
             engine: runtime.managedDatabase.engine,
           } : null,
+          components: evidence.components || [],
           port: evidence.appPort,
             healthPath: evidence.healthCheckPath,
           },
         });
+        await this.deploymentGenerations.promoteVerified(operation.generationId, operation.id, {
+          ecsServiceArn: evidence.ecsServiceArn,
+          taskDefinitionArn: evidence.taskDefinitionArn,
+          targetGroupArn: evidence.targetGroupArn,
+          listenerRuleArn: evidence.listenerRuleArn,
+          routingVerified: evidence.routingVerified,
+          candidateRouteRemoved: evidence.candidateRouteRemoved,
+        }, manager);
+        return stableRelease;
       });
     } catch (error) {
       if (error instanceof RuntimeEvidenceContractError) throw error;
@@ -1821,6 +2379,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       || evidence.commitSha !== sourceEvidence.commitSha
       || evidence.imageUri !== sourceEvidence.imageUri
       || evidence.imageDigest !== sourceEvidence.imageDigest
+      || JSON.stringify(evidence.components || []) !== JSON.stringify(sourceEvidence.components || [])
       || evidence.taskDefinitionArn !== sourceEvidence.taskDefinitionArn
       || evidence.appPort !== sourceEvidence.appPort
       || evidence.healthCheckPath !== sourceEvidence.healthCheckPath
@@ -1907,6 +2466,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         || target.healthCheckPath !== sourceEvidence.healthCheckPath
         || targetMetadata.operationId !== sourceOperationId
         || targetMetadata.imageDigest !== sourceEvidence.imageDigest
+        || JSON.stringify(targetMetadata.components || []) !== JSON.stringify(sourceEvidence.components || [])
         || targetMetadata.configurationSnapshotId !== sourceRuntime.configurationSnapshotId
         || targetMetadata.configurationFingerprint !== sourceRuntime.configurationFingerprint
         || JSON.stringify(storedSecretReferences) !== JSON.stringify(expectedSecretReferences)
@@ -1984,25 +2544,79 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
   }
 
   private async loadBalancerUrl(project: Project, generationId: string) {
-    const projectId = project.id;
     const environment = canonicalEnvironmentName(project);
-    const name = `dg-${projectId.toLowerCase().replaceAll("_", "-").slice(0, 25)}`;
-    const client = new ElasticLoadBalancingV2Client({ region: this.config.get("AWS_REGION", "us-east-1") });
-    const response = await client.send(new DescribeLoadBalancersCommand({ Names: [name] }));
-    const loadBalancer = response.LoadBalancers?.[0];
-    if (!loadBalancer?.LoadBalancerArn || !loadBalancer.DNSName) return null;
-    const tagResponse = await client.send(new DescribeTagsCommand({ ResourceArns: [loadBalancer.LoadBalancerArn] }));
-    const tags = Object.fromEntries((tagResponse.TagDescriptions?.[0]?.Tags || []).map((tag) => [tag.Key || "", tag.Value || ""]));
-    return tags.ManagedBy === "DeployGuard"
-      && tags.DeployGuardProjectId === projectId
-      && tags.Environment === environment
-      && tags.DeployGuardGenerationId === generationId
-      ? `http://${loadBalancer.DNSName}`
-      : null;
+    const route = await this.deploymentGenerations.route(project.id, environment);
+    if (!route || route.liveGenerationId !== generationId) return null;
+    const domain = this.config.get<string>("DEPLOYGUARD_ROUTING_DOMAIN", "").trim().toLowerCase();
+    return domain ? `http://p-${project.id}.${domain}` : null;
   }
 
   private stage(value: string) { return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 80) || "github_actions"; }
   private async project(user: User, id: string) { const project = await this.projects.findOne({ where: { id } }); if (!project) throw new NotFoundException("Project not found."); if (project.ownerUserId !== user.id) throw new ForbiddenException("Project operations are restricted to the project owner."); return project; }
   private result(state: "accepted" | "no_op" | "rejected", message: string, run: ProjectPipelineRun) { return { deployment: { state, message, operation: this.response(run, typeof run.metadata?.stableDeployedUrl === "string" ? run.metadata.stableDeployedUrl : null) } }; }
-  private response(run: ProjectPipelineRun, stableUrl: string | null = null) { const verification = run.metadata?.destroyVerification as Record<string, unknown> | undefined; const destroyed = run.metadata?.deploymentAction === "destroy" && run.status === PipelineRunStatus.COMPLETED && verification?.status === "verified_destroyed" && verification?.deploymentOperationId === run.id && verification?.projectOwnedAwsResourcesAbsent === true && verification?.allProjectTerraformArtifactsAbsent === true; const deploymentAction = run.metadata?.deploymentAction === "destroy" ? "destroy" : run.metadata?.deploymentAction === "rollback" ? "rollback" : "deploy"; const verificationPending = deploymentAction === "destroy" && run.status === PipelineRunStatus.COMPLETED && run.currentStage === "destroyed" && !destroyed; const reconciliation = run.metadata?.legacyDestroyReconciliation as Record<string, unknown> | undefined; const stage = verificationPending ? { key: "destroy_verification_pending", label: "Destroy verification pending" } : githubActionsStagePresentation(run.currentStage, deploymentAction); const failedStage = typeof run.metadata?.failedStage === "string" ? githubActionsStagePresentation(run.metadata.failedStage, deploymentAction) : null; const oidcFailure = failedStage?.key === "configure_aws_credentials_through_oidc"; const platformFailure = oidcFailure || run.metadata?.failureOwner === "platform" || run.metadata?.failureCategory === "platform_configuration"; return { id: run.id, generationId: run.generationId, status: run.status, phase: verificationPending ? "destroy_verification_pending" : run.status === PipelineRunStatus.QUEUED ? "queued" : run.currentStage, stage: stage.key, stageLabel: stage.label, deploymentAction, destroyVerificationStatus: destroyed ? "verified_destroyed" : verificationPending ? "pending" : null, destroyVerificationUnresolved: verificationPending && Array.isArray(reconciliation?.unresolvedComponents) ? reconciliation.unresolvedComponents : [], deploymentMode: typeof run.metadata?.deploymentMode === "string" ? run.metadata.deploymentMode : null, deploymentContext: run.metadata?.deploymentContext || null, workflowRunId: run.githubWorkflowRunId, workflowStatus: run.githubWorkflowStatus, deployedUrl: destroyed ? null : (typeof run.metadata?.deployedUrl === "string" ? run.metadata.deployedUrl : stableUrl) || null, workflowUrl: typeof run.metadata?.workflowUrl === "string" ? run.metadata.workflowUrl : null, commitSha: run.commitSha, attempt: Number(run.metadata?.attempt || 1), retryOfOperationId: typeof run.metadata?.retryOfOperationId === "string" ? run.metadata.retryOfOperationId : null, rollbackSourceOperationId: typeof run.metadata?.rollbackSourceOperationId === "string" ? run.metadata.rollbackSourceOperationId : null, conclusion: typeof run.metadata?.conclusion === "string" ? run.metadata.conclusion : null, failedStage: failedStage?.key || null, failedStageLabel: failedStage?.label || null, failureOwner: platformFailure ? "platform" : null, safeLog: typeof run.metadata?.safeLog === "string" ? run.metadata.safeLog : null, advancedSafeLog: typeof run.metadata?.advancedSafeLog === "string" ? run.metadata.advancedSafeLog : null, errorMessage: oidcFailure ? "DeployGuard could not connect securely to AWS. This is a platform configuration defect; no application credential or project setting is required." : run.errorMessage || null, requestedAt: run.createdAt, createdAt: run.createdAt, completedAt: run.completedAt, failedAt: run.failedAt }; }
+  private response(run: ProjectPipelineRun, stableUrl: string | null = null) {
+    const verification = run.metadata?.destroyVerification as Record<string, unknown> | undefined;
+    const deleted = run.metadata?.deploymentAction === "destroy"
+      && run.status === PipelineRunStatus.COMPLETED
+      && verification?.contractVersion === "deployguard.destroy-result/v2"
+      && verification.deploymentOperationId === run.id
+      && verification.status === "project_delete_ready"
+      && verification.generationResourcesRemoved === true
+      && verification.projectResourcesRemoved === true
+      && verification.terraformStateArtifactsRemoved === true
+      && verification.sharedPlatformUntouched === true;
+    const deploymentAction = run.metadata?.deploymentAction === "destroy"
+      ? "destroy"
+      : run.metadata?.deploymentAction === "rollback" ? "rollback" : "deploy";
+    const verificationPending = deploymentAction === "destroy"
+      && run.status === PipelineRunStatus.COMPLETED
+      && run.currentStage === "destroyed"
+      && !deleted;
+    const stage = verificationPending
+      ? { key: "project_delete_verification_pending", label: "Project deletion verification pending" }
+      : githubActionsStagePresentation(run.currentStage, deploymentAction);
+    const failedStage = typeof run.metadata?.failedStage === "string"
+      ? githubActionsStagePresentation(run.metadata.failedStage, deploymentAction)
+      : null;
+    const oidcFailure = failedStage?.key === "configure_aws_credentials_through_oidc";
+    const platformFailure = oidcFailure || run.metadata?.failureOwner === "platform" || run.metadata?.failureCategory === "platform_configuration";
+    return {
+      id: run.id,
+      generationId: run.generationId,
+      status: run.status,
+      phase: verificationPending ? "project_delete_verification_pending" : run.status === PipelineRunStatus.QUEUED ? "queued" : run.currentStage,
+      stage: stage.key,
+      stageLabel: stage.label,
+      deploymentAction,
+      destroyVerificationStatus: deleted ? "project_delete_ready" : verificationPending ? "pending" : null,
+      destroyVerificationUnresolved: [],
+      deploymentMode: typeof run.metadata?.deploymentMode === "string" ? run.metadata.deploymentMode : null,
+      deploymentContext: run.metadata?.deploymentContext || null,
+      workflowRunId: run.githubWorkflowRunId,
+      workflowStatus: run.githubWorkflowStatus,
+      deployedUrl: deleted ? null : (typeof run.metadata?.deployedUrl === "string" ? run.metadata.deployedUrl : stableUrl) || null,
+      workflowUrl: typeof run.metadata?.workflowUrl === "string" ? run.metadata.workflowUrl : null,
+      commitSha: run.commitSha,
+      attempt: Number(run.metadata?.attempt || 1),
+      retryOfOperationId: typeof run.metadata?.retryOfOperationId === "string" ? run.metadata.retryOfOperationId : null,
+      rollbackSourceOperationId: typeof run.metadata?.rollbackSourceOperationId === "string" ? run.metadata.rollbackSourceOperationId : null,
+      conclusion: typeof run.metadata?.conclusion === "string" ? run.metadata.conclusion : null,
+      failedStage: failedStage?.key || null,
+      failedStageLabel: failedStage?.label || null,
+      failureOwner: platformFailure ? "platform" : null,
+      safeLog: typeof run.metadata?.safeLog === "string" ? run.metadata.safeLog : null,
+      advancedSafeLog: typeof run.metadata?.advancedSafeLog === "string" ? run.metadata.advancedSafeLog : null,
+      aiAnalysisEligible: run.status === PipelineRunStatus.FAILED
+        && Boolean(run.githubWorkflowRunId)
+        && typeof run.metadata?.safeLog === "string"
+        && run.metadata.safeLog.trim().length > 0,
+      errorMessage: oidcFailure
+        ? "DeployGuard could not connect securely to AWS. This is a platform configuration defect; no application credential or project setting is required."
+        : run.errorMessage || null,
+      requestedAt: run.createdAt,
+      createdAt: run.createdAt,
+      completedAt: run.completedAt,
+      failedAt: run.failedAt,
+    };
+  }
 }

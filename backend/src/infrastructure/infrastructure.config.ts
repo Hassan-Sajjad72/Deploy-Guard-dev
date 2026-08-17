@@ -1,5 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { resolve } from "path";
+import { envBoolean } from "../config/env-parsing";
 
 export type InfrastructureConfig = {
   awsRegion: string;
@@ -29,8 +30,8 @@ export function getInfrastructureConfig(config: ConfigService): InfrastructureCo
       process.cwd(),
       config.get<string>("TERRAFORM_NETWORK_TEMPLATE_DIR", "terraform/base-network")
     ),
-    terraformAutoApprove: config.get<string>("TERRAFORM_AUTO_APPROVE", "true") === "true",
-    terraformApplyEnabled: config.get<string>("TERRAFORM_APPLY_ENABLED", "false") === "true",
+    terraformAutoApprove: envBoolean(config, "TERRAFORM_AUTO_APPROVE", true),
+    terraformApplyEnabled: envBoolean(config, "TERRAFORM_APPLY_ENABLED", false),
     defaultVpcCidr: config.get<string>("DEPLOYGUARD_DEFAULT_VPC_CIDR", "10.0.0.0/16"),
     publicSubnetCidrs: splitCsv(
       config.get<string>("DEPLOYGUARD_PUBLIC_SUBNET_CIDRS", "10.0.1.0/24,10.0.2.0/24")
@@ -38,9 +39,9 @@ export function getInfrastructureConfig(config: ConfigService): InfrastructureCo
     privateSubnetCidrs: splitCsv(
       config.get<string>("DEPLOYGUARD_PRIVATE_SUBNET_CIDRS", "10.0.101.0/24,10.0.102.0/24")
     ),
-    singleNatGateway: config.get<string>("DEPLOYGUARD_SINGLE_NAT_GATEWAY", "true") !== "false",
+    singleNatGateway: envBoolean(config, "DEPLOYGUARD_SINGLE_NAT_GATEWAY", true),
     cloudMapNamespace: config.get<string>("DEPLOYGUARD_CLOUDMAP_NAMESPACE", "deployguard.local"),
-    enableHttps: config.get<string>("DEPLOYGUARD_ENABLE_HTTPS", "false") === "true",
+    enableHttps: envBoolean(config, "DEPLOYGUARD_ENABLE_HTTPS", false),
     defaultAppPort: Number(config.get<string>("DEPLOYGUARD_DEFAULT_APP_PORT", "3000")),
   };
 }

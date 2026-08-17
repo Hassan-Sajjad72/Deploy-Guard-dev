@@ -15,10 +15,10 @@ export class ProjectStorageRestoreRequest {
   id: string;
 
   @Index()
-  @Column({ name: "project_id" })
+  @Column({ name: "project_id", type: "uuid" })
   projectId: string;
 
-  @Column({ name: "persistent_storage_id" })
+  @Column({ name: "persistent_storage_id", type: "uuid" })
   persistentStorageId: string;
 
   @Column({ nullable: true, name: "recovery_point_arn" })
@@ -36,15 +36,15 @@ export class ProjectStorageRestoreRequest {
   @Column({ nullable: true, type: "text" })
   reason: string;
 
-  @Column({ nullable: true, name: "completed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "completed_at", type: "timestamptz" })
   completedAt: Date;
 
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

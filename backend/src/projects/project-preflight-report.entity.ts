@@ -36,6 +36,9 @@ export class ProjectPreflightReport {
   @Column({ nullable: true, name: "detection_profile_id" })
   detectionProfileId: string;
 
+  @Column({ nullable: true, name: "input_fingerprint" })
+  inputFingerprint: string;
+
   @ManyToOne(() => ProjectDetectionProfile, { nullable: true, onDelete: "SET NULL" })
   @JoinColumn({ name: "detection_profile_id" })
   detectionProfile: ProjectDetectionProfile;
@@ -94,9 +97,9 @@ export class ProjectPreflightReport {
   @Column({ type: "jsonb", nullable: true })
   errors: string[] | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

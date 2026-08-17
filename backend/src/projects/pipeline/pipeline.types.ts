@@ -1,4 +1,8 @@
-export const PIPELINE_QUEUE_NAME = "pipelineQueue";
+import { RecoveryStage } from "../recovery/stage-selective-resume.types";
+
+const configuredPipelineQueueName = process.env.PIPELINE_QUEUE_NAME?.trim();
+
+export const PIPELINE_QUEUE_NAME = configuredPipelineQueueName || "pipelineQueue";
 export const PIPELINE_QUEUE = Symbol("PIPELINE_QUEUE");
 
 export type PipelineJobOptions = {
@@ -19,12 +23,21 @@ export type PipelineJobData = {
     | "storage_provision"
     | "full_deploy"
     | "resume_after_cost_approval"
-    | "resume_after_state_lock";
+    | "resume_after_apply_approval"
+    | "resume_after_state_lock"
+    | "stage_selective_resume";
+  mode?: "full" | "resume";
+  resumeFromStage?: RecoveryStage;
+  skippedStages?: RecoveryStage[];
+  rerunStages?: RecoveryStage[];
+  reason?: string;
+  sourcePipelineRunId?: string;
   resumeOperation?: "plan" | "apply";
   options: PipelineJobOptions;
 };
 
 export type PipelineEventMetadata = {
+  durationMs?: number;
   projectId?: string;
   pipelineRunId?: string;
   repositoryFullName?: string;
@@ -69,5 +82,8 @@ export type PipelineEventMetadata = {
   targetGroupArn?: string;
   toCommitSha?: string;
   diagnosticCode?: string;
+  ecsDiagnostics?: Record<string, unknown> | null;
+  bindingId?: string;
+  bindingFingerprint?: string;
   required?: boolean;
 };

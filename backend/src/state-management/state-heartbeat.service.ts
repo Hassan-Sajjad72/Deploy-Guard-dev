@@ -43,7 +43,7 @@ export class StateHeartbeatService implements OnModuleDestroy {
       this.timers.delete(lockId);
     }
 
-    return this.updateHeartbeat(lockId, pipelineRunId);
+    return this.lockRepository.findOne({ where: { lockId, pipelineRunId } });
   }
 
   async onModuleDestroy() {

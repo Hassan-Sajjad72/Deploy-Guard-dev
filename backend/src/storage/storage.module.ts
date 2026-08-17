@@ -4,7 +4,7 @@ import { AuditLogModule } from "../audit-log/audit-log.module";
 import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
 import { ProjectDetectionProfile } from "../projects/project-detection-profile.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
-import { pipelineQueueProvider } from "../projects/pipeline/pipeline.queue";
+import { retiredMutationBoundaryProvider } from "../projects/pipeline/retired-mutation-boundary.provider";
 import { Project } from "../projects/project.entity";
 import { BackupService } from "./backup.service";
 import { EfsService } from "./efs.service";
@@ -12,9 +12,9 @@ import { ProjectBackupRecord } from "./project-backup-record.entity";
 import { ProjectPersistentStorage } from "./project-persistent-storage.entity";
 import { ProjectStorageEvent } from "./project-storage-event.entity";
 import { ProjectStorageRestoreRequest } from "./project-storage-restore-request.entity";
-import { StorageController } from "./storage.controller";
 import { StoragePolicyService } from "./storage-policy.service";
 import { StorageService } from "./storage.service";
+import { OrchestrationContractsModule } from "../orchestration-contracts/orchestration-contracts.module";
 
 @Module({
   imports: [
@@ -29,10 +29,10 @@ import { StorageService } from "./storage.service";
       ProjectStorageRestoreRequest,
     ]),
     AuditLogModule,
+    OrchestrationContractsModule,
   ],
-  controllers: [StorageController],
   providers: [
-    pipelineQueueProvider,
+    retiredMutationBoundaryProvider,
     StorageService,
     StoragePolicyService,
     EfsService,

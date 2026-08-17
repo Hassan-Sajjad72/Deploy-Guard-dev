@@ -13,13 +13,13 @@ export class ProjectSpotInterruptionEvent {
   id: string;
 
   @Index()
-  @Column({ name: "project_id" })
+  @Column({ name: "project_id", type: "uuid" })
   projectId: string;
 
-  @Column({ nullable: true, name: "deployment_id" })
+  @Column({ nullable: true, name: "deployment_id", type: "uuid" })
   deploymentId: string;
 
-  @Column({ nullable: true, name: "pipeline_run_id" })
+  @Column({ nullable: true, name: "pipeline_run_id", type: "uuid" })
   pipelineRunId: string;
 
   @Column({ nullable: true, name: "ecs_cluster_arn" })
@@ -34,7 +34,7 @@ export class ProjectSpotInterruptionEvent {
   @Column({ nullable: true, name: "event_id" })
   eventId: string;
 
-  @Column({ nullable: true, name: "event_time", type: "timestamp" })
+  @Column({ nullable: true, name: "event_time", type: "timestamptz" })
   eventTime: Date;
 
   @Column({ nullable: true })
@@ -46,9 +46,9 @@ export class ProjectSpotInterruptionEvent {
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

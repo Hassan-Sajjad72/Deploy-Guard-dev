@@ -50,6 +50,6 @@ export class ProjectObservabilityEvent {
   @JoinColumn({ name: "actor_user_id" })
   actorUser: User;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

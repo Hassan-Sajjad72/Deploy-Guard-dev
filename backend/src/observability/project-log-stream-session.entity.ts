@@ -71,10 +71,10 @@ export class ProjectLogStreamSession {
   @Column({ nullable: true, name: "log_stream_name" })
   logStreamName: string;
 
-  @Column({ name: "started_at", type: "timestamp" })
+  @Column({ name: "started_at", type: "timestamptz" })
   startedAt: Date;
 
-  @Column({ nullable: true, name: "stopped_at", type: "timestamp" })
+  @Column({ nullable: true, name: "stopped_at", type: "timestamptz" })
   stoppedAt: Date;
 
   @Column({ nullable: true, name: "error_message", type: "text" })
@@ -83,9 +83,9 @@ export class ProjectLogStreamSession {
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

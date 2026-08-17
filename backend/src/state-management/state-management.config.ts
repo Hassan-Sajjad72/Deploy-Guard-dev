@@ -1,10 +1,11 @@
 import { ConfigService } from "@nestjs/config";
+import { envBoolean } from "../config/env-parsing";
 
 export type StateManagementConfig = {
   bucket: string;
   prefix: string;
-  lockTable: string;
   region: string;
+  useLockfile: boolean;
   heartbeatIntervalSeconds: number;
   staleAfterSeconds: number;
   monitorIntervalSeconds: number;
@@ -16,16 +17,23 @@ export type StateManagementConfig = {
 
 export function getStateManagementConfig(config: ConfigService): StateManagementConfig {
   return {
-    bucket: config.get<string>("DEPLOYGUARD_TF_STATE_BUCKET", ""),
-    prefix: config.get<string>("DEPLOYGUARD_TF_STATE_PREFIX", "deployguard/state"),
-    lockTable: config.get<string>("DEPLOYGUARD_TF_LOCK_TABLE", "deployguard-terraform-locks"),
-    region: config.get<string>("AWS_REGION", "us-east-1"),
+    bucket:
+      config.get<string>("TERRAFORM_STATE_BUCKET", "").trim() ||
+      config.get<string>("DEPLOYGUARD_TF_STATE_BUCKET", "").trim(),
+    prefix:
+      config.get<string>("TERRAFORM_STATE_PREFIX", "").trim() ||
+      config.get<string>("DEPLOYGUARD_TF_STATE_PREFIX", "").trim() ||
+      "projects",
+    region:
+      config.get<string>("TERRAFORM_STATE_REGION", "").trim() ||
+      config.get<string>("AWS_REGION", "").trim(),
+    useLockfile: envBoolean(config, "TERRAFORM_STATE_USE_LOCKFILE", true),
     heartbeatIntervalSeconds: Number(config.get<string>("STATE_LOCK_HEARTBEAT_INTERVAL_SECONDS", "30")),
     staleAfterSeconds: Number(config.get<string>("STATE_LOCK_STALE_AFTER_SECONDS", "300")),
     monitorIntervalSeconds: Number(config.get<string>("STATE_LOCK_MONITOR_INTERVAL_SECONDS", "60")),
     resourceDropWarningPercent: Number(config.get<string>("STATE_RESOURCE_DROP_WARNING_PERCENT", "70")),
-    orphanAutoRecovery: config.get<string>("STATE_ENABLE_ORPHAN_AUTO_RECOVERY", "true") !== "false",
-    forceReleaseEnabled: config.get<string>("STATE_ENABLE_FORCE_RELEASE", "true") !== "false",
-    mockMode: config.get<string>("STATE_MOCK_MODE", "true") !== "false",
+    orphanAutoRecovery: envBoolean(config, "STATE_ENABLE_ORPHAN_AUTO_RECOVERY", true),
+    forceReleaseEnabled: envBoolean(config, "STATE_ENABLE_FORCE_RELEASE", true),
+    mockMode: envBoolean(config, "STATE_MOCK_MODE", false),
   };
 }

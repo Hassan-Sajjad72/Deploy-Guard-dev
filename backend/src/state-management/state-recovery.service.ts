@@ -5,6 +5,7 @@ import { Project } from "../projects/project.entity";
 import { ProjectStateRecoveryRequest, StateRecoveryStatus } from "./project-state-recovery-request.entity";
 import { TerraformStateStatus } from "./project-terraform-state.entity";
 import { TerraformStateService } from "./terraform-state.service";
+import { CurrentStateInvalidationService } from "./current-state-invalidation.service";
 
 @Injectable()
 export class StateRecoveryService {
@@ -13,7 +14,8 @@ export class StateRecoveryService {
     private readonly projectRepository: Repository<Project>,
     @InjectRepository(ProjectStateRecoveryRequest)
     private readonly recoveryRepository: Repository<ProjectStateRecoveryRequest>,
-    private readonly terraformStateService: TerraformStateService
+    private readonly terraformStateService: TerraformStateService,
+    private readonly currentStateInvalidation: CurrentStateInvalidationService,
   ) {}
 
   async listRecoverableVersions(projectId: string, environmentName = "dev") {
@@ -47,7 +49,9 @@ export class StateRecoveryService {
       versionId,
       status: TerraformStateStatus.RECOVERED,
     });
-    return this.recoveryRepository.save(request);
+    const saved = await this.recoveryRepository.save(request);
+    this.currentStateInvalidation.invalidate(projectId, "terraform_state_version_restored");
+    return saved;
   }
 
   async markRecoveryDecision(projectId: string, decision: "approved" | "rejected", userId?: number | null) {
