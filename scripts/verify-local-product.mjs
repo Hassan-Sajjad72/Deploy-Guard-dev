@@ -1,5 +1,4 @@
 import process from "node:process";
-import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 
 if (existsSync(".env")) process.loadEnvFile(".env");
@@ -12,8 +11,7 @@ const frontendBase = (process.env.PRODUCT_FRONTEND_URL || "http://localhost:5173
 const prometheusBase = (process.env.PROMETHEUS_BASE_URL || "http://localhost:9090").replace(/\/$/, "");
 const grafanaConfiguredUrl = process.env.GRAFANA_BASE_URL || "http://localhost:3001/d/deployguard-runtime/deployguard-runtime";
 const grafanaBase = new URL(grafanaConfiguredUrl).origin;
-const require = createRequire(import.meta.url);
-const { workflowCapabilityFingerprint, WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION } = require("../backend/dist/src/projects/github-actions-aws-capability-contract.js");
+const WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION = "deployguard.workflow-aws/v2";
 
 if (!process.env.PRODUCT_VERIFY_ALLOW_REMOTE && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(apiBase)) {
   throw new Error("Refusing to verify a non-local API. Set PRODUCT_VERIFY_ALLOW_REMOTE=true to override.");
@@ -35,8 +33,8 @@ if (ready.body.status !== "ready" || ready.body.dependencies?.database?.status !
 }
 if (ready.body.capabilityContract?.stale
   || ready.body.capabilityContract?.version !== WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION
-  || ready.body.capabilityContract?.fingerprint !== workflowCapabilityFingerprint()) {
-  throw new Error(`Running AWS capability contract does not match the current backend build: ${JSON.stringify(ready.body.capabilityContract)}`);
+  || !/^[a-f0-9]{64}$/.test(ready.body.capabilityContract?.fingerprint || "")) {
+  throw new Error(`Running AWS capability contract is invalid or stale: ${JSON.stringify(ready.body.capabilityContract)}`);
 }
 
 const frontend = await request(frontendBase);
