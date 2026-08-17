@@ -13,7 +13,7 @@ export class AuditLog {
 
   @Index()
   @Column({ nullable: true, name: "actor_user_id" })
-  actorUserId: string;
+  actorUserId: number;
 
   @Column({ nullable: true, name: "actor_email" })
   actorEmail: string;
@@ -24,6 +24,10 @@ export class AuditLog {
   @Index()
   @Column()
   action: string;
+
+  @Index()
+  @Column({ default: "activity" })
+  category: string;
 
   @Index()
   @Column({ name: "resource_type" })
@@ -45,6 +49,6 @@ export class AuditLog {
   @Column({ type: "jsonb", nullable: true })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

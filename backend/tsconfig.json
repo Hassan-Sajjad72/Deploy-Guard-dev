@@ -9,6 +9,7 @@
     "target": "ES2021",
     "sourceMap": true,
     "outDir": "./dist",
+    "rootDir": "./",
     "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
@@ -17,5 +18,27 @@
     "strictBindCallApply": false,
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false
-  }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/orchestration-contracts/**",
+    "src/infrastructure-lifecycle/**",
+    "src/orchestration/**",
+    "src/state-management/**",
+    "src/storage/**",
+    "src/finops/**",
+    "src/observability/**",
+    "src/infrastructure/infrastructure.controller.ts",
+    "src/infrastructure/infrastructure.service.ts",
+    "src/infrastructure/terraform-runner.service.ts",
+    "src/projects/pipeline/pipeline.queue.ts",
+    "src/projects/pipeline/pipeline.service.ts",
+    "src/projects/pipeline/pipeline-worker.service.ts",
+    "src/projects/pipeline/pipeline-job-finality.service.ts",
+    "src/projects/recovery/**",
+    "src/projects/normal-deployment-command.service.ts",
+    "src/pipeline.worker.ts"
+  ]
 }

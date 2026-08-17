@@ -5,7 +5,7 @@ import { UserRole } from "../users/user.entity";
 import { StorageService } from "./storage.service";
 
 @Controller("api/projects/:projectId")
-@UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER, UserRole.READONLY]))
+@UseGuards(requireRole([UserRole.ADMIN]))
 export class StorageController {
   constructor(private readonly storageService: StorageService) {}
 
@@ -24,6 +24,7 @@ export class StorageController {
   }
 
   @Patch("storage/settings")
+  @UseGuards(requireRole([UserRole.ADMIN]))
   async updateSettings(
     @Req() req: Request,
     @Param("projectId") projectId: string,
@@ -35,6 +36,7 @@ export class StorageController {
   }
 
   @Post("storage/provision")
+  @UseGuards(requireRole([UserRole.ADMIN]))
   async provision(@Req() req: Request, @Param("projectId") projectId: string) {
     return this.storageService.provision(req.user!, projectId, req);
   }
@@ -61,6 +63,7 @@ export class StorageController {
   }
 
   @Post("backups/restore-request")
+  @UseGuards(requireRole([UserRole.ADMIN]))
   async createRestoreRequest(
     @Req() req: Request,
     @Param("projectId") projectId: string,

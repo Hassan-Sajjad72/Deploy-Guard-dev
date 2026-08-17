@@ -3,6 +3,7 @@ import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { AuditLogModule } from "../audit-log/audit-log.module";
 import { UsersModule } from "../users/users.module";
+import { AdminAuthController } from "./admin-auth.controller";
 
 /**
  * AuthModule
@@ -12,7 +13,7 @@ import { UsersModule } from "../users/users.module";
  */
 @Module({
   imports: [UsersModule, AuditLogModule],
-  controllers: [AuthController],
+  controllers: [AuthController, AdminAuthController],
   providers: [AuthService],
   exports: [AuthService],
 })

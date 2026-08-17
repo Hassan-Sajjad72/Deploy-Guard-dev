@@ -10,7 +10,7 @@ export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
 
   @Get()
-  @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER, UserRole.READONLY]))
+  @UseGuards(requireRole([UserRole.ADMIN]))
   async listAuditLogs(@Query() query: AuditLogQueryDto, @Req() req: Request) {
     return this.auditLogService.findForUser(req.user!, query);
   }

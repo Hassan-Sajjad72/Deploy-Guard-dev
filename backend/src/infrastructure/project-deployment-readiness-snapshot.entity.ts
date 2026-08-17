@@ -47,6 +47,6 @@ export class ProjectDeploymentReadinessSnapshot {
   @JoinColumn({ name: "created_by_user_id" })
   createdByUser: User;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

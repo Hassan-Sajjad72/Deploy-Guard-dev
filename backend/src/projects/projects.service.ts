@@ -6,7 +6,9 @@ import {
   BadRequestException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Not, Repository } from "typeorm";
+import { EntityManager, Not, Repository } from "typeorm";
+import { DataSource } from "typeorm";
+import { ConfigService } from "@nestjs/config";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { User, UserRole } from "../users/user.entity";
 import { CreateEnvVarDto } from "./dto/create-env-var.dto";
@@ -18,8 +20,22 @@ import { UpdateRepositoryDto } from "./dto/update-repository.dto";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { Project, ProjectStatus, ProjectVisibility } from "./project.entity";
 import { UsersService } from "../users/users.service";
+import { DeploymentContractService } from "./deployment-contract.service";
+import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
+import { BulkEnvVarsDto } from "./dto/bulk-env-vars.dto";
+import { ProjectDetectionProfile } from "./project-detection-profile.entity";
+import { ProjectActivityService } from "./project-activity.service";
+import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
+import { analysisFingerprint } from "./analysis-fingerprint";
+import { classifyConfigurationVariable, ignoredSubmittedVariableNames, managedAliasError, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, provenRepositoryOwnedVariableKeys, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
+import { canonicalEnvironmentName } from "./canonical-environment";
+import {
+  acquireProjectConfigurationAdvisoryLock,
+  DatabaseServiceBindingService,
+} from "../infrastructure/database-service-binding.service";
+import { GithubAppService } from "./github-app.service";
 
-type RequestInfo = { ip?: string; headers?: { cookie?: string } };
+type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
 @Injectable()
 export class ProjectsService {
@@ -28,17 +44,41 @@ export class ProjectsService {
     private readonly projectRepository: Repository<Project>,
     @InjectRepository(ProjectEnvironmentVariable)
     private readonly envVarRepository: Repository<ProjectEnvironmentVariable>,
+    @InjectRepository(ProjectDetectionProfile)
+    private readonly detectionProfileRepository: Repository<ProjectDetectionProfile>,
+    @InjectRepository(ProjectDatabaseTier)
+    private readonly databaseTierRepository: Repository<ProjectDatabaseTier>,
     private readonly auditLogService: AuditLogService,
-    private readonly usersService: UsersService
+    private readonly usersService: UsersService,
+    private readonly dataSource: DataSource,
+    private readonly config: ConfigService,
+    private readonly deploymentContractService: DeploymentContractService,
+    private readonly environmentCrypto: ProjectEnvironmentCryptoService,
+    private readonly projectActivity: ProjectActivityService,
+    private readonly effectiveConfiguration: DatabaseServiceBindingService,
+    private readonly githubApp: GithubAppService
   ) {}
 
+  async githubConnectionStatus(user: User) {
+    const repositories = this.githubApp.configured() ? await this.githubApp.listRepositories(user.id) : [];
+    const availableInstallations = this.githubApp.configured() ? await this.githubApp.availableInstallations(user) : [];
+    return {
+      appConfigured: this.githubApp.configured(),
+      connected: repositories.length > 0,
+      installUrl: this.githubApp.statusUrl(),
+      repositoryCount: repositories.length,
+      availableInstallations,
+      message: this.githubApp.configured() ? (repositories.length ? "DeployGuard GitHub App repository access is connected." : availableInstallations.length ? "Connect the existing GitHub App installation to this DeployGuard account." : "Install the DeployGuard GitHub App to select a repository.") : "DeployGuard GitHub App is not configured on the server.",
+    };
+  }
+
+  async connectGithubInstallation(user: User, installationId: string) {
+    const installation = await this.githubApp.connectInstallation(user, installationId);
+    return { connected: true, installationId: installation.installationId, accountLogin: installation.accountLogin };
+  }
+
   async listGithubRepositories(user: User) {
-    const token = await this.requireGithubToken(user);
-    const response = await fetch("https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member", {
-      headers: this.githubHeaders(token),
-    });
-    if (!response.ok) throw new BadRequestException("Unable to load repositories from GitHub. Reconnect your GitHub account and try again.");
-    const repositories = await response.json() as Array<Record<string, unknown>>;
+    const repositories = await this.githubApp.listRepositories(user.id);
     return repositories.map((repository) => ({
       id: String(repository.id || ""),
       fullName: String(repository.full_name || ""),
@@ -48,18 +88,38 @@ export class ProjectsService {
       defaultBranch: String(repository.default_branch || "main"),
       updatedAt: repository.updated_at || null,
       language: typeof repository.language === "string" ? repository.language : null,
+      installationId: String(repository.installationId || ""),
     })).filter((repository) => repository.fullName);
   }
 
   async listGithubRepositoryBranches(user: User, repositoryFullName: string) {
-    const token = await this.requireGithubToken(user);
-    const fullName = this.normalizeRepositoryFullName(repositoryFullName);
-    const response = await fetch(`https://api.github.com/repos/${fullName}/branches?per_page=100`, {
-      headers: this.githubHeaders(token),
-    });
-    if (!response.ok) throw new BadRequestException("Unable to load branches for this repository.");
-    const branches = await response.json() as Array<{ name?: string }>;
-    return branches.map((branch) => branch.name).filter(Boolean);
+    return (await this.inspectGithubRepository(user, repositoryFullName)).branches;
+  }
+
+  async inspectGithubRepository(user: User, repositoryIdentity: string) {
+    const fullName = this.normalizeRepositoryFullName(repositoryIdentity);
+    const { token, installationId } = await this.githubApp.tokenForRepository(user.id, fullName);
+    const metadataResponse = await fetch(`https://api.github.com/repos/${fullName}`, { headers: this.githubHeaders(token) });
+    if (!metadataResponse.ok) this.throwGithubError(metadataResponse, Boolean(token));
+    const metadata = await metadataResponse.json() as Record<string, unknown>;
+    const branchesResponse = await fetch(`https://api.github.com/repos/${fullName}/branches?per_page=100`, { headers: this.githubHeaders(token) });
+    if (!branchesResponse.ok) this.throwGithubError(branchesResponse, Boolean(token));
+    const branches = ((await branchesResponse.json()) as Array<{ name?: string }>).map((branch) => branch.name).filter((name): name is string => Boolean(name));
+    if (!branches.length) throw new BadRequestException("This repository/branch is empty and cannot be analyzed.");
+    const defaultBranch = String(metadata.default_branch || branches[0]);
+    if (!branches.includes(defaultBranch)) branches.unshift(defaultBranch);
+    return {
+      id: String(metadata.id || ""),
+      fullName: String(metadata.full_name || fullName),
+      name: String(metadata.name || fullName.split("/")[1]),
+      description: typeof metadata.description === "string" ? metadata.description : null,
+      url: String(metadata.html_url || `https://github.com/${fullName}`),
+      private: Boolean(metadata.private),
+      defaultBranch,
+      branches,
+      language: typeof metadata.language === "string" ? metadata.language : null,
+      installationId,
+    };
   }
 
   async listProjects(user: User) {
@@ -76,12 +136,21 @@ export class ProjectsService {
               },
             ];
 
-    const projects = await this.projectRepository.find({
-      where,
-      order: { createdAt: "DESC" },
-    });
-
-    return projects.map((project) => this.toProjectResponse(project, user));
+    const [projects, activities] = await Promise.all([
+      this.projectRepository.find({ where }),
+      this.projectActivity.forUser(user.id),
+    ]);
+    const byProject = new Map(activities.map((activity) => [activity.projectId, activity]));
+    return projects
+      .sort((left, right) => {
+        const leftActivity = byProject.get(left.id);
+        const rightActivity = byProject.get(right.id);
+        if (Boolean(leftActivity?.pinned) !== Boolean(rightActivity?.pinned)) return leftActivity?.pinned ? -1 : 1;
+        const leftTime = leftActivity?.lastMeaningfulActivityAt?.getTime() || left.createdAt.getTime();
+        const rightTime = rightActivity?.lastMeaningfulActivityAt?.getTime() || right.createdAt.getTime();
+        return rightTime - leftTime || right.createdAt.getTime() - left.createdAt.getTime();
+      })
+      .map((project) => this.toProjectResponse(project, user, byProject.get(project.id)));
   }
 
   async createProject(user: User, dto: CreateProjectDto, req?: RequestInfo) {
@@ -89,29 +158,49 @@ export class ProjectsService {
     const repositoryFullName = dto.repositoryFullName
       ? this.normalizeRepositoryFullName(dto.repositoryFullName)
       : this.parseGitHubRepositoryFullName(dto.repositoryUrl || "");
-    const token = await this.requireGithubToken(user);
-    const metadataResponse = await fetch(`https://api.github.com/repos/${repositoryFullName}`, {
-      headers: this.githubHeaders(token),
+    const metadata = await this.inspectGithubRepository(user, repositoryFullName);
+    const targetBranch = dto.targetBranch || metadata.defaultBranch;
+    const environmentName = dto.environmentName || "dev";
+    await this.assertGithubBranchHasCommit(user, metadata.fullName, targetBranch);
+    const creation = await this.dataSource.transaction(async (manager) => {
+      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-create:${user.id}`]);
+      const repository = manager.getRepository(Project);
+      const existing = await repository.createQueryBuilder("project")
+        .where("project.ownerUserId = :userId", { userId: user.id })
+        .andWhere("(project.githubRepositoryId = :githubRepositoryId OR lower(project.repositoryFullName) = lower(:repositoryFullName))", { githubRepositoryId: metadata.id || null, repositoryFullName: metadata.fullName })
+        .andWhere("project.targetBranch = :targetBranch", { targetBranch })
+        .andWhere("project.environmentName = :environmentName", { environmentName })
+        .andWhere("project.status <> :archived", { archived: ProjectStatus.ARCHIVED })
+        .andWhere("project.archivedAt IS NULL")
+        .getOne();
+      if (existing) {
+        throw new ConflictException({
+          code: "EXISTING_PROJECT",
+          message: "This repository already has an existing project for the selected branch and environment.",
+          existingProject: this.toProjectResponse(existing, user),
+          repositoryFullName: metadata.fullName,
+          targetBranch,
+          environmentName,
+        });
+      }
+      const project = repository.create({
+        ownerUserId: user.id,
+        name: String(dto.name || metadata.name).trim(),
+        description: dto.description !== undefined ? dto.description.trim() || null : metadata.description,
+        repositoryUrl: this.normalizeRepositoryUrl(metadata.url),
+        repositoryProvider: "github",
+        githubRepositoryId: metadata.id || null,
+        githubInstallationId: metadata.installationId,
+        repositoryFullName: metadata.fullName,
+        targetBranch,
+        environmentName,
+        appDirectory: this.normalizeAppDirectory(dto.appDirectory),
+        visibility: dto.visibility || ProjectVisibility.PRIVATE,
+        status: ProjectStatus.CREATED,
+      });
+      return { project: await repository.save(project) };
     });
-    if (!metadataResponse.ok) throw new BadRequestException("The selected GitHub repository is unavailable or access was revoked.");
-    const metadata = await metadataResponse.json() as Record<string, unknown>;
-    const targetBranch = dto.targetBranch || String(metadata.default_branch || "main");
-    const branches = await this.listGithubRepositoryBranches(user, repositoryFullName);
-    if (!branches.includes(targetBranch)) throw new BadRequestException("The selected branch does not exist in this repository.");
-    const repositoryUrl = String(metadata.html_url || `https://github.com/${repositoryFullName}`);
-    const project = this.projectRepository.create({
-      ownerUserId: user.id,
-      name: String(metadata.name || dto.name || repositoryFullName.split("/")[1]).trim(),
-      description: typeof metadata.description === "string" ? metadata.description : dto.description || null,
-      repositoryUrl: this.normalizeRepositoryUrl(repositoryUrl),
-      repositoryProvider: "github",
-      repositoryFullName,
-      targetBranch,
-      appDirectory: this.normalizeAppDirectory(dto.appDirectory),
-      visibility: dto.visibility || ProjectVisibility.PRIVATE,
-      status: ProjectStatus.CREATED,
-    });
-    const savedProject = await this.projectRepository.save(project);
+    const savedProject = creation.project;
 
     await this.auditLogService.record({
       actorUser: user,
@@ -124,8 +213,14 @@ export class ProjectsService {
         projectName: savedProject.name,
         repositoryFullName: savedProject.repositoryFullName,
         targetBranch: savedProject.targetBranch,
+        githubRepositoryId: savedProject.githubRepositoryId,
+        environmentName: savedProject.environmentName,
       },
       req: req as never,
+    });
+    await this.projectActivity.recordUserAction(user.id, savedProject.id, "project_created", {
+      route: `/projects/${savedProject.id}/requirements`,
+      section: "requirements",
     });
 
     return this.toProjectResponse(savedProject, user);
@@ -160,24 +255,30 @@ export class ProjectsService {
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
+    const deploymentAffecting = dto.appDirectory !== undefined || dto.deploymentOverrides !== undefined;
+    const persist = async (target: Project, repository: Repository<Project>, manager?: EntityManager) => {
+      this.applyProjectUpdate(target, dto);
+      const saved = await repository.save(target);
+      if (deploymentAffecting) {
+        await this.deploymentContractService.invalidateProject(
+          saved.id,
+          "Deployment settings changed. Run stack detection and pre-flight again.",
+          manager,
+        );
+      }
+      return saved;
+    };
 
-    if (dto.name !== undefined) {
-      project.name = dto.name.trim();
-    }
-
-    if (dto.description !== undefined) {
-      project.description = dto.description;
-    }
-
-    if (dto.visibility !== undefined) {
-      project.visibility = dto.visibility;
-    }
-
-    if (dto.appDirectory !== undefined) {
-      project.appDirectory = this.normalizeAppDirectory(dto.appDirectory);
-    }
-
-    const savedProject = await this.projectRepository.save(project);
+    const savedProject = deploymentAffecting
+      ? await this.dataSource.transaction(async (manager) => {
+          await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+          const repository = manager.getRepository(Project);
+          const current = await repository.findOne({ where: { id: projectId } });
+          if (!current || current.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
+          this.assertCanManage(user, current);
+          return persist(current, repository, manager);
+        })
+      : await persist(project, this.projectRepository);
 
     await this.auditLogService.record({
       actorUser: user,
@@ -225,12 +326,29 @@ export class ProjectsService {
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-
-    project.repositoryUrl = this.normalizeRepositoryUrl(dto.repositoryUrl);
-    project.repositoryFullName = this.parseGitHubRepositoryFullName(dto.repositoryUrl);
-    project.repositoryProvider = "github";
-    project.status = ProjectStatus.CONFIGURED;
-    const savedProject = await this.projectRepository.save(project);
+    const metadata = await this.inspectGithubRepository(user, dto.repositoryUrl);
+    const nextBranch = metadata.branches.includes(project.targetBranch) ? project.targetBranch : metadata.defaultBranch;
+    await this.assertProjectIdentityAvailable(project.ownerUserId, metadata.id || null, metadata.fullName, nextBranch, project.environmentName || "dev", project.id);
+    const savedProject = await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const repository = manager.getRepository(Project);
+      const current = await repository.findOne({ where: { id: projectId } });
+      if (!current || current.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
+      this.assertCanManage(user, current);
+      current.repositoryUrl = this.normalizeRepositoryUrl(metadata.url);
+      current.githubRepositoryId = metadata.id || null;
+      current.repositoryFullName = metadata.fullName;
+      current.repositoryProvider = "github";
+      current.targetBranch = nextBranch;
+      current.status = ProjectStatus.CONFIGURED;
+      const saved = await repository.save(current);
+      await this.deploymentContractService.invalidateProject(
+        saved.id,
+        "Repository changed. Run stack detection and pre-flight again.",
+        manager,
+      );
+      return saved;
+    });
 
     await this.auditLogService.record({
       actorUser: user,
@@ -257,31 +375,7 @@ export class ProjectsService {
       throw new BadRequestException("Project repository is not linked");
     }
 
-    const token = await this.usersService.getGithubAccessToken(user.id) || process.env.GITHUB_TOKEN?.trim();
-    const response = await fetch(
-      `https://api.github.com/repos/${project.repositoryFullName}/branches`,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "Deploy-Guard",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const message =
-        response.status === 404
-          ? "Repository was not found or the GitHub token does not have access."
-          : response.status === 403
-            ? "GitHub branch access was denied or rate limited. Check token permissions."
-            : "Unable to fetch GitHub branches.";
-      throw new BadRequestException(message);
-    }
-
-    const branches = (await response.json()) as Array<{ name?: string }>;
-
-    return branches.map((branch) => branch.name).filter(Boolean);
+    return (await this.inspectGithubRepository(user, project.repositoryFullName)).branches;
   }
 
   async updateBranch(
@@ -292,9 +386,25 @@ export class ProjectsService {
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    project.targetBranch = dto.targetBranch;
-    project.status = ProjectStatus.CONFIGURED;
-    const savedProject = await this.projectRepository.save(project);
+    const details = await this.inspectGithubRepository(user, project.repositoryFullName);
+    await this.assertGithubBranchHasCommit(user, details.fullName, dto.targetBranch);
+    await this.assertProjectIdentityAvailable(project.ownerUserId, details.id || project.githubRepositoryId, details.fullName, dto.targetBranch, project.environmentName || "dev", project.id);
+    const savedProject = await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const repository = manager.getRepository(Project);
+      const current = await repository.findOne({ where: { id: projectId } });
+      if (!current || current.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
+      this.assertCanManage(user, current);
+      current.targetBranch = dto.targetBranch;
+      current.status = ProjectStatus.CONFIGURED;
+      const saved = await repository.save(current);
+      await this.deploymentContractService.invalidateProject(
+        saved.id,
+        "Target branch changed. Run stack detection and pre-flight again.",
+        manager,
+      );
+      return saved;
+    });
 
     await this.auditLogService.record({
       actorUser: user,
@@ -316,12 +426,64 @@ export class ProjectsService {
   async listEnvVars(user: User, projectId: string) {
     const project = await this.findProject(projectId);
     this.assertCanView(user, project);
+    await this.encryptLegacyEnvironmentValues(project.id);
     const variables = await this.envVarRepository.find({
-      where: { projectId: project.id },
+      where: { projectId: project.id, environment: canonicalEnvironmentName(project), isActive: true },
       order: { key: "ASC" },
     });
 
     return variables.map((variable) => this.toEnvVarResponse(variable));
+  }
+
+  async getEnvVarSetup(user: User, projectId: string) {
+    const project = await this.findProject(projectId);
+    this.assertCanView(user, project);
+    const [variables, contract, profile] = await Promise.all([
+      this.listEnvVars(user, projectId),
+      this.deploymentContractService.getForProject(projectId),
+      this.detectionProfileRepository.findOne({ where: { projectId } }),
+    ]);
+    const evidence = Array.isArray((profile?.rawProfile as Record<string, unknown> | null)?.environmentVariables)
+      ? ((profile!.rawProfile as Record<string, unknown>).environmentVariables as Array<Record<string, unknown>>)
+      : [];
+    const sources = new Map(evidence.map((item) => [String(item.key), Array.isArray(item.sources) ? item.sources.map(String) : []]));
+    const configured = new Set(variables.map((variable) => variable.key));
+    const keys = new Set(contract?.optionalEnvVars || []);
+    const missingVariables = [...keys]
+      .filter((key) => !configured.has(key))
+      .sort()
+      .map((key) => this.environmentSuggestion(key, contract, sources.get(key)));
+    const configuration = contract
+      ? await this.effectiveConfiguration.getSanitizedConfiguration(projectId, null, canonicalEnvironmentName(project))
+      : null;
+    const managedByKey = new Map<string, Record<string, unknown>>();
+    for (const variable of variables.filter((item) => item.protected || ["platform", "managed_service", "external_service"].includes(item.owner))) {
+      const definition = reservedVariable(variable.key);
+      managedByKey.set(variable.key, { ...variable, category: definition?.category || "infrastructure_generated", managedBy: "DeployGuard", valueVisible: false });
+    }
+    const manifestKeys = Array.isArray((configuration?.manifest as { keys?: unknown[] } | undefined)?.keys)
+      ? (configuration!.manifest as { keys: Array<Record<string, unknown>> }).keys
+      : [];
+    for (const item of manifestKeys.filter((entry) => entry.protected === true || ["platform", "managed_service", "external_service"].includes(String(entry.owner)))) {
+      const key = String(item.key || "");
+      const definition = reservedVariable(key);
+      const { value: _managedValue, ...safeItem } = item;
+      if (key) managedByKey.set(key, {
+        ...safeItem, key, isSecret: item.secret === true, scope: "runtime",
+        category: definition?.category || (item.secret ? "runtime_secret" : "infrastructure_generated"), managedBy: "DeployGuard",
+        maskedValue: item.secret ? "••••••••" : "Managed by DeployGuard", valueVisible: false,
+      });
+    }
+    return {
+      variables: variables.filter((item) => !managedByKey.has(item.key)),
+      managedVariables: [...managedByKey.values()].sort((left, right) => String(left.key).localeCompare(String(right.key))),
+      reservedVariables: [
+        ...RESERVED_VARIABLE_REGISTRY,
+        ...SERVICE_ALIAS_GROUPS.flatMap((group) => group.aliases.map((key) => reservedVariable(key, group.service)!)),
+      ].filter((item, index, items) => items.findIndex((candidate) => candidate.key === item.key) === index),
+      missingVariables: missingVariables.filter((item) => !reservedVariable(item.key)),
+      configuration,
+    };
   }
 
   async createEnvVar(
@@ -332,31 +494,61 @@ export class ProjectsService {
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    await this.assertEnvKeyAvailable(project.id, dto.key);
-    const variable = this.envVarRepository.create({
-      projectId: project.id,
-      key: dto.key,
-      value: dto.value,
-      isSecret: dto.isSecret ?? true,
+    const key = normalizeConfigurationKey(dto.key);
+    const environment = canonicalEnvironmentName(project);
+    const result = await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, project.id, environment);
+      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [key], manager);
+      if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
+      await this.assertEnvKeyAvailable(project.id, key, undefined, manager);
+      const defaults = await this.environmentDefaults(project.id, key, manager);
+      if (defaults.isRequired) throw new BadRequestException(`${key} is required by the application. Configure it from Deployment Requirements.`);
+      const repository = manager.getRepository(ProjectEnvironmentVariable);
+      const encryptedValue = this.environmentCrypto.encrypt(dto.value);
+      const variable = repository.create({
+        projectId: project.id,
+        key,
+        normalizedKey: key,
+        value: encryptedValue,
+        isSecret: dto.isSecret ?? defaults.isSecret,
+        scope: dto.scope || defaults.scope,
+        isRequired: false,
+        environment,
+        detectedSource: dto.detectedSource || defaults.detectedSource,
+        owner: "user_optional",
+        source: dto.detectedSource || defaults.detectedSource || "developer_mode",
+        protected: false,
+        serviceBindingId: null,
+        detectedReference: dto.detectedSource || defaults.detectedSource || null,
+        repositoryDefault: null,
+        supersededBy: null,
+        configurationFingerprint: analysisFingerprint({ projectId: project.id, key, scope: dto.scope || defaults.scope, environment, encryptedValue }),
+        isActive: true,
+        supersededAt: null,
+        supersededReason: null,
+        appliedAt: null,
+        encryptionVersion: 1,
+      });
+      const saved = await repository.save(variable);
+      await this.deploymentContractService.refreshForProject(project.id, manager);
+      return { variable: saved, ignoredVariableNames: [] as string[] };
     });
-    const savedVariable = await this.envVarRepository.save(variable);
 
     await this.auditLogService.record({
       actorUser: user,
       action: "PROJECT_ENV_CREATED",
       resourceType: "project_env",
-      resourceId: savedVariable.id,
+      resourceId: result.variable?.id || project.id,
       status: "success",
       metadata: {
         projectId: project.id,
         projectName: project.name,
-        key: savedVariable.key,
-        isSecret: savedVariable.isSecret,
+        ...(result.variable ? { key: result.variable.key, isSecret: result.variable.isSecret } : { ignoredVariableNames: result.ignoredVariableNames }),
       },
       req: req as never,
     });
 
-    return this.toEnvVarResponse(savedVariable);
+    return { variable: result.variable ? this.toEnvVarResponse(result.variable) : null, ignoredVariableNames: result.ignoredVariableNames };
   }
 
   async updateEnvVar(
@@ -368,46 +560,134 @@ export class ProjectsService {
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const variable = await this.findEnvVar(project.id, envId);
-
-    if (dto.key && dto.key !== variable.key) {
-      await this.assertEnvKeyAvailable(project.id, dto.key, variable.id);
-      variable.key = dto.key;
-    }
-
-    if (dto.value !== undefined) {
-      variable.value = dto.value;
-    }
-
-    if (dto.isSecret !== undefined) {
-      variable.isSecret = dto.isSecret;
-    }
-
-    const savedVariable = await this.envVarRepository.save(variable);
+    const environment = canonicalEnvironmentName(project);
+    const result = await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, project.id, environment);
+      const variable = await this.findEnvVar(project.id, envId, manager);
+      this.assertVariableMutable(variable);
+      const submittedKey = normalizeConfigurationKey(dto.key || variable.key);
+      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [submittedKey], manager);
+      if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
+      if (dto.key && submittedKey !== variable.key) {
+        const key = submittedKey;
+        await this.assertEnvKeyAvailable(project.id, key, variable.id, manager);
+        variable.key = key;
+        variable.normalizedKey = key;
+      }
+      if (dto.value !== undefined) {
+        variable.value = this.environmentCrypto.encrypt(dto.value);
+        variable.encryptionVersion = 1;
+      }
+      if (dto.isSecret !== undefined) variable.isSecret = dto.isSecret;
+      if (dto.scope !== undefined) variable.scope = dto.scope;
+      variable.isRequired = false;
+      variable.environment = environment;
+      if (dto.detectedSource !== undefined) variable.detectedSource = dto.detectedSource;
+      variable.owner = "user_optional";
+      variable.source = dto.detectedSource || variable.source || "developer_mode";
+      variable.protected = false;
+      variable.serviceBindingId = null;
+      variable.supersededBy = null;
+      variable.isActive = true;
+      variable.supersededAt = null;
+      variable.supersededReason = null;
+      variable.appliedAt = null;
+      variable.configurationFingerprint = analysisFingerprint({ projectId: project.id, key: variable.key, scope: variable.scope, environment: variable.environment, encryptedValue: variable.value });
+      const saved = await manager.getRepository(ProjectEnvironmentVariable).save(variable);
+      await this.deploymentContractService.refreshForProject(project.id, manager);
+      return { variable: saved, ignoredVariableNames: [] as string[] };
+    });
 
     await this.auditLogService.record({
       actorUser: user,
       action: "PROJECT_ENV_UPDATED",
       resourceType: "project_env",
-      resourceId: savedVariable.id,
+      resourceId: result.variable?.id || project.id,
       status: "success",
       metadata: {
         projectId: project.id,
         projectName: project.name,
-        key: savedVariable.key,
-        isSecret: savedVariable.isSecret,
+        ...(result.variable ? { key: result.variable.key, isSecret: result.variable.isSecret } : { ignoredVariableNames: result.ignoredVariableNames }),
       },
       req: req as never,
     });
 
-    return this.toEnvVarResponse(savedVariable);
+    return { variable: result.variable ? this.toEnvVarResponse(result.variable) : null, ignoredVariableNames: result.ignoredVariableNames };
+  }
+
+  async bulkUpsertEnvVars(
+    user: User,
+    projectId: string,
+    dto: BulkEnvVarsDto,
+    req?: RequestInfo
+  ) {
+    const project = await this.findProject(projectId);
+    this.assertCanManage(user, project);
+    const environment = canonicalEnvironmentName(project);
+    const normalized = dto.variables.map((item) => ({ ...item, key: item.key.trim().toUpperCase() }));
+    const result = await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, environment);
+      const repository = manager.getRepository(ProjectEnvironmentVariable);
+      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(projectId, normalized.map((item) => item.key), manager);
+      const { accepted } = partitionSubmittedEnvironmentVariables(normalized, { repositoryOwnedKeys: new Set(ignoredVariableNames) });
+      const duplicateKeys = accepted.map((item) => item.key).filter((key, index, keys) => keys.indexOf(key) !== index);
+      if (duplicateKeys.length) throw new BadRequestException(`Duplicate environment variable keys: ${[...new Set(duplicateKeys)].join(", ")}`);
+      const existing = await repository.find({ where: { projectId, environment } });
+      const byKey = new Map(existing.map((item) => [item.key, item]));
+      const rows: ProjectEnvironmentVariable[] = [];
+      for (const item of accepted) {
+        const defaults = await this.environmentDefaults(projectId, item.key, manager);
+        const variable = byKey.get(item.key) || repository.create({ projectId, key: item.key });
+        const encryptedValue = this.environmentCrypto.encrypt(item.value);
+        variable.key = item.key;
+        variable.normalizedKey = item.key;
+        variable.value = encryptedValue;
+        variable.isSecret = item.isSecret ?? defaults.isSecret;
+        variable.scope = item.scope || defaults.scope;
+        variable.isRequired = defaults.isRequired;
+        variable.environment = environment;
+        variable.detectedSource = item.detectedSource || defaults.detectedSource;
+        variable.owner = defaults.isRequired ? "user_required" : "user_optional";
+        variable.source = item.detectedSource || defaults.detectedSource || (defaults.isRequired ? "repository_requirement" : "developer_mode");
+        variable.protected = false;
+        variable.serviceBindingId = null;
+        variable.detectedReference = item.detectedSource || defaults.detectedSource || null;
+        variable.repositoryDefault = null;
+        variable.supersededBy = null;
+        variable.isActive = true;
+        variable.supersededAt = null;
+        variable.supersededReason = null;
+        variable.appliedAt = null;
+        variable.encryptionVersion = 1;
+        variable.configurationFingerprint = analysisFingerprint({ projectId, key: item.key, scope: variable.scope, environment: variable.environment, encryptedValue });
+        rows.push(await repository.save(variable));
+      }
+      await this.deploymentContractService.refreshForProject(projectId, manager);
+      return { rows, ignoredVariableNames };
+    });
+    await this.auditLogService.record({
+      actorUser: user,
+      action: "PROJECT_ENV_BULK_UPSERTED",
+      resourceType: "project",
+      resourceId: projectId,
+      status: "success",
+      metadata: { projectId, projectName: project.name, keys: result.rows.map((item) => item.key), count: result.rows.length, ignoredVariableNames: result.ignoredVariableNames },
+      req: req as never,
+    });
+    return { variables: result.rows.map((item) => this.toEnvVarResponse(item)), ignoredVariableNames: result.ignoredVariableNames };
   }
 
   async deleteEnvVar(user: User, projectId: string, envId: string, req?: RequestInfo) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const variable = await this.findEnvVar(project.id, envId);
-    await this.envVarRepository.remove(variable);
+    const variable = await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, project.id, canonicalEnvironmentName(project));
+      const current = await this.findEnvVar(project.id, envId, manager);
+      this.assertVariableMutable(current);
+      await manager.getRepository(ProjectEnvironmentVariable).remove(current);
+      await this.deploymentContractService.refreshForProject(project.id, manager);
+      return current;
+    });
 
     await this.auditLogService.record({
       actorUser: user,
@@ -435,15 +715,25 @@ export class ProjectsService {
     return project;
   }
 
-  private async findEnvVar(projectId: string, envId: string) {
-    const variable = await this.envVarRepository.findOne({
+  private async findEnvVar(projectId: string, envId: string, manager?: EntityManager) {
+    const variable = await (manager?.getRepository(ProjectEnvironmentVariable) || this.envVarRepository).findOne({
       where: { id: envId, projectId },
       select: {
         id: true,
         projectId: true,
         key: true,
-        value: true,
-        isSecret: true,
+      value: true,
+      isSecret: true,
+      scope: true,
+      isRequired: true,
+      environment: true,
+      detectedSource: true,
+      owner: true,
+      isActive: true,
+      supersededAt: true,
+      supersededReason: true,
+      appliedAt: true,
+      encryptionVersion: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -484,7 +774,7 @@ export class ProjectsService {
   private assertCanManage(user: User, project: Project) {
     this.assertCanWrite(user);
 
-    if (user.role === UserRole.ADMIN || project.ownerUserId === user.id) {
+    if (project.ownerUserId === user.id) {
       return;
     }
 
@@ -494,29 +784,37 @@ export class ProjectsService {
   private async assertEnvKeyAvailable(
     projectId: string,
     key: string,
-    currentEnvId?: string
+    currentEnvId?: string,
+    manager?: EntityManager,
   ) {
-    const existing = await this.envVarRepository.findOne({ where: { projectId, key } });
+    const existing = await (manager?.getRepository(ProjectEnvironmentVariable) || this.envVarRepository).findOne({ where: { projectId, key } });
 
     if (existing && existing.id !== currentEnvId) {
       throw new ConflictException("Environment variable key already exists");
     }
   }
 
+  private async assertProjectIdentityAvailable(ownerUserId: number, githubRepositoryId: string | null, repositoryFullName: string, targetBranch: string, environmentName: string, excludeProjectId?: string) {
+    const query = this.projectRepository.createQueryBuilder("project")
+      .where("project.ownerUserId = :ownerUserId", { ownerUserId })
+      .andWhere("(project.githubRepositoryId = :githubRepositoryId OR lower(project.repositoryFullName) = lower(:repositoryFullName))", { githubRepositoryId, repositoryFullName })
+      .andWhere("project.targetBranch = :targetBranch", { targetBranch })
+      .andWhere("project.environmentName = :environmentName", { environmentName })
+      .andWhere("project.status <> :archived", { archived: ProjectStatus.ARCHIVED })
+      .andWhere("project.archivedAt IS NULL");
+    if (excludeProjectId) query.andWhere("project.id <> :excludeProjectId", { excludeProjectId });
+    const existing = await query.getOne();
+    if (existing) throw new ConflictException({ code: "EXISTING_PROJECT", message: "This repository already has an existing project for the selected branch and environment.", existingProjectId: existing.id });
+  }
+
   private parseGitHubRepositoryFullName(repositoryUrl: string): string {
-    const match = this.normalizeRepositoryUrl(repositoryUrl).match(
-      /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)$/
-    );
-
-    if (!match) {
-      throw new BadRequestException("Invalid GitHub repository URL");
-    }
-
-    return match[1];
+    return this.normalizeRepositoryFullName(repositoryUrl);
   }
 
   private normalizeRepositoryFullName(value: string): string {
-    const normalized = value.trim().replace(/^https:\/\/github\.com\//, "").replace(/\/$/, "");
+    const raw = value.trim();
+    if (/^https?:\/\//i.test(raw) && !/^https:\/\/github\.com\//i.test(raw)) throw new BadRequestException("Repository must be a GitHub URL or owner/repository.");
+    const normalized = raw.replace(/^https:\/\/github\.com\//i, "").replace(/\.git\/?$/, "").replace(/\/$/, "");
     if (!/^[^/\s]+\/[^/\s]+$/.test(normalized)) throw new BadRequestException("Invalid GitHub repository");
     return normalized;
   }
@@ -527,10 +825,40 @@ export class ProjectsService {
     return token;
   }
 
-  private githubHeaders(token: string) {
+  private throwGithubError(response: Response, authenticated: boolean): never {
+    const remaining = response.headers.get("x-ratelimit-remaining");
+    if (response.status === 401) throw new BadRequestException("GitHub access expired or was revoked. Reconnect GitHub and try again.");
+    if (response.status === 403 && remaining === "0") throw new BadRequestException("GitHub API rate limit reached. Wait for the rate-limit window to reset, then retry.");
+    if (response.status === 403) throw new BadRequestException("GitHub denied repository access. Reconnect GitHub with repository permission.");
+    if (response.status === 404 && authenticated) throw new BadRequestException("Repository not found or the connected GitHub account does not have access to this private repository.");
+    if (response.status === 404) throw new BadRequestException("Repository not found. Private repositories require a connected GitHub account with access.");
+    if (response.status === 409) throw new BadRequestException("This repository/branch is empty and cannot be analyzed.");
+    throw new BadRequestException(`GitHub repository request failed with status ${response.status}.`);
+  }
+
+  private async assertGithubBranchHasCommit(user: User, repositoryFullName: string, branch: string) {
+    const { token } = await this.githubApp.tokenForRepository(user.id, repositoryFullName);
+    const response = await fetch(`https://api.github.com/repos/${repositoryFullName}/commits/${encodeURIComponent(branch)}`, { headers: this.githubHeaders(token) });
+    if (response.status === 409) throw new BadRequestException("This repository/branch is empty and cannot be analyzed.");
+    if (response.status === 404) throw new BadRequestException(`Branch '${branch}' was not found in this repository.`);
+    if (!response.ok) this.throwGithubError(response, Boolean(token));
+  }
+
+  async ensureDeployguardWorkflow(user: User, projectId: string) {
+    const project = await this.getProjectEntityForView(user, projectId);
+    if (!project.repositoryFullName) throw new BadRequestException("Project repository is not linked.");
+    const workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
+    if (project.githubInstallationId !== workflow.installationId) {
+      project.githubInstallationId = workflow.installationId;
+      await this.projectRepository.save(project);
+    }
+    return workflow;
+  }
+
+  private githubHeaders(token?: string | null) {
     return {
       Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       "User-Agent": "DeployGuard",
       "X-GitHub-Api-Version": "2022-11-28",
     };
@@ -549,7 +877,7 @@ export class ProjectsService {
     return normalized && normalized !== "." ? normalized : null;
   }
 
-  private toProjectResponse(project: Project, user: User) {
+  private toProjectResponse(project: Project, user: User, activity?: { lastViewedAt: Date | null; lastUserActionAt: Date | null; lastMeaningfulActivityAt: Date | null; lastPipelineActivityAt: Date | null; lastRoute: string | null; lastSection: string | null; lastActionType: string | null; pinned: boolean }) {
     return {
       id: project.id,
       ownerUserId: String(project.ownerUserId),
@@ -557,16 +885,30 @@ export class ProjectsService {
       description: project.description,
       repositoryUrl: project.repositoryUrl,
       repositoryProvider: project.repositoryProvider,
+      githubRepositoryId: project.githubRepositoryId,
+      githubInstallationId: project.githubInstallationId,
       repositoryFullName: project.repositoryFullName,
       targetBranch: project.targetBranch,
+      environmentName: project.environmentName || "dev",
       appDirectory: project.appDirectory,
+      deploymentOverrides: project.deploymentOverrides || {},
       status: project.status,
       visibility: project.visibility,
       canManage:
-        user.role === UserRole.ADMIN ||
-        (user.role === UserRole.DEVELOPER && project.ownerUserId === user.id),
+        project.ownerUserId === user.id &&
+        [UserRole.ADMIN, UserRole.DEVELOPER].includes(user.role),
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
+      activity: activity ? {
+        lastViewedAt: activity.lastViewedAt,
+        lastUserActionAt: activity.lastUserActionAt,
+        lastMeaningfulActivityAt: activity.lastMeaningfulActivityAt,
+        lastPipelineActivityAt: activity.lastPipelineActivityAt,
+        lastRoute: activity.lastRoute,
+        lastSection: activity.lastSection,
+        lastActionType: activity.lastActionType,
+        pinned: activity.pinned,
+      } : null,
     };
   }
 
@@ -575,9 +917,130 @@ export class ProjectsService {
       id: variable.id,
       key: variable.key,
       isSecret: variable.isSecret,
-      maskedValue: "********",
+      scope: variable.scope || "runtime",
+      isRequired: Boolean(variable.isRequired),
+      environment: variable.environment || "dev",
+      detectedSource: variable.detectedSource || null,
+      owner: variable.owner || "user_optional",
+      source: variable.source || variable.detectedSource || "user",
+      protected: Boolean(variable.protected),
+      normalizedKey: variable.normalizedKey || variable.key,
+      serviceBindingId: variable.serviceBindingId || null,
+      detectedReference: variable.detectedReference || variable.detectedSource || null,
+      repositoryDefault: variable.isSecret ? null : variable.repositoryDefault || null,
+      configurationFingerprint: variable.configurationFingerprint || null,
+      classification: classifyConfigurationVariable(variable.key, { secret: variable.isSecret, scope: variable.scope }),
+      isActive: variable.isActive !== false,
+      status: variable.appliedAt ? "applied" : "saved",
+      configured: true,
+      maskedValue: "••••••••",
       createdAt: variable.createdAt,
       updatedAt: variable.updatedAt,
     };
+  }
+
+  private async environmentDefaults(projectId: string, key: string, manager?: EntityManager) {
+    const contract = await this.deploymentContractService.getForProject(projectId, manager);
+    return this.environmentSuggestion(key, contract);
+  }
+
+  private async assertEnvironmentOwnership(projectId: string, key: string, manager?: EntityManager) {
+    const normalized = normalizeConfigurationKey(key);
+    const contract = await this.deploymentContractService.getForProject(projectId, manager);
+    const tier = await (manager?.getRepository(ProjectDatabaseTier) || this.databaseTierRepository).findOne({ where: { projectId } });
+    const engine = tier?.engine || "postgres";
+    if (reservedVariable(normalized, engine)) throw new BadRequestException(reservedVariableError(normalized, engine));
+    const alias = serviceAlias(normalized, engine);
+    if (contract?.persistentStorageRequired && serviceAlias(normalized, "storage")) {
+      throw new BadRequestException(managedAliasError(normalized, "storage"));
+    }
+    if (!alias || !tier?.provider || tier.provider === DatabaseTierProvider.NONE) return;
+    if (tier.provider === DatabaseTierProvider.MANAGED) throw new BadRequestException(managedAliasError(normalized, engine));
+    throw new BadRequestException(`${normalized} is owned by the external ${engine} service binding. Update it from Deployment Requirements.`);
+  }
+
+  private async ignoredEnvironmentVariableNames(projectId: string, keys: string[], manager?: EntityManager) {
+    const [profile, tier] = await Promise.all([
+      (manager?.getRepository(ProjectDetectionProfile) || this.detectionProfileRepository).findOne({ where: { projectId } }),
+      (manager?.getRepository(ProjectDatabaseTier) || this.databaseTierRepository).findOne({ where: { projectId } }),
+    ]);
+    const evidence = Array.isArray((profile?.rawProfile as Record<string, unknown> | null)?.environmentVariables)
+      ? (profile!.rawProfile as Record<string, unknown>).environmentVariables as Array<Record<string, unknown>>
+      : [];
+    return ignoredSubmittedVariableNames(keys, {
+      service: tier?.engine || "postgres",
+      managedService: tier?.provider === DatabaseTierProvider.MANAGED,
+      repositoryOwnedKeys: provenRepositoryOwnedVariableKeys(evidence),
+    });
+  }
+
+  private assertVariableMutable(variable: ProjectEnvironmentVariable) {
+    if (variable.isRequired && !variable.protected) throw new BadRequestException(`${variable.key} is required by the application. Update it from Deployment Requirements.`);
+    if (variable.protected || !["user_optional", "repository_default"].includes(variable.owner || "")) {
+      throw new BadRequestException(reservedVariableError(variable.normalizedKey || variable.key));
+    }
+  }
+
+  private environmentSuggestion(key: string, contract: Awaited<ReturnType<DeploymentContractService["getForProject"]>>, sources: string[] = []) {
+    const build = Boolean(contract?.buildTimeEnvVars.includes(key));
+    const runtime = Boolean(contract?.runtimeEnvVars.includes(key));
+    const scope = build && runtime ? "both" : build ? "build" : "runtime";
+    const publicBuild = /^(VITE_|NEXT_PUBLIC_|REACT_APP_)/.test(key) && (scope === "build" || scope === "both");
+    const isSecret = !publicBuild && (Boolean(contract?.secretEnvVars.includes(key)) ||
+      /(SECRET|TOKEN|PASSWORD|PRIVATE|API_KEY|DATABASE_URL|CREDENTIAL|AUTH_KEY)/.test(key));
+    return {
+      key,
+      required: Boolean(contract?.requiredEnvVars.includes(key)),
+      isRequired: Boolean(contract?.requiredEnvVars.includes(key)),
+      scope: scope as "build" | "runtime" | "both",
+      isSecret,
+      public: /^(VITE_|NEXT_PUBLIC_|REACT_APP_)/.test(key),
+      detectedSource: sources.length ? sources.join(", ") : "Repository scan",
+      configured: false,
+      status: "missing",
+    };
+  }
+
+  private async encryptLegacyEnvironmentValues(projectId: string) {
+    const variables = await this.envVarRepository.createQueryBuilder("env")
+      .addSelect("env.value")
+      .where("env.projectId = :projectId", { projectId })
+      .andWhere("env.isActive = true")
+      .getMany();
+    const legacy = variables.filter((variable) => variable.value && !this.environmentCrypto.isEncrypted(variable.value));
+    if (!legacy.length) return;
+    await this.dataSource.transaction(async (manager) => {
+      const project = await manager.getRepository(Project).findOne({ where: { id: projectId } });
+      if (!project) throw new NotFoundException("Project not found");
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const repository = manager.getRepository(ProjectEnvironmentVariable);
+      const current = await repository.createQueryBuilder("env")
+        .addSelect("env.value")
+        .where("env.projectId = :projectId", { projectId })
+        .andWhere("env.isActive = true")
+        .getMany();
+      const currentLegacy = current.filter((variable) => variable.value && !this.environmentCrypto.isEncrypted(variable.value));
+      for (const variable of currentLegacy) {
+        variable.value = this.environmentCrypto.encrypt(variable.value);
+        variable.encryptionVersion = 1;
+      }
+      if (currentLegacy.length) await repository.save(currentLegacy);
+    });
+  }
+
+  private applyProjectUpdate(project: Project, dto: UpdateProjectDto) {
+    if (dto.name !== undefined) project.name = dto.name.trim();
+    if (dto.description !== undefined) project.description = dto.description;
+    if (dto.visibility !== undefined) project.visibility = dto.visibility;
+    if (dto.appDirectory !== undefined) project.appDirectory = this.normalizeAppDirectory(dto.appDirectory);
+    if (dto.deploymentOverrides !== undefined) {
+      const { requiredEnvironmentVariables: _legacyRawRequirements, ...safeOverrides } = dto.deploymentOverrides;
+      project.deploymentOverrides = {
+        ...Object.fromEntries(Object.entries(safeOverrides).filter(([, value]) => value !== "" && value !== undefined)),
+        ...(project.deploymentOverrides?.requiredEnvironmentVariables?.length
+          ? { requiredEnvironmentVariables: project.deploymentOverrides.requiredEnvironmentVariables }
+          : {}),
+      };
+    }
   }
 }

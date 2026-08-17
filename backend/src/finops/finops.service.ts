@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { Queue } from "bullmq";
 import { ConfigService } from "@nestjs/config";
@@ -42,6 +43,11 @@ import {
   SubscriptionTier,
 } from "./project-cost-settings.entity";
 import { TerraformCostPlanService } from "./terraform-cost-plan.service";
+import { InactiveLegacyShadowInsertionAdapter } from "../orchestration-contracts/release-lane/inactive-legacy-shadow-insertion.adapter";
+import {
+  CrossLaneOwnershipClaim,
+  CrossLaneOwnershipEnforcementService,
+} from "../orchestration-contracts/release-lane/cross-lane-ownership-enforcement.service";
 
 type RequestInfo = Request | undefined;
 
@@ -105,7 +111,9 @@ export class FinopsService {
     private readonly auditLogService: AuditLogService,
     private readonly policyService: FinopsPolicyService,
     private readonly infracostService: InfracostService,
-    private readonly terraformCostPlanService: TerraformCostPlanService
+    private readonly terraformCostPlanService: TerraformCostPlanService,
+    @Optional() private readonly legacyShadow?: InactiveLegacyShadowInsertionAdapter,
+    @Optional() private readonly crossLane?: CrossLaneOwnershipEnforcementService,
   ) {}
 
   async createEstimate(user: User, projectId: string, req?: RequestInfo) {
@@ -260,6 +268,17 @@ export class FinopsService {
     if (!run) {
       throw new NotFoundException("Pipeline run for cost approval was not found.");
     }
+    const claim: CrossLaneOwnershipClaim = await (
+      this.crossLane?.acquireLegacy({
+        projectId,
+        operationId: pipelineRunId,
+        actorId: `user:${triggeredByUserId}`,
+        operationClass: "legacy_cost_approval_resume",
+      }) ?? Promise.resolve({ enabled: false } as const)
+    );
+    await this.crossLane?.linkLegacyRun(claim, pipelineRunId);
+
+    this.legacyShadow?.observeCostApprovalResume({ projectId, logicalOperationId: pipelineRunId });
 
     await this.pipelineQueue.add(
       "resumeAfterCostApproval",
@@ -481,10 +500,21 @@ export class FinopsService {
           warningThresholdMonthlyCost: estimate.warningThresholdMonthlyCost,
         }, req);
       } else {
-        await this.pipelineEvent(estimate, "cost_analysis_passed", "success", "Cost policy passed.", {
+        await this.pipelineEvent(estimate, config.bypassCostGate ? "cost_gate_bypassed" : "cost_analysis_passed", "success", config.bypassCostGate
+          ? "Infracost API is disabled. Using mock estimate / cost gate bypass for demo."
+          : "Cost policy passed.", {
           estimateId: estimate.id,
           totalMonthlyCost,
         });
+        if (config.bypassCostGate) {
+          await this.audit("COST_GATE_BYPASSED", project, actorUser || null, "success", {
+            projectId: project.id,
+            pipelineRunId: pipelineRun?.id,
+            estimateId: estimate.id,
+            source: estimate.source,
+            status: "success",
+          }, req);
+        }
       }
 
       return estimate;
@@ -627,7 +657,7 @@ export class FinopsService {
       );
     }
 
-    await this.pipelineEvent(estimate, "mock_cost_estimate_generated", "success", "Mock cost estimate generated.", {
+    await this.pipelineEvent(estimate, "mock_cost_estimate_generated", "success", "Infracost API is disabled. Using mock estimate / cost gate bypass for demo.", {
       estimateId: estimate.id,
       resourceCount: resources.length,
       source: CostEstimateSource.MOCK,

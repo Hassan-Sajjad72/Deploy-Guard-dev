@@ -25,6 +25,15 @@ export enum InfrastructureEnvironmentStatus {
   PARTIALLY_PROVISIONED = "partially_provisioned",
   DISABLED_BY_CONFIG = "disabled_by_config",
   DESTROYED = "destroyed",
+  DESTROYING = "destroying",
+  DESTROY_NEEDS_CLEANUP = "destroy_needs_cleanup",
+  DESTROY_FAILED = "destroy_failed",
+}
+
+export enum InfrastructureEnvironmentType {
+  TESTING = "testing",
+  PREVIEW = "preview",
+  PRODUCTION = "production",
 }
 
 @Entity("project_infrastructure_environments")
@@ -32,7 +41,7 @@ export class ProjectInfrastructureEnvironment {
   @PrimaryGeneratedColumn("uuid")
   id: string;
 
-  @Index()
+  @Index("IDX_infrastructure_environments_desired_manifest")
   @Column({ name: "project_id" })
   projectId: string;
 
@@ -40,7 +49,7 @@ export class ProjectInfrastructureEnvironment {
   @JoinColumn({ name: "project_id" })
   project: Project;
 
-  @Index()
+  @Index("IDX_infrastructure_environments_applied_manifest")
   @Column({ nullable: true, name: "pipeline_run_id" })
   pipelineRunId: string;
 
@@ -48,8 +57,29 @@ export class ProjectInfrastructureEnvironment {
   @JoinColumn({ name: "pipeline_run_id" })
   pipelineRun: ProjectPipelineRun;
 
+  @Index()
+  @Column({ nullable: true, name: "desired_manifest_id", type: "uuid" })
+  desiredManifestId: string | null;
+
+  @Index()
+  @Column({ nullable: true, name: "applied_manifest_id", type: "uuid" })
+  appliedManifestId: string | null;
+
   @Column({ default: "dev", name: "environment_name" })
   environmentName: string;
+
+  @Index()
+  @Column({ default: InfrastructureEnvironmentType.PRODUCTION, name: "environment_type" })
+  environmentType: InfrastructureEnvironmentType;
+
+  @Column({ nullable: true, name: "ttl_expires_at", type: "timestamptz" })
+  ttlExpiresAt: Date | null;
+
+  @Column({ default: false, name: "auto_destroy_enabled" })
+  autoDestroyEnabled: boolean;
+
+  @Column({ default: "not_scheduled", name: "cleanup_status" })
+  cleanupStatus: string;
 
   @Column({ default: InfrastructureEnvironmentStatus.NOT_PROVISIONED })
   status: string;
@@ -114,15 +144,15 @@ export class ProjectInfrastructureEnvironment {
   @Column({ nullable: true, name: "error_message", type: "text" })
   errorMessage: string;
 
-  @Column({ nullable: true, name: "provisioned_at", type: "timestamp" })
+  @Column({ nullable: true, name: "provisioned_at", type: "timestamptz" })
   provisionedAt: Date;
 
-  @Column({ nullable: true, name: "failed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "failed_at", type: "timestamptz" })
   failedAt: Date;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

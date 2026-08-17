@@ -71,10 +71,10 @@ export class ProjectStageMetric {
   @Column({ default: StageMetricStatus.PENDING })
   status: string;
 
-  @Column({ nullable: true, name: "started_at", type: "timestamp" })
+  @Column({ nullable: true, name: "started_at", type: "timestamptz" })
   startedAt: Date;
 
-  @Column({ nullable: true, name: "ended_at", type: "timestamp" })
+  @Column({ nullable: true, name: "ended_at", type: "timestamptz" })
   endedAt: Date;
 
   @Column({ nullable: true, name: "duration_ms" })
@@ -86,9 +86,9 @@ export class ProjectStageMetric {
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

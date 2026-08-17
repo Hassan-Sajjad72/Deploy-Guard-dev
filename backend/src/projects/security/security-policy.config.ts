@@ -1,6 +1,8 @@
 import { ConfigService } from "@nestjs/config";
 
 export type SecurityPolicyConfig = {
+  scanEnabled: boolean;
+  gateMode: "enforce" | "bypass";
   blockCritical: boolean;
   blockHigh: boolean;
   blockBaseImageCritical: boolean;
@@ -12,15 +14,28 @@ export type SecurityPolicyConfig = {
 };
 
 function bool(value: string | undefined, defaultValue: boolean) {
-  if (value === undefined || value === "") {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
     return defaultValue;
   }
 
-  return value === "true";
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return defaultValue;
 }
 
 export function getSecurityPolicyConfig(config: ConfigService): SecurityPolicyConfig {
+  const configuredGateMode = config.get<string>("SECURITY_GATE_MODE", "enforce").trim().toLowerCase();
+  const bypassEnabled = bool(config.get<string>("SECURITY_BYPASS_ENABLED"), false);
   return {
+    scanEnabled: bool(
+      config.get<string>(
+        "TRIVY_SCAN_ENABLED",
+        config.get<string>("TRIVY_ENABLED", "true")
+      ),
+      true
+    ),
+    gateMode: configuredGateMode === "bypass" || bypassEnabled ? "bypass" : "enforce",
     blockCritical: bool(config.get<string>("SECURITY_BLOCK_CRITICAL"), true),
     blockHigh: bool(config.get<string>("SECURITY_BLOCK_HIGH"), false),
     blockBaseImageCritical: bool(

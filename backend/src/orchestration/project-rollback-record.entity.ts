@@ -12,13 +12,13 @@ export class ProjectRollbackRecord {
   id: string;
 
   @Index()
-  @Column({ name: "project_id" })
+  @Column({ name: "project_id", type: "uuid" })
   projectId: string;
 
-  @Column({ name: "deployment_id" })
+  @Column({ name: "deployment_id", type: "uuid" })
   deploymentId: string;
 
-  @Column({ nullable: true, name: "pipeline_run_id" })
+  @Column({ nullable: true, name: "pipeline_run_id", type: "uuid" })
   pipelineRunId: string;
 
   @Column({ nullable: true, name: "from_commit_sha" })
@@ -39,10 +39,10 @@ export class ProjectRollbackRecord {
   @Column({ default: RollbackStatus.STARTED })
   status: string;
 
-  @Column({ name: "started_at", type: "timestamp" })
+  @Column({ name: "started_at", type: "timestamptz" })
   startedAt: Date;
 
-  @Column({ nullable: true, name: "completed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "completed_at", type: "timestamptz" })
   completedAt: Date;
 
   @Column({ nullable: true, type: "jsonb" })
@@ -51,6 +51,26 @@ export class ProjectRollbackRecord {
   @Column({ nullable: true, name: "error_message", type: "text" })
   errorMessage: string;
 
-  @CreateDateColumn({ name: "created_at" })
+  /** Nullable, inactive cross-lane fence correlation for future legacy work. */
+  @Index("IDX_rollback_records_cross_lane_ownership")
+  @Column({ nullable: true, name: "cross_lane_ownership_id", type: "uuid" })
+  crossLaneOwnershipId: string | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_lane", length: 16 })
+  crossLaneOwnerLane: "legacy" | "v1" | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_environment_name", length: 64 })
+  crossLaneOwnerEnvironmentName: string | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_lease_id", type: "uuid" })
+  crossLaneOwnerLeaseId: string | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_actor_id", length: 160 })
+  crossLaneOwnerActorId: string | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_fencing_token", type: "bigint" })
+  crossLaneOwnerFencingToken: string | null;
+
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

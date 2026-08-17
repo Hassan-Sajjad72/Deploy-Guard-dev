@@ -17,10 +17,11 @@ export class DockerBuildService {
     }
   }
 
-  async buildImage(input: { workspacePath: string; imageName: string; imageTag: string }) {
+  async buildImage(input: { workspacePath: string; imageName: string; imageTag: string; buildArguments?: Record<string, string> }) {
+    const buildArguments = Object.entries(input.buildArguments || {}).flatMap(([key, value]) => ["--build-arg", `${key}=${value}`]);
     await execFileAsync(
       "docker",
-      ["build", "-t", `${input.imageName}:${input.imageTag}`, input.workspacePath],
+      ["build", ...buildArguments, "-t", `${input.imageName}:${input.imageTag}`, input.workspacePath],
       {
         timeout: 10 * 60 * 1000,
         maxBuffer: 8 * 1024 * 1024,
@@ -47,6 +48,20 @@ export class DockerBuildService {
     await execFileAsync("docker", ["push", ecrImageUri], {
       timeout: 10 * 60 * 1000,
       maxBuffer: 8 * 1024 * 1024,
+    });
+  }
+
+  async pullImage(imageUri: string) {
+    await execFileAsync("docker", ["pull", imageUri], {
+      timeout: 10 * 60 * 1000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+  }
+
+  async tagRemoteImage(imageUri: string, localImageName: string, imageTag: string) {
+    await execFileAsync("docker", ["tag", imageUri, `${localImageName}:${imageTag}`], {
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
     });
   }
 }

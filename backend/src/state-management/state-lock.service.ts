@@ -5,6 +5,7 @@ import { Repository } from "typeorm";
 import { ProjectDeploymentQueueItem, DeploymentQueueStatus } from "./project-deployment-queue-item.entity";
 import { ProjectTerraformLock, TerraformLockStatus } from "./project-terraform-lock.entity";
 import { getStateManagementConfig } from "./state-management.config";
+import { CurrentStateInvalidationService } from "./current-state-invalidation.service";
 
 const ACTIVE_LOCK_STATUSES = [
   TerraformLockStatus.ACQUIRED,
@@ -20,7 +21,8 @@ export class StateLockService {
     private readonly lockRepository: Repository<ProjectTerraformLock>,
     @InjectRepository(ProjectDeploymentQueueItem)
     private readonly queueRepository: Repository<ProjectDeploymentQueueItem>,
-    private readonly config: ConfigService
+    private readonly config: ConfigService,
+    private readonly currentStateInvalidation: CurrentStateInvalidationService,
   ) {}
 
   buildLockId(projectId: string, environmentName = "dev") {
@@ -117,7 +119,9 @@ export class StateLockService {
 
     lock.status = TerraformLockStatus.RELEASED;
     lock.releasedAt = new Date();
-    return this.lockRepository.save(lock);
+    const released = await this.lockRepository.save(lock);
+    this.currentStateInvalidation.invalidate(lock.projectId, "terraform_state_lock_released");
+    return released;
   }
 
   async getLock(lockId: string) {
@@ -130,7 +134,9 @@ export class StateLockService {
     if (!lock) return null;
 
     lock.status = TerraformLockStatus.ORPHANED;
-    return this.lockRepository.save(lock);
+    const orphaned = await this.lockRepository.save(lock);
+    this.currentStateInvalidation.invalidate(lock.projectId, "terraform_state_lock_orphaned");
+    return orphaned;
   }
 
   async forceReleaseOrphanedLock(lockId: string) {
@@ -147,7 +153,9 @@ export class StateLockService {
 
     lock.status = TerraformLockStatus.FORCE_RELEASED;
     lock.forceReleasedAt = new Date();
-    return this.lockRepository.save(lock);
+    const released = await this.lockRepository.save(lock);
+    this.currentStateInvalidation.invalidate(lock.projectId, "terraform_state_lock_force_released");
+    return released;
   }
 
   async enqueueBehindExistingLock(
@@ -191,6 +199,19 @@ export class StateLockService {
     next.status = DeploymentQueueStatus.PROCESSING;
     next.startedAt = new Date();
     return this.queueRepository.save(next);
+  }
+
+  async finishQueuedDeployment(pipelineRunId: string, succeeded: boolean, reason?: string) {
+    const item = await this.queueRepository.findOne({
+      where: { pipelineRunId, status: DeploymentQueueStatus.PROCESSING },
+      order: { createdAt: "DESC" },
+    });
+    if (!item) return null;
+    item.status = succeeded ? DeploymentQueueStatus.COMPLETED : DeploymentQueueStatus.FAILED;
+    item.completedAt = succeeded ? new Date() : null;
+    item.failedAt = succeeded ? null : new Date();
+    item.reason = succeeded ? "Resumed after state lock release." : (reason || "Resumed operation failed.");
+    return this.queueRepository.save(item);
   }
 
   async activeLocks() {

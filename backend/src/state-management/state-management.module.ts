@@ -3,8 +3,11 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { AuditLogModule } from "../audit-log/audit-log.module";
 import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
+import { PipelineActivityService } from "../projects/pipeline/pipeline-activity.service";
+import { retiredMutationBoundaryProvider } from "../projects/pipeline/retired-mutation-boundary.provider";
 import { Project } from "../projects/project.entity";
-import { AwsCliService } from "./aws-cli.service";
+import { AwsCliModule } from "./aws-cli.module";
+import { CurrentStateInvalidationService } from "./current-state-invalidation.service";
 import { OrphanedLockMonitorService } from "./orphaned-lock-monitor.service";
 import { ProjectDeploymentQueueItem } from "./project-deployment-queue-item.entity";
 import { ProjectStateRecoveryRequest } from "./project-state-recovery-request.entity";
@@ -14,10 +17,10 @@ import { ProjectTerraformState } from "./project-terraform-state.entity";
 import { StateCorruptionService } from "./state-corruption.service";
 import { StateHeartbeatService } from "./state-heartbeat.service";
 import { StateLockService } from "./state-lock.service";
-import { StateManagementController } from "./state-management.controller";
 import { StateManagementService } from "./state-management.service";
 import { StateRecoveryService } from "./state-recovery.service";
 import { TerraformStateService } from "./terraform-state.service";
+import { TerraformStateSafetySnapshotService } from "./terraform-state-safety-snapshot.service";
 
 @Module({
   imports: [
@@ -32,10 +35,13 @@ import { TerraformStateService } from "./terraform-state.service";
       ProjectStateRecoveryRequest,
     ]),
     AuditLogModule,
+    AwsCliModule,
   ],
-  controllers: [StateManagementController],
   providers: [
-    AwsCliService,
+    retiredMutationBoundaryProvider,
+    PipelineActivityService,
+    CurrentStateInvalidationService,
+    TerraformStateSafetySnapshotService,
     TerraformStateService,
     StateLockService,
     StateHeartbeatService,
@@ -45,12 +51,15 @@ import { TerraformStateService } from "./terraform-state.service";
     StateManagementService,
   ],
   exports: [
+    AwsCliModule,
     TerraformStateService,
     StateLockService,
     StateHeartbeatService,
     OrphanedLockMonitorService,
     StateCorruptionService,
     StateRecoveryService,
+    CurrentStateInvalidationService,
+    TerraformStateSafetySnapshotService,
   ],
 })
 export class StateManagementModule {}

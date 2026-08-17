@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 
 export type DetectionDraft = {
   hasDockerfile: boolean;
+  dockerfileMode?: "generated" | "custom";
   frameworkVariant: string | null;
   ecosystem: string;
 };
@@ -9,7 +10,7 @@ export type DetectionDraft = {
 @Injectable()
 export class TemplateMatchingService {
   selectTemplate(draft: DetectionDraft) {
-    if (draft.hasDockerfile) {
+    if (draft.dockerfileMode === "custom" && draft.hasDockerfile) {
       return {
         selectedTemplate: "custom-dockerfile",
         dockerfileRequired: false,
@@ -19,14 +20,51 @@ export class TemplateMatchingService {
       };
     }
 
+    if (draft.dockerfileMode === "custom") {
+      return {
+        selectedTemplate: "custom-dockerfile-required",
+        dockerfileRequired: true,
+        detectionStatus: "needs_manual_dockerfile",
+        templateMatched: false,
+        unsupportedReason: "Repository-Dockerfile mode was selected, but no Dockerfile exists in the application root.",
+      };
+    }
+
+    if (draft.frameworkVariant === "react-native-mobile") {
+      return {
+        selectedTemplate: "custom-dockerfile-required",
+        dockerfileRequired: true,
+        detectionStatus: "needs_manual_dockerfile",
+        templateMatched: false,
+        unsupportedReason: "React Native mobile applications do not expose an HTTP web service for ECS and ALB. Provide an explicit web target or deploy a web repository.",
+      };
+    }
+
     const frameworkTemplates = new Set([
       "nextjs-ssr",
+      "nextjs-standalone",
       "nextjs-static",
       "express-server",
+      "nestjs-server",
+      "fastify-server",
       "vite-static",
+      "cra-static",
+      "vite-vue-static",
+      "nuxt-static",
+      "nuxt-ssr",
+      "angular-static",
+      "sveltekit-static",
+      "sveltekit-node",
+      "astro-static",
+      "astro-node",
+      "remix-node",
+      "react-static",
+      "react-webpack-static",
       "django-wsgi",
+      "django-asgi",
       "fastapi-asgi",
       "flask-wsgi",
+      "streamlit-server",
       "rails-server",
     ]);
 

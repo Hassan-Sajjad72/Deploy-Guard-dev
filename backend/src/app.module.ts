@@ -41,7 +41,7 @@ import { ProjectPipelineEvent } from "./projects/project-pipeline-event.entity";
 import { ProjectPipelineJobFinality } from "./projects/pipeline/project-pipeline-job-finality.entity";
 import { ProjectPipelineRun } from "./projects/project-pipeline-run.entity";
 import { ProjectDeploymentGeneration } from "./projects/project-deployment-generation.entity";
-import { ProjectDestroyLifecycle } from "./projects/project-destroy-lifecycle.entity";
+import { ProjectEnvironmentRoute } from "./projects/project-environment-route.entity";
 import { ProjectPreflightReport } from "./projects/project-preflight-report.entity";
 import { ProjectServiceBinding } from "./projects/project-service-binding.entity";
 import { ProjectSecurityScan } from "./projects/project-security-scan.entity";
@@ -65,6 +65,7 @@ import { UsersModule } from "./users/users.module";
 import { NotificationDelivery } from "./notifications/notification-delivery.entity";
 import { NotificationPreference } from "./notifications/notification-preference.entity";
 import { NotificationSubscription } from "./notifications/notification-subscription.entity";
+import { ObservabilityModule } from "./observability/observability.module";
 
 /** The supported local product: PostgreSQL + authenticated GitHub App + GitHub Actions. */
 @Module({
@@ -86,7 +87,7 @@ import { NotificationSubscription } from "./notifications/notification-subscript
           User, AuditLog, Project, GithubAppInstallation, ProjectEnvironmentVariable,
           ProjectDetectionProfile, ProjectDeploymentContract, ProjectDatabaseTier,
           ProjectServiceBinding, ProjectConfigurationSnapshot,
-          ProjectDeploymentRequirements, ProjectPreflightReport, ProjectPipelineRun, ProjectDeploymentGeneration, ProjectDestroyLifecycle,
+          ProjectDeploymentRequirements, ProjectPreflightReport, ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
           ProjectPipelineEvent, ProjectPipelineJobFinality, ProjectUserActivity,
           ProjectSecurityScan, ProjectSecurityFinding, ProjectCostEstimate,
           ProjectCostResourceBreakdown, ProjectCostSettings,
@@ -108,7 +109,7 @@ import { NotificationSubscription } from "./notifications/notification-subscript
       }),
     }),
     AuthModule, UsersModule, AdminModule, AuditLogModule, ProjectsModule,
-    TerraformExportModule, AiTroubleshootingModule,
+    TerraformExportModule, AiTroubleshootingModule, ObservabilityModule,
   ],
   controllers: [HealthController],
   providers: [AuthenticatedUserMiddleware, HealthService],

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Request } from "express";
 import { FindOptionsWhere, ILike, Repository } from "typeorm";
@@ -63,7 +64,8 @@ export class SecurityScanService {
     private readonly trivyParserService: TrivyParserService,
     private readonly securityPolicyService: SecurityPolicyService,
     private readonly remediationService: RemediationService,
-    private readonly auditLogService: AuditLogService
+    private readonly auditLogService: AuditLogService,
+    private readonly config: ConfigService
   ) {}
 
   async triggerScan(
@@ -97,6 +99,13 @@ export class SecurityScanService {
   }
 
   async scanImage(input: ScanImageInput) {
+    const scanEnabled = this.config.get<string>(
+      "TRIVY_SCAN_ENABLED",
+      this.config.get<string>("TRIVY_ENABLED", "true")
+    ) !== "false";
+    if (!scanEnabled) {
+      throw new BadRequestException("Security scan is disabled for this demo run.");
+    }
     const image = this.parseImageName(input.imageName);
     const scan = await this.scanRepository.save(
       this.scanRepository.create({

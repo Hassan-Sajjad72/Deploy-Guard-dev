@@ -4,65 +4,76 @@ import { Request } from "express";
 import { Repository } from "typeorm";
 import { AuditLogService } from "../../audit-log/audit-log.service";
 import { User } from "../../users/user.entity";
-import { ProjectDetectionProfile } from "../project-detection-profile.entity";
+import { DeploymentContractService } from "../deployment-contract.service";
+import { ProjectDeploymentContract } from "../project-deployment-contract.entity";
 import { ProjectEnvironmentVariable } from "../project-environment-variable.entity";
 import {
   PreflightValidationStatus,
   ProjectPreflightReport,
 } from "../project-preflight-report.entity";
 import { Project } from "../project.entity";
+import { canonicalEnvironmentName } from "../canonical-environment";
 import { ProjectsService } from "../projects.service";
-import { DockerTemplateEngineService } from "./docker-template-engine.service";
 import { DevOpsTemplateDefinition } from "./devops-templates";
 import { TemplateRegistryService } from "./template-registry.service";
+import { DatabaseServiceBindingService } from "../../infrastructure/database-service-binding.service";
+import { requireBuildPlan } from "../build-plan";
+import { evaluateBuildPlanReadiness } from "../build-plan-readiness";
+
+type Validation = { code: string; status: "passed" | "failed"; message: string };
 
 @Injectable()
 export class PreflightService {
+  private readonly inFlight = new Map<string, Promise<unknown>>();
+
   constructor(
     @InjectRepository(ProjectPreflightReport)
     private readonly reportRepository: Repository<ProjectPreflightReport>,
-    @InjectRepository(ProjectDetectionProfile)
-    private readonly profileRepository: Repository<ProjectDetectionProfile>,
     @InjectRepository(ProjectEnvironmentVariable)
     private readonly envVarRepository: Repository<ProjectEnvironmentVariable>,
     private readonly projectsService: ProjectsService,
+    private readonly deploymentContractService: DeploymentContractService,
     private readonly templateRegistryService: TemplateRegistryService,
-    private readonly dockerTemplateEngineService: DockerTemplateEngineService,
-    private readonly auditLogService: AuditLogService
+    private readonly auditLogService: AuditLogService,
+    private readonly effectiveConfiguration: DatabaseServiceBindingService,
   ) {}
 
   async generateReport(user: User, projectId: string, req?: Request) {
-    const project = await this.projectsService.getProjectEntityForManage(
-      user,
-      projectId
-    );
+    return this.singleFlight(projectId, () => this.executeGenerateReport(user, projectId, req));
+  }
+
+  async getOrGenerateReport(user: User, projectId: string, req?: Request) {
+    const project = await this.projectsService.getProjectEntityForManage(user, projectId);
+    const contract = await this.deploymentContractService.refreshForProject(project.id);
+    if (!contract) throw new NotFoundException("Run stack detection before pre-flight validation");
+    const existing = await this.reportRepository.findOne({ where: { projectId: project.id } });
+    if (
+      existing?.inputFingerprint === contract.contractHash &&
+      contract.deployable &&
+      [PreflightValidationStatus.PASSED, PreflightValidationStatus.PASSED_WITH_WARNINGS].includes(
+        existing.validationStatus as PreflightValidationStatus
+      )
+    ) {
+      await this.audit("PREFLIGHT_REUSED", user, project, existing, req);
+      return this.toReportResponse(existing);
+    }
+    return this.generateReport(user, projectId, req);
+  }
+
+  private async executeGenerateReport(user: User, projectId: string, req?: Request) {
+    const project = await this.projectsService.getProjectEntityForManage(user, projectId);
     await this.audit("PREFLIGHT_STARTED", user, project, undefined, req);
-
     try {
-      const profile = await this.getProfile(project.id);
-      const report = await this.buildReport(project, profile);
-      const savedReport = await this.saveReport(project, profile, report);
-
-      await this.audit("PREFLIGHT_COMPLETED", user, project, savedReport, req);
-
-      if (savedReport.generatedDockerfile) {
-        await this.audit("TEMPLATE_INJECTED", user, project, savedReport, req);
+      const contract = await this.deploymentContractService.refreshForProject(project.id);
+      if (!contract) throw new NotFoundException("Run stack detection before pre-flight validation");
+      const built = await this.buildReport(project, contract);
+      const saved = await this.saveReport(project, contract, built);
+      await this.audit("PREFLIGHT_COMPLETED", user, project, saved, req);
+      if (saved.generatedDockerfile) await this.audit("TEMPLATE_INJECTED", user, project, saved, req);
+      if (saved.validationStatus === PreflightValidationStatus.MANUAL_DOCKERFILE_REQUIRED) {
+        await this.audit("MANUAL_DOCKERFILE_REQUIRED", user, project, saved, req);
       }
-
-      if (
-        savedReport.validationStatus ===
-        PreflightValidationStatus.MANUAL_DOCKERFILE_REQUIRED
-      ) {
-        await this.audit(
-          "MANUAL_DOCKERFILE_REQUIRED",
-          user,
-          project,
-          savedReport,
-          req
-        );
-      }
-
-      return this.toReportResponse(savedReport);
+      return this.toReportResponse(saved);
     } catch (error) {
       await this.audit("PREFLIGHT_FAILED", user, project, undefined, req);
       throw error;
@@ -71,14 +82,8 @@ export class PreflightService {
 
   async getReport(user: User, projectId: string) {
     const project = await this.projectsService.getProjectEntityForView(user, projectId);
-    const report = await this.reportRepository.findOne({
-      where: { projectId: project.id },
-    });
-
-    if (!report) {
-      throw new NotFoundException("Pre-flight report not found");
-    }
-
+    const report = await this.reportRepository.findOne({ where: { projectId: project.id } });
+    if (!report) throw new NotFoundException("Pre-flight report not found");
     return this.toReportResponse(report);
   }
 
@@ -86,120 +91,148 @@ export class PreflightService {
     return this.templateRegistryService.listTemplates();
   }
 
-  private async buildReport(project: Project, profile: ProjectDetectionProfile) {
-    const validations = [];
-    const warnings: string[] = [];
-    const errors: string[] = [];
-    const template = this.templateRegistryService.getTemplate(
-      profile.selectedTemplate || ""
+  private async buildReport(project: Project, contract: ProjectDeploymentContract) {
+    const plan = requireBuildPlan(contract);
+    const template = this.templateRegistryService.getTemplate(plan.dockerTemplate) ||
+      this.templateRegistryService.getTemplate("custom-dockerfile-required");
+    if (!template) throw new ForbiddenException("DeployGuard template registry is incomplete");
+    const effective = await this.effectiveConfiguration.resolveEffectiveDeploymentConfiguration(
+      project.id,
+      null,
+      canonicalEnvironmentName(project),
+      { throwOnBlockers: false, requireReady: false, useSnapshot: false },
     );
-    const envVars = await this.envVarRepository.find({
-      where: { projectId: project.id },
-      order: { key: "ASC" },
-    });
-    warnings.push(...(profile.warnings || []));
-
-    this.addCheck(validations, "DETECTION_PROFILE_EXISTS", true, "Detection profile exists.");
-    this.addCheck(validations, "PROJECT_REPOSITORY_URL", Boolean(project.repositoryUrl), "Project has repository URL.", errors);
-    this.addCheck(validations, "PROJECT_TARGET_BRANCH", Boolean(project.targetBranch), "Project has target branch.", errors);
-    this.addCheck(validations, "SELECTED_TEMPLATE_EXISTS", Boolean(profile.selectedTemplate), "Detection selected a template.", errors);
-    this.addCheck(validations, "SUPPORTED_TEMPLATE", Boolean(template), "A supported template was found.", errors);
-    this.addCheck(validations, "SUPPORTED_FRAMEWORK", this.isSupportedFramework(profile), "Framework is supported for pre-flight.", errors);
-    this.addCheck(validations, "SUPPORTED_ECOSYSTEM", ["node", "python"].includes(profile.ecosystem) || profile.selectedTemplate?.startsWith("custom-dockerfile"), "Ecosystem is supported for pre-flight.", errors);
-    this.addCheck(validations, "EXPECTED_PORT", Boolean(profile.expectedPort || template?.defaultPort || profile.selectedTemplate?.startsWith("custom-dockerfile")), "Expected port exists or safe default exists.", errors);
-    this.addCheck(validations, "START_COMMAND", Boolean(profile.startCommand || profile.staticOutput || profile.hasDockerfile || profile.dockerfileRequired), "Start command exists or is not required.", errors);
-    this.addCheck(validations, "ENV_VALUES_NOT_INCLUDED", true, "Environment variable values are not included in report.");
-
-    if (!template) {
-      throw new ForbiddenException("Unsupported deployment template");
-    }
-
-    this.addCheck(
-      validations,
-      "BUILD_COMMAND",
-      !template.requiredCommands.includes("build") || Boolean(profile.buildCommand),
-      "Build command exists where required.",
-      errors
+    const validations: Validation[] = [];
+    this.addCheck(validations, "DEPLOYMENT_CONTRACT_EXISTS", true, "Deployment contract exists.");
+    this.addCheck(validations, "CONTRACT_COMMIT", Boolean(contract.detectionSourceCommit), "Deployment contract is tied to a repository commit.");
+    this.addCheck(validations, "SUPPORTED_LANGUAGE", ["javascript", "python"].includes(plan.language), "Only JavaScript and Python web applications are supported.");
+    this.addCheck(validations, "SUPPORTED_FRAMEWORK", Boolean(plan.framework), "A supported web framework is required.");
+    this.addCheck(validations, "DEPENDENCY_MANIFEST", Boolean(plan.dependencyManifest), "A supported dependency manifest is present.");
+    this.addCheck(validations, "INSTALL_COMMAND", Boolean(plan.installCommand), "A compatible install command is required.");
+    this.addCheck(validations, "BUILD_COMMAND", plan.runtimeType !== "static" || Boolean(plan.buildCommand), "Static applications require a build command.");
+    this.addCheck(validations, "START_COMMAND", plan.runtimeType === "static" || Boolean(plan.runCommand), "Server applications require a production run command.");
+    this.addCheck(validations, "EXPECTED_PORT", Boolean(plan.port), "Container and ALB target ports are required.");
+    this.addCheck(validations, "HEALTH_PATH", plan.healthPath.startsWith("/"), "A valid public health-check path is required.");
+    this.addCheck(validations, "REQUIRED_ENVIRONMENT", true, effective.unresolvedRequiredValues.length ? `Likely runtime application configuration is not set: ${effective.unresolvedRequiredValues.join(", ")}. This is a warning, not a structural deployment blocker.` : "All required application configuration is complete.");
+    this.addCheck(validations, "CONFIGURATION_OWNERSHIP", effective.prohibitedOverrides.length === 0 && effective.duplicateOwnershipConflicts.length === 0, "Every configuration key must have one authoritative owner.");
+    this.addCheck(validations, "DOCKERFILE_STRATEGY", contract.dockerStrategy === "custom" || Boolean(contract.generatedDockerfile), "A safe custom or generated Dockerfile is required.");
+    const generated = contract.generatedDockerfile || "";
+    const generatedContractValid = plan.dockerStrategy !== "generated" || (
+      Boolean(generated) &&
+      !/\{\{[A-Z_]+\}\}/.test(generated) &&
+      Boolean(contract.commitSha && generated.includes(contract.commitSha)) &&
+      (plan.runtimeType === "static" || generated.includes(JSON.stringify(["sh", "-c", plan.runCommand]))) &&
+      (!plan.buildCommand || generated.includes(`RUN ${plan.buildCommand}`))
     );
+    this.addCheck(validations, "DOCKERFILE_CONTRACT_PARITY", generatedContractValid, "Generated Dockerfile must exactly preserve the immutable commit, build, and start contract.");
+    const buildSecrets = plan.buildTimeEnvVars.filter((key) => plan.secretEnvVars.includes(key));
+    this.addCheck(validations, "NO_BUILD_TIME_SECRETS", buildSecrets.length === 0, "Secret values are forbidden during image build.");
+    this.addCheck(validations, "PUBLIC_BUILD_VARIABLES", plan.buildTimeEnvVars.every((key) => /^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$/.test(key)), "Only explicitly public framework-prefixed variables may enter image builds.");
+    this.addCheck(validations, "ECS_PORT_ALIGNMENT", Boolean(plan.port) && plan.port === contract.ecsPlan.targetGroupPort, "BuildPlan and ALB target ports must match.");
+    this.addCheck(validations, "ENV_VALUES_NOT_INCLUDED", true, "Environment variable values are not included in the report or contract.");
 
-    const generatedDockerfile =
-      profile.hasDockerfile ||
-      profile.selectedTemplate === "custom-dockerfile" ||
-      profile.selectedTemplate === "custom-dockerfile-required"
-        ? null
-        : this.dockerTemplateEngineService.renderDockerfile(template, profile);
-
-    if (profile.selectedTemplate === "custom-dockerfile-required") {
-      const rawProfile = (profile.rawProfile || {}) as Record<string, unknown>;
-      warnings.push(
-        typeof rawProfile.unsupportedReason === "string"
-          ? "Stack detected but no supported template is available."
-          : "No safe automatic template was found. Please provide a custom Dockerfile."
-      );
-    }
-
-    warnings.push(...template.warnings);
-    if (!this.hasDockerignore(profile)) {
-      warnings.push(".dockerignore was not found; the worker will generate a safe build-only default.");
-    }
-
-    const validationStatus = this.validationStatus(profile, errors, warnings);
+    const configurationBlockers = effective.blockers.filter((blocker) => !/^Required application configuration is unresolved:/i.test(blocker));
+    const configurationWarnings = effective.unresolvedRequiredValues.length
+      ? [`Likely runtime application configuration is not set: ${effective.unresolvedRequiredValues.join(", ")}.`]
+      : [];
+    const validationStatus = this.validationStatus(contract, configurationBlockers);
+    const readiness = evaluateBuildPlanReadiness(plan, effective);
+    const environmentEvidence = this.environmentEvidence(contract);
     const report = {
       project: {
         id: project.id,
         name: project.name,
         repositoryUrl: project.repositoryUrl,
-        repositoryFullName: project.repositoryFullName,
-        targetBranch: project.targetBranch,
+        repositoryFullName: contract.repositoryFullName,
+        targetBranch: contract.branch,
+        commitSha: plan.commitSha,
+      },
+      repositoryInspection: {
+        emptyRepository: false,
+        manifestFiles: contract.dependencyManifest ? [contract.dependencyManifest] : [],
+        appRoot: plan.appRoot,
+        appRootConfidence: plan.confidence,
+        appRootReason: "Deployment contract selected this application root from repository evidence.",
+        detectedCandidates: [],
+        sourceFileCount: null,
       },
       detectedStack: {
-        ecosystem: profile.ecosystem,
-        framework: profile.framework,
-        frameworkVariant: profile.frameworkVariant,
-        packageManager: profile.packageManager,
-        runtimeVersion: profile.runtimeVersion,
+        ecosystem: contract.language === "javascript" ? "node" : contract.language,
+        language: plan.language,
+        framework: plan.framework,
+        packageManager: plan.packageManager,
+        runtimeVersion: plan.runtimeVersion,
       },
       deploymentProfile: {
-        buildCommand: profile.buildCommand,
-        startCommand: profile.startCommand,
-        expectedPort: profile.expectedPort || template.defaultPort || null,
-        healthCheckPath: profile.healthCheckPath,
-        requiresDatabase: profile.requiresDatabase,
-        requiresPersistentStorage: profile.requiresPersistentStorage,
-        staticOutput: profile.staticOutput,
+        installCommand: plan.installCommand,
+        buildCommand: plan.buildCommand,
+        releaseCommand: plan.releaseCommand,
+        startCommand: plan.runCommand,
+        expectedPort: plan.port,
+        healthCheckPath: plan.healthPath,
+        runtimeType: plan.runtimeType,
+        outputDirectory: plan.outputDirectory,
+        bindsToPortEnv: plan.bindsToPortEnv,
+        bindHost: plan.bindHost,
+        requiresDatabase: contract.databaseRequired,
+        requiresPersistentStorage: contract.persistentStorageRequired,
+        staticOutput: plan.runtimeType === "static",
       },
-      template: {
-        templateKey: template.templateKey,
-        displayName: template.displayName,
-        baseImage: template.baseImage,
-        runtimeImage: template.runtimeImage,
-        usesMultiStageBuild: template.usesMultiStageBuild,
-        securityLevel: template.securityLevel,
-      },
+      template: this.templateSummary(template),
       dockerfile: {
-        willGenerate: Boolean(generatedDockerfile),
-        usesExistingDockerfile: profile.hasDockerfile,
-        dockerfileRequired: profile.dockerfileRequired,
-        contentPreview: generatedDockerfile,
+        willGenerate: Boolean(contract.generatedDockerfile),
+        usesExistingDockerfile: contract.dockerStrategy === "custom",
+        dockerfileRequired: contract.dockerStrategy === "custom",
+        contentPreview: contract.generatedDockerfile,
       },
       environmentVariables: {
-        count: envVars.length,
-        keys: envVars.map((envVar) => envVar.key),
+        count: Object.keys(effective.ownership).length,
+        keys: Object.keys(effective.ownership).sort(),
+        detected: environmentEvidence,
+        required: plan.requiredInputs,
+        optional: plan.optionalInputs,
+        buildTime: plan.buildTimeEnvVars,
+        runtime: plan.runtimeEnvVars,
+        secrets: plan.secretEnvVars,
+        missing: effective.unresolvedRequiredValues,
         containsSecretValues: false,
         valuesIncluded: false,
       },
+      readiness: {
+        decision: readiness.status,
+        validationStatus,
+        contractHash: contract.contractHash,
+        configurationFingerprint: effective.configurationFingerprint,
+      },
+      ecsRuntimePlan: {
+        containerPort: plan.port,
+        albTargetPort: contract.ecsPlan.targetGroupPort,
+        healthCheckPath: plan.healthPath,
+        runtimeCommand: plan.runCommand,
+        cpu: contract.ecsPlan.cpu,
+        memory: contract.ecsPlan.memory,
+        environmentMappings: contract.ecsPlan.environmentMappings,
+        secretMappings: contract.ecsPlan.secretMappings,
+        injectPortEnvironment: contract.runtimeType === "server",
+      },
       validations,
-      warnings,
-      errors,
+      warnings: [...new Set([...readiness.warnings, ...configurationWarnings])],
+      errors: readiness.blockers,
     };
-
-    return { report, template, generatedDockerfile, validationStatus, warnings, errors };
+    return {
+      report,
+      template,
+      generatedDockerfile: contract.generatedDockerfile,
+      validationStatus,
+      warnings: [...new Set([...contract.warnings, ...configurationWarnings])],
+      errors: [...new Set([...contract.blockers, ...configurationBlockers])],
+    };
   }
 
   private async saveReport(
     project: Project,
-    profile: ProjectDetectionProfile,
-    builtReport: {
+    contract: ProjectDeploymentContract,
+    built: {
       report: Record<string, unknown>;
       template: DevOpsTemplateDefinition;
       generatedDockerfile: string | null;
@@ -208,110 +241,72 @@ export class PreflightService {
       errors: string[];
     }
   ) {
-    const existing = await this.reportRepository.findOne({
-      where: { projectId: project.id },
-    });
-    const report = this.reportRepository.create({
+    const existing = await this.reportRepository.findOne({ where: { projectId: project.id } });
+    return this.reportRepository.save(this.reportRepository.create({
       ...(existing || {}),
       projectId: project.id,
-      detectionProfileId: profile.id,
-      templateKey: builtReport.template.templateKey,
-      templateDisplayName: builtReport.template.displayName,
-      ecosystem: profile.ecosystem,
-      framework: profile.framework,
-      frameworkVariant: profile.frameworkVariant,
-      packageManager: profile.packageManager,
-      runtimeVersion: profile.runtimeVersion,
-      expectedPort: profile.expectedPort || builtReport.template.defaultPort || null,
-      buildCommand: profile.buildCommand,
-      startCommand: profile.startCommand,
-      healthCheckPath: profile.healthCheckPath,
-      hasDockerfile: profile.hasDockerfile,
-      dockerfileRequired: profile.dockerfileRequired,
-      generatedDockerfile: builtReport.generatedDockerfile,
-      report: builtReport.report,
-      validationStatus: builtReport.validationStatus,
-      warnings: builtReport.warnings,
-      errors: builtReport.errors,
-    });
-
-    return this.reportRepository.save(report);
+      detectionProfileId: contract.detectionProfileId,
+      inputFingerprint: contract.contractHash,
+      templateKey: contract.dockerTemplate || built.template.templateKey,
+      templateDisplayName: built.template.displayName,
+      ecosystem: contract.language === "javascript" ? "node" : contract.language || "unknown",
+      framework: contract.framework,
+      frameworkVariant: contract.dockerTemplate,
+      packageManager: contract.packageManager,
+      runtimeVersion: contract.nodeVersion || contract.pythonVersion,
+      expectedPort: contract.port,
+      buildCommand: contract.buildCommand,
+      startCommand: contract.startCommand,
+      healthCheckPath: contract.healthPath,
+      hasDockerfile: contract.dockerStrategy === "custom",
+      dockerfileRequired: contract.dockerStrategy === "custom",
+      generatedDockerfile: built.generatedDockerfile,
+      report: built.report,
+      validationStatus: built.validationStatus,
+      warnings: built.warnings,
+      errors: built.errors,
+    }));
   }
 
-  private async getProfile(projectId: string) {
-    const profile = await this.profileRepository.findOne({ where: { projectId } });
-
-    if (!profile) {
-      throw new NotFoundException("Run stack detection before pre-flight validation");
-    }
-
-    return profile;
-  }
-
-  private addCheck(
-    validations: Array<{ code: string; status: string; message: string }>,
-    code: string,
-    passed: boolean,
-    message: string,
-    errors?: string[]
-  ) {
-    validations.push({ code, status: passed ? "passed" : "failed", message });
-
-    if (!passed && errors) {
-      errors.push(message);
-    }
-  }
-
-  private isSupportedFramework(profile: ProjectDetectionProfile) {
-    if (profile.selectedTemplate?.startsWith("custom-dockerfile")) {
-      return true;
-    }
-
-    return [
-      "nextjs",
-      "express",
-      "nestjs",
-      "react",
-      "vite-react",
-      "django",
-      "fastapi",
-      "flask",
-      "unknown",
-    ].includes(profile.framework || "unknown");
-  }
-
-  private validationStatus(
-    profile: ProjectDetectionProfile,
-    errors: string[],
-    warnings: string[]
-  ) {
-    if (profile.selectedTemplate === "custom-dockerfile-required") {
+  private validationStatus(contract: ProjectDeploymentContract, configurationBlockers: string[] = []) {
+    if (contract.dockerTemplate === "custom-dockerfile-required") {
       return PreflightValidationStatus.MANUAL_DOCKERFILE_REQUIRED;
     }
-
-    if (errors.length > 0) {
-      return PreflightValidationStatus.FAILED;
-    }
-
-    return warnings.length > 0
+    if (!contract.deployable || contract.blockers.length || configurationBlockers.length) return PreflightValidationStatus.FAILED;
+    return contract.warnings.length
       ? PreflightValidationStatus.PASSED_WITH_WARNINGS
       : PreflightValidationStatus.PASSED;
   }
 
-  private hasDockerignore(profile: ProjectDetectionProfile) {
-    const rawProfile = profile.rawProfile as { rootFiles?: unknown } | null;
-    return Array.isArray(rawProfile?.rootFiles)
-      ? rawProfile.rootFiles.includes(".dockerignore")
-      : false;
+  private environmentEvidence(contract: ProjectDeploymentContract) {
+    const keys = new Set([...contract.requiredEnvVars, ...contract.optionalEnvVars]);
+    return [...keys].sort().map((key) => ({
+      key,
+      required: contract.requiredEnvVars.includes(key),
+      phase: contract.buildTimeEnvVars.includes(key) && contract.runtimeEnvVars.includes(key)
+        ? "both"
+        : contract.buildTimeEnvVars.includes(key) ? "build" : "runtime",
+      public: /^(VITE_|NEXT_PUBLIC_|REACT_APP_)/.test(key),
+      secret: contract.secretEnvVars.includes(key),
+    }));
   }
 
-  private async audit(
-    action: string,
-    user: User,
-    project: Project,
-    report?: ProjectPreflightReport,
-    req?: Request
-  ) {
+  private templateSummary(template: DevOpsTemplateDefinition) {
+    return {
+      templateKey: template.templateKey,
+      displayName: template.displayName,
+      baseImage: template.baseImage,
+      runtimeImage: template.runtimeImage,
+      usesMultiStageBuild: template.usesMultiStageBuild,
+      securityLevel: template.securityLevel,
+    };
+  }
+
+  private addCheck(validations: Validation[], code: string, passed: boolean, message: string) {
+    validations.push({ code, status: passed ? "passed" : "failed", message });
+  }
+
+  private async audit(action: string, user: User, project: Project, report?: ProjectPreflightReport, req?: Request) {
     await this.auditLogService.record({
       actorUser: user,
       action,
@@ -337,6 +332,7 @@ export class PreflightService {
       id: report.id,
       projectId: report.projectId,
       detectionProfileId: report.detectionProfileId,
+      inputFingerprint: report.inputFingerprint,
       templateKey: report.templateKey,
       templateDisplayName: report.templateDisplayName,
       ecosystem: report.ecosystem,
@@ -358,5 +354,17 @@ export class PreflightService {
       createdAt: report.createdAt,
       updatedAt: report.updatedAt,
     };
+  }
+
+  private async singleFlight<T>(projectId: string, task: () => Promise<T>): Promise<T> {
+    const active = this.inFlight.get(projectId);
+    if (active) return active as Promise<T>;
+    const promise = task();
+    this.inFlight.set(projectId, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.inFlight.get(projectId) === promise) this.inFlight.delete(projectId);
+    }
   }
 }

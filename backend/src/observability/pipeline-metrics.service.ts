@@ -162,11 +162,11 @@ export class PipelineMetricsService {
     const byStage = new Map(existing.map((metric) => [metric.stageName, metric]));
     const pipelineEvents = await this.eventRepository.find({
       where: { projectId, pipelineRunId },
-      order: { createdAt: "ASC" },
+      order: { occurredAt: "ASC", sequenceNumber: "ASC" },
     });
     const orchestrationEvents = await this.orchestrationEventRepository.find({
       where: { projectId, pipelineRunId },
-      order: { createdAt: "ASC" },
+      order: { occurredAt: "ASC", sequenceNumber: "ASC" },
     });
 
     const candidates = [
@@ -196,7 +196,7 @@ export class PipelineMetricsService {
 
   private fromEvents(
     stageName: string,
-    events: Array<{ stage?: string; eventType?: string; status: string; createdAt: Date; metadata?: Record<string, unknown> | null }>,
+    events: Array<{ stage?: string; eventType?: string; status: string; createdAt: Date; occurredAt?: Date; metadata?: Record<string, unknown> | null }>,
     starts: string[],
     successes: string[],
     failures: string[]
@@ -211,8 +211,8 @@ export class PipelineMetricsService {
       return null;
     }
 
-    const startedAt = start?.createdAt || terminal.createdAt;
-    const endedAt = terminal === start && terminal.status === "running" ? null : terminal.createdAt;
+    const startedAt = start?.occurredAt || start?.createdAt || terminal.occurredAt || terminal.createdAt;
+    const endedAt = terminal === start && terminal.status === "running" ? null : terminal.occurredAt || terminal.createdAt;
     const status = failure
       ? StageMetricStatus.FAILED
       : success

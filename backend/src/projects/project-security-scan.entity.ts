@@ -67,13 +67,13 @@ export class ProjectSecurityScan {
   @Column({ name: "scan_status" })
   scanStatus: string;
 
-  @Column({ nullable: true, name: "started_at", type: "timestamp" })
+  @Column({ nullable: true, name: "started_at", type: "timestamptz" })
   startedAt: Date;
 
-  @Column({ nullable: true, name: "completed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "completed_at", type: "timestamptz" })
   completedAt: Date;
 
-  @Column({ nullable: true, name: "failed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "failed_at", type: "timestamptz" })
   failedAt: Date;
 
   @Column({ default: 0, name: "total_vulnerabilities" })
@@ -110,7 +110,7 @@ export class ProjectSecurityScan {
   @JoinColumn({ name: "approved_by_user_id" })
   approvedByUser: User;
 
-  @Column({ nullable: true, name: "approved_at", type: "timestamp" })
+  @Column({ nullable: true, name: "approved_at", type: "timestamptz" })
   approvedAt: Date;
 
   @Column({ nullable: true, name: "approval_reason", type: "text" })
@@ -122,9 +122,9 @@ export class ProjectSecurityScan {
   @OneToMany(() => ProjectSecurityFinding, (finding) => finding.scan)
   findings: ProjectSecurityFinding[];
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

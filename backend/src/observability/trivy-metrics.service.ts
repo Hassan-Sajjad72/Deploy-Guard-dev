@@ -47,13 +47,13 @@ export class TrivyMetricsService {
       durationMs,
     });
 
-    await this.metrics.startStage(projectId, pipelineRunId, "trivy_scan", StageMetricSource.TRIVY, metadata);
+    await this.metrics.startStage(projectId, pipelineRunId, "trivy_image_scan", StageMetricSource.TRIVY, metadata);
 
     if (scan.scanStatus === "failed") {
-      return this.metrics.failStage(projectId, pipelineRunId, "trivy_scan", scan.policyReason || "Trivy scan failed.", metadata);
+      return this.metrics.failStage(projectId, pipelineRunId, "trivy_image_scan", scan.policyReason || "Trivy scan failed.", metadata);
     }
 
-    return this.metrics.completeStage(projectId, pipelineRunId, "trivy_scan", metadata);
+    return this.metrics.completeStage(projectId, pipelineRunId, "trivy_image_scan", metadata);
   }
 
   async getLatest(projectId: string, pipelineRunId?: string) {

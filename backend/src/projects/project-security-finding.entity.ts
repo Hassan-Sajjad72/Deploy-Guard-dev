@@ -97,6 +97,6 @@ export class ProjectSecurityFinding {
   @Column({ default: "warning", name: "policy_action" })
   policyAction: string;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

@@ -46,6 +46,21 @@ export class ProjectPipelineEvent {
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @Column({ name: "occurred_at", type: "timestamptz", default: () => "CURRENT_TIMESTAMP" })
+  occurredAt: Date;
+
+  @Column({ name: "ingested_at", type: "timestamptz", default: () => "CURRENT_TIMESTAMP" })
+  ingestedAt: Date;
+
+  @Column({ nullable: true, name: "duration_ms", type: "bigint" })
+  durationMs: number | null;
+
+  @Column({ default: "pipeline_worker" })
+  source: string;
+
+  @Column({ name: "sequence_number", type: "integer", default: 0 })
+  sequenceNumber: number;
+
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

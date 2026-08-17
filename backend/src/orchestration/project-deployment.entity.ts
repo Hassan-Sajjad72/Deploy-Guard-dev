@@ -31,7 +31,7 @@ export class ProjectDeployment {
   @PrimaryGeneratedColumn("uuid")
   id: string;
 
-  @Index()
+  @Index("IDX_project_deployments_release_manifest")
   @Column({ name: "project_id" })
   projectId: string;
 
@@ -45,6 +45,10 @@ export class ProjectDeployment {
   @ManyToOne(() => ProjectPipelineRun, { nullable: true, onDelete: "SET NULL" })
   @JoinColumn({ name: "pipeline_run_id" })
   pipelineRun: ProjectPipelineRun;
+
+  @Index()
+  @Column({ nullable: true, name: "release_manifest_id", type: "uuid" })
+  releaseManifestId: string | null;
 
   @Column({ nullable: true, name: "infrastructure_environment_id" })
   infrastructureEnvironmentId: string;
@@ -128,19 +132,19 @@ export class ProjectDeployment {
   @Column({ nullable: true, name: "cloud_map_service_name" })
   cloudMapServiceName: string;
 
-  @Column({ nullable: true, name: "deployment_started_at", type: "timestamp" })
+  @Column({ nullable: true, name: "deployment_started_at", type: "timestamptz" })
   deploymentStartedAt: Date;
 
-  @Column({ nullable: true, name: "deployment_completed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "deployment_completed_at", type: "timestamptz" })
   deploymentCompletedAt: Date;
 
-  @Column({ nullable: true, name: "failed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "failed_at", type: "timestamptz" })
   failedAt: Date;
 
-  @Column({ nullable: true, name: "rollback_started_at", type: "timestamp" })
+  @Column({ nullable: true, name: "rollback_started_at", type: "timestamptz" })
   rollbackStartedAt: Date;
 
-  @Column({ nullable: true, name: "rollback_completed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "rollback_completed_at", type: "timestamptz" })
   rollbackCompletedAt: Date;
 
   @Column({ default: false })
@@ -152,9 +156,9 @@ export class ProjectDeployment {
   @Column({ nullable: true, name: "error_message", type: "text" })
   errorMessage: string;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }

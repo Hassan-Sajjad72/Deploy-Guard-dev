@@ -5,7 +5,7 @@ import { existsSync } from "fs";
 import { Repository } from "typeorm";
 import { CostEstimateStatus, ProjectCostEstimate } from "../finops/project-cost-estimate.entity";
 import { getFinopsConfig } from "../finops/finops.config";
-import { ProjectDetectionProfile } from "../projects/project-detection-profile.entity";
+import { ProjectDeploymentContract } from "../projects/project-deployment-contract.entity";
 import {
   PreflightValidationStatus,
   ProjectPreflightReport,
@@ -18,10 +18,12 @@ import { SecurityPolicyDecision, ProjectSecurityScan } from "../projects/project
 import { Project, ProjectStatus, ProjectVisibility } from "../projects/project.entity";
 import { User, UserRole } from "../users/user.entity";
 import { getInfrastructureConfig } from "./infrastructure.config";
+import { envBoolean, externalCiRequired } from "../config/env-parsing";
 import {
   InfrastructureEnvironmentStatus,
   ProjectInfrastructureEnvironment,
 } from "./project-infrastructure-environment.entity";
+import { PipelineActivityService } from "../projects/pipeline/pipeline-activity.service";
 
 export type DeploymentReadinessCheck = {
   key: string;
@@ -36,8 +38,8 @@ export class InfrastructureReadinessService {
   constructor(
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
-    @InjectRepository(ProjectDetectionProfile)
-    private readonly profileRepository: Repository<ProjectDetectionProfile>,
+    @InjectRepository(ProjectDeploymentContract)
+    private readonly contractRepository: Repository<ProjectDeploymentContract>,
     @InjectRepository(ProjectPreflightReport)
     private readonly preflightRepository: Repository<ProjectPreflightReport>,
     @InjectRepository(ProjectPipelineRun)
@@ -48,6 +50,7 @@ export class InfrastructureReadinessService {
     private readonly costEstimateRepository: Repository<ProjectCostEstimate>,
     @InjectRepository(ProjectInfrastructureEnvironment)
     private readonly environmentRepository: Repository<ProjectInfrastructureEnvironment>,
+    private readonly pipelineActivity: PipelineActivityService,
     private readonly config: ConfigService
   ) {}
 
@@ -76,32 +79,33 @@ export class InfrastructureReadinessService {
     checks.push(this.checkBoolean("repository", "GitHub repository", Boolean(project.repositoryUrl), "Repository is linked.", "Link a GitHub repository first."));
     checks.push(this.checkBoolean("target_branch", "Target branch", Boolean(project.targetBranch), "Target branch is selected.", "Select a target branch first."));
 
-    const profile = await this.profileRepository.findOne({ where: { projectId: project.id } });
-    checks.push(this.checkBoolean("stack_detection", "Stack detection", Boolean(profile), "Stack detection profile exists.", "Run stack detection first."));
+    const contract = await this.contractRepository.findOne({ where: { projectId: project.id } });
+    checks.push(this.checkBoolean("deployment_contract", "Deployment contract", Boolean(contract), "Deployment contract exists.", "Run stack detection first."));
+    checks.push(this.checkBoolean("deployability", "Deployability", Boolean(contract?.deployable), "Deployment contract is deployable.", contract?.blockers?.[0] || "Resolve deployment contract blockers first."));
 
     const preflight = await this.preflightRepository.findOne({ where: { projectId: project.id } });
     const preflightPassed = Boolean(
       preflight &&
         [PreflightValidationStatus.PASSED, PreflightValidationStatus.PASSED_WITH_WARNINGS].includes(
           preflight.validationStatus as PreflightValidationStatus
-        )
+        ) && preflight.inputFingerprint === contract?.contractHash
     );
     checks.push(this.checkBoolean("preflight", "Pre-flight validation", preflightPassed, "Pre-flight validation passed.", "Generate and pass pre-flight validation first."));
 
     const externalCiConfigured = Boolean(
-      this.config.get<string>("GITHUB_TOKEN") &&
-        this.config.get<string>("GITHUB_ACTIONS_WORKFLOW_FILE", "deploy.yml")
+      this.config.get<string>("GITHUB_APP_ID") &&
+        this.config.get<string>("GITHUB_APP_PRIVATE_KEY") &&
+        this.config.get<string>("GITHUB_ACTIONS_WORKFLOW_FILE", "deployguard.yml")
     );
-    const externalCiRequired =
-      this.config.get<string>("GITHUB_ACTIONS_REQUIRED", "false") === "true";
+    const isExternalCiRequired = externalCiRequired(this.config);
     checks.push({
       key: "external_ci_validation",
       label: "Optional External CI",
-      status: externalCiConfigured ? "passed" : externalCiRequired ? "missing" : "warning",
-      blocking: externalCiRequired && !externalCiConfigured,
+      status: externalCiConfigured ? "passed" : isExternalCiRequired ? "missing" : "warning",
+      blocking: isExternalCiRequired && !externalCiConfigured,
       message: externalCiConfigured
         ? "Optional external CI dispatch is configured."
-        : externalCiRequired
+        : isExternalCiRequired
           ? "External CI is required but is not configured."
           : "External CI is not configured. DeployGuard internal pipeline remains available.",
     });
@@ -110,18 +114,26 @@ export class InfrastructureReadinessService {
       where: { projectId: project.id },
       order: { createdAt: "DESC" },
     });
+    const deploymentActivity = await this.pipelineActivity.inspect(project.id, latestRun);
     checks.push(this.checkBoolean("artifact", "Docker artifact", Boolean(!latestRun || latestRun.ecrImageUri || canManage), "Docker build artifact is ready or can be built by deployment.", "Docker build artifact is not ready."));
 
     const latestScan = await this.scanRepository.findOne({
       where: { projectId: project.id },
       order: { createdAt: "DESC" },
     });
-    const securityPassed = Boolean(
-      !latestScan ||
-        latestScan.policyDecision === SecurityPolicyDecision.ALLOWED ||
-        latestScan.policyDecision === SecurityPolicyDecision.APPROVED_OVERRIDE
-    );
-    checks.push(this.checkBoolean("security", "Security gate", securityPassed, "Security gate is passable.", "Security scan is blocked by critical/high vulnerabilities."));
+    const securityDisabled =
+      !envBoolean(this.config, "TRIVY_SCAN_ENABLED", envBoolean(this.config, "TRIVY_ENABLED", true)) ||
+      this.config.get<string>("SECURITY_GATE_MODE", "enforce").trim().toLowerCase() === "bypass";
+    if (securityDisabled) {
+      checks.push({ key: "security", label: "Security gate", status: "warning", blocking: false, message: "Trivy/security enforcement is disabled; no production security pass is claimed." });
+    } else {
+      const securityPassed = Boolean(
+        !latestScan ||
+          latestScan.policyDecision === SecurityPolicyDecision.ALLOWED ||
+          latestScan.policyDecision === SecurityPolicyDecision.APPROVED_OVERRIDE
+      );
+      checks.push(this.checkBoolean("security", "Security gate", securityPassed, "Security gate is passable.", "Security scan is blocked by critical/high vulnerabilities."));
+    }
 
     const latestCost = await this.costEstimateRepository.findOne({
       where: { projectId: project.id },
@@ -141,7 +153,13 @@ export class InfrastructureReadinessService {
       ],
       order: { createdAt: "DESC" },
     });
-    checks.push(this.checkBoolean("not_in_progress", "Deployment progress", !activeEnvironment, "No deployment is currently running.", "Deployment already in progress."));
+    checks.push(this.checkBoolean(
+      "not_in_progress",
+      "Deployment progress",
+      !activeEnvironment && !deploymentActivity.isDeploymentJobActive,
+      "No deployment is currently running.",
+      "Deployment already in progress.",
+    ));
     checks.push(this.checkBoolean("write_access", "Deploy permission", canManage, "User can deploy this project.", "Readonly users cannot deploy."));
 
     return this.result(checks);
@@ -192,6 +210,10 @@ export class InfrastructureReadinessService {
   }
 
   private costCheck(estimate: ProjectCostEstimate | null): DeploymentReadinessCheck {
+    const finops = getFinopsConfig(this.config);
+    if (finops.mockMode || !finops.infracostEnabled) {
+      return { key: "cost", label: "FinOps cost gate", status: "warning", blocking: false, message: estimate ? "Only a mock/local estimate is available; no real Infracost result is claimed." : "FinOps/Infracost is disabled or mock and will not block deployment." };
+    }
     if (!estimate) {
       return { key: "cost", label: "FinOps cost gate", status: "missing", blocking: true, message: "Generate a cost estimate first." };
     }

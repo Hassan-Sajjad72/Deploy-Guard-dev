@@ -1,5 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { inflateRawSync } from "node:zlib";
+import { BUILD_PLAN_WORKFLOW_INPUT_NAMES, GITHUB_ACTIONS_CALLER_INPUT_NAMES, GITHUB_ACTIONS_OPTIONAL_CALLER_INPUT_NAMES } from "../github-actions-operation-contract";
 
 export type GithubActionsDiagnosticCode =
   | "workflow_file_missing"
@@ -9,16 +11,116 @@ export type GithubActionsDiagnosticCode =
   | "token_no_repo_access"
   | "token_no_actions_write"
   | "github_actions_disabled"
+  | "workflow_run_identity_missing"
   | "repo_not_found_or_permission_denied"
   | "invalid_workflow_inputs"
   | "unknown_github_error";
 
 export class GithubActionsDispatchError extends Error {
-  constructor(public readonly diagnosticCode: GithubActionsDiagnosticCode) {
+  constructor(
+    public readonly diagnosticCode: GithubActionsDiagnosticCode,
+    public readonly safeDetail: string | null = null,
+    public readonly evidence: GithubActionsDispatchEvidence | null = null,
+  ) {
     super(
       "GitHub Actions dispatch failed. Check workflow file, selected branch, workflow_dispatch, token repo access, and Actions write permission."
     );
   }
+}
+
+export type GithubActionsDispatchEvidence = {
+  classification: GithubActionsDiagnosticCode;
+  httpStatus: number | null;
+  message: string;
+  workflow: string;
+  repository: string;
+  ref: string;
+  inputNames: string[];
+  operationId: string | null;
+  failedAt: string;
+};
+
+export type GithubActionsDispatchReceipt = {
+  httpStatus: number;
+  workflow: string;
+  repository: string;
+  ref: string;
+  inputNames: string[];
+  operationId: string | null;
+  apiVersion: "2026-03-10";
+  authentication: "Bearer installation token";
+  workflowRunId: string;
+  workflowRunUrl: string | null;
+};
+
+export function compactGithubWorkflowInputs(inputs?: Record<string, string>) {
+  if (!inputs) return undefined;
+  return Object.fromEntries(Object.entries(inputs).filter(([, value]) => value !== ""));
+}
+
+export function githubWorkflowDispatchInputs(inputs?: Record<string, string>) {
+  if (!inputs) return undefined;
+  const callerInputs = { ...inputs };
+  const rollback = {
+    sourceOperationId: callerInputs.rollback_source_operation_id || "",
+    imageUri: callerInputs.rollback_image_uri || "",
+    taskDefinitionArn: callerInputs.rollback_task_definition_arn || "",
+  };
+  delete callerInputs.rollback_source_operation_id;
+  delete callerInputs.rollback_image_uri;
+  delete callerInputs.rollback_task_definition_arn;
+  const rollbackValues = Object.values(rollback);
+  if (rollbackValues.some(Boolean) && !rollbackValues.every(Boolean)) {
+    throw new GithubActionsDispatchError("invalid_workflow_inputs", "Immutable rollback dispatch evidence is incomplete.");
+  }
+  const buildPlan = Object.fromEntries(BUILD_PLAN_WORKFLOW_INPUT_NAMES.map((name) => [
+    name,
+    name === "app_port" ? Number(callerInputs[name]) : callerInputs[name] || "",
+  ]));
+  if (!Number.isInteger(buildPlan.app_port) || Number(buildPlan.app_port) < 1 || Number(buildPlan.app_port) > 65535) {
+    throw new GithubActionsDispatchError("invalid_workflow_inputs", "Immutable BuildPlan port is invalid.");
+  }
+  for (const name of BUILD_PLAN_WORKFLOW_INPUT_NAMES) delete callerInputs[name];
+  callerInputs.build_plan_contract_json = JSON.stringify(buildPlan);
+  if (rollbackValues.every(Boolean)) callerInputs.rollback_release_json = JSON.stringify(rollback);
+  return compactGithubWorkflowInputs(callerInputs);
+}
+
+export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryBytes = 512 * 1024) {
+  const minimumEocd = 22;
+  const searchStart = Math.max(0, archive.length - 65_557);
+  let eocd = -1;
+  for (let offset = archive.length - minimumEocd; offset >= searchStart; offset -= 1) {
+    if (archive.readUInt32LE(offset) === 0x06054b50) { eocd = offset; break; }
+  }
+  if (eocd < 0) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact is not a valid ZIP archive.");
+  const entryCount = archive.readUInt16LE(eocd + 10);
+  let cursor = archive.readUInt32LE(eocd + 16);
+  for (let index = 0; index < entryCount; index += 1) {
+    if (archive.readUInt32LE(cursor) !== 0x02014b50) break;
+    const method = archive.readUInt16LE(cursor + 10);
+    const compressedSize = archive.readUInt32LE(cursor + 20);
+    const uncompressedSize = archive.readUInt32LE(cursor + 24);
+    const nameLength = archive.readUInt16LE(cursor + 28);
+    const extraLength = archive.readUInt16LE(cursor + 30);
+    const commentLength = archive.readUInt16LE(cursor + 32);
+    const localOffset = archive.readUInt32LE(cursor + 42);
+    const name = archive.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
+    if (name === expectedName) {
+      if (uncompressedSize > maxEntryBytes || localOffset + 30 > archive.length || archive.readUInt32LE(localOffset) !== 0x04034b50) {
+        throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact is invalid or too large.");
+      }
+      const localNameLength = archive.readUInt16LE(localOffset + 26);
+      const localExtraLength = archive.readUInt16LE(localOffset + 28);
+      const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = archive.subarray(dataStart, dataStart + compressedSize);
+      const result = method === 0 ? compressed : method === 8 ? inflateRawSync(compressed) : null;
+      if (!result || result.length !== uncompressedSize) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact compression is unsupported.");
+      return result.toString("utf8");
+    }
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return null;
 }
 
 @Injectable()
@@ -26,23 +128,33 @@ export class GithubActionsService {
   constructor(private readonly config: ConfigService) {}
 
   getWorkflowFile() {
-    return this.config.get<string>("GITHUB_ACTIONS_WORKFLOW_FILE", "deploy.yml");
+    return this.config.get<string>("GITHUB_ACTIONS_WORKFLOW_FILE", "deployguard.yml");
   }
 
   async triggerWorkflow(input: {
     repositoryFullName: string;
     targetBranch: string;
-  }): Promise<{ status: string; workflowRunId: string | null }> {
-    const token = this.config.get<string>("GITHUB_TOKEN");
+    token?: string;
+    inputs?: Record<string, string>;
+  }): Promise<{ status: "dispatch_accepted"; workflowRunId: string; receipt: GithubActionsDispatchReceipt }> {
+    const token = input.token?.trim();
     const workflowFile = this.config.get<string>(
       "GITHUB_ACTIONS_WORKFLOW_FILE",
-      "deploy.yml"
+      "deployguard.yml"
     );
 
     if (!token || !workflowFile) {
       throw new GithubActionsDispatchError(token ? "workflow_file_missing" : "token_missing");
     }
 
+    const dispatchInputs = githubWorkflowDispatchInputs(input.inputs) || {};
+    const inputNames = Object.keys(dispatchInputs).sort();
+    const operationId = input.inputs?.deployment_operation_id || null;
+    if (input.inputs && (input.repositoryFullName !== input.inputs.repository_full_name || input.targetBranch !== input.inputs.repository_branch)) {
+      const detail = "Dispatch repository and ref do not match the immutable deployment snapshot.";
+      throw new GithubActionsDispatchError("invalid_workflow_inputs", detail, this.failureEvidence("invalid_workflow_inputs", null, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId));
+    }
+    await this.validateDispatchTarget(input.repositoryFullName, input.targetBranch, workflowFile, token, inputNames, operationId);
     let response: Response;
 
     try {
@@ -53,12 +165,14 @@ export class GithubActionsService {
         {
           method: "POST",
           headers: {
-            Accept: "application/vnd.github+json",
-            Authorization: `Bearer ${token}`,
+            ...this.headers(token),
             "Content-Type": "application/json",
-            "User-Agent": "Deploy-Guard",
           },
-          body: JSON.stringify({ ref: input.targetBranch }),
+          body: JSON.stringify({
+            ref: input.targetBranch,
+            ...(input.inputs ? { inputs: dispatchInputs } : {}),
+            return_run_details: true,
+          }),
         }
       );
     } catch {
@@ -67,18 +181,161 @@ export class GithubActionsService {
 
     if (!response.ok) {
       const responseMessage = await this.safeResponseMessage(response);
-      throw new GithubActionsDispatchError(
-        await this.dispatchDiagnosticCode(
+      const diagnosticCode = await this.dispatchDiagnosticCode(
           response.status,
           responseMessage,
           input,
           token
-        )
-      );
+        );
+      const detail = this.safeDispatchFailureDetail(responseMessage);
+      throw new GithubActionsDispatchError(diagnosticCode, detail, this.failureEvidence(diagnosticCode, response.status, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId));
     }
 
-    return { status: "dispatched", workflowRunId: null };
+    const dispatchResult = await response.json().catch(() => null) as { workflow_run_id?: number | string; html_url?: string } | null;
+    const workflowRunId = String(dispatchResult?.workflow_run_id || "").trim();
+    if (!/^\d+$/.test(workflowRunId)) {
+      const detail = "GitHub accepted the workflow request without returning an immutable workflow run identity.";
+      throw new GithubActionsDispatchError(
+        "workflow_run_identity_missing",
+        detail,
+        this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId),
+      );
+    }
+    return {
+      status: "dispatch_accepted",
+      workflowRunId,
+      receipt: {
+        httpStatus: response.status,
+        workflow: workflowFile,
+        repository: input.repositoryFullName,
+        ref: input.targetBranch,
+        inputNames,
+        operationId,
+        apiVersion: "2026-03-10",
+        authentication: "Bearer installation token",
+        workflowRunId,
+        workflowRunUrl: typeof dispatchResult?.html_url === "string" ? dispatchResult.html_url : null,
+      },
+    };
   }
+
+  private async validateDispatchTarget(repository: string, branch: string, workflowFile: string, token: string, inputNames: string[], operationId: string | null) {
+    const checks = [
+      { url: `https://api.github.com/repos/${repository}`, code: "repo_not_found_or_permission_denied" as const, detail: "GitHub repository is not accessible to the installation token." },
+      { url: `https://api.github.com/repos/${repository}/branches/${encodeURIComponent(branch)}`, code: "wrong_branch" as const, detail: "The selected GitHub branch does not exist or is not accessible." },
+    ];
+    for (const check of checks) {
+      const response = await fetch(check.url, { headers: this.headers(token) });
+      if (!response.ok) {
+        const code = response.status === 401 || response.status === 403 ? "token_no_repo_access" : check.code;
+        throw new GithubActionsDispatchError(code, check.detail, this.failureEvidence(code, response.status, check.detail, workflowFile, repository, branch, inputNames, operationId));
+      }
+    }
+    const path = workflowFile.includes("/") ? workflowFile : `.github/workflows/${workflowFile}`;
+    const response = await fetch(`https://api.github.com/repos/${repository}/contents/${path}?ref=${encodeURIComponent(branch)}`, { headers: this.headers(token) });
+    if (!response.ok) {
+      const detail = "The expected workflow file does not exist on the selected branch.";
+      throw new GithubActionsDispatchError("workflow_file_missing", detail, this.failureEvidence("workflow_file_missing", response.status, detail, workflowFile, repository, branch, inputNames, operationId));
+    }
+    const body = await response.json() as { content?: string; encoding?: string };
+    const content = body.encoding === "base64" && body.content ? Buffer.from(body.content.replace(/\n/g, ""), "base64").toString("utf8") : "";
+    if (!/^on:\s*\n\s+workflow_dispatch:\s*$/m.test(content)) {
+      const detail = "The expected workflow does not expose workflow_dispatch.";
+      throw new GithubActionsDispatchError("workflow_dispatch_missing", detail, this.failureEvidence("workflow_dispatch_missing", null, detail, workflowFile, repository, branch, inputNames, operationId));
+    }
+    const definitions = content.match(/\n    inputs:\n([\s\S]*?)\npermissions:/)?.[1] || "";
+    const declared = [...definitions.matchAll(/^\s{6}([a-z][a-z0-9_]*):\s*\{/gm)].map((match) => match[1]).sort();
+    const expected = [...GITHUB_ACTIONS_CALLER_INPUT_NAMES].sort();
+    const required = expected.filter((name) => !GITHUB_ACTIONS_OPTIONAL_CALLER_INPUT_NAMES.includes(name as typeof GITHUB_ACTIONS_OPTIONAL_CALLER_INPUT_NAMES[number]));
+    if (declared.length !== expected.length || declared.some((name, index) => name !== expected[index]) || inputNames.some((name) => !declared.includes(name)) || required.some((name) => !inputNames.includes(name))) {
+      const detail = "Generated workflow input names do not match the canonical DeployGuard dispatch contract.";
+      throw new GithubActionsDispatchError("invalid_workflow_inputs", detail, this.failureEvidence("invalid_workflow_inputs", null, detail, workflowFile, repository, branch, inputNames, operationId));
+    }
+    const workflowResponse = await fetch(`https://api.github.com/repos/${repository}/actions/workflows/${encodeURIComponent(workflowFile)}`, { headers: this.headers(token) });
+    if (!workflowResponse.ok) {
+      const code: GithubActionsDiagnosticCode = workflowResponse.status === 401 || workflowResponse.status === 403 ? "token_no_repo_access" : "workflow_file_missing";
+      const detail = "GitHub does not expose the expected workflow to the installation token.";
+      throw new GithubActionsDispatchError(code, detail, this.failureEvidence(code, workflowResponse.status, detail, workflowFile, repository, branch, inputNames, operationId));
+    }
+    const workflow = await workflowResponse.json() as { state?: string };
+    if (workflow.state && workflow.state !== "active") {
+      const detail = "The expected GitHub Actions workflow is not active.";
+      throw new GithubActionsDispatchError("github_actions_disabled", detail, this.failureEvidence("github_actions_disabled", null, detail, workflowFile, repository, branch, inputNames, operationId));
+    }
+  }
+
+  private failureEvidence(classification: GithubActionsDiagnosticCode, httpStatus: number | null, message: string, workflow: string, repository: string, ref: string, inputNames: string[], operationId: string | null): GithubActionsDispatchEvidence {
+    return { classification, httpStatus, message, workflow, repository, ref, inputNames: [...inputNames].sort(), operationId, failedAt: new Date().toISOString() };
+  }
+
+  async getWorkflowRun(repositoryFullName: string, workflowRunId: string, token: string) {
+    const response = await fetch(`https://api.github.com/repos/${repositoryFullName}/actions/runs/${workflowRunId}`, { headers: this.headers(token) });
+    if (!response.ok) throw new GithubActionsDispatchError("unknown_github_error");
+    return response.json() as Promise<Record<string, unknown>>;
+  }
+
+  async findWorkflowRunAfter(repository: string, branch: string, dispatchedAt: Date, token: string, excludedIds: string[] = []) {
+    const workflowFile = this.config.get<string>("GITHUB_ACTIONS_WORKFLOW_FILE", "deployguard.yml");
+    const response = await fetch(`https://api.github.com/repos/${repository}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?event=workflow_dispatch&branch=${encodeURIComponent(branch)}&per_page=30`, { headers: this.headers(token) });
+    if (!response.ok) return null;
+    const body = await response.json() as { workflow_runs?: Array<{ id?: number; created_at?: string }> };
+    const floor = dispatchedAt.getTime() - 5_000;
+    const excluded = new Set(excludedIds);
+    const match = (body.workflow_runs || []).find((run) => run.id && !excluded.has(String(run.id)) && Date.parse(String(run.created_at || "")) >= floor);
+    return match?.id ? String(match.id) : null;
+  }
+
+  async getWorkflowJobs(repository: string, workflowRunId: string, token: string) {
+    const response = await fetch(`https://api.github.com/repos/${repository}/actions/runs/${workflowRunId}/jobs?per_page=100`, { headers: this.headers(token) });
+    if (!response.ok) throw new GithubActionsDispatchError("unknown_github_error");
+    return response.json() as Promise<{ jobs?: Array<{
+      id?: number;
+      name?: string;
+      status?: string;
+      conclusion?: string | null;
+      html_url?: string;
+      started_at?: string | null;
+      completed_at?: string | null;
+      steps?: Array<{
+        name?: string;
+        status?: string;
+        conclusion?: string | null;
+        number?: number;
+        started_at?: string | null;
+        completed_at?: string | null;
+      }>;
+    }> }>;
+  }
+
+  async getJobLog(repository: string, jobId: number, token: string) {
+    const response = await fetch(`https://api.github.com/repos/${repository}/actions/jobs/${jobId}/logs`, { headers: this.headers(token), redirect: "follow" });
+    if (!response.ok) throw new GithubActionsDispatchError("unknown_github_error");
+    return response.text();
+  }
+
+  async getResultArtifact(repository: string, workflowRunId: string, operationId: string, token: string) {
+    return this.getArtifactEntry(repository, workflowRunId, operationId, token, "deployguard-result.json", 512 * 1024);
+  }
+
+  async getArtifactEntry(repository: string, workflowRunId: string, operationId: string, token: string, entryName: string, maxEntryBytes: number) {
+    const name = `deployguard-result-${operationId}`;
+    const list = await fetch(`https://api.github.com/repos/${repository}/actions/runs/${workflowRunId}/artifacts?name=${encodeURIComponent(name)}&per_page=10`, { headers: this.headers(token) });
+    if (!list.ok) throw new GithubActionsDispatchError("unknown_github_error", "GitHub did not expose the DeployGuard result artifact.");
+    const body = await list.json() as { artifacts?: Array<{ id?: number; name?: string; expired?: boolean }> };
+    const artifacts = (body.artifacts || []).filter((artifact) => artifact.name === name && artifact.expired !== true && artifact.id);
+    if (artifacts.length === 0) return null;
+    if (artifacts.length !== 1) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact identity is ambiguous.");
+    const download = await fetch(`https://api.github.com/repos/${repository}/actions/artifacts/${artifacts[0].id}/zip`, { headers: this.headers(token), redirect: "follow" });
+    if (!download.ok) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact could not be downloaded.");
+    const contentLength = Number(download.headers.get("content-length") || 0);
+    const maxArchiveBytes = Math.min(Math.max(maxEntryBytes * 2, 2 * 1024 * 1024), 32 * 1024 * 1024);
+    if (contentLength > maxArchiveBytes) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact is too large.");
+    const archive = Buffer.from(await download.arrayBuffer());
+    if (archive.length > maxArchiveBytes) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact is too large.");
+    return exactZipEntry(archive, entryName, maxEntryBytes);
+  }
+
+  private headers(token: string) { return { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "User-Agent": "Deploy-Guard", "X-GitHub-Api-Version": "2026-03-10" }; }
 
   private async dispatchDiagnosticCode(
     status: number,
@@ -135,5 +392,24 @@ export class GithubActionsService {
     } catch {
       return "";
     }
+  }
+
+  private safeDispatchFailureDetail(message: string) {
+    const normalized = message.replace(/\s+/g, " ").trim();
+    const required = normalized.match(/^Required input '([a-z][a-z0-9_]*)' not provided$/);
+    if (required) return `GitHub requires workflow input ${required[1]}.`;
+    const propertyLimit = normalized.match(/^Invalid request\. No more than ([0-9]+) properties are allowed; ([0-9]+) were supplied\.$/);
+    if (propertyLimit) return `GitHub accepts at most ${propertyLimit[1]} workflow inputs; ${propertyLimit[2]} were supplied.`;
+    if (/^Workflow does not have 'workflow_dispatch' trigger\.?$/.test(normalized)) {
+      return "GitHub reports that the selected workflow revision does not expose workflow_dispatch.";
+    }
+    const redacted = normalized
+      .replace(/https?:\/\/\S+/g, "[link]")
+      .replace(/[A-Za-z0-9+/_=-]{20,}/g, "[redacted]")
+      .slice(0, 300);
+    const printable = redacted.replace(/[^\x20-\x7E]/g, "").trim();
+    return printable
+      ? `GitHub rejected the dispatch: ${printable}`
+      : "GitHub rejected the workflow dispatch before creating a run.";
   }
 }

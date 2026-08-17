@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 export function getOrchestrationConfig(config: ConfigService) {
   return {
     useFargateSpot: config.get<string>("DEPLOYGUARD_ECS_USE_FARGATE_SPOT", "true") !== "false",
-    enableFargateFallback: config.get<string>("DEPLOYGUARD_ECS_ENABLE_FARGATE_FALLBACK", "false") === "true",
+    enableFargateFallback: config.get<string>("DEPLOYGUARD_ECS_ENABLE_FARGATE_FALLBACK", "true") !== "false",
     minTasks: Number(config.get<string>("DEPLOYGUARD_ECS_MIN_TASKS", "1")),
     maxTasks: Number(config.get<string>("DEPLOYGUARD_ECS_MAX_TASKS", "3")),
     cpuTargetPercent: Number(config.get<string>("DEPLOYGUARD_ECS_CPU_TARGET_PERCENT", "60")),

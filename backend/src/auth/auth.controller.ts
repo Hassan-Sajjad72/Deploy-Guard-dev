@@ -59,7 +59,7 @@ export class AuthController {
       resourceType: "auth",
       resourceId: sessionUser?.id,
       status: "success",
-      metadata: { provider: "github" },
+      metadata: { provider: sessionUser?.githubId ? "github" : "email" },
       req: request,
     });
 

@@ -64,6 +64,7 @@ export class LogSanitizerService {
 
   private mask(input: string) {
     return input
+      .replace(/AIza[0-9A-Za-z_-]{20,}/g, "[REDACTED_GOOGLE_AI_KEY]")
       .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_ACCESS_KEY]")
       .replace(/aws_secret_access_key\s*=\s*[^\s]+/gi, "AWS_SECRET_ACCESS_KEY=[REDACTED]")
       .replace(/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")

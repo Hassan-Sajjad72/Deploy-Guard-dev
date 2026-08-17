@@ -2,10 +2,12 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   CreateRepositoryCommand,
+  DescribeImagesCommand,
   DescribeRepositoriesCommand,
   ECRClient,
   GetAuthorizationTokenCommand,
   PutLifecyclePolicyCommand,
+  TagResourceCommand,
 } from "@aws-sdk/client-ecr";
 import { spawn } from "child_process";
 
@@ -40,9 +42,10 @@ export class EcrService {
     );
   }
 
-  getRepositoryName(projectName: string) {
+  getRepositoryName(projectName: string, projectId?: string) {
     const prefix = this.config.get<string>("ECR_REPOSITORY_PREFIX", "mini-paas");
-    return `${this.safeName(prefix)}-${this.safeName(projectName)}`;
+    const projectSuffix = projectId ? `-${this.safeName(projectId).slice(0, 16)}` : "";
+    return `${this.safeName(prefix)}-${this.safeName(projectName)}${projectSuffix}`.slice(0, 128).replace(/-+$/g, "");
   }
 
   getImageUri(repositoryName: string, imageTag: string) {
@@ -51,13 +54,18 @@ export class EcrService {
     return `${accountId}.dkr.ecr.${region}.amazonaws.com/${repositoryName}:${imageTag}`;
   }
 
-  async ensureRepository(repositoryName: string) {
+  async ensureRepository(repositoryName: string, tags: Record<string, string>) {
     const client = this.createClient();
+    const repositoryTags = Object.entries(tags).map(([Key, Value]) => ({ Key, Value }));
 
     try {
-      await client.send(new DescribeRepositoriesCommand({ repositoryNames: [repositoryName] }));
+      const existing = await client.send(new DescribeRepositoriesCommand({ repositoryNames: [repositoryName] }));
+      const repositoryArn = existing.repositories?.[0]?.repositoryArn;
+      if (repositoryArn) await client.send(new TagResourceCommand({ resourceArn: repositoryArn, tags: repositoryTags }));
+      return { repositoryArn: repositoryArn || null, repositoryName, created: false };
     } catch {
-      await client.send(new CreateRepositoryCommand({ repositoryName }));
+      const created = await client.send(new CreateRepositoryCommand({ repositoryName, tags: repositoryTags }));
+      return { repositoryArn: created.repository?.repositoryArn || null, repositoryName, created: true };
     }
   }
 
@@ -88,6 +96,14 @@ export class EcrService {
         lifecyclePolicyText: JSON.stringify(LIFECYCLE_POLICY),
       })
     );
+  }
+
+  async getImageDigest(repositoryName: string, imageTag: string) {
+    const response = await this.createClient().send(new DescribeImagesCommand({
+      repositoryName,
+      imageIds: [{ imageTag }],
+    }));
+    return response.imageDetails?.[0]?.imageDigest || null;
   }
 
   private createClient() {

@@ -43,6 +43,17 @@ export class UsersService {
     }
   }
 
+  async getGithubCredentialStatus(userId: number): Promise<"available" | "missing" | "invalid"> {
+    const user = await this.userRepository.createQueryBuilder("user").addSelect("user.githubAccessToken").where("user.id = :userId", { userId }).getOne();
+    if (!user?.githubAccessToken) return "missing";
+    try {
+      this.decrypt(user.githubAccessToken);
+      return "available";
+    } catch {
+      return "invalid";
+    }
+  }
+
   private encryptionKey(): Buffer {
     const secret = this.configService.get<string>("AUTH_SESSION_SECRET")?.trim();
     if (!secret || secret.length < 32) throw new Error("AUTH_SESSION_SECRET is required to protect GitHub credentials");
@@ -86,10 +97,20 @@ export class UsersService {
       where: { githubId: githubData.githubId },
     });
 
+    if (user?.role === UserRole.ADMIN) {
+      // Legacy GitHub-linked administrators cannot authenticate through either
+      // of the now-separated session audiences. Preserve their GitHub project
+      // ownership by normalizing them to the developer role.
+      user.role = UserRole.DEVELOPER;
+    }
+
     let isNewUser = false;
 
     if (!user && githubData.email) {
-      user = await this.findByEmail(githubData.email);
+      const emailUser = await this.findByEmail(githubData.email);
+      // A password administrator is a separate identity and must never be
+      // converted into a GitHub developer merely because the email matches.
+      user = emailUser?.role === UserRole.ADMIN ? null : emailUser;
     }
 
     if (!user) {
@@ -191,6 +212,10 @@ export class UsersService {
       throw new NotFoundException("User not found");
     }
 
+    if (role === UserRole.ADMIN && user.githubId) {
+      throw new BadRequestException("GitHub-linked users cannot be administrators");
+    }
+
     if (
       actorUserId === user.id &&
       user.role === UserRole.ADMIN &&
@@ -210,6 +235,16 @@ export class UsersService {
 
     user.role = role;
 
+    return this.userRepository.save(user);
+  }
+
+  async updateAccess(id: number, enabled: boolean, actorUserId?: number): Promise<User> {
+    const user = await this.findById(id);
+    if (!user) throw new NotFoundException("User not found");
+    if (actorUserId === user.id && !enabled) {
+      throw new BadRequestException("Administrators cannot disable their own account");
+    }
+    user.disabledAt = enabled ? null : new Date();
     return this.userRepository.save(user);
   }
 

@@ -176,6 +176,7 @@ export class AutoscalingService {
         eventType,
         status,
         message,
+        source: "aws_ecs",
         metadata: this.safeMetadata({ projectId, deploymentId, eventType, status, ...metadata }),
       })
     );

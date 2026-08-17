@@ -194,6 +194,7 @@ export class AlbService {
         eventType,
         status,
         message,
+        source: "aws_alb",
         metadata: this.safeMetadata({ projectId, deploymentId, eventType, status, ...metadata }),
       })
     );

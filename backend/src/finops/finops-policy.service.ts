@@ -25,6 +25,16 @@ export class FinopsPolicyService {
     const finopsConfig = getFinopsConfig(this.config);
     const overTier = input.totalMonthlyCost > tierLimitMonthlyCost;
 
+    if (finopsConfig.bypassCostGate) {
+      return {
+        status: CostEstimateStatus.NO_APPROVAL_REQUIRED,
+        approvalRequired: false,
+        blockedByTierLimit: false,
+        tierLimitMonthlyCost,
+        upgradePromptMessage: null,
+      };
+    }
+
     if (overTier && finopsConfig.enforceTierLimits) {
       return {
         status: CostEstimateStatus.BLOCKED_BY_TIER_LIMIT,

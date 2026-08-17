@@ -1,6 +1,6 @@
 import { Injectable, NestMiddleware } from "@nestjs/common";
 import { NextFunction, Request, Response } from "express";
-import { AuthService, SESSION_COOKIE_NAME } from "../../auth/auth.service";
+import { ADMIN_SESSION_COOKIE_NAME, AuthService, SESSION_COOKIE_NAME } from "../../auth/auth.service";
 import { UsersService } from "../../users/users.service";
 
 @Injectable()
@@ -11,17 +11,19 @@ export class AuthenticatedUserMiddleware implements NestMiddleware {
   ) {}
 
   async use(req: Request, _res: Response, next: NextFunction) {
-    const sessionToken = this.getCookie(req, SESSION_COOKIE_NAME);
+    const requestPath = req.path || req.originalUrl || req.url || "";
+    const adminRoute = requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/admin-auth");
+    const sessionToken = this.getCookie(req, adminRoute ? ADMIN_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME);
 
     if (sessionToken) {
-      req.user = await this.authService.getUserFromSessionToken(sessionToken);
+      req.user = await this.authService.getUserFromSessionToken(sessionToken, adminRoute ? "admin" : "developer");
 
       if (req.user) {
         return next();
       }
     }
 
-    const allowInsecureUserHeader =
+    const allowInsecureUserHeader = !adminRoute &&
       process.env.NODE_ENV !== "production" &&
       process.env.ALLOW_INSECURE_USER_HEADER === "true";
     const userId = allowInsecureUserHeader ? req.header("x-user-id") : undefined;
@@ -36,7 +38,8 @@ export class AuthenticatedUserMiddleware implements NestMiddleware {
       return next();
     }
 
-    req.user = await this.usersService.findById(parsedUserId);
+    const user = await this.usersService.findById(parsedUserId);
+    req.user = user?.disabledAt ? null : user;
 
     return next();
   }

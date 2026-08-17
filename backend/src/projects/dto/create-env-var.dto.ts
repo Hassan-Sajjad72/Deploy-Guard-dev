@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString, Matches } from "class-validator";
+import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength } from "class-validator";
 
 export class CreateEnvVarDto {
   @IsString()
@@ -14,4 +14,17 @@ export class CreateEnvVarDto {
   @IsBoolean()
   @IsOptional()
   isSecret?: boolean;
+
+  @IsIn(["build", "runtime", "both"])
+  @IsOptional()
+  scope?: "build" | "runtime" | "both";
+
+  @IsBoolean()
+  @IsOptional()
+  isRequired?: boolean;
+
+  @IsString()
+  @MaxLength(240)
+  @IsOptional()
+  detectedSource?: string;
 }

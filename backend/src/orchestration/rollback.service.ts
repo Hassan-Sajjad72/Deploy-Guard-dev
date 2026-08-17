@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Not, Repository } from "typeorm";
 import { AuditLogService } from "../audit-log/audit-log.service";
@@ -8,6 +8,14 @@ import { ProjectDeployment, ProjectDeploymentStatus } from "./project-deployment
 import { ProjectOrchestrationEvent } from "./project-orchestration-event.entity";
 import { ProjectRollbackRecord, RollbackStatus } from "./project-rollback-record.entity";
 import { ProjectStableRelease, StableReleaseStatus } from "./project-stable-release.entity";
+import { InactiveLegacyShadowInsertionAdapter } from "../orchestration-contracts/release-lane/inactive-legacy-shadow-insertion.adapter";
+import { randomUUID } from "node:crypto";
+import {
+  CrossLaneHeartbeat,
+  CrossLaneOwnershipClaim,
+  CrossLaneOwnershipEnforcementError,
+  CrossLaneOwnershipEnforcementService,
+} from "../orchestration-contracts/release-lane/cross-lane-ownership-enforcement.service";
 
 @Injectable()
 export class RollbackService {
@@ -22,7 +30,9 @@ export class RollbackService {
     private readonly eventRepository: Repository<ProjectOrchestrationEvent>,
     private readonly ecsService: EcsService,
     private readonly albService: AlbService,
-    private readonly auditLogService: AuditLogService
+    private readonly auditLogService: AuditLogService,
+    @Optional() private readonly legacyShadow?: InactiveLegacyShadowInsertionAdapter,
+    @Optional() private readonly crossLane?: CrossLaneOwnershipEnforcementService,
   ) {}
 
   async saveStableRelease(projectId: string, pipelineRunId: string | null, commitSha: string, imageUri: string, taskDefinitionArn: string) {
@@ -95,14 +105,27 @@ export class RollbackService {
       await this.deploymentRepository.save(deployment);
       throw new BadRequestException("No previous stable release available for rollback.");
     }
+    const rollbackRecordId = randomUUID();
+    const crossLaneClaim: CrossLaneOwnershipClaim = await (
+      this.crossLane?.acquireLegacy({
+        projectId,
+        operationId: rollbackRecordId,
+        actorId: `legacy-rollback:${rollbackRecordId}`,
+        operationClass: "legacy_rollback",
+      }) ?? Promise.resolve({ enabled: false } as const)
+    );
+    let crossLaneHeartbeat: CrossLaneHeartbeat | null = null;
 
-    deployment.status = ProjectDeploymentStatus.ROLLBACK_STARTED;
-    deployment.rollbackStartedAt = new Date();
-    deployment.previousTaskDefinitionArn = deployment.taskDefinitionArn;
-    await this.deploymentRepository.save(deployment);
+    let record: ProjectRollbackRecord;
+    try {
+      deployment.status = ProjectDeploymentStatus.ROLLBACK_STARTED;
+      deployment.rollbackStartedAt = new Date();
+      deployment.previousTaskDefinitionArn = deployment.taskDefinitionArn;
+      await this.deploymentRepository.save(deployment);
 
-    const record = await this.rollbackRepository.save(
-      this.rollbackRepository.create({
+      record = await this.rollbackRepository.save(
+        this.rollbackRepository.create({
+        ...(crossLaneClaim.enabled ? { id: rollbackRecordId } : {}),
         projectId,
         deploymentId: deployment.id,
         pipelineRunId: pipelineRunId || deployment.pipelineRunId || null,
@@ -113,8 +136,20 @@ export class RollbackService {
         reason,
         status: RollbackStatus.STARTED,
         startedAt: new Date(),
-      })
-    );
+        })
+      );
+      await this.crossLane?.linkLegacyRollback(
+        crossLaneClaim,
+        record.id,
+      );
+      crossLaneHeartbeat = this.crossLane?.startHeartbeat(crossLaneClaim)
+        ?? null;
+    } catch (error) {
+      await this.crossLane?.release(crossLaneClaim);
+      throw error;
+    }
+
+    this.legacyShadow?.observeRollbackRecordCreated({ projectId, rollbackRecordId: record.id });
 
     await this.event(projectId, record.pipelineRunId || null, deployment.id, "rollback_service_update_started", "running", "Updating ECS service to previous stable task definition.", {
       rollbackId: record.id,
@@ -129,6 +164,16 @@ export class RollbackService {
     });
 
     try {
+      if (
+        !(await (this.crossLane?.renew(crossLaneClaim)
+          ?? Promise.resolve(true)))
+        || !(crossLaneHeartbeat?.isTrusted() ?? true)
+      ) {
+        throw new CrossLaneOwnershipEnforcementError(
+          "CROSS_LANE_OWNERSHIP_LOST",
+        );
+      }
+      this.legacyShadow?.observeRollbackBeforeEcsUpdate({ projectId, rollbackRecordId: record.id });
       await this.ecsService.updateServiceToTaskDefinition(projectId, target.taskDefinitionArn);
 
       await this.event(projectId, record.pipelineRunId || null, deployment.id, "rollback_stability_wait_started", "running", "Waiting for rollback ECS service stability.", {
@@ -177,6 +222,13 @@ export class RollbackService {
       target.status = StableReleaseStatus.STABLE;
       await this.releaseRepository.save(target);
 
+      this.legacyShadow?.observeRollbackSucceeded({ projectId, rollbackRecordId: record.id });
+      await crossLaneHeartbeat?.stop();
+      await this.crossLane?.releaseLegacyRollback(
+        crossLaneClaim,
+        record.id,
+      );
+
       await this.event(projectId, record.pipelineRunId || null, deployment.id, "rollback_service_stable", "success", "Rollback ECS service is stable and ALB targets are healthy.", {
         rollbackId: record.id,
         toCommitSha: target.commitSha,
@@ -200,6 +252,9 @@ export class RollbackService {
       record.completedAt = new Date();
       record.errorMessage = message;
       await this.rollbackRepository.save(record);
+
+      this.legacyShadow?.observeRollbackFailed({ projectId, rollbackRecordId: record.id });
+      await crossLaneHeartbeat?.stop();
 
       await this.event(projectId, record.pipelineRunId || null, deployment.id, "rollback_service_failed", "failed", message, {
         rollbackId: record.id,
@@ -234,6 +289,7 @@ export class RollbackService {
         eventType,
         status,
         message,
+        source: "aws_ecs",
         metadata: this.safeMetadata({ projectId, deploymentId, eventType, status, ...metadata }),
       })
     );

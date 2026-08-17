@@ -5,6 +5,7 @@ import { Request } from "express";
 import { Repository } from "typeorm";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { InfrastructureService } from "../infrastructure/infrastructure.service";
+import { NotificationDispatcherService } from "../notifications/notification-dispatcher.service";
 import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
 import { Project, ProjectStatus, ProjectVisibility } from "../projects/project.entity";
@@ -43,7 +44,8 @@ export class OrchestrationService {
     private readonly albService: AlbService,
     private readonly autoscalingService: AutoscalingService,
     private readonly rollbackService: RollbackService,
-    private readonly spotInterruptionService: SpotInterruptionService
+    private readonly spotInterruptionService: SpotInterruptionService,
+    private readonly notifications: NotificationDispatcherService
   ) {}
 
   async deploy(user: User, projectId: string, req?: RequestInfo) {
@@ -56,6 +58,29 @@ export class OrchestrationService {
       where: { projectId: project.id },
       order: { createdAt: "DESC" },
     });
+    let deploymentView = deployment;
+    if (
+      deployment &&
+      [ProjectDeploymentStatus.FAILED, ProjectDeploymentStatus.UNHEALTHY, ProjectDeploymentStatus.ROLLBACK_FAILED]
+        .includes(deployment.status as ProjectDeploymentStatus) &&
+      !(deployment.metadata?.ecsStability as Record<string, unknown> | undefined)?.diagnostics
+    ) {
+      const diagnostics = await this.ecsService.getFailureDiagnostics(project.id).catch(() => null);
+      if (diagnostics) {
+        deploymentView = {
+          ...deployment,
+          errorMessage: diagnostics.summary,
+          metadata: {
+            ...(deployment.metadata || {}),
+            ecsStability: {
+              ...((deployment.metadata?.ecsStability as Record<string, unknown> | undefined) || {}),
+              reason: diagnostics.summary,
+              diagnostics,
+            },
+          },
+        } as ProjectDeployment;
+      }
+    }
     const stableRelease = await this.releaseRepository.findOne({
       where: { projectId: project.id, status: "stable" },
       order: { deployedAt: "DESC" },
@@ -64,7 +89,7 @@ export class OrchestrationService {
 
     return {
       canManage: user.role !== UserRole.READONLY && (user.role === UserRole.ADMIN || project.ownerUserId === user.id),
-      deployment,
+      deployment: deploymentView,
       stableRelease,
       spotEvents,
       service: await this.ecsService.getServiceStatus(project.id),
@@ -77,7 +102,7 @@ export class OrchestrationService {
     const project = await this.findProjectForView(user, projectId);
     return this.eventRepository.find({
       where: { projectId: project.id },
-      order: { createdAt: "ASC" },
+      order: { occurredAt: "ASC", sequenceNumber: "ASC" },
     });
   }
 
@@ -201,6 +226,33 @@ export class OrchestrationService {
     });
 
     deployment = await this.deploymentRepository.save(deployment);
+    const configurationValidation = await this.ecsService.validateDeploymentConfiguration(deployment);
+    deployment.metadata = this.safeMetadata({
+      ...deployment.metadata,
+      preDeploymentValidation: configurationValidation,
+    });
+    await this.deploymentRepository.save(deployment);
+    await this.event(
+      projectId,
+      pipelineRunId,
+      deployment.id,
+      "ecs_predeployment_validation",
+      configurationValidation.passed ? "success" : "failed",
+      configurationValidation.passed
+        ? "ECR image, task definition, container port, target group, health path, and Fargate resources are consistent."
+        : configurationValidation.checks.find((check) => !check.passed)?.message || "ECS deployment configuration validation failed.",
+      actorUser || null,
+      { preDeploymentValidation: configurationValidation }
+    );
+    if (!configurationValidation.passed) {
+      const reason = configurationValidation.checks.find((check) => !check.passed)?.message || "ECS deployment configuration validation failed.";
+      deployment.status = ProjectDeploymentStatus.UNHEALTHY;
+      deployment.stable = false;
+      deployment.errorMessage = reason;
+      deployment.failedAt = new Date();
+      await this.deploymentRepository.save(deployment);
+      throw new BadRequestException(reason);
+    }
     await this.event(projectId, pipelineRunId, deployment.id, "ecs_service_stability_wait_started", "running", "Waiting for ECS service stability.", actorUser || null);
     await this.audit("ECS_SERVICE_STABILITY_WAIT_STARTED", projectId, actorUser || null, "success", { deploymentId: deployment.id });
     const stabilityResult = await this.ecsService.waitForServiceStability(projectId, deployment.ecsServiceArn);
@@ -221,7 +273,11 @@ export class OrchestrationService {
       await this.deploymentRepository.save(deployment);
       await this.event(projectId, pipelineRunId, deployment.id, "ecs_service_unhealthy", "failed", deployment.errorMessage, actorUser || null, stabilityResult);
       await this.audit("ECS_SERVICE_UNSTABLE", projectId, actorUser || null, "failed", { deploymentId: deployment.id, reason: deployment.errorMessage });
-      await this.attemptAutoRollback(projectId, pipelineRunId, deployment, deployment.errorMessage, actorUser || null);
+      if (previous?.taskDefinitionArn) {
+        await this.attemptAutoRollback(projectId, pipelineRunId, deployment, deployment.errorMessage, actorUser || null);
+      } else {
+        await this.event(projectId, pipelineRunId, deployment.id, "rollback_unavailable", "warning", "No previous stable release is available; the ECS failure remains the primary recovery reason.", actorUser || null);
+      }
       throw new BadRequestException(deployment.errorMessage);
     }
 
@@ -242,7 +298,11 @@ export class OrchestrationService {
       await this.deploymentRepository.save(deployment);
       await this.event(projectId, pipelineRunId, deployment.id, "alb_targets_unhealthy", "failed", deployment.errorMessage, actorUser || null, albHealthResult);
       await this.audit("ALB_TARGETS_UNHEALTHY", projectId, actorUser || null, "failed", { deploymentId: deployment.id, reason: deployment.errorMessage });
-      await this.attemptAutoRollback(projectId, pipelineRunId, deployment, deployment.errorMessage, actorUser || null);
+      if (previous?.taskDefinitionArn) {
+        await this.attemptAutoRollback(projectId, pipelineRunId, deployment, deployment.errorMessage, actorUser || null);
+      } else {
+        await this.event(projectId, pipelineRunId, deployment.id, "rollback_unavailable", "warning", "No previous stable release is available; the ALB failure remains the primary recovery reason.", actorUser || null);
+      }
       throw new BadRequestException(deployment.errorMessage);
     }
 
@@ -322,7 +382,7 @@ export class OrchestrationService {
     actorUser?: User | null,
     metadata: Record<string, unknown> = {}
   ) {
-    return this.eventRepository.save(
+    const event = await this.eventRepository.save(
       this.eventRepository.create({
         projectId,
         pipelineRunId,
@@ -330,10 +390,13 @@ export class OrchestrationService {
         eventType,
         status,
         message,
+        source: "pipeline_worker",
         actorUserId: actorUser?.id || null,
         metadata: this.safeMetadata({ projectId, pipelineRunId, deploymentId, eventType, status, ...metadata }),
       })
     );
+    await this.notifications.dispatch({ projectId, pipelineRunId, eventId: event.id, stage: eventType, status, message }).catch(() => undefined);
+    return event;
   }
 
   async audit(action: string, projectId: string, actorUser: User | null, status: string, metadata: Record<string, unknown>, req?: RequestInfo) {
@@ -346,6 +409,19 @@ export class OrchestrationService {
       metadata: this.safeMetadata({ projectId, ...metadata }),
       req,
     });
+  }
+
+  async getLatestDeploymentEvidence(projectId: string, pipelineRunId: string) {
+    const deployment = await this.deploymentRepository.findOne({
+      where: { projectId, pipelineRunId },
+      order: { createdAt: "DESC" },
+    });
+    const stability = deployment?.metadata?.ecsStability as Record<string, unknown> | undefined;
+    return {
+      deploymentId: deployment?.id || null,
+      deploymentStatus: deployment?.status || null,
+      diagnostics: stability?.diagnostics || null,
+    };
   }
 
   private async findProjectForView(user: User, projectId: string) {
@@ -399,6 +475,7 @@ export class OrchestrationService {
       "cloudWatchLogGroupName",
       "ecsStability",
       "albHealth",
+      "preDeploymentValidation",
     ];
 
     return Object.entries(metadata).reduce((safe, [key, value]) => {

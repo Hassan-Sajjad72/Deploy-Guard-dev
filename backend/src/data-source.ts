@@ -38,6 +38,7 @@ import { ProjectPipelineEvent } from "./projects/project-pipeline-event.entity";
 import { ProjectUserActivity } from "./projects/project-user-activity.entity";
 import { ProjectPipelineRun } from "./projects/project-pipeline-run.entity";
 import { ProjectDeploymentGeneration } from "./projects/project-deployment-generation.entity";
+import { ProjectEnvironmentRoute } from "./projects/project-environment-route.entity";
 import { ProjectPreflightReport } from "./projects/project-preflight-report.entity";
 import { ProjectSecurityFinding } from "./projects/project-security-finding.entity";
 import { ProjectSecurityScan } from "./projects/project-security-scan.entity";
@@ -84,7 +85,6 @@ import { ProjectReleaseLaneOwnership } from "./orchestration-contracts/entities/
 import { ProjectReleaseLaneShadowObservation } from "./orchestration-contracts/entities/release-lane-shadow-observation.entity";
 import { ProjectPipelineJobFinality } from "./projects/pipeline/project-pipeline-job-finality.entity";
 import { GithubAppInstallation } from "./projects/github-app-installation.entity";
-import { ProjectDestroyLifecycle } from "./projects/project-destroy-lifecycle.entity";
 
 function loadBackendEnv() {
   const envPath = resolveBackendEnvFile();
@@ -154,6 +154,7 @@ export default new DataSource({
     ProjectPreflightReport,
     ProjectPipelineRun,
     ProjectDeploymentGeneration,
+    ProjectEnvironmentRoute,
     ProjectPipelineEvent,
     ProjectUserActivity,
     ProjectStageCheckpoint,
@@ -225,7 +226,6 @@ export default new DataSource({
     ProjectReleaseLaneShadowObservation,
     ProjectPipelineJobFinality,
     GithubAppInstallation,
-    ProjectDestroyLifecycle,
   ],
   migrations: ["src/migrations/*.ts"],
 });

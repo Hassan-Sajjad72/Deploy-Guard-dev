@@ -51,7 +51,7 @@ export class ProjectRuntimeMetricSnapshot {
   value: number;
 
   @Index()
-  @Column({ type: "timestamp" })
+  @Column({ type: "timestamptz" })
   timestamp: Date;
 
   @Column({ nullable: true, type: "jsonb" })
@@ -60,6 +60,6 @@ export class ProjectRuntimeMetricSnapshot {
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

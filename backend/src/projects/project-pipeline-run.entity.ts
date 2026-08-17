@@ -1,5 +1,6 @@
 import {
   Column,
+  Check,
   CreateDateColumn,
   Entity,
   Index,
@@ -14,6 +15,8 @@ import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { ProjectPreflightReport } from "./project-preflight-report.entity";
 import { Project } from "./project.entity";
 import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
+import { ProjectServiceBinding } from "./project-service-binding.entity";
+import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.entity";
 
 export enum PipelineRunStatus {
   QUEUED = "queued",
@@ -50,17 +53,30 @@ export enum PipelineRunStatus {
   ROLLBACK_SUCCEEDED = "rollback_succeeded",
   ROLLBACK_FAILED = "rollback_failed",
   SPOT_INTERRUPTION_HANDLED = "spot_interruption_handled",
+  APPLY_DISABLED = "apply_disabled",
   COMPLETED = "completed",
   FAILED = "failed",
   CANCELLED = "cancelled",
 }
 
 @Entity("project_pipeline_runs")
+@Check(
+  "CHK_project_pipeline_runs_execution_lane",
+  `"execution_lane" IS NULL OR "execution_lane" IN ('release','infrastructure','deletion')`,
+)
+@Check(
+  "CHK_project_pipeline_runs_fencing_token",
+  `"operation_fencing_token" IS NULL OR "operation_fencing_token" > 0`,
+)
+@Check(
+  "CHK_project_pipeline_runs_worker_protocol",
+  `"worker_protocol_version" IS NULL OR "worker_protocol_version" > 0`,
+)
 export class ProjectPipelineRun {
   @PrimaryGeneratedColumn("uuid")
   id: string;
 
-  @Index()
+  @Index("IDX_pipeline_runs_deployment_intent")
   @Column({ name: "project_id" })
   projectId: string;
 
@@ -68,7 +84,11 @@ export class ProjectPipelineRun {
   @JoinColumn({ name: "project_id" })
   project: Project;
 
-  @Index()
+  @Index("IDX_pipeline_runs_generation")
+  @Column({ nullable: true, name: "generation_id", type: "uuid" })
+  generationId: string | null;
+
+  @Index("IDX_pipeline_runs_execution_lane")
   @Column({ name: "triggered_by_user_id" })
   triggeredByUserId: number;
 
@@ -114,6 +134,62 @@ export class ProjectPipelineRun {
   @Column({ nullable: true, name: "ecr_image_uri" })
   ecrImageUri: string;
 
+  @Column({ nullable: true, name: "database_service_binding_id" })
+  databaseServiceBindingId: string | null;
+
+  @ManyToOne(() => ProjectServiceBinding, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "database_service_binding_id" })
+  databaseServiceBinding: ProjectServiceBinding | null;
+
+  @Column({ nullable: true, name: "configuration_snapshot_id" })
+  configurationSnapshotId: string | null;
+
+  @ManyToOne(() => ProjectConfigurationSnapshot, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "configuration_snapshot_id" })
+  configurationSnapshot: ProjectConfigurationSnapshot | null;
+
+  @Index("IDX_pipeline_runs_infrastructure_manifest")
+  @Column({ nullable: true, name: "deployment_intent_id", type: "uuid" })
+  deploymentIntentId: string | null;
+
+  @Index("IDX_pipeline_runs_release_manifest")
+  @Column({ nullable: true, name: "execution_lane", length: 24 })
+  executionLane: "release" | "infrastructure" | "deletion" | null;
+
+  @Index()
+  @Column({ nullable: true, name: "infrastructure_manifest_id", type: "uuid" })
+  infrastructureManifestId: string | null;
+
+  @Index()
+  @Column({ nullable: true, name: "release_manifest_id", type: "uuid" })
+  releaseManifestId: string | null;
+
+  @Column({ nullable: true, name: "worker_protocol_version", type: "integer" })
+  workerProtocolVersion: number | null;
+
+  @Column({ nullable: true, name: "operation_fencing_token", type: "bigint" })
+  operationFencingToken: string | null;
+
+  /** Nullable, inactive cross-lane fence correlation for future legacy work. */
+  @Index("IDX_pipeline_runs_cross_lane_ownership")
+  @Column({ nullable: true, name: "cross_lane_ownership_id", type: "uuid" })
+  crossLaneOwnershipId: string | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_lane", length: 16 })
+  crossLaneOwnerLane: "legacy" | "v1" | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_environment_name", length: 64 })
+  crossLaneOwnerEnvironmentName: string | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_lease_id", type: "uuid" })
+  crossLaneOwnerLeaseId: string | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_actor_id", length: 160 })
+  crossLaneOwnerActorId: string | null;
+
+  @Column({ nullable: true, name: "cross_lane_owner_fencing_token", type: "bigint" })
+  crossLaneOwnerFencingToken: string | null;
+
   @Column({ nullable: true, name: "github_workflow_run_id" })
   githubWorkflowRunId: string;
 
@@ -130,13 +206,16 @@ export class ProjectPipelineRun {
   @Column({ nullable: true, name: "current_stage" })
   currentStage: string;
 
-  @Column({ nullable: true, name: "started_at", type: "timestamp" })
+  @Column({ nullable: true, name: "started_at", type: "timestamptz" })
   startedAt: Date;
 
-  @Column({ nullable: true, name: "completed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "current_stage_started_at", type: "timestamptz" })
+  currentStageStartedAt: Date | null;
+
+  @Column({ nullable: true, name: "completed_at", type: "timestamptz" })
   completedAt: Date;
 
-  @Column({ nullable: true, name: "failed_at", type: "timestamp" })
+  @Column({ nullable: true, name: "failed_at", type: "timestamptz" })
   failedAt: Date;
 
   @Column({ nullable: true, name: "error_message", type: "text" })
@@ -148,9 +227,9 @@ export class ProjectPipelineRun {
   @OneToMany(() => ProjectPipelineEvent, (event) => event.pipelineRun)
   events: ProjectPipelineEvent[];
 
-  @CreateDateColumn({ name: "created_at" })
+  @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: "updated_at" })
+  @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt: Date;
 }
