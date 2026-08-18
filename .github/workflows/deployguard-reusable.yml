@@ -174,7 +174,14 @@ jobs:
               and .projectPersistence.ownershipScope == "project"
               and (.retiredGenerationCleanup == null or (
                 (.retiredGenerationCleanup.generationId | test("^[0-9a-fA-F-]{36}$"))
-                and .retiredGenerationCleanup.generationId != $generation
+                and ((.retiredGenerationCleanup.cleanupReason // "retired") | IN("retired", "failed_candidate"))
+                and (
+                  if (.retiredGenerationCleanup.cleanupReason // "retired") == "failed_candidate" then
+                    .retiredGenerationCleanup.generationId == $generation
+                  else
+                    .retiredGenerationCleanup.generationId != $generation
+                  end
+                )
                 and .retiredGenerationCleanup.terraformStateKey == ("projects/" + $project + "/" + $environment + "/" + .retiredGenerationCleanup.generationId + "/terraform.tfstate")
                 and (.retiredGenerationCleanup.resourceManifest | type == "object")
               ))
@@ -1506,9 +1513,9 @@ jobs:
           mkdir -p .deployguard/terraform
           printf '%s\n' "$RESULT" | jq . > .deployguard/terraform/deployguard-result.json
 
-      - name: Clean retired generation independently
-        # This action is dispatched only after the backend has committed the
-        # successor generation LIVE. It can never gate or undo that release.
+      - name: Clean exact generation independently
+        # The backend supplies an exact retired or terminally failed-candidate
+        # state identity. This action never receives project-persistence state.
         if: inputs.deployment_action == 'cleanup'
         continue-on-error: true
         shell: bash
@@ -1518,7 +1525,7 @@ jobs:
           [ -n "$RETIRED_GENERATION_ID" ] || exit 0
           RETIRED_STATE_KEY="$(jq -r '.retiredGenerationCleanup.terraformStateKey' .deployguard/runtime-config.json)"
           EXPECTED_STATE_KEY="projects/$PROJECT_ID/$ENVIRONMENT_NAME/$RETIRED_GENERATION_ID/terraform.tfstate"
-          [ "$RETIRED_STATE_KEY" = "$EXPECTED_STATE_KEY" ] || { echo "Retired generation state identity mismatch." >&2; exit 1; }
+          [ "$RETIRED_STATE_KEY" = "$EXPECTED_STATE_KEY" ] || { echo "Generation cleanup state identity mismatch." >&2; exit 1; }
           mkdir -p .deployguard/retired-terraform
           cp .deployguard/terraform/main.tf .deployguard/retired-terraform/main.tf
           jq --arg generation "$RETIRED_GENERATION_ID" \
@@ -1574,7 +1581,7 @@ jobs:
             CLEANUP_ERROR=""
           else
             CLEANUP_STATUS="cleanup_pending"
-            CLEANUP_ERROR="Retired generation cleanup did not converge; the LIVE generation was not affected."
+            CLEANUP_ERROR="Generation cleanup did not converge; authoritative LIVE and project-persistence resources were not affected."
           fi
           CLEANUP_RESULT="$(jq -cn --arg generationId "$RETIRED_GENERATION_ID" --arg status "$CLEANUP_STATUS" --arg error "$CLEANUP_ERROR" '{generationId:$generationId,status:$status,error:(if $error == "" then null else $error end)}')"
           printf 'DEPLOYGUARD_GENERATION_CLEANUP_RESULT=%s\n' "$CLEANUP_RESULT"
