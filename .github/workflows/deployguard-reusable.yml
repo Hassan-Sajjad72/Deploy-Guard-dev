@@ -283,7 +283,6 @@ jobs:
                     and ($image.imageDigest | test("^sha256:[0-9a-f]{64}$"))
                     and ($image.imageUri | test("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$"))
                     and ($image.imageUri | endswith("@" + $image.imageDigest)))
-                  )
                 else .securityContinuation == null or .securityContinuation == null end
               )
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable runtime configuration references." >&2; exit 1; }
