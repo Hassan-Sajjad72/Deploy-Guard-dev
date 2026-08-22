@@ -70,12 +70,12 @@ jobs:
     steps:
       - name: Checkout application
         if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.commit_sha }}
 
       - name: Configure AWS credentials through OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ inputs.aws_role_arn }}
           aws-region: ${{ inputs.aws_region }}
@@ -462,9 +462,9 @@ jobs:
       - name: Install Trivy scanner
         if: inputs.deployment_action == 'deploy'
         continue-on-error: true
-        uses: aquasecurity/setup-trivy@v0.2.3
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: v0.58.2
+          version: v0.72.0
 
       - name: Scan exact immutable component images
         if: inputs.deployment_action == 'deploy'
@@ -561,7 +561,7 @@ jobs:
 
       - name: Install Terraform
         if: (inputs.deployment_action == 'deploy' && steps.security.outputs.review_required != 'true') || inputs.deployment_action == 'security_continue' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote' || inputs.deployment_action == 'cleanup'
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
@@ -1792,7 +1792,7 @@ jobs:
 
       - name: Upload DeployGuard result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deployguard-result-${{ inputs.deployment_operation_id }}
           path: |
