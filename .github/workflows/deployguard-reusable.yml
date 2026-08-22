@@ -84,7 +84,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|security_continue|destroy|rollback|promote|compensate|cleanup)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
+          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|destroy|rollback|promote|compensate|cleanup)$ ]] || { echo "Invalid deployment action." >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = "deploy" ] || [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             [ "$GITHUB_REPOSITORY" = "${{ inputs.repository_full_name }}" ] || { echo "Immutable repository identity mismatch." >&2; exit 1; }
             [ "$GITHUB_REF_NAME" = "${{ inputs.repository_branch }}" ] || { echo "Immutable branch identity mismatch." >&2; exit 1; }
@@ -103,7 +103,7 @@ jobs:
           GENERATION_PREFIX="$(printf '%s' "$GENERATION_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
           RESOURCE_NAME="dg-$PROJECT_PREFIX-$GENERATION_PREFIX"
           printf 'RESOURCE_NAME=%s\n' "$RESOURCE_NAME" >> "$GITHUB_ENV"
-          if [ "$DEPLOYMENT_ACTION" = "deploy" ] || [ "$DEPLOYMENT_ACTION" = "security_continue" ]; then
+          if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
             [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
           fi
           [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
@@ -153,7 +153,7 @@ jobs:
             ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
           chmod 600 .deployguard/runtime-config.json
-          if [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|security_continue|rollback|promote|compensate|cleanup)$ ]]; then
+          if [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|promote|compensate|cleanup)$ ]]; then
             MONGODB_HEALTH_CHECK="$(printf '%s' 'bW9uZ29zaCAtLXF1aWV0IC0tdXNlcm5hbWUgIiRNT05HT19JTklUREJfUk9PVF9VU0VSTkFNRSIgLS1wYXNzd29yZCAiJE1PTkdPX0lOSVREQl9ST09UX1BBU1NXT1JEIiAtLWF1dGhlbnRpY2F0aW9uRGF0YWJhc2UgYWRtaW4gLS1ldmFsICdkYi5hZG1pbkNvbW1hbmQoeyBwaW5nOiAxIH0pJyA+L2Rldi9udWxs' | base64 --decode)"
             jq -e --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" --arg mongodbHealthCheck "$MONGODB_HEALTH_CHECK" '
               type == "object"
@@ -187,19 +187,6 @@ jobs:
               ))
               and (.environment | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | type == "string")))
               and (.secretReferences | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:"))))
-              and (
-                if ($ENV.DEPLOYMENT_ACTION | IN("deploy", "security_continue")) then
-                  .securityPolicy.contractVersion == "deployguard.security-policy/v1"
-                  and (.securityPolicy.gateMode | IN("enforce", "bypass"))
-                  and (.securityPolicy.blockCritical | type == "boolean")
-                  and (.securityPolicy.blockHigh | type == "boolean")
-                  and (.securityPolicy.blockBaseImageCritical | type == "boolean")
-                  and (.securityPolicy.requireFixAvailableToBlock | type == "boolean")
-                  and (.securityPolicy.mediumThresholdForApproval | type == "number" and . >= 1)
-                  and (.securityPolicy.lowBlocking | type == "boolean")
-                  and (.securityPolicy.allowManualApprovalForMedium | type == "boolean")
-                else true end
-              )
               and (.deploymentContext.schemaVersion == 1)
               and (.deploymentContext.deploymentMode | IN("FRESH", "UPDATE", "RETRY", "RESTORE", "RESET_FRESH"))
               and (.deploymentContext.persistentState | IN("NONE", "PERSISTENT"))
@@ -268,23 +255,6 @@ jobs:
                 )
               ))
               and (.environment.DEPLOYGUARD_OPERATION_ID == $operation)
-              and (
-                if $ENV.DEPLOYMENT_ACTION == "security_continue" then
-                  .securityContinuation.contractVersion == "deployguard.security-continuation/v1"
-                  and .securityContinuation.deploymentOperationId == $operation
-                  and .securityContinuation.projectId == $project
-                  and .securityContinuation.generationId == $generation
-                  and (.securityContinuation.scanId | test("^[0-9a-fA-F-]{36}$"))
-                  and (.securityContinuation.evidenceHash | test("^[0-9a-f]{64}$"))
-                  and (.securityContinuation.componentImages | type == "array" and length > 0 and length <= 2)
-                  and all(.securityContinuation.componentImages[];
-                    . as $image
-                    | ($image.id | IN("app", "application", "frontend", "backend"))
-                    and ($image.imageDigest | test("^sha256:[0-9a-f]{64}$"))
-                    and ($image.imageUri | test("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$"))
-                    and ($image.imageUri | endswith("@" + $image.imageDigest)))
-                else .securityContinuation == null or .securityContinuation == null end
-              )
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable runtime configuration references." >&2; exit 1; }
           elif [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '
@@ -556,128 +526,15 @@ jobs:
           echo "uri=$(printf '%s' "$PRIMARY" | jq -r '.imageUri')" >> "$GITHUB_OUTPUT"
           echo "components=$(printf '%s' "$COMPONENT_IMAGES" | jq -c .)" >> "$GITHUB_OUTPUT"
 
-      - name: Install Trivy scanner
-        if: inputs.deployment_action == 'deploy'
-        continue-on-error: true
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.72.0
-
-      - name: Scan exact immutable component images
-        if: inputs.deployment_action == 'deploy'
-        id: security
-        shell: bash
-        run: |
-          set -uo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/.deployguard/security"
-          COMPONENT_IMAGES="$GITHUB_WORKSPACE/.deployguard/component-images.json"
-          SECURITY_RESULT="$GITHUB_WORKSPACE/.deployguard/security/deployguard-security-result.json"
-          FINDINGS="$GITHUB_WORKSPACE/.deployguard/security/findings.json"
-          EVIDENCE_ALL_FILE="$GITHUB_WORKSPACE/.deployguard/security/evidence-all.json"
-          EVIDENCE_FILE="$GITHUB_WORKSPACE/.deployguard/security/evidence.json"
-          COUNTS_FILE="$GITHUB_WORKSPACE/.deployguard/security/counts.json"
-          POLICY_FILE="$GITHUB_WORKSPACE/.deployguard/security/policy.json"
-          SCANNED_IMAGES_FILE="$GITHUB_WORKSPACE/.deployguard/security/scanned-images.json"
-          HASH_PAYLOAD_FILE="$GITHUB_WORKSPACE/.deployguard/security/hash-payload.json"
-          printf '[]\n' > "$FINDINGS"
-          write_error() {
-            jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg commit "${{ inputs.commit_sha }}" \
-              '{contractVersion:"deployguard.security-result/v1",status:"error",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,commitSha:$commit,scanner:"trivy",componentImages:[],counts:{critical:0,high:0,medium:0,low:0,unknown:0,total:0},reviewFindingCount:0,evidence:[],evidenceHash:null,policy:{reviewRule:"fixable Critical application dependencies"}}' > "$SECURITY_RESULT"
-            echo "review_required=false" >> "$GITHUB_OUTPUT"
-            echo "Security scan could not produce trustworthy evidence." >&2
-            exit 1
-          }
-          command -v trivy >/dev/null 2>&1 || write_error
-          [ -s "$COMPONENT_IMAGES" ] || write_error
-          while IFS= read -r component; do
-            COMPONENT_ID="$(printf '%s' "$component" | jq -r '.id')"
-            IMAGE_URI="$(printf '%s' "$component" | jq -r '.imageUri')"
-            IMAGE_DIGEST="$(printf '%s' "$component" | jq -r '.imageDigest')"
-            [[ "$IMAGE_URI" == *"@$IMAGE_DIGEST" ]] || write_error
-            RAW="$GITHUB_WORKSPACE/.deployguard/security/$COMPONENT_ID.json"
-            trivy image --quiet --format json --output "$RAW" "$IMAGE_URI" || write_error
-            [ -s "$RAW" ] || write_error
-            jq -e 'type == "object" and (.Results | type == "array")' "$RAW" >/dev/null || write_error
-            jq -c --arg componentId "$COMPONENT_ID" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" '
-              [(.Results // [])[] as $result | ($result.Vulnerabilities // [])[] |
-                {componentId:$componentId,imageUri:$imageUri,imageDigest:$imageDigest,
-                 vulnerabilityId:(.VulnerabilityID // "UNKNOWN"),severity:((.Severity // "UNKNOWN") | ascii_upcase),
-                 packageName:(.PkgName // "unknown"),installedVersion:(.InstalledVersion // null),fixedVersion:(.FixedVersion // null),
-                 target:($result.Target // "unknown"),class:($result.Class // "unknown"),type:($result.Type // "unknown"),
-                 origin:(if (($result.Type // "") | ascii_downcase | IN("node-pkg","python-pkg","gobinary","gomod","jar","pom","bundler","cargo","composer","nuget"))
-                   or (($result.Target // "") | ascii_downcase | test("(^|/)(package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|requirements[^/]*\\.txt|poetry\\.lock|pipfile\\.lock|gemfile\\.lock|go\\.sum|pom\\.xml|cargo\\.lock)$")) then "app_dependency"
-                   elif (($result.Type // "") | ascii_downcase | IN("alpine","debian","ubuntu","redhat","centos","rocky","amazon","oracle","suse")) then "base_image"
-                   elif (($result.Type // "") | ascii_downcase) == "os" then "os_package" else "unknown" end)}]' "$RAW" \
-              | jq -s 'add' - "$FINDINGS" > "$FINDINGS.next" || write_error
-            mv "$FINDINGS.next" "$FINDINGS"
-          done < <(jq -c '.[]' "$COMPONENT_IMAGES")
-          jq -c 'sort_by(.componentId,.severity,.vulnerabilityId,.packageName)' "$FINDINGS" > "$EVIDENCE_ALL_FILE" || write_error
-          jq -c '{critical:map(select(.severity=="CRITICAL"))|length,high:map(select(.severity=="HIGH"))|length,medium:map(select(.severity=="MEDIUM"))|length,low:map(select(.severity=="LOW"))|length,unknown:map(select(.severity=="UNKNOWN"))|length,total:length}' "$EVIDENCE_ALL_FILE" > "$COUNTS_FILE" || write_error
-          jq -c '.securityPolicy' "$GITHUB_WORKSPACE/.deployguard/runtime-config.json" > "$POLICY_FILE" || write_error
-          REVIEW_COUNT="$(jq --slurpfile policy "$POLICY_FILE" '[.[] | select(
-            $policy[0].gateMode == "enforce"
-            and (($policy[0].requireFixAvailableToBlock | not) or (.fixedVersion // "") != "")
-            and ((.severity == "CRITICAL" and ((.origin == "app_dependency" and $policy[0].blockCritical) or ((.origin == "base_image" or .origin == "os_package") and $policy[0].blockBaseImageCritical)))
-              or (.severity == "HIGH" and $policy[0].blockHigh)
-              or (.severity == "LOW" and $policy[0].lowBlocking))
-          )] | length' "$EVIDENCE_ALL_FILE")" || write_error
-          MEDIUM_COUNT="$(jq '[.[] | select(.severity=="MEDIUM")] | length' "$EVIDENCE_ALL_FILE")" || write_error
-          if [ "$REVIEW_COUNT" -eq 0 ] && [ "$(jq -r '.gateMode == "enforce" and .allowManualApprovalForMedium' "$POLICY_FILE")" = "true" ] && [ "$MEDIUM_COUNT" -ge "$(jq -r '.mediumThresholdForApproval' "$POLICY_FILE")" ]; then REVIEW_COUNT="$MEDIUM_COUNT"; fi
-          jq -c '.[0:500]' "$EVIDENCE_ALL_FILE" > "$EVIDENCE_FILE" || write_error
-          jq -c --slurpfile evidence "$EVIDENCE_ALL_FILE" 'map(. as $image | {id:$image.id,role:$image.role,imageUri:($image.imageUri|ascii_downcase),imageDigest:($image.imageDigest|ascii_downcase),counts:{critical:([$evidence[0][]|select(.componentId==$image.id and .severity=="CRITICAL")]|length),high:([$evidence[0][]|select(.componentId==$image.id and .severity=="HIGH")]|length),medium:([$evidence[0][]|select(.componentId==$image.id and .severity=="MEDIUM")]|length),low:([$evidence[0][]|select(.componentId==$image.id and .severity=="LOW")]|length),unknown:([$evidence[0][]|select(.componentId==$image.id and .severity=="UNKNOWN")]|length),total:([$evidence[0][]|select(.componentId==$image.id)]|length)}}) | sort_by(tojson)' "$COMPONENT_IMAGES" > "$SCANNED_IMAGES_FILE" || write_error
-          STATUS=passed; [ "$REVIEW_COUNT" -gt 0 ] && STATUS=review_required
-          jq -cn --arg status "$STATUS" --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg commit "${{ inputs.commit_sha }}" \
-            --argjson reviewFindingCount "$REVIEW_COUNT" \
-            --slurpfile componentImages "$SCANNED_IMAGES_FILE" --slurpfile counts "$COUNTS_FILE" --slurpfile evidence "$EVIDENCE_FILE" --slurpfile policy "$POLICY_FILE" \
-            '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:($operation|ascii_downcase),projectId:($projectId|ascii_downcase),generationId:($generationId|ascii_downcase),commitSha:($commit|ascii_downcase),scanner:"trivy",componentImages:$componentImages[0],counts:$counts[0],reviewFindingCount:$reviewFindingCount,evidence:$evidence[0],policy:$policy[0]}' \
-            | jq -Scj . > "$HASH_PAYLOAD_FILE" || write_error
-          EVIDENCE_HASH="$(sha256sum "$HASH_PAYLOAD_FILE" | awk '{print $1}')" || write_error
-          jq -cn --arg status "$STATUS" --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg commit "${{ inputs.commit_sha }}" \
-            --arg hash "$EVIDENCE_HASH" --argjson reviewFindingCount "$REVIEW_COUNT" \
-            --slurpfile componentImages "$SCANNED_IMAGES_FILE" --slurpfile counts "$COUNTS_FILE" --slurpfile evidence "$EVIDENCE_FILE" --slurpfile policy "$POLICY_FILE" \
-            '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:($operation|ascii_downcase),projectId:($projectId|ascii_downcase),generationId:($generationId|ascii_downcase),commitSha:($commit|ascii_downcase),scanner:"trivy",componentImages:$componentImages[0],counts:$counts[0],reviewFindingCount:$reviewFindingCount,evidence:$evidence[0],evidenceHash:$hash,hashAlgorithm:"deployguard.security-evidence-sha256/v1",policy:$policy[0]}' > "$SECURITY_RESULT" || write_error
-          echo "review_required=$([ "$STATUS" = review_required ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          if [ "$STATUS" = review_required ]; then
-            mkdir -p "$GITHUB_WORKSPACE/.deployguard/terraform"
-            cp "$SECURITY_RESULT" "$GITHUB_WORKSPACE/.deployguard/terraform/deployguard-result.json"
-            echo "SECURITY_REVIEW_REQUIRED: immutable images were scanned and require an authenticated user decision."
-          else
-            echo "SECURITY_SCAN_PASSED: $REVIEW_COUNT configured review-threshold finding(s)."
-          fi
-
-      - name: Restore reviewed immutable images
-        if: inputs.deployment_action == 'security_continue'
-        id: reviewed_image
-        shell: bash
-        run: |
-          set -euo pipefail
-          COMPONENT_IMAGES="$(jq -c '.securityContinuation.componentImages' .deployguard/runtime-config.json)"
-          EVIDENCE_HASH="$(jq -r '.securityContinuation.evidenceHash' .deployguard/runtime-config.json)"
-          ACKNOWLEDGED_HASH="$(jq -r '.securityContinuation.acknowledgedEvidenceHash' .deployguard/runtime-config.json)"
-          [ "$EVIDENCE_HASH" = "$ACKNOWLEDGED_HASH" ] || { echo "Security evidence acknowledgement does not match the reviewed evidence." >&2; exit 1; }
-          while IFS= read -r component; do
-            URI="$(printf '%s' "$component" | jq -r '.imageUri')"
-            DIGEST="$(printf '%s' "$component" | jq -r '.imageDigest')"
-            [[ "$URI" == *"@$DIGEST" ]] || { echo "Reviewed image identity is invalid." >&2; exit 1; }
-            REPOSITORY="${URI#*/}"; REPOSITORY="${REPOSITORY%@*}"
-            aws ecr describe-images --repository-name "$REPOSITORY" --image-ids imageDigest="$DIGEST" --output json | jq -e '.imageDetails | length == 1' >/dev/null
-          done < <(printf '%s' "$COMPONENT_IMAGES" | jq -c '.[]')
-          printf '%s\n' "$COMPONENT_IMAGES" > .deployguard/component-images.json
-          jq -c 'if ((.components // []) | length) > 0 then .components else [{id:"app",role:"application",root:.appRoot,buildContext:.appRoot,port:.port,healthPath:.healthPath,dockerStrategy:.dockerStrategy}] end' .deployguard/build-plan.json > .deployguard/components.json
-          PRIMARY="$(printf '%s' "$COMPONENT_IMAGES" | jq -c 'map(select(.role == "frontend"))[0] // .[0]')"
-          echo "digest=$(printf '%s' "$PRIMARY" | jq -r '.imageDigest')" >> "$GITHUB_OUTPUT"
-          echo "uri=$(printf '%s' "$PRIMARY" | jq -r '.imageUri')" >> "$GITHUB_OUTPUT"
-          echo "components=$(printf '%s' "$COMPONENT_IMAGES" | jq -c .)" >> "$GITHUB_OUTPUT"
-
       - name: Install Terraform
-        if: (inputs.deployment_action == 'deploy' && steps.security.outputs.review_required != 'true') || inputs.deployment_action == 'security_continue' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote' || inputs.deployment_action == 'cleanup'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote' || inputs.deployment_action == 'cleanup'
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
 
       - name: Prepare project-scoped persistence
-        if: (inputs.deployment_action == 'deploy' && steps.security.outputs.review_required != 'true') || inputs.deployment_action == 'security_continue' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
         shell: bash
         run: |
           set -euo pipefail
@@ -976,10 +833,10 @@ jobs:
           fi
 
       - name: Generate deployment Terraform
-        if: (inputs.deployment_action == 'deploy' && steps.security.outputs.review_required != 'true') || inputs.deployment_action == 'security_continue' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'cleanup'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'cleanup'
         shell: bash
         env:
-          IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.deployment_action == 'security_continue' && steps.reviewed_image.outputs.uri || inputs.deployment_action == 'rollback' && inputs.rollback_image_uri || 'destroy.invalid' }}
+          IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.deployment_action == 'rollback' && inputs.rollback_image_uri || 'destroy.invalid' }}
         run: |
           set -euo pipefail
           mkdir -p .deployguard/terraform
@@ -1278,7 +1135,7 @@ jobs:
           NODE
 
       - name: Terraform plan and apply
-        if: (inputs.deployment_action == 'deploy' && steps.security.outputs.review_required != 'true') || inputs.deployment_action == 'security_continue' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback'
         working-directory: .deployguard/terraform
         shell: bash
         run: |
@@ -1547,12 +1404,12 @@ jobs:
           done < <(jq -r '.projectDeletion.generations[].generationId' .deployguard/runtime-config.json)
 
       - name: Verify exact candidate health and write evidence
-        if: (inputs.deployment_action == 'deploy' && steps.security.outputs.review_required != 'true') || inputs.deployment_action == 'security_continue' || inputs.deployment_action == 'rollback'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'rollback'
         working-directory: .deployguard/terraform
         shell: bash
         env:
-          IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.deployment_action == 'security_continue' && steps.reviewed_image.outputs.uri || inputs.rollback_image_uri }}
-          IMAGE_DIGEST: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.digest || inputs.deployment_action == 'security_continue' && steps.reviewed_image.outputs.digest || '' }}
+          IMAGE_URI: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.uri || inputs.rollback_image_uri }}
+          IMAGE_DIGEST: ${{ inputs.deployment_action == 'deploy' && steps.image.outputs.digest || '' }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
@@ -1613,14 +1470,20 @@ jobs:
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
       - name: Promote exact verified candidate and write result
-        if: inputs.deployment_action == 'promote'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote'
         shell: bash
         env:
           COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
-          CANDIDATE="$(jq -c '.promotion.candidate' .deployguard/runtime-config.json)"
-          INTENT_FINGERPRINT="$(jq -r '.promotion.intentFingerprint' .deployguard/runtime-config.json)"
+          if [ "$DEPLOYMENT_ACTION" = "promote" ]; then
+            CANDIDATE="$(jq -c '.promotion.candidate' .deployguard/runtime-config.json)"
+            INTENT_FINGERPRINT="$(jq -r '.promotion.intentFingerprint' .deployguard/runtime-config.json)"
+          else
+            CANDIDATE="$(jq -c . .deployguard/terraform/deployguard-result.json)"
+            INTENT_WITHOUT_FINGERPRINT="$(jq -c --argjson candidate "$CANDIDATE" '.promotion | .candidate = $candidate | del(.intentFingerprint)' .deployguard/runtime-config.json)"
+            INTENT_FINGERPRINT="$(printf '%s' "$INTENT_WITHOUT_FINGERPRINT" | sha256sum | awk '{print $1}')"
+          fi
           TARGET_GROUP_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.targetGroupArn')"
           CANDIDATE_RULE_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.candidateListenerRuleArn')"
           CLUSTER_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.clusterName')"
@@ -1907,7 +1770,6 @@ jobs:
           name: deployguard-result-${{ inputs.deployment_operation_id }}
           path: |
             .deployguard/terraform/deployguard-result.json
-            .deployguard/security/deployguard-security-result.json
             .deployguard/terraform/deployguard-cost-plan.json
             .deployguard/project-terraform/deployguard-project-cost-plan.json
           retention-days: 30
