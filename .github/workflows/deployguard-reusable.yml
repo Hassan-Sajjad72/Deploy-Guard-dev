@@ -422,9 +422,15 @@ jobs:
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
           BUILD_ARGS=()
+          CONFIG_FILE=""
+          BUILD_RUNTIME_CONFIG=""
+          cleanup_build_temporary_files() {
+            if [ -n "$CONFIG_FILE" ]; then rm -f "$CONFIG_FILE"; fi
+            if [ -n "$BUILD_RUNTIME_CONFIG" ]; then rm -f "$BUILD_RUNTIME_CONFIG"; fi
+          }
+          trap cleanup_build_temporary_files EXIT
           if [ -n "$BUILD_TIME_PUBLIC_CONFIG_BASE64" ]; then
             CONFIG_FILE="$(mktemp)"
-            trap 'rm -f "$CONFIG_FILE"' EXIT
             printf '%s' "$BUILD_TIME_PUBLIC_CONFIG_BASE64" | base64 --decode > "$CONFIG_FILE"
             jq -e 'type == "object" and all(keys[]; test("^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$")) and all(.[]; type == "string")' "$CONFIG_FILE" >/dev/null || { echo "Invalid public build configuration payload." >&2; exit 1; }
             while IFS= read -r key; do
@@ -440,12 +446,49 @@ jobs:
             COMPONENT_TAG="${{ steps.release.outputs.image_tag }}-$COMPONENT_ID"
             TAGGED_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:$COMPONENT_TAG"
             cd "$GITHUB_WORKSPACE/$BUILD_CONTEXT"
+            BUILD_SECRET_ARGS=()
+            if [ "$(printf '%s' "$component" | jq -r '.dockerStrategy == "generated"')" = "true" ] && grep -q 'id=deployguard_runtime_config' Dockerfile; then
+              BUILD_RUNTIME_CONFIG="$(mktemp "$RUNNER_TEMP/deployguard-runtime-build.XXXXXX")"
+              chmod 600 "$BUILD_RUNTIME_CONFIG"
+              BUILD_RUNTIME_CONFIG="$BUILD_RUNTIME_CONFIG" node <<'NODE'
+              const { execFileSync } = require("child_process");
+              const fs = require("fs");
+              const runtime = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/.deployguard/runtime-config.json`, "utf8"));
+              const values = { ...(runtime.environment || {}), ...(runtime.managedDatabase?.runtimeAliases || {}) };
+              const secretCache = new Map();
+              for (const [name, reference] of Object.entries(runtime.secretReferences || {})) {
+                const segments = String(reference).split(":");
+                const field = segments.at(-3);
+                const secretArn = segments.slice(0, -3).join(":");
+                if (!field || !secretArn.startsWith("arn:")) throw new Error("The immutable runtime secret reference is invalid for build initialization.");
+                let secret = secretCache.get(secretArn);
+                if (!secret) {
+                  try {
+                    secret = JSON.parse(execFileSync("aws", ["secretsmanager", "get-secret-value", "--secret-id", secretArn, "--query", "SecretString", "--output", "text"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+                  } catch {
+                    throw new Error("DeployGuard could not read an immutable runtime secret for build initialization.");
+                  }
+                  secretCache.set(secretArn, secret);
+                }
+                if (typeof secret[field] !== "string") throw new Error("The immutable runtime secret is missing a required build-initialization value.");
+                values[name] = secret[field];
+              }
+              fs.writeFileSync(process.env.BUILD_RUNTIME_CONFIG, JSON.stringify(values), { mode: 0o600 });
+          NODE
+              BUILD_SECRET_ARGS=(--secret "id=deployguard_runtime_config,src=$BUILD_RUNTIME_CONFIG")
+            fi
             if docker buildx version >/dev/null 2>&1 && docker buildx build --help 2>&1 | grep -q -- '--check'; then
-              docker buildx build --check "${BUILD_ARGS[@]}" .
+              docker buildx build --check "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" .
             else
               echo "Docker Buildx --check is unavailable on this runner; the validated contract and real Docker build remain authoritative."
             fi
-            docker build --pull "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .
+            if [ "${#BUILD_SECRET_ARGS[@]}" -gt 0 ]; then
+              docker buildx build --load --pull "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" -t "$TAGGED_URI" .
+              rm -f "$BUILD_RUNTIME_CONFIG"
+              BUILD_RUNTIME_CONFIG=""
+            else
+              docker build --pull "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .
+            fi
             docker push "$TAGGED_URI"
             IMAGE_DIGEST="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids imageTag="$COMPONENT_TAG" --query 'imageDetails[0].imageDigest' --output text)"
             [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "The immutable image digest could not be resolved for $COMPONENT_ID." >&2; exit 1; }
