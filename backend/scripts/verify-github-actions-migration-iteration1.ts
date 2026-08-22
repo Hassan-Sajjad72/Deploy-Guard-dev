@@ -14,7 +14,7 @@ async function run() {
     GITHUB_APP_ID: "12345",
     GITHUB_APP_SLUG: "deployguard-test",
     GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@7dd007c820320b5c74d6bf1e1cb8839bb0bd9d8d",
+    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@7c5eb08925f02aa75090bef65bc8fb14667df699",
   };
   const rows: any[] = [];
   const repository = {
