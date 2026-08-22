@@ -450,13 +450,65 @@ jobs:
             if [ "$(printf '%s' "$component" | jq -r '.dockerStrategy == "generated"')" = "true" ] && grep -q 'id=deployguard_runtime_config' Dockerfile; then
               BUILD_RUNTIME_CONFIG="$(mktemp "$RUNNER_TEMP/deployguard-runtime-build.XXXXXX")"
               chmod 600 "$BUILD_RUNTIME_CONFIG"
-              BUILD_RUNTIME_CONFIG="$BUILD_RUNTIME_CONFIG" node <<'NODE'
+              COMPONENT="$component" BUILD_RUNTIME_CONFIG="$BUILD_RUNTIME_CONFIG" node <<'NODE'
               const { execFileSync } = require("child_process");
               const fs = require("fs");
               const runtime = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/.deployguard/runtime-config.json`, "utf8"));
-              const values = { ...(runtime.environment || {}), ...(runtime.managedDatabase?.runtimeAliases || {}) };
+              const component = JSON.parse(process.env.COMPONENT || "{}");
+              const legacyDjangoCollectstatic = component.language === "python"
+                && component.framework === "django"
+                && /(?:^|\s)manage\.py\s+collectstatic(?:\s|$)/.test(String(component.buildCommand || ""));
+              const initialization = component.buildInitialization?.mode || (legacyDjangoCollectstatic ? "runtime_placeholders" : "none");
+              if (initialization === "external_service_required") {
+                throw new Error("The immutable build command requires a live external service and must be deferred to the post-provision/release phase.");
+              }
+              const ownership = Array.isArray(component.environmentOwnership) ? component.environmentOwnership : [];
+              const componentKeys = new Set(ownership
+                .filter((item) => item && item.source !== "managed_database")
+                .map((item) => String(item.key || ""))
+                .filter(Boolean));
+              const hasComponentOwnership = componentKeys.size > 0;
+              const values = Object.fromEntries(Object.entries(runtime.environment || {})
+                .filter(([key]) => !hasComponentOwnership || componentKeys.has(key)));
+              const managed = runtime.managedDatabase || null;
+              const aliases = {
+                host: ["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MONGO_HOST", "MONGODB_HOST"],
+                port: ["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "MYSQL_PORT", "MONGO_PORT", "MONGODB_PORT"],
+                username: ["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "MYSQL_USER", "MONGO_USER", "MONGODB_USER"],
+                password: ["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD"],
+                database: ["DB_NAME", "DATABASE_NAME", "POSTGRES_DB", "PGDATABASE", "MYSQL_DATABASE", "MONGO_DB", "MONGODB_DATABASE"],
+                url: ["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URL", "MONGODB_URI"],
+              };
+              const propertyFor = (key) => Object.entries(aliases).find(([, keys]) => keys.includes(key))?.[0] || null;
+              const databaseKeys = new Set();
+              if (managed) {
+                for (const keys of Object.values(aliases)) for (const key of keys) databaseKeys.add(key);
+                for (const key of Object.keys(managed.runtimeAliases || {})) databaseKeys.add(key);
+                for (const key of Object.keys(managed.secretAliases || {})) databaseKeys.add(key);
+                for (const item of ownership) if (item?.source === "managed_database" && item.key) databaseKeys.add(String(item.key));
+              }
+              const buildHost = "deployguard-build-init.invalid";
+              const buildUser = "deployguard_build_init";
+              const buildPassword = "deployguard-build-init-placeholder";
+              const buildDatabase = "deployguard_build_init";
+              const buildPort = String(managed?.port || 5432);
+              const buildUrl = managed
+                ? `${managed.urlScheme}://${encodeURIComponent(buildUser)}:${encodeURIComponent(buildPassword)}@${buildHost}:${buildPort}/${buildDatabase}${managed.urlQuery || ""}`
+                : null;
+              const placeholder = (key) => {
+                const property = propertyFor(key);
+                if (property === "host") return buildHost;
+                if (property === "port") return buildPort;
+                if (property === "username") return buildUser;
+                if (property === "database") return buildDatabase;
+                if (property === "url") return buildUrl || "deployguard-build-init-placeholder";
+                return buildPassword;
+              };
+              for (const key of databaseKeys) delete values[key];
               const secretCache = new Map();
               for (const [name, reference] of Object.entries(runtime.secretReferences || {})) {
+                if (databaseKeys.has(name)) continue;
+                if (hasComponentOwnership && !componentKeys.has(name)) continue;
                 const segments = String(reference).split(":");
                 const field = segments.at(-3);
                 const secretArn = segments.slice(0, -3).join(":");
@@ -472,6 +524,9 @@ jobs:
                 }
                 if (typeof secret[field] !== "string") throw new Error("The immutable runtime secret is missing a required build-initialization value.");
                 values[name] = secret[field];
+              }
+              if (initialization === "runtime_placeholders") {
+                for (const key of databaseKeys) values[key] = placeholder(key);
               }
               fs.writeFileSync(process.env.BUILD_RUNTIME_CONFIG, JSON.stringify(values), { mode: 0o600 });
           NODE
