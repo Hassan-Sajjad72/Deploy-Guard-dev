@@ -103,7 +103,7 @@ jobs:
           GENERATION_PREFIX="$(printf '%s' "$GENERATION_ID" | tr '[:upper:]_' '[:lower:]-' | cut -c1-8)"
           RESOURCE_NAME="dg-$PROJECT_PREFIX-$GENERATION_PREFIX"
           printf 'RESOURCE_NAME=%s\n' "$RESOURCE_NAME" >> "$GITHUB_ENV"
-          if [ "$DEPLOYMENT_ACTION" = "deploy" ]; then
+          if [ "$DEPLOYMENT_ACTION" = "deploy" ] || [ "$DEPLOYMENT_ACTION" = "security_continue" ]; then
             [[ "${{ inputs.image_tag }}" =~ ^[0-9a-f]{12}-[A-Za-z0-9]{12}$ ]] || { echo "Invalid immutable image tag." >&2; exit 1; }
           fi
           [ -n "${{ inputs.detection_profile_version }}" ] && [ -n "${{ inputs.deployment_contract_version }}" ] || { echo "Immutable contract version is missing." >&2; exit 1; }
@@ -578,6 +578,7 @@ jobs:
           COUNTS_FILE="$GITHUB_WORKSPACE/.deployguard/security/counts.json"
           POLICY_FILE="$GITHUB_WORKSPACE/.deployguard/security/policy.json"
           SCANNED_IMAGES_FILE="$GITHUB_WORKSPACE/.deployguard/security/scanned-images.json"
+          HASH_PAYLOAD_FILE="$GITHUB_WORKSPACE/.deployguard/security/hash-payload.json"
           printf '[]\n' > "$FINDINGS"
           write_error() {
             jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg commit "${{ inputs.commit_sha }}" \
@@ -623,13 +624,18 @@ jobs:
           MEDIUM_COUNT="$(jq '[.[] | select(.severity=="MEDIUM")] | length' "$EVIDENCE_ALL_FILE")" || write_error
           if [ "$REVIEW_COUNT" -eq 0 ] && [ "$(jq -r '.gateMode == "enforce" and .allowManualApprovalForMedium' "$POLICY_FILE")" = "true" ] && [ "$MEDIUM_COUNT" -ge "$(jq -r '.mediumThresholdForApproval' "$POLICY_FILE")" ]; then REVIEW_COUNT="$MEDIUM_COUNT"; fi
           jq -c '.[0:500]' "$EVIDENCE_ALL_FILE" > "$EVIDENCE_FILE" || write_error
-          EVIDENCE_HASH="$(jq -cj . "$EVIDENCE_FILE" | sha256sum | awk '{print $1}')" || write_error
-          jq -c --slurpfile evidence "$EVIDENCE_ALL_FILE" 'map(. as $image | . + {counts:{critical:([$evidence[0][]|select(.componentId==$image.id and .severity=="CRITICAL")]|length),high:([$evidence[0][]|select(.componentId==$image.id and .severity=="HIGH")]|length),medium:([$evidence[0][]|select(.componentId==$image.id and .severity=="MEDIUM")]|length),low:([$evidence[0][]|select(.componentId==$image.id and .severity=="LOW")]|length),unknown:([$evidence[0][]|select(.componentId==$image.id and .severity=="UNKNOWN")]|length),total:([$evidence[0][]|select(.componentId==$image.id)]|length)}})' "$COMPONENT_IMAGES" > "$SCANNED_IMAGES_FILE" || write_error
+          jq -c --slurpfile evidence "$EVIDENCE_ALL_FILE" 'map(. as $image | {id:$image.id,role:$image.role,imageUri:($image.imageUri|ascii_downcase),imageDigest:($image.imageDigest|ascii_downcase),counts:{critical:([$evidence[0][]|select(.componentId==$image.id and .severity=="CRITICAL")]|length),high:([$evidence[0][]|select(.componentId==$image.id and .severity=="HIGH")]|length),medium:([$evidence[0][]|select(.componentId==$image.id and .severity=="MEDIUM")]|length),low:([$evidence[0][]|select(.componentId==$image.id and .severity=="LOW")]|length),unknown:([$evidence[0][]|select(.componentId==$image.id and .severity=="UNKNOWN")]|length),total:([$evidence[0][]|select(.componentId==$image.id)]|length)}}) | sort_by(tojson)' "$COMPONENT_IMAGES" > "$SCANNED_IMAGES_FILE" || write_error
           STATUS=passed; [ "$REVIEW_COUNT" -gt 0 ] && STATUS=review_required
+          jq -cn --arg status "$STATUS" --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg commit "${{ inputs.commit_sha }}" \
+            --argjson reviewFindingCount "$REVIEW_COUNT" \
+            --slurpfile componentImages "$SCANNED_IMAGES_FILE" --slurpfile counts "$COUNTS_FILE" --slurpfile evidence "$EVIDENCE_FILE" --slurpfile policy "$POLICY_FILE" \
+            '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:($operation|ascii_downcase),projectId:($projectId|ascii_downcase),generationId:($generationId|ascii_downcase),commitSha:($commit|ascii_downcase),scanner:"trivy",componentImages:$componentImages[0],counts:$counts[0],reviewFindingCount:$reviewFindingCount,evidence:$evidence[0],policy:$policy[0]}' \
+            | jq -Scj . > "$HASH_PAYLOAD_FILE" || write_error
+          EVIDENCE_HASH="$(sha256sum "$HASH_PAYLOAD_FILE" | awk '{print $1}')" || write_error
           jq -cn --arg status "$STATUS" --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg commit "${{ inputs.commit_sha }}" \
             --arg hash "$EVIDENCE_HASH" --argjson reviewFindingCount "$REVIEW_COUNT" \
             --slurpfile componentImages "$SCANNED_IMAGES_FILE" --slurpfile counts "$COUNTS_FILE" --slurpfile evidence "$EVIDENCE_FILE" --slurpfile policy "$POLICY_FILE" \
-            '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,commitSha:$commit,scanner:"trivy",componentImages:$componentImages[0],counts:$counts[0],reviewFindingCount:$reviewFindingCount,evidence:$evidence[0],evidenceHash:$hash,policy:$policy[0]}' > "$SECURITY_RESULT" || write_error
+            '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:($operation|ascii_downcase),projectId:($projectId|ascii_downcase),generationId:($generationId|ascii_downcase),commitSha:($commit|ascii_downcase),scanner:"trivy",componentImages:$componentImages[0],counts:$counts[0],reviewFindingCount:$reviewFindingCount,evidence:$evidence[0],evidenceHash:$hash,hashAlgorithm:"deployguard.security-evidence-sha256/v1",policy:$policy[0]}' > "$SECURITY_RESULT" || write_error
           echo "review_required=$([ "$STATUS" = review_required ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           if [ "$STATUS" = review_required ]; then
             mkdir -p "$GITHUB_WORKSPACE/.deployguard/terraform"
