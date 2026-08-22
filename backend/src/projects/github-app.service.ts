@@ -9,7 +9,7 @@ import { BUILD_PLAN_WORKFLOW_INPUT_NAMES, GITHUB_ACTIONS_CALLER_INPUT_NAMES, GIT
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, GithubActionsWorkflowContractError, parsePinnedReusableWorkflow } from "./github-actions-workflow-contract";
 
 export const DEPLOYGUARD_WORKFLOW_PATH = ".github/workflows/deployguard.yml";
-export const DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW = "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@7c5eb08925f02aa75090bef65bc8fb14667df699";
+export const DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW = "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@d2ff5f8714312e34d0c3ed9c6f7d93b4b4f64727";
 
 export function renderDeployguardCallerWorkflow(reusable: string) {
   const names = [...GITHUB_ACTIONS_CALLER_INPUT_NAMES];
