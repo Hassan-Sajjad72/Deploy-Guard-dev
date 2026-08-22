@@ -573,6 +573,11 @@ jobs:
           COMPONENT_IMAGES="$GITHUB_WORKSPACE/.deployguard/component-images.json"
           SECURITY_RESULT="$GITHUB_WORKSPACE/.deployguard/security/deployguard-security-result.json"
           FINDINGS="$GITHUB_WORKSPACE/.deployguard/security/findings.json"
+          EVIDENCE_ALL_FILE="$GITHUB_WORKSPACE/.deployguard/security/evidence-all.json"
+          EVIDENCE_FILE="$GITHUB_WORKSPACE/.deployguard/security/evidence.json"
+          COUNTS_FILE="$GITHUB_WORKSPACE/.deployguard/security/counts.json"
+          POLICY_FILE="$GITHUB_WORKSPACE/.deployguard/security/policy.json"
+          SCANNED_IMAGES_FILE="$GITHUB_WORKSPACE/.deployguard/security/scanned-images.json"
           printf '[]\n' > "$FINDINGS"
           write_error() {
             jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg commit "${{ inputs.commit_sha }}" \
@@ -590,6 +595,8 @@ jobs:
             [[ "$IMAGE_URI" == *"@$IMAGE_DIGEST" ]] || write_error
             RAW="$GITHUB_WORKSPACE/.deployguard/security/$COMPONENT_ID.json"
             trivy image --quiet --format json --output "$RAW" "$IMAGE_URI" || write_error
+            [ -s "$RAW" ] || write_error
+            jq -e 'type == "object" and (.Results | type == "array")' "$RAW" >/dev/null || write_error
             jq -c --arg componentId "$COMPONENT_ID" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" '
               [(.Results // [])[] as $result | ($result.Vulnerabilities // [])[] |
                 {componentId:$componentId,imageUri:$imageUri,imageDigest:$imageDigest,
@@ -603,26 +610,26 @@ jobs:
               | jq -s 'add' - "$FINDINGS" > "$FINDINGS.next" || write_error
             mv "$FINDINGS.next" "$FINDINGS"
           done < <(jq -c '.[]' "$COMPONENT_IMAGES")
-          EVIDENCE_ALL="$(jq -c 'sort_by(.componentId,.severity,.vulnerabilityId,.packageName)' "$FINDINGS")" || write_error
-          COUNTS="$(printf '%s' "$EVIDENCE_ALL" | jq -c '{critical:map(select(.severity=="CRITICAL"))|length,high:map(select(.severity=="HIGH"))|length,medium:map(select(.severity=="MEDIUM"))|length,low:map(select(.severity=="LOW"))|length,unknown:map(select(.severity=="UNKNOWN"))|length,total:length}')" || write_error
-          POLICY="$(jq -c '.securityPolicy' "$GITHUB_WORKSPACE/.deployguard/runtime-config.json")" || write_error
-          REVIEW_COUNT="$(printf '%s' "$EVIDENCE_ALL" | jq --argjson policy "$POLICY" '[.[] | select(
-            $policy.gateMode == "enforce"
-            and (($policy.requireFixAvailableToBlock | not) or (.fixedVersion // "") != "")
-            and ((.severity == "CRITICAL" and ((.origin == "app_dependency" and $policy.blockCritical) or ((.origin == "base_image" or .origin == "os_package") and $policy.blockBaseImageCritical)))
-              or (.severity == "HIGH" and $policy.blockHigh)
-              or (.severity == "LOW" and $policy.lowBlocking))
-          )] | length')" || write_error
-          MEDIUM_COUNT="$(printf '%s' "$EVIDENCE_ALL" | jq '[.[] | select(.severity=="MEDIUM")] | length')" || write_error
-          if [ "$REVIEW_COUNT" -eq 0 ] && [ "$(printf '%s' "$POLICY" | jq -r '.gateMode == "enforce" and .allowManualApprovalForMedium')" = "true" ] && [ "$MEDIUM_COUNT" -ge "$(printf '%s' "$POLICY" | jq -r '.mediumThresholdForApproval')" ]; then REVIEW_COUNT="$MEDIUM_COUNT"; fi
-          EVIDENCE="$(printf '%s' "$EVIDENCE_ALL" | jq -c '.[0:500]')" || write_error
-          EVIDENCE_HASH="$(printf '%s' "$EVIDENCE" | sha256sum | awk '{print $1}')"
-          SCANNED_IMAGES="$(jq -c --argjson evidence "$EVIDENCE_ALL" 'map(. as $image | . + {counts:{critical:([$evidence[]|select(.componentId==$image.id and .severity=="CRITICAL")]|length),high:([$evidence[]|select(.componentId==$image.id and .severity=="HIGH")]|length),medium:([$evidence[]|select(.componentId==$image.id and .severity=="MEDIUM")]|length),low:([$evidence[]|select(.componentId==$image.id and .severity=="LOW")]|length),unknown:([$evidence[]|select(.componentId==$image.id and .severity=="UNKNOWN")]|length),total:([$evidence[]|select(.componentId==$image.id)]|length)}})' "$COMPONENT_IMAGES")" || write_error
+          jq -c 'sort_by(.componentId,.severity,.vulnerabilityId,.packageName)' "$FINDINGS" > "$EVIDENCE_ALL_FILE" || write_error
+          jq -c '{critical:map(select(.severity=="CRITICAL"))|length,high:map(select(.severity=="HIGH"))|length,medium:map(select(.severity=="MEDIUM"))|length,low:map(select(.severity=="LOW"))|length,unknown:map(select(.severity=="UNKNOWN"))|length,total:length}' "$EVIDENCE_ALL_FILE" > "$COUNTS_FILE" || write_error
+          jq -c '.securityPolicy' "$GITHUB_WORKSPACE/.deployguard/runtime-config.json" > "$POLICY_FILE" || write_error
+          REVIEW_COUNT="$(jq --slurpfile policy "$POLICY_FILE" '[.[] | select(
+            $policy[0].gateMode == "enforce"
+            and (($policy[0].requireFixAvailableToBlock | not) or (.fixedVersion // "") != "")
+            and ((.severity == "CRITICAL" and ((.origin == "app_dependency" and $policy[0].blockCritical) or ((.origin == "base_image" or .origin == "os_package") and $policy[0].blockBaseImageCritical)))
+              or (.severity == "HIGH" and $policy[0].blockHigh)
+              or (.severity == "LOW" and $policy[0].lowBlocking))
+          )] | length' "$EVIDENCE_ALL_FILE")" || write_error
+          MEDIUM_COUNT="$(jq '[.[] | select(.severity=="MEDIUM")] | length' "$EVIDENCE_ALL_FILE")" || write_error
+          if [ "$REVIEW_COUNT" -eq 0 ] && [ "$(jq -r '.gateMode == "enforce" and .allowManualApprovalForMedium' "$POLICY_FILE")" = "true" ] && [ "$MEDIUM_COUNT" -ge "$(jq -r '.mediumThresholdForApproval' "$POLICY_FILE")" ]; then REVIEW_COUNT="$MEDIUM_COUNT"; fi
+          jq -c '.[0:500]' "$EVIDENCE_ALL_FILE" > "$EVIDENCE_FILE" || write_error
+          EVIDENCE_HASH="$(jq -cj . "$EVIDENCE_FILE" | sha256sum | awk '{print $1}')" || write_error
+          jq -c --slurpfile evidence "$EVIDENCE_ALL_FILE" 'map(. as $image | . + {counts:{critical:([$evidence[0][]|select(.componentId==$image.id and .severity=="CRITICAL")]|length),high:([$evidence[0][]|select(.componentId==$image.id and .severity=="HIGH")]|length),medium:([$evidence[0][]|select(.componentId==$image.id and .severity=="MEDIUM")]|length),low:([$evidence[0][]|select(.componentId==$image.id and .severity=="LOW")]|length),unknown:([$evidence[0][]|select(.componentId==$image.id and .severity=="UNKNOWN")]|length),total:([$evidence[0][]|select(.componentId==$image.id)]|length)}})' "$COMPONENT_IMAGES" > "$SCANNED_IMAGES_FILE" || write_error
           STATUS=passed; [ "$REVIEW_COUNT" -gt 0 ] && STATUS=review_required
           jq -cn --arg status "$STATUS" --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg commit "${{ inputs.commit_sha }}" \
-            --arg hash "$EVIDENCE_HASH" --argjson componentImages "$SCANNED_IMAGES" --argjson counts "$COUNTS" --argjson reviewFindingCount "$REVIEW_COUNT" --argjson evidence "$EVIDENCE" \
-            --argjson policy "$POLICY" \
-            '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,commitSha:$commit,scanner:"trivy",componentImages:$componentImages,counts:$counts,reviewFindingCount:$reviewFindingCount,evidence:$evidence,evidenceHash:$hash,policy:$policy}' > "$SECURITY_RESULT" || write_error
+            --arg hash "$EVIDENCE_HASH" --argjson reviewFindingCount "$REVIEW_COUNT" \
+            --slurpfile componentImages "$SCANNED_IMAGES_FILE" --slurpfile counts "$COUNTS_FILE" --slurpfile evidence "$EVIDENCE_FILE" --slurpfile policy "$POLICY_FILE" \
+            '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,commitSha:$commit,scanner:"trivy",componentImages:$componentImages[0],counts:$counts[0],reviewFindingCount:$reviewFindingCount,evidence:$evidence[0],evidenceHash:$hash,policy:$policy[0]}' > "$SECURITY_RESULT" || write_error
           echo "review_required=$([ "$STATUS" = review_required ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           if [ "$STATUS" = review_required ]; then
             mkdir -p "$GITHUB_WORKSPACE/.deployguard/terraform"
