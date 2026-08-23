@@ -140,8 +140,11 @@ jobs:
                 and (.root | test("^(\\.|[A-Za-z0-9._/-]+)$"))
                 and (.buildContext | test("^(\\.|[A-Za-z0-9._/-]+)$"))
                 and (.port >= 1 and .port <= 65535)
-                and (.healthPath | startswith("/"))
                 and ((.healthCheckMode // "http") | IN("http", "tcp"))
+                and (if (.healthCheckMode // "http") == "tcp"
+                     then .healthPath == null
+                     else (.healthPath | type == "string" and startswith("/"))
+                     end)
               ))
               and ((.relationships // []) | type == "array" and length <= 1)
               and ((.relationships // []) | all(.[];
@@ -342,6 +345,8 @@ jobs:
             APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$BUILD_CONTEXT"
             [ -d "$APPLICATION_DIRECTORY" ] || { echo "Component build context does not exist: $COMPONENT_ID." >&2; exit 1; }
             cd "$APPLICATION_DIRECTORY"
+            DOCKERFILE_PATH="$(printf '%s' "$component" | jq -r 'if .dockerStrategy == "custom" then (.dockerfilePath // "Dockerfile") else "Dockerfile" end')"
+            case "$DOCKERFILE_PATH" in ""|/*|*".."*) echo "Invalid component Dockerfile path." >&2; exit 1;; esac
             if [ -n "$GENERATED_DOCKERFILE_BASE64" ]; then
               if [ "$COMPONENT_COUNT" -gt 1 ]; then
                 jq -er --arg id "$COMPONENT_ID" '.components[$id] | select(type == "string" and length > 0)' "$GENERATED_FILE" > Dockerfile
@@ -350,7 +355,7 @@ jobs:
               fi
               [ -s Dockerfile ] || { echo "Generated Dockerfile payload is empty for $COMPONENT_ID." >&2; exit 1; }
               grep -q '${{ inputs.commit_sha }}' Dockerfile || { echo "Generated Dockerfile does not match the immutable commit contract for $COMPONENT_ID." >&2; exit 1; }
-            elif [ ! -f Dockerfile ]; then
+            elif [ ! -f "$DOCKERFILE_PATH" ]; then
               echo "Deployment contract supplied neither a generated nor repository Dockerfile for $COMPONENT_ID." >&2
               exit 1
             fi
@@ -415,6 +420,7 @@ jobs:
           while IFS= read -r component; do
             COMPONENT_ID="$(printf '%s' "$component" | jq -r '.id')"
             BUILD_CONTEXT="$(printf '%s' "$component" | jq -r '.buildContext')"
+            DOCKERFILE_PATH="$(printf '%s' "$component" | jq -r 'if .dockerStrategy == "custom" then (.dockerfilePath // "Dockerfile") else "Dockerfile" end')"
             COMPONENT_TAG="${{ steps.release.outputs.image_tag }}-$COMPONENT_ID"
             TAGGED_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:$COMPONENT_TAG"
             cd "$GITHUB_WORKSPACE/$BUILD_CONTEXT"
@@ -505,17 +511,19 @@ jobs:
               BUILD_SECRET_ARGS=(--secret "id=deployguard_runtime_config,src=$BUILD_RUNTIME_CONFIG")
             fi
             if docker buildx version >/dev/null 2>&1 && docker buildx build --help 2>&1 | grep -q -- '--check'; then
-              docker buildx build --check "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" .
+              docker buildx build --check -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" .
             else
               echo "Docker Buildx --check is unavailable on this runner; the validated contract and real Docker build remain authoritative."
             fi
             if [ "${#BUILD_SECRET_ARGS[@]}" -gt 0 ]; then
-              docker buildx build --load --pull "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" -t "$TAGGED_URI" .
+              docker buildx build --load --pull -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" -t "$TAGGED_URI" .
               rm -f "$BUILD_RUNTIME_CONFIG"
               BUILD_RUNTIME_CONFIG=""
             else
-              docker build --pull "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .
+              docker build --pull -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .
             fi
+            RUNTIME_USER="$(docker image inspect "$TAGGED_URI" --format '{{.Config.User}}')"
+            case "$RUNTIME_USER" in ""|0|root|0:0|root:root) echo "The immutable runtime image must declare a non-root user." >&2; exit 1;; esac
             docker push "$TAGGED_URI"
             IMAGE_DIGEST="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids imageTag="$COMPONENT_TAG" --query 'imageDetails[0].imageDigest' --output text)"
             [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "The immutable image digest could not be resolved for $COMPONENT_ID." >&2; exit 1; }
