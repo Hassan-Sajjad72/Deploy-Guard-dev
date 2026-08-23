@@ -398,7 +398,6 @@ jobs:
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
-          BUILD_ARGS=()
           CONFIG_FILE=""
           BUILD_RUNTIME_CONFIG=""
           cleanup_build_temporary_files() {
@@ -410,10 +409,6 @@ jobs:
             CONFIG_FILE="$(mktemp)"
             printf '%s' "$BUILD_TIME_PUBLIC_CONFIG_BASE64" | base64 --decode > "$CONFIG_FILE"
             jq -e 'type == "object" and all(keys[]; test("^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$")) and all(.[]; type == "string")' "$CONFIG_FILE" >/dev/null || { echo "Invalid public build configuration payload." >&2; exit 1; }
-            while IFS= read -r key; do
-              value="$(jq -r --arg key "$key" '.[$key]' "$CONFIG_FILE")"
-              BUILD_ARGS+=(--build-arg "$key=$value")
-            done < <(jq -r 'keys[]' "$CONFIG_FILE")
           fi
           COMPONENTS_FILE="$GITHUB_WORKSPACE/.deployguard/components.json"
           COMPONENT_IMAGES='[]'
@@ -425,6 +420,17 @@ jobs:
             TAGGED_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:$COMPONENT_TAG"
             cd "$GITHUB_WORKSPACE/$BUILD_CONTEXT"
             BUILD_SECRET_ARGS=()
+            BUILD_ARGS=()
+            if [ "$(printf '%s' "$component" | jq -r '.dockerStrategy == "generated"')" = "true" ]; then
+              if grep -q 'id=deployguard_public_build_config' Dockerfile && [ -n "$CONFIG_FILE" ]; then
+                BUILD_SECRET_ARGS+=(--secret "id=deployguard_public_build_config,src=$CONFIG_FILE")
+              fi
+            elif [ -n "$CONFIG_FILE" ]; then
+              while IFS= read -r key; do
+                value="$(jq -r --arg key "$key" '.[$key]' "$CONFIG_FILE")"
+                BUILD_ARGS+=(--build-arg "$key=$value")
+              done < <(jq -r 'keys[]' "$CONFIG_FILE")
+            fi
             if [ "$(printf '%s' "$component" | jq -r '.dockerStrategy == "generated"')" = "true" ] && grep -q 'id=deployguard_runtime_config' Dockerfile; then
               BUILD_RUNTIME_CONFIG="$(mktemp "$RUNNER_TEMP/deployguard-runtime-build.XXXXXX")"
               chmod 600 "$BUILD_RUNTIME_CONFIG"
@@ -508,7 +514,7 @@ jobs:
               }
               fs.writeFileSync(process.env.BUILD_RUNTIME_CONFIG, JSON.stringify(values), { mode: 0o600 });
           NODE
-              BUILD_SECRET_ARGS=(--secret "id=deployguard_runtime_config,src=$BUILD_RUNTIME_CONFIG")
+              BUILD_SECRET_ARGS+=(--secret "id=deployguard_runtime_config,src=$BUILD_RUNTIME_CONFIG")
             fi
             if docker buildx version >/dev/null 2>&1 && docker buildx build --help 2>&1 | grep -q -- '--check'; then
               docker buildx build --check -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" .
