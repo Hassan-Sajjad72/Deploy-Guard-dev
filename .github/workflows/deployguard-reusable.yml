@@ -70,12 +70,12 @@ jobs:
     steps:
       - name: Checkout application
         if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.commit_sha }}
 
       - name: Configure AWS credentials through OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ inputs.aws_role_arn }}
           aws-region: ${{ inputs.aws_region }}
@@ -141,6 +141,7 @@ jobs:
                 and (.buildContext | test("^(\\.|[A-Za-z0-9._/-]+)$"))
                 and (.port >= 1 and .port <= 65535)
                 and (.healthPath | startswith("/"))
+                and ((.healthCheckMode // "http") | IN("http", "tcp"))
               ))
               and ((.relationships // []) | type == "array" and length <= 1)
               and ((.relationships // []) | all(.[];
@@ -148,7 +149,7 @@ jobs:
                 and (.mode | IN("same-origin", "build-time-url"))
                 and (.pathPrefix | test("^/[A-Za-z0-9._~!$&()*+,;=:@%/-]+$"))
                 and (.stripPathPrefix | type == "boolean")
-                and (.verificationPath | test("^/[A-Za-z0-9._~!$&()*+,;=:@%/-]+$"))
+                and (.verificationPath == null or (.verificationPath | test("^/[A-Za-z0-9._~!$&()*+,;=:@%/-]+$")))
               ))
             ' .deployguard/build-plan.json >/dev/null || { echo "Immutable BuildPlan does not match workflow inputs." >&2; exit 1; }
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime-config.json
@@ -365,6 +366,7 @@ jobs:
             server_name _;
             root /usr/share/nginx/html;
             location / { try_files \$uri \$uri/ /index.html; }
+            location = ${PATH_PREFIX%/} { proxy_pass http://127.0.0.1:$BACKEND_PORT$PROXY_SUFFIX; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; }
             location ${PATH_PREFIX%/}/ { proxy_pass http://127.0.0.1:$BACKEND_PORT$PROXY_SUFFIX; proxy_set_header Host \$host; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; }
           }
           NGINX
@@ -392,9 +394,15 @@ jobs:
           REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
           BUILD_ARGS=()
+          CONFIG_FILE=""
+          BUILD_RUNTIME_CONFIG=""
+          cleanup_build_temporary_files() {
+            if [ -n "$CONFIG_FILE" ]; then rm -f "$CONFIG_FILE"; fi
+            if [ -n "$BUILD_RUNTIME_CONFIG" ]; then rm -f "$BUILD_RUNTIME_CONFIG"; fi
+          }
+          trap cleanup_build_temporary_files EXIT
           if [ -n "$BUILD_TIME_PUBLIC_CONFIG_BASE64" ]; then
             CONFIG_FILE="$(mktemp)"
-            trap 'rm -f "$CONFIG_FILE"' EXIT
             printf '%s' "$BUILD_TIME_PUBLIC_CONFIG_BASE64" | base64 --decode > "$CONFIG_FILE"
             jq -e 'type == "object" and all(keys[]; test("^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$")) and all(.[]; type == "string")' "$CONFIG_FILE" >/dev/null || { echo "Invalid public build configuration payload." >&2; exit 1; }
             while IFS= read -r key; do
@@ -410,7 +418,104 @@ jobs:
             COMPONENT_TAG="${{ steps.release.outputs.image_tag }}-$COMPONENT_ID"
             TAGGED_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:$COMPONENT_TAG"
             cd "$GITHUB_WORKSPACE/$BUILD_CONTEXT"
-            docker build --pull "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .
+            BUILD_SECRET_ARGS=()
+            if [ "$(printf '%s' "$component" | jq -r '.dockerStrategy == "generated"')" = "true" ] && grep -q 'id=deployguard_runtime_config' Dockerfile; then
+              BUILD_RUNTIME_CONFIG="$(mktemp "$RUNNER_TEMP/deployguard-runtime-build.XXXXXX")"
+              chmod 600 "$BUILD_RUNTIME_CONFIG"
+              COMPONENT="$component" BUILD_RUNTIME_CONFIG="$BUILD_RUNTIME_CONFIG" node <<'NODE'
+              const { execFileSync } = require("child_process");
+              const fs = require("fs");
+              const runtime = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/.deployguard/runtime-config.json`, "utf8"));
+              const component = JSON.parse(process.env.COMPONENT || "{}");
+              const legacyDjangoCollectstatic = component.language === "python"
+                && component.framework === "django"
+                && /(?:^|\s)manage\.py\s+collectstatic(?:\s|$)/.test(String(component.buildCommand || ""));
+              const initialization = component.buildInitialization?.mode || (legacyDjangoCollectstatic ? "runtime_placeholders" : "none");
+              if (initialization === "external_service_required") {
+                throw new Error("The immutable build command requires a live external service and must be deferred to the post-provision/release phase.");
+              }
+              const ownership = Array.isArray(component.environmentOwnership) ? component.environmentOwnership : [];
+              const componentKeys = new Set(ownership
+                .filter((item) => item && item.source !== "managed_database")
+                .map((item) => String(item.key || ""))
+                .filter(Boolean));
+              const hasComponentOwnership = componentKeys.size > 0;
+              const values = Object.fromEntries(Object.entries(runtime.environment || {})
+                .filter(([key]) => !hasComponentOwnership || componentKeys.has(key)));
+              const managed = runtime.managedDatabase || null;
+              const aliases = {
+                host: ["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MONGO_HOST", "MONGODB_HOST"],
+                port: ["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "MYSQL_PORT", "MONGO_PORT", "MONGODB_PORT"],
+                username: ["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "MYSQL_USER", "MONGO_USER", "MONGODB_USER"],
+                password: ["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD"],
+                database: ["DB_NAME", "DATABASE_NAME", "POSTGRES_DB", "PGDATABASE", "MYSQL_DATABASE", "MONGO_DB", "MONGODB_DATABASE"],
+                url: ["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URL", "MONGODB_URI"],
+              };
+              const propertyFor = (key) => Object.entries(aliases).find(([, keys]) => keys.includes(key))?.[0] || null;
+              const databaseKeys = new Set();
+              if (managed) {
+                for (const keys of Object.values(aliases)) for (const key of keys) databaseKeys.add(key);
+                for (const key of Object.keys(managed.runtimeAliases || {})) databaseKeys.add(key);
+                for (const key of Object.keys(managed.secretAliases || {})) databaseKeys.add(key);
+                for (const item of ownership) if (item?.source === "managed_database" && item.key) databaseKeys.add(String(item.key));
+              }
+              const buildHost = "deployguard-build-init.invalid";
+              const buildUser = "deployguard_build_init";
+              const buildPassword = "deployguard-build-init-placeholder";
+              const buildDatabase = "deployguard_build_init";
+              const buildPort = String(managed?.port || 5432);
+              const buildUrl = managed
+                ? `${managed.urlScheme}://${encodeURIComponent(buildUser)}:${encodeURIComponent(buildPassword)}@${buildHost}:${buildPort}/${buildDatabase}${managed.urlQuery || ""}`
+                : null;
+              const placeholder = (key) => {
+                const property = propertyFor(key);
+                if (property === "host") return buildHost;
+                if (property === "port") return buildPort;
+                if (property === "username") return buildUser;
+                if (property === "database") return buildDatabase;
+                if (property === "url") return buildUrl || "deployguard-build-init-placeholder";
+                return buildPassword;
+              };
+              for (const key of databaseKeys) delete values[key];
+              const secretCache = new Map();
+              for (const [name, reference] of Object.entries(runtime.secretReferences || {})) {
+                if (databaseKeys.has(name)) continue;
+                if (hasComponentOwnership && !componentKeys.has(name)) continue;
+                const segments = String(reference).split(":");
+                const field = segments.at(-3);
+                const secretArn = segments.slice(0, -3).join(":");
+                if (!field || !secretArn.startsWith("arn:")) throw new Error("The immutable runtime secret reference is invalid for build initialization.");
+                let secret = secretCache.get(secretArn);
+                if (!secret) {
+                  try {
+                    secret = JSON.parse(execFileSync("aws", ["secretsmanager", "get-secret-value", "--secret-id", secretArn, "--query", "SecretString", "--output", "text"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+                  } catch {
+                    throw new Error("DeployGuard could not read an immutable runtime secret for build initialization.");
+                  }
+                  secretCache.set(secretArn, secret);
+                }
+                if (typeof secret[field] !== "string") throw new Error("The immutable runtime secret is missing a required build-initialization value.");
+                values[name] = secret[field];
+              }
+              if (initialization === "runtime_placeholders") {
+                for (const key of databaseKeys) values[key] = placeholder(key);
+              }
+              fs.writeFileSync(process.env.BUILD_RUNTIME_CONFIG, JSON.stringify(values), { mode: 0o600 });
+          NODE
+              BUILD_SECRET_ARGS=(--secret "id=deployguard_runtime_config,src=$BUILD_RUNTIME_CONFIG")
+            fi
+            if docker buildx version >/dev/null 2>&1 && docker buildx build --help 2>&1 | grep -q -- '--check'; then
+              docker buildx build --check "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" .
+            else
+              echo "Docker Buildx --check is unavailable on this runner; the validated contract and real Docker build remain authoritative."
+            fi
+            if [ "${#BUILD_SECRET_ARGS[@]}" -gt 0 ]; then
+              docker buildx build --load --pull "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" -t "$TAGGED_URI" .
+              rm -f "$BUILD_RUNTIME_CONFIG"
+              BUILD_RUNTIME_CONFIG=""
+            else
+              docker build --pull "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .
+            fi
             docker push "$TAGGED_URI"
             IMAGE_DIGEST="$(aws ecr describe-images --repository-name "${{ steps.release.outputs.repository_name }}" --image-ids imageTag="$COMPONENT_TAG" --query 'imageDetails[0].imageDigest' --output text)"
             [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "The immutable image digest could not be resolved for $COMPONENT_ID." >&2; exit 1; }
@@ -423,9 +528,131 @@ jobs:
           echo "uri=$(printf '%s' "$PRIMARY" | jq -r '.imageUri')" >> "$GITHUB_OUTPUT"
           echo "components=$(printf '%s' "$COMPONENT_IMAGES" | jq -c .)" >> "$GITHUB_OUTPUT"
 
+      - name: Execute immutable application contract before AWS mutation
+        if: inputs.deployment_action == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFLIGHT_ID="dg-preflight-${OPERATION_ID:0:8}-${GITHUB_RUN_ID}"
+          PREFLIGHT_ATTEMPTS="${DEPLOYGUARD_PREFLIGHT_ATTEMPTS:-60}"
+          NETWORK="$PREFLIGHT_ID"
+          ENV_FILE="$(mktemp "$RUNNER_TEMP/deployguard-preflight-env.XXXXXX")"
+          CONTAINERS=()
+          cleanup_executable_preflight() {
+            for container in "${CONTAINERS[@]}"; do docker rm -f "$container" >/dev/null 2>&1 || true; done
+            docker network rm "$NETWORK" >/dev/null 2>&1 || true
+            rm -f "$ENV_FILE"
+          }
+          trap cleanup_executable_preflight EXIT
+          docker network create --internal "$NETWORK" >/dev/null
+          chmod 600 "$ENV_FILE"
+          PREFLIGHT_ENV_FILE="$ENV_FILE" node <<'NODE'
+          const fs = require("fs");
+          const runtime = JSON.parse(fs.readFileSync(".deployguard/runtime-config.json", "utf8"));
+          const plan = JSON.parse(fs.readFileSync(".deployguard/build-plan.json", "utf8"));
+          const target = (plan.components || []).find((item) => item.role === "backend" || item.role === "application") || (plan.components || [])[0];
+          const owned = new Set((target?.environmentOwnership || []).filter((item) => item.component !== "frontend").map((item) => item.key));
+          const values = Object.fromEntries(Object.entries(runtime.environment || {}).filter(([key]) => !owned.size || owned.has(key) || key.startsWith("DEPLOYGUARD_") || ["PORT", "HOST"].includes(key)));
+          const database = runtime.managedDatabase;
+          const password = "deployguard_preflight_password";
+          if (database) {
+            const replacements = new Map([[String(database.host), "database"], [String(database.port), String(database.port)], [String(database.databaseName), String(database.databaseName)], [String(database.databaseUser), String(database.databaseUser)]]);
+            for (const [key, value] of Object.entries(database.runtimeAliases || {})) values[key] = replacements.get(String(value)) || String(value);
+            const url = `${database.urlScheme}://${encodeURIComponent(database.databaseUser)}:${encodeURIComponent(password)}@database:${database.port}/${database.databaseName}${database.urlQuery || ""}`;
+            for (const [key, property] of Object.entries(database.secretAliases || {})) values[key] = property === "url" ? url : password;
+          }
+          for (const [name, reference] of Object.entries(runtime.secretReferences || {})) {
+            if (database?.secretAliases?.[name]) continue;
+            if (owned.size && !owned.has(name)) continue;
+            const segments = String(reference).split(":");
+            const field = segments.at(-3);
+            const arn = segments.slice(0, -3).join(":");
+            if (!field || !arn.startsWith("arn:")) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: immutable secret reference for ${name} is invalid.`);
+            values[name] = `deployguard_preflight_${"7".repeat(64)}`;
+          }
+          const missing = (target?.environmentOwnership || [])
+            .filter((item) => item?.required === true && item.phase === "runtime" && item.source !== "repository")
+            .map((item) => String(item.key || ""))
+            .filter((key) => key && values[key] === undefined);
+          if (missing.length) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: missing required runtime configuration: ${[...new Set(missing)].sort().join(", ")}.`);
+          for (const [key, value] of Object.entries(values).sort(([a], [b]) => a.localeCompare(b))) {
+            const rendered = String(value);
+            if (/[\r\n\0]/.test(rendered)) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: ${key} cannot be represented safely.`);
+            fs.appendFileSync(process.env.PREFLIGHT_ENV_FILE, `${key}=${rendered}\n`, { mode: 0o600 });
+          }
+          NODE
+          DATABASE_ENGINE="$(jq -r '.managedDatabase.engine // empty' .deployguard/runtime-config.json)"
+          if [ -n "$DATABASE_ENGINE" ]; then
+            DATABASE_NAME="$(jq -r '.managedDatabase.databaseName' .deployguard/runtime-config.json)"
+            DATABASE_USER="$(jq -r '.managedDatabase.databaseUser' .deployguard/runtime-config.json)"
+            case "$DATABASE_ENGINE" in
+              postgres) DB_IMAGE="postgres:16"; DB_ARGS=(-e "POSTGRES_DB=$DATABASE_NAME" -e "POSTGRES_USER=$DATABASE_USER" -e "POSTGRES_PASSWORD=deployguard_preflight_password"); DB_HEALTH=(--health-cmd "pg_isready -U $DATABASE_USER -d $DATABASE_NAME");;
+              mysql) DB_IMAGE="mysql:8"; DB_ARGS=(-e "MYSQL_DATABASE=$DATABASE_NAME" -e "MYSQL_USER=$DATABASE_USER" -e "MYSQL_PASSWORD=deployguard_preflight_password" -e "MYSQL_ROOT_PASSWORD=deployguard_preflight_password"); DB_HEALTH=(--health-cmd "mysqladmin ping -h 127.0.0.1 -u$DATABASE_USER -pdeployguard_preflight_password --silent");;
+              mongodb) DB_IMAGE="mongo:8"; DB_ARGS=(-e "MONGO_INITDB_DATABASE=$DATABASE_NAME" -e "MONGO_INITDB_ROOT_USERNAME=$DATABASE_USER" -e "MONGO_INITDB_ROOT_PASSWORD=deployguard_preflight_password"); DB_HEALTH=(--health-cmd "mongosh --quiet --username '$DATABASE_USER' --password deployguard_preflight_password --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null");;
+              *) echo "EXECUTABLE_PREFLIGHT_FAILED: unsupported managed database engine." >&2; exit 1;;
+            esac
+            DB_CONTAINER="$PREFLIGHT_ID-database"; CONTAINERS+=("$DB_CONTAINER")
+            docker run -d --name "$DB_CONTAINER" --network "$NETWORK" --network-alias database "${DB_ARGS[@]}" "${DB_HEALTH[@]}" --health-interval 2s --health-timeout 5s --health-retries 30 "$DB_IMAGE" >/dev/null
+            for attempt in $(seq 1 "$PREFLIGHT_ATTEMPTS"); do
+              [ "$(docker inspect --format '{{.State.Health.Status}}' "$DB_CONTAINER" 2>/dev/null || true)" = "healthy" ] && break
+              [ "$attempt" -lt "$PREFLIGHT_ATTEMPTS" ] || { echo "EXECUTABLE_PREFLIGHT_FAILED: managed database fixture did not become healthy." >&2; exit 1; }
+              sleep 2
+            done
+          fi
+          COMPONENTS="$(cat .deployguard/component-images.json)"
+          while IFS= read -r image; do
+            docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image" >/dev/null
+            USER_VALUE="$(docker image inspect "$image" --format '{{.Config.User}}')"
+            [ -n "$USER_VALUE" ] && [ "$USER_VALUE" != "0" ] && [ "$USER_VALUE" != "root" ] || { echo "EXECUTABLE_PREFLIGHT_FAILED: a final application image is configured to run as root." >&2; exit 1; }
+          done < <(printf '%s' "$COMPONENTS" | jq -r '.[].imageUri')
+          BACKEND="$(printf '%s' "$COMPONENTS" | jq -c 'map(select(.role == "backend" or .role == "application"))[0] // empty')"
+          FRONTEND="$(printf '%s' "$COMPONENTS" | jq -c 'map(select(.role == "frontend"))[0] // empty')"
+          OWNER_CONTAINER="$PREFLIGHT_ID-runtime"
+          if [ -n "$BACKEND" ]; then
+            BACKEND_IMAGE="$(printf '%s' "$BACKEND" | jq -r '.imageUri')"; BACKEND_PORT="$(printf '%s' "$BACKEND" | jq -r '.port')"
+            CONTAINERS+=("$OWNER_CONTAINER")
+            docker run -d --name "$OWNER_CONTAINER" --network "$NETWORK" --env-file "$ENV_FILE" "$BACKEND_IMAGE" >/dev/null
+          elif [ -n "$FRONTEND" ]; then
+            FRONTEND_IMAGE="$(printf '%s' "$FRONTEND" | jq -r '.imageUri')"; FRONTEND_PORT="$(printf '%s' "$FRONTEND" | jq -r '.port')"
+            CONTAINERS+=("$OWNER_CONTAINER")
+            docker run -d --name "$OWNER_CONTAINER" --network "$NETWORK" "$FRONTEND_IMAGE" >/dev/null
+          else
+            echo "EXECUTABLE_PREFLIGHT_FAILED: immutable component set is empty." >&2; exit 1
+          fi
+          if [ -n "$FRONTEND" ] && [ -n "$BACKEND" ]; then
+            FRONTEND_CONTAINER="$PREFLIGHT_ID-frontend"; CONTAINERS+=("$FRONTEND_CONTAINER")
+            FRONTEND_IMAGE="$(printf '%s' "$FRONTEND" | jq -r '.imageUri')"; FRONTEND_PORT="$(printf '%s' "$FRONTEND" | jq -r '.port')"
+            docker run -d --name "$FRONTEND_CONTAINER" --network "container:$OWNER_CONTAINER" "$FRONTEND_IMAGE" >/dev/null
+          fi
+          check_component() {
+            local component="$1" port mode path container_ip
+            port="$(printf '%s' "$component" | jq -r '.port')"; mode="$(printf '%s' "$component" | jq -r '.healthCheckMode // "http"')"; path="$(printf '%s' "$component" | jq -r '.healthPath')"
+            container_ip="$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$OWNER_CONTAINER" 2>/dev/null || true)"
+            if [ -z "$container_ip" ]; then
+              docker logs --tail 40 "$OWNER_CONTAINER" >&2 || true
+              echo "EXECUTABLE_PREFLIGHT_FAILED: component did not expose its immutable port contract and may have exited during startup." >&2
+              return 1
+            fi
+            for attempt in $(seq 1 "$PREFLIGHT_ATTEMPTS"); do
+              if (echo >"/dev/tcp/$container_ip/$port") >/dev/null 2>&1; then
+                if [ "$mode" = "tcp" ] || curl --fail --silent --show-error --max-time 5 "http://$container_ip:$port$path" >/dev/null; then return 0; fi
+              fi
+              [ "$attempt" -lt "$PREFLIGHT_ATTEMPTS" ] || { docker logs --tail 40 "$OWNER_CONTAINER" >&2 || true; echo "EXECUTABLE_PREFLIGHT_FAILED: component failed startup/readiness on its immutable port contract." >&2; return 1; }
+              sleep 2
+            done
+          }
+          [ -z "$BACKEND" ] || check_component "$BACKEND"
+          [ -z "$FRONTEND" ] || check_component "$FRONTEND"
+          RELATIONSHIP_PATH="$(jq -r '.relationships[0].verificationPath // empty' .deployguard/build-plan.json)"
+          if [ -n "$RELATIONSHIP_PATH" ] && [ -n "$FRONTEND" ]; then
+            OWNER_IP="$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$OWNER_CONTAINER")"
+            curl --fail --silent --show-error --max-time 5 "http://$OWNER_IP:$FRONTEND_PORT$RELATIONSHIP_PATH" >/dev/null || { echo "EXECUTABLE_PREFLIGHT_FAILED: proven frontend/backend relationship endpoint failed." >&2; exit 1; }
+          fi
+          echo "Executable immutable application contract passed before persistence and Terraform."
+
       - name: Install Terraform
         if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote' || inputs.deployment_action == 'cleanup'
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
@@ -928,7 +1155,7 @@ jobs:
               portMappings = [{ containerPort = tonumber(component.port), hostPort = tonumber(component.port), protocol = "tcp" }]
               dependsOn    = local.full_stack && component.role == "frontend" ? [{ containerName = local.backend_component.id, condition = "HEALTHY" }] : []
               healthCheck = {
-                command     = component.language == "python" ? ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:${component.port}${component.healthPath}', timeout=5)\""] : component.runtimeType == "static" ? ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${component.port}${component.healthPath} || exit 1"] : ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:${component.port}${component.healthPath}',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+                command     = try(component.healthCheckMode, "http") == "tcp" ? (component.language == "python" ? ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('127.0.0.1',${component.port}),5); s.close()\""] : ["CMD-SHELL", "node -e \"const s=require('net').connect(${component.port},'127.0.0.1',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1))\""]) : component.language == "python" ? ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:${component.port}${component.healthPath}', timeout=5)\""] : component.runtimeType == "static" ? ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${component.port}${component.healthPath} || exit 1"] : ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:${component.port}${component.healthPath}',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
                 interval    = 30
                 timeout     = 5
                 retries     = 3
@@ -1346,8 +1573,8 @@ jobs:
                 TASKS="$(aws ecs describe-tasks --cluster "$CLUSTER_NAME" --tasks $(printf '%s' "$TASK_ARNS" | jq -r '.[]') --output json)"
                 BACKEND_COMPONENT_READY="$(printf '%s' "$TASKS" | jq -r --arg backend "$BACKEND_ID" '(.tasks | length) > 0 and all(.tasks[]; any(.containers[]?; .name == $backend and .healthStatus == "HEALTHY"))')"
               fi
-              RELATIONSHIP_PATH="$(jq -er '.relationships[0].verificationPath' ../build-plan.json)"
-              if ! curl --fail --silent --show-error --max-time 15 "$URL$RELATIONSHIP_PATH" >/dev/null; then RELATIONSHIP_READY=false; fi
+              RELATIONSHIP_PATH="$(jq -r '.relationships[0].verificationPath // empty' ../build-plan.json)"
+              if [ -n "$RELATIONSHIP_PATH" ] && ! curl --fail --silent --show-error --max-time 15 "$URL$RELATIONSHIP_PATH" >/dev/null; then RELATIONSHIP_READY=false; fi
             fi
             if [ "$ECS_READY" = "true" ] && [ "$COMPONENTS_READY" = "true" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ] && [ "$BACKEND_COMPONENT_READY" = "true" ] && [ "$RELATIONSHIP_READY" = "true" ]; then break; fi
             if [ "$attempt" -eq 30 ]; then echo "The complete candidate component set, immutable images, routing, or frontend/backend relationship did not converge." >&2; exit 1; fi
@@ -1361,20 +1588,26 @@ jobs:
           CANDIDATE_LISTENER_RULE_ARN="$(terraform output -raw candidate_listener_rule_arn)"
           SECRET_REFERENCE_NAMES="$(jq -c '.secretReferences | keys | sort' ../runtime-config.json)"
           DATABASE_OUTPUTS="$(terraform output -json | jq -c '{database_internal_host:.database_internal_host.value,database_service_arn:.database_service_arn.value,database_cloud_map_service_arn:.database_cloud_map_service_arn.value,database_password_secret_arn:.database_password_secret_arn.value,database_url_secret_arn:.database_url_secret_arn.value,database_efs_file_system_id:.database_efs_file_system_id.value,database_efs_access_point_id:.database_efs_access_point_id.value} | with_entries(select(.value != null))')"
-          COMPONENT_EVIDENCE="$(jq -cn --argjson contract "$COMPONENT_CONTRACT" --argjson images "$COMPONENT_IMAGES" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --arg serviceName "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" '[ $contract[] | . as $component | {id,role,root,buildContext,framework,frameworkMode,imageUri:$images[$component.id],imageDigest:($images[$component.id] | split("@") | .[1]),taskDefinitionArn:$taskDefinitionArn,serviceName:$serviceName,ecsServiceArn:$ecsServiceArn,port,healthPath,verified:true} ]')"
+          COMPONENT_EVIDENCE="$(jq -cn --argjson contract "$COMPONENT_CONTRACT" --argjson images "$COMPONENT_IMAGES" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --arg serviceName "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" '[ $contract[] | . as $component | {id,role,root,buildContext,framework,frameworkMode,imageUri:$images[$component.id],imageDigest:($images[$component.id] | split("@") | .[1]),taskDefinitionArn:$taskDefinitionArn,serviceName:$serviceName,ecsServiceArn:$ecsServiceArn,port,healthPath,healthCheckMode:(.healthCheckMode // "http"),verified:true} ]')"
           RESULT="$(jq -cn --arg operation "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg generationId "$GENERATION_ID" --arg environmentName "$ENVIRONMENT_NAME" --arg url "$URL" --arg imageUri "$IMAGE_URI" --arg imageDigest "$IMAGE_DIGEST" --arg commit "$COMMIT_SHA" --arg cluster "$CLUSTER_NAME" --arg service "$SERVICE_NAME" --arg ecsServiceArn "$ECS_SERVICE_ARN" --arg targetGroupArn "$TARGET_GROUP_ARN" --arg candidateListenerRuleArn "$CANDIDATE_LISTENER_RULE_ARN" --arg taskDefinitionArn "$TASK_DEFINITION_ARN" --argjson appPort "$APP_PORT" --arg healthCheckPath "$HEALTH_CHECK_PATH" --arg configurationFingerprint "$CONFIGURATION_FINGERPRINT" --arg configurationSnapshotId "$CONFIGURATION_SNAPSHOT_ID" --arg databaseBindingId "$DATABASE_BINDING_ID" --argjson secretReferenceNames "$SECRET_REFERENCE_NAMES" --argjson databaseOutputs "$DATABASE_OUTPUTS" --argjson healthyTargetCount "$HEALTHY_TARGET_COUNT" --argjson targetStates "$TARGET_STATES" --argjson components "$COMPONENT_EVIDENCE" '{contractVersion:"deployguard.candidate-result/v1",deploymentOperationId:$operation,projectId:$projectId,generationId:$generationId,environmentName:$environmentName,commitSha:$commit,candidateUrl:$url,imageUri:$imageUri,imageDigest:$imageDigest,components:$components,clusterName:$cluster,serviceName:$service,ecsServiceArn:$ecsServiceArn,targetGroupArn:$targetGroupArn,candidateListenerRuleArn:$candidateListenerRuleArn,taskDefinitionArn:$taskDefinitionArn,appPort:$appPort,healthCheckPath:$healthCheckPath,configurationFingerprint:$configurationFingerprint,configurationSnapshotId:$configurationSnapshotId,databaseBindingId:(if $databaseBindingId == "" then null else $databaseBindingId end),secretReferenceNames:$secretReferenceNames,databaseOutputs:$databaseOutputs,health:{ecsStable:true,expectedTaskDefinitionRunning:true,expectedImageRunning:true,componentSetVerified:true,frontendHttpVerified:true,backendComponentHealthVerified:true,relationshipVerified:true,targetHealthVerified:true,candidateHttpVerified:true,healthyTargetCount:$healthyTargetCount,targetStates:$targetStates}}')"
           printf 'DEPLOYGUARD_CANDIDATE_RESULT=%s\n' "$RESULT"
           printf '%s\n' "$RESULT" | jq . > deployguard-result.json
 
       - name: Promote exact verified candidate and write result
-        if: inputs.deployment_action == 'promote'
+        if: inputs.deployment_action == 'deploy' || inputs.deployment_action == 'rollback' || inputs.deployment_action == 'promote'
         shell: bash
         env:
           COMMIT_SHA: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
-          CANDIDATE="$(jq -c '.promotion.candidate' .deployguard/runtime-config.json)"
-          INTENT_FINGERPRINT="$(jq -r '.promotion.intentFingerprint' .deployguard/runtime-config.json)"
+          if [ "$DEPLOYMENT_ACTION" = "promote" ]; then
+            CANDIDATE="$(jq -c '.promotion.candidate' .deployguard/runtime-config.json)"
+            INTENT_FINGERPRINT="$(jq -r '.promotion.intentFingerprint' .deployguard/runtime-config.json)"
+          else
+            CANDIDATE="$(jq -c . .deployguard/terraform/deployguard-result.json)"
+            INTENT_WITHOUT_FINGERPRINT="$(jq -c --argjson candidate "$CANDIDATE" '.promotion | .candidate = $candidate | del(.intentFingerprint)' .deployguard/runtime-config.json)"
+            INTENT_FINGERPRINT="$(printf '%s' "$INTENT_WITHOUT_FINGERPRINT" | sha256sum | awk '{print $1}')"
+          fi
           TARGET_GROUP_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.targetGroupArn')"
           CANDIDATE_RULE_ARN="$(printf '%s' "$CANDIDATE" | jq -r '.candidateListenerRuleArn')"
           CLUSTER_NAME="$(printf '%s' "$CANDIDATE" | jq -r '.clusterName')"
@@ -1409,8 +1642,8 @@ jobs:
                 TASKS="$(aws ecs describe-tasks --cluster "$CLUSTER_NAME" --tasks $(printf '%s' "$TASK_ARNS" | jq -r '.[]') --output json)"
                 BACKEND_COMPONENT_READY="$(printf '%s' "$TASKS" | jq -r --arg backend "$BACKEND_ID" '(.tasks | length) > 0 and all(.tasks[]; any(.containers[]?; .name == $backend and .healthStatus == "HEALTHY"))')"
               fi
-              RELATIONSHIP_PATH="$(jq -er '.relationships[0].verificationPath' .deployguard/build-plan.json)"
-              if ! curl --fail --silent --show-error --max-time 15 "$URL$RELATIONSHIP_PATH" >/dev/null; then RELATIONSHIP_READY=false; fi
+              RELATIONSHIP_PATH="$(jq -r '.relationships[0].verificationPath // empty' .deployguard/build-plan.json)"
+              if [ -n "$RELATIONSHIP_PATH" ] && ! curl --fail --silent --show-error --max-time 15 "$URL$RELATIONSHIP_PATH" >/dev/null; then RELATIONSHIP_READY=false; fi
             fi
             if [ "$ECS_READY" = "true" ] && [ "$COMPONENTS_READY" = "true" ] && [ "$TG_READY" = "true" ] && [ "$HTTP_READY" = "true" ] && [ "$BACKEND_COMPONENT_READY" = "true" ] && [ "$RELATIONSHIP_READY" = "true" ]; then break; fi
             if [ "$attempt" -eq 30 ]; then echo "Candidate ceased to be healthy before promotion." >&2; exit 1; fi
@@ -1445,8 +1678,8 @@ jobs:
               HTTP_READY=true
             fi
             if [ "$HTTP_READY" = "true" ] && [ "$FULL_STACK" = "true" ]; then
-              RELATIONSHIP_PATH="$(jq -er '.relationships[0].verificationPath' .deployguard/build-plan.json)"
-              if ! curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$RELATIONSHIP_PATH" >/dev/null; then HTTP_READY=false; fi
+              RELATIONSHIP_PATH="$(jq -r '.relationships[0].verificationPath // empty' .deployguard/build-plan.json)"
+              if [ -n "$RELATIONSHIP_PATH" ] && ! curl --fail --silent --show-error --max-time 15 "$PRODUCTION_URL$RELATIONSHIP_PATH" >/dev/null; then HTTP_READY=false; fi
             fi
             if [ "$RULE_READY" = "true" ] && [ "$HTTP_READY" = "true" ]; then
               ROUTE_VERIFIED=true
@@ -1656,7 +1889,7 @@ jobs:
 
       - name: Upload DeployGuard result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deployguard-result-${{ inputs.deployment_operation_id }}
           path: |
