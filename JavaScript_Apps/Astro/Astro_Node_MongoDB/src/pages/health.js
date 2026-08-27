@@ -1,1 +1,0 @@
-import{MongoClient}from'mongodb';export async function GET(){try{const c=new MongoClient(process.env.MONGODB_URI);await c.connect();await c.db().command({ping:1});await c.close();return new Response(JSON.stringify({status:'ok',database:'mongodb'}),{headers:{'content-type':'application/json'}})}catch(e){return new Response(JSON.stringify({status:'error'}),{status:503})}}
