@@ -61,7 +61,7 @@ export default function PreflightReportPanel({ report }) {
           <dt>Expected Port</dt>
           <dd>{data.deploymentProfile?.expectedPort || "-"}</dd>
           <dt>Health Check</dt>
-          <dd>{data.deploymentProfile?.healthCheckPath || "/"}</dd>
+          <dd>{data.deploymentProfile?.healthCheckPath || "TCP readiness (no proven HTTP endpoint)"}</dd>
           <dt>Database Required</dt>
           <dd>{data.deploymentProfile?.requiresDatabase ? "yes" : "no"}</dd>
           <dt>Output Directory</dt>
@@ -73,7 +73,7 @@ export default function PreflightReportPanel({ report }) {
         <dl className="details-list">
           <dt>Container port</dt><dd>{data.ecsRuntimePlan?.containerPort || "-"}</dd>
           <dt>ALB target port</dt><dd>{data.ecsRuntimePlan?.albTargetPort || "-"}</dd>
-          <dt>Health path</dt><dd>{data.ecsRuntimePlan?.healthCheckPath || "/"}</dd>
+          <dt>Health path</dt><dd>{data.ecsRuntimePlan?.healthCheckPath || "TCP readiness; ALB uses / only for platform liveness"}</dd>
           <dt>Runtime command</dt><dd>{data.ecsRuntimePlan?.runtimeCommand || "-"}</dd>
           <dt>PORT injection</dt><dd>{data.ecsRuntimePlan?.injectPortEnvironment ? "enabled" : "not required"}</dd>
         </dl>

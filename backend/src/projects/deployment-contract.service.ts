@@ -980,7 +980,7 @@ export class DeploymentContractService {
       key: item.key,
       owner: platform.has(item.key) ? "platform" : managed.has(item.key) ? "infrastructure" : item.ownership === "repository_build" || item.detectedDefault ? "repository" : "application",
       component: platform.has(item.key) ? "platform" : item.component || "application",
-      componentId: platform.has(item.key) ? undefined : item.componentId || componentId,
+      ...(!platform.has(item.key) && (item.componentId || componentId) ? { componentId: item.componentId || componentId } : {}),
       source: platform.has(item.key) ? "platform" : managed.has(item.key) ? "managed_database" : item.ownership === "repository_build" || item.detectedDefault ? "repository" : "application",
       exposure: item.exposure || (isPublicFrontendConfigurationKey(item.key) && item.phase === "build" ? "public" : "private"),
       requirement: item.requirement || (item.required ? "unknown" : "optional"),

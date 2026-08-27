@@ -126,6 +126,8 @@ async function main() {
   assert.equal(decoded.environment.JWT_EXPIRES_IN, "1h");
   assert.equal(decoded.secretReferences.JWT_SECRET, `${secretArn}:JWT_SECRET::`);
   assert.deepEqual(decoded.managedDatabase?.secretAliases, { DATABASE_URL: "url", DB_PASSWORD: "password" });
+  assert.deepEqual(decoded.componentRuntime.application.secretReferences, { JWT_SECRET: `${secretArn}:JWT_SECRET::` }, "deferred managed database aliases must not enter ECS application secret references");
+  assert.doesNotMatch(JSON.stringify(decoded.componentRuntime), /terraform:\/\/database/, "deferred database placeholders must never pass runtime serialization as ECS valueFrom");
   assert.deepEqual(decoded.retentionProtectedRelease, configuration.retentionProtectedRelease);
   assert.doesNotMatch(encoded, new RegExp(secretValue));
   assert.doesNotMatch(Buffer.from(encoded, "base64").toString("utf8"), new RegExp(secretValue), "decoded runtime configuration must contain references, never application credentials");
@@ -343,6 +345,9 @@ async function main() {
     /component_runtime\s+=\s+try\(local\.runtime_config\.componentRuntime, \{\}\)/,
     /local\.component_runtime\[component\.id\]\.environment/,
     /local\.component_runtime\[component\.id\]\.secretReferences/,
+    /component\.id == try\(local\.managed_database\.ownerComponentId, ""\)/,
+    /project_persistence_outputs\.database_url_secret_arn/,
+    /project_persistence_outputs\.database_password_secret_arn/,
     /Action = \["secretsmanager:GetSecretValue"\]/,
     /Resource = concat\([\s\S]*local\.application_secret_arns/,
     /pg_isready -U \$POSTGRES_USER -d \$POSTGRES_DB/,

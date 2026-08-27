@@ -459,6 +459,7 @@ function assertRuntimeConfiguration(configuration: GithubActionsRuntimeConfigura
     !UUID.test(database.bindingId)
     || !FINGERPRINT.test(database.bindingFingerprint)
     || database.provider !== "managed"
+    || !/^[a-z][a-z0-9-]{0,31}$/.test(database.ownerComponentId)
     || !databaseProfile
     || !database.host || /^(?:localhost|127\.|0\.0\.0\.0|::1)/i.test(database.host)
     || !Number.isInteger(database.port) || database.port !== databaseProfile.port

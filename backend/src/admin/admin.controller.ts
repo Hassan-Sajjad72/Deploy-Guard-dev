@@ -16,6 +16,7 @@ import { AuditLogService } from "../audit-log/audit-log.service";
 import { AuditLogQueryDto } from "../audit-log/dto/audit-log-query.dto";
 import { requireRole } from "../common/rbac/require-role.guard";
 import { ProjectCurrentStateService } from "../projects/current-state/project-current-state.service";
+import { canonicalDeployguardReusableWorkflow } from "../projects/github-app.service";
 import { ProjectsService } from "../projects/projects.service";
 import { UserRole } from "../users/user.entity";
 import { UsersService } from "../users/users.service";
@@ -91,6 +92,19 @@ export class AdminController {
     const grafana = await probeGrafanaAvailability(
       this.config.get<string>("GRAFANA_INTERNAL_URL") || this.config.get<string>("GRAFANA_BASE_URL"),
     );
+    let githubActions: ServiceAvailability & { releaseIdentity: "unconfigured" | "invalid" | "exact_immutable" };
+    if (!this.config.get<string>("DEPLOYGUARD_REUSABLE_WORKFLOW")?.trim()) {
+      githubActions = { status: "unavailable", source: "runtime_configuration", releaseIdentity: "unconfigured" };
+    } else {
+      try {
+        canonicalDeployguardReusableWorkflow(this.config);
+        githubActions = configured(["DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"])
+          ? { status: "available", source: "runtime_configuration", releaseIdentity: "exact_immutable" }
+          : { status: "degraded", source: "runtime_configuration", releaseIdentity: "exact_immutable" };
+      } catch {
+        githubActions = { status: "degraded", source: "runtime_configuration", releaseIdentity: "invalid" };
+      }
+    }
     const result = {
       generatedAt: new Date().toISOString(),
       services: {
@@ -98,7 +112,7 @@ export class AdminController {
         database: { status: database ? "available" : "unavailable", source: "postgresql_probe" },
         githubOAuth: { status: configured(["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"]) ? "configured" : "unavailable", source: "runtime_configuration" },
         githubApp: { status: configured(["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"]) ? "configured" : "unavailable", source: "runtime_configuration" },
-        githubActions: { status: configured(["DEPLOYGUARD_REUSABLE_WORKFLOW", "DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"]) ? "configured" : "unavailable", source: "runtime_configuration" },
+        githubActions,
         awsOidc: { status: configured(["DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"]) ? "configured" : "unavailable", source: "runtime_configuration" },
         terraformState: { status: configured(["DEPLOYGUARD_TERRAFORM_STATE_BUCKET"]) ? "configured" : "unavailable", source: "runtime_configuration" },
         prometheus: { status: this.config.get<string>("PROMETHEUS_ENABLED") === "true" ? "configured" : "disabled", source: "runtime_configuration" },

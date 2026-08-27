@@ -384,6 +384,13 @@ function writePreflightArtifacts(root: string, fixture: Fixture, plan: any, imag
     PORT: String(plan.components[0].port),
     ...(materialized.environment || {}),
   };
+  if (materialized.managedDatabase) {
+    materialized.managedDatabase.ownerComponentId = plan.components.find((component: any) => component.database?.required)?.id || null;
+  }
+  materialized.componentRuntime = Object.fromEntries(plan.components.map((component: any) => [component.id, {
+    environment: { ...materialized.environment, PORT: String(component.port) },
+    secretReferences: { ...materialized.secretReferences },
+  }]));
   writeFileSync(join(root, ".deployguard/build-plan.json"), JSON.stringify(plan));
   writeFileSync(join(root, ".deployguard/component-images.json"), JSON.stringify(imagesOverride || componentImages(plan.components, image)));
   writeFileSync(join(root, ".deployguard/runtime-config.json"), JSON.stringify(materialized));

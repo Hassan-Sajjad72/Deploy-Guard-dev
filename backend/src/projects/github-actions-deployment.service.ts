@@ -1480,12 +1480,6 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       });
       if (databaseOwnerComponentId === component.id && binding) {
         Object.assign(environment, runtimeAliases);
-        for (const [key, reference] of Object.entries(secretAliases)) {
-          const valueFrom = binding.databaseUrlSecretReference && reference === "url"
-            ? binding.databaseUrlSecretReference
-            : binding.passwordSecretReference;
-          if (valueFrom) secrets[key] = valueFrom;
-        }
       }
       const missing = required.filter((key) => environment[key] === undefined && secrets[key] === undefined);
       if (missing.length) throw new BadRequestException(`Required runtime configuration is missing for component ${component.id}: ${missing.sort().join(", ")}.`);

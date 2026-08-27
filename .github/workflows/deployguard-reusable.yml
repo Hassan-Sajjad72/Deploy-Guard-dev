@@ -1190,7 +1190,13 @@ jobs:
               image        = var.component_images[component.id]
               essential    = true
               environment  = [for key in sort(keys(try(local.component_runtime[component.id].environment, {}))) : { name = key, value = tostring(local.component_runtime[component.id].environment[key]) }]
-              secrets      = [for key in sort(keys(try(local.component_runtime[component.id].secretReferences, {}))) : { name = key, valueFrom = local.component_runtime[component.id].secretReferences[key] }]
+              secrets      = concat(
+                [for key in sort(keys(try(local.component_runtime[component.id].secretReferences, {}))) : { name = key, valueFrom = local.component_runtime[component.id].secretReferences[key] }],
+                component.id == try(local.managed_database.ownerComponentId, "") ? [for key in sort(keys(try(local.managed_database.secretAliases, {}))) : {
+                  name      = key
+                  valueFrom = local.managed_database.secretAliases[key] == "url" ? var.project_persistence_outputs.database_url_secret_arn : var.project_persistence_outputs.database_password_secret_arn
+                } if local.managed_database_configured] : []
+              )
               portMappings = [{ containerPort = tonumber(component.port), hostPort = tonumber(component.port), protocol = "tcp" }]
               dependsOn    = local.full_stack && component.role == "frontend" ? [{ containerName = local.backend_component.id, condition = "HEALTHY" }] : []
               healthCheck = {

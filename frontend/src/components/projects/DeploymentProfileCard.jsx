@@ -56,7 +56,7 @@ export default function DeploymentProfileCard({ profile }) {
           <MetricCard label="Framework" value={profile.framework || "Unknown"} detail={profile.frameworkVariant || "No variant"} tone={profile.framework ? "success" : "neutral"} />
           <MetricCard label="App Directory" value={profile.appDirectory || "."} detail="Build context selected by detection" />
           <MetricCard label="Runtime" value={profile.runtimeType || (profile.staticOutput ? "static" : "server")} detail={`${profile.appRootConfidence || profile.confidence || "unknown"} app-root confidence`} />
-          <MetricCard label="Health Check" value={profile.healthCheckPath || "/"} detail={`Expected port ${profile.expectedPort || "-"}`} />
+          <MetricCard label="Health Check" value={profile.healthCheckPath || "TCP readiness"} detail={profile.healthCheckPath ? `Expected port ${profile.expectedPort || "-"}` : `Expected port ${profile.expectedPort || "-"}; ALB / is platform liveness`} />
         </BentoGrid>
       </section>
 
