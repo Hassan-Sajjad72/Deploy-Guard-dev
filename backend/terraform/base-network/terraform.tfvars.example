@@ -1,0 +1,46 @@
+project_id              = "example-project-id"
+project_name            = "example-app"
+environment_name        = "dev"
+aws_region              = "us-east-1"
+vpc_cidr                = "10.0.0.0/16"
+public_subnet_cidrs     = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs    = ["10.0.101.0/24", "10.0.102.0/24"]
+single_nat_gateway      = true
+cloud_map_namespace     = "project-example.deployguard.local"
+enable_https            = false
+app_port                = 3000
+enable_efs              = false
+efs_performance_mode    = "generalPurpose"
+efs_throughput_mode     = "bursting"
+efs_transition_to_ia    = "AFTER_30_DAYS"
+efs_posix_uid           = 1000
+efs_posix_gid           = 1000
+efs_root_permissions    = "750"
+efs_root_directory      = "/deployguard/example-project-id/dev"
+enable_efs_backup       = true
+efs_backup_retention_days = 30
+efs_backup_schedule     = "cron(0 3 * * ? *)"
+
+enable_ecs_service            = false
+ecs_container_image           = "000000000000.dkr.ecr.us-east-1.amazonaws.com/mini-paas-example:fullcommithash"
+ecs_container_name            = "app"
+ecs_task_cpu                  = 256
+ecs_task_memory               = 512
+ecs_environment_variables     = {}
+ecs_use_fargate_spot          = true
+ecs_enable_fargate_fallback   = false
+ecs_desired_count             = 1
+ecs_min_tasks                 = 1
+ecs_max_tasks                 = 3
+ecs_cpu_target_percent        = 60
+ecs_healthcheck_grace_seconds = 60
+ecs_container_insights        = false
+alb_health_check_path         = "/health"
+enable_eventbridge_spot_rule  = true
+
+tags = {
+  Project              = "DeployGuard"
+  ManagedBy            = "DeployGuard"
+  DeployGuardProjectId = "example-project-id"
+  Environment          = "dev"
+}

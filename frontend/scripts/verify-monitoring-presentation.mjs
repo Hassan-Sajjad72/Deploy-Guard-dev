@@ -1,0 +1,35 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+
+const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+const page = read("../src/pages/ProjectMetrics.jsx");
+const sidebar = read("../src/components/layout/Sidebar.jsx");
+const styles = read("../src/styles.css");
+const routes = read("../src/routes/AppRoutes.jsx");
+const currentState = read("../../backend/src/projects/current-state/project-current-state.service.ts");
+
+assert.match(routes, /element=\{<ProjectMetrics \/>\} path="\/projects\/:projectId\/monitoring"/);
+assert.match(sidebar, /label: "Monitoring"[\s\S]*state\?\.state === "LIVE"/);
+assert.match(page, /getProjectCurrentState/);
+assert.match(page, /projectStatePresentation/);
+assert.match(page, /subscribeProjectStateChanged/);
+assert.match(page, /authority\?\.state === "LIVE" && authority\?\.infrastructure\?\.exists/);
+assert.match(page, /<Navigate replace to=\{`\/projects\/\$\{projectId\}`\}/);
+assert.doesNotMatch(page, /<dl[\s>]/, "Monitoring must not use a raw definition list.");
+assert.equal((page.match(/<MetricCard/g) || []).length, 4, "Monitoring has exactly four compact summary cards.");
+for (const label of ["Application status", "Runtime metrics", "Running ECS tasks", "ALB target health"]) assert.match(page, new RegExp(`label="${label}"`));
+assert.match(page, /Runtime metrics are not configured/);
+assert.match(page, /Deployment health is still verified through ECS and ALB/);
+assert.match(page, /Configure Prometheus and Grafana/);
+assert.match(page, /GitHub Actions health verification/);
+assert.match(page, /runtimeCharts = metricDefinitions\.filter/);
+for (const metric of ["cpu", "memory", "httpLatency", "healthyHosts", "unhealthyHosts", "runtimeAvailability"]) assert.match(page, new RegExp(`key: "${metric}"`));
+assert.match(page, /points\.length > 0/);
+assert.doesNotMatch(page, /CpuMemoryChart|AlbLatencyCard|RuntimeMetricsChart|duration chart/i);
+assert.match(page, /LIVE CloudWatch log group/);
+assert.match(page, /runtime\?\.available && !runtimeCharts\.length/);
+for (const item of ["Runtime telemetry", "Last scrape", "AWS observation", "Evidence freshness", "ALB health", "ECS task health", "LIVE generation", "Grafana"]) assert.match(page, new RegExp(item));
+assert.match(currentState, /monitoring: authoritativeLiveRelease[\s\S]*getObservabilityConfig\(this\.config\)\.awsRuntimeMonitoringEnabled/);
+for (const selector of ["monitoring-summary-grid", "monitoring-health-grid", "monitoring-chart-grid", "monitoring-sample-chart"]) assert.match(styles, new RegExp(selector));
+assert.match(styles, /@media\(max-width:560px\)[\s\S]*monitoring-summary-grid/);
+console.log("Runtime Monitoring presentation verification passed.");

@@ -9,7 +9,7 @@ import { BUILD_PLAN_WORKFLOW_INPUT_NAMES, GITHUB_ACTIONS_CALLER_INPUT_NAMES, GIT
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, GithubActionsWorkflowContractError, parsePinnedReusableWorkflow } from "./github-actions-workflow-contract";
 
 export const DEPLOYGUARD_WORKFLOW_PATH = ".github/workflows/deployguard.yml";
-export const DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW = "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@2b1b5d8f2ba4191f2d94eec88573ea98c6786ba8";
+export const DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW = "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0def2608f708a2cfcbc93c4b816694b39b44bafa";
 
 export function renderDeployguardCallerWorkflow(reusable: string) {
   const names = [...GITHUB_ACTIONS_CALLER_INPUT_NAMES];
@@ -48,7 +48,7 @@ export class GithubAppService {
 
   async connectInstallation(user: User, installationId: string) {
     if (!/^\d+$/.test(installationId || "")) throw new BadRequestException("Invalid GitHub App installation id.");
-    const response = await fetch(`https://api.github.com/app/installations/${installationId}`, { headers: this.headers(this.appJwt()) });
+    const response = await this.githubFetch(`https://api.github.com/app/installations/${installationId}`, { headers: this.headers(this.appJwt()) });
     if (!response.ok) throw new BadRequestException("GitHub App installation could not be verified.");
     const body = await response.json() as { account?: { login?: string; id?: number } };
     const accountLogin = String(body.account?.login || "").trim();
@@ -63,7 +63,7 @@ export class GithubAppService {
 
   async availableInstallations(user: User) {
     if (!this.configured()) return [];
-    const response = await fetch("https://api.github.com/app/installations?per_page=100", { headers: this.headers(this.appJwt()) });
+    const response = await this.githubFetch("https://api.github.com/app/installations?per_page=100", { headers: this.headers(this.appJwt()) });
     if (!response.ok) throw new BadRequestException("Existing GitHub App installations could not be loaded.");
     const body = await response.json() as Array<{ id?: number; account?: { login?: string; id?: number }; repository_selection?: string; suspended_at?: string | null }>;
     const connected = new Set((await this.installations.find({ where: { ownerUserId: user.id, status: "active" } })).map((row) => row.installationId));
@@ -84,7 +84,7 @@ export class GithubAppService {
     const repositories: Array<Record<string, unknown> & { installationId: string }> = [];
     for (const row of rows) {
       const token = await this.createInstallationToken(row.installationId);
-      const response = await fetch("https://api.github.com/installation/repositories?per_page=100", { headers: this.headers(token) });
+      const response = await this.githubFetch("https://api.github.com/installation/repositories?per_page=100", { headers: this.headers(token) });
       if (!response.ok) throw new BadRequestException("GitHub App repository access could not be loaded.");
       const body = await response.json() as { repositories?: Array<Record<string, unknown>> };
       for (const repository of body.repositories || []) repositories.push({ ...repository, installationId: row.installationId });
@@ -98,7 +98,7 @@ export class GithubAppService {
       : await this.installations.find({ where: { ownerUserId: userId, status: "active" } });
     for (const row of rows) {
       const token = await this.createInstallationToken(row.installationId);
-      const response = await fetch(`https://api.github.com/repos/${repositoryFullName}`, { headers: this.headers(token) });
+      const response = await this.githubFetch(`https://api.github.com/repos/${repositoryFullName}`, { headers: this.headers(token) });
       if (response.ok) {
         const repository = await response.json() as { id?: number };
         return { token, installationId: row.installationId, repositoryId: repository.id ? String(repository.id) : null };
@@ -109,7 +109,7 @@ export class GithubAppService {
 
   async oidcTrustSubject(userId: number, repositoryFullName: string, preferredInstallationId?: string | null) {
     const credential = await this.tokenForRepository(userId, repositoryFullName, preferredInstallationId);
-    const response = await fetch(`https://api.github.com/app/installations/${credential.installationId}`, { headers: this.headers(this.appJwt()) });
+    const response = await this.githubFetch(`https://api.github.com/app/installations/${credential.installationId}`, { headers: this.headers(this.appJwt()) });
     if (!response.ok) throw new BadRequestException("GitHub App installation scope could not be verified for AWS authorization.");
     const installation = await response.json() as { account?: { login?: string; id?: number }; repository_selection?: string };
     const [owner, repositoryName] = repositoryFullName.split("/");
@@ -133,7 +133,7 @@ export class GithubAppService {
     const content = renderDeployguardCallerWorkflow(reusable);
     await this.validatePinnedReusableWorkflow(credential.token, reusable, content);
     const url = `https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}?ref=${encodeURIComponent(branch)}`;
-    let response = await fetch(url, { headers: this.headers(credential.token) });
+    let response = await this.githubFetch(url, { headers: this.headers(credential.token) });
     let existingSha: string | undefined;
     if (response.ok) {
       const existing = await response.json() as { content?: string; encoding?: string; sha?: string };
@@ -148,7 +148,7 @@ export class GithubAppService {
     } else if (response.status !== 404) {
       throw new BadRequestException("DeployGuard workflow could not be verified.");
     }
-    response = await fetch(`https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}`, {
+    response = await this.githubFetch(`https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}`, {
       method: "PUT", headers: { ...this.headers(credential.token), "Content-Type": "application/json" },
       body: JSON.stringify({ message: existingSha ? "chore: update DeployGuard deployment workflow" : "chore: add DeployGuard deployment workflow", content: Buffer.from(content).toString("base64"), branch, ...(existingSha ? { sha: existingSha } : {}) }),
     });
@@ -159,7 +159,7 @@ export class GithubAppService {
   async removeManagedWorkflow(userId: number, repositoryFullName: string, branch: string, installationId?: string | null) {
     const credential = await this.tokenForRepository(userId, repositoryFullName, installationId);
     const url = `https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}?ref=${encodeURIComponent(branch)}`;
-    const existingResponse = await fetch(url, { headers: this.headers(credential.token) });
+    const existingResponse = await this.githubFetch(url, { headers: this.headers(credential.token) });
     if (existingResponse.status === 404) return credential.token;
     if (!existingResponse.ok) throw new Error("The DeployGuard caller workflow could not be inspected for project deletion.");
     const existing = await existingResponse.json() as { content?: string; encoding?: string; sha?: string };
@@ -169,14 +169,14 @@ export class GithubAppService {
     if (!existing.sha || !/^name: DeployGuard\n/.test(content) || !/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@[0-9a-f]{40}/.test(content)) {
       throw new Error("The caller workflow is not proven DeployGuard-owned.");
     }
-    const deletion = await fetch(`https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}`, {
+    const deletion = await this.githubFetch(`https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}`, {
       method: "DELETE",
       headers: { ...this.headers(credential.token), "Content-Type": "application/json" },
       body: JSON.stringify({ message: "chore: remove deleted DeployGuard project workflow", sha: existing.sha, branch }),
     });
     if (!deletion.ok) throw new Error("The DeployGuard caller workflow could not be removed for project deletion.");
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const verification = await fetch(url, { headers: this.headers(credential.token) });
+      const verification = await this.githubFetch(url, { headers: this.headers(credential.token) });
       if (verification.status === 404) return credential.token;
       if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -186,7 +186,7 @@ export class GithubAppService {
   private async validatePinnedReusableWorkflow(token: string, reusable: string, caller: string) {
     try {
       const pinned = parsePinnedReusableWorkflow(reusable);
-      const response = await fetch(
+      const response = await this.githubFetch(
         `https://api.github.com/repos/${pinned.owner}/${pinned.repository}/contents/${pinned.path}?ref=${pinned.sha}`,
         { headers: this.headers(token) },
       );
@@ -199,6 +199,7 @@ export class GithubAppService {
         : "";
       assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller));
     } catch (error) {
+      if (error instanceof ServiceUnavailableException) throw error;
       const message = error instanceof GithubActionsWorkflowContractError
         ? error.message
         : "Reusable workflow contract mismatch: pinned workflow validation failed.";
@@ -208,7 +209,7 @@ export class GithubAppService {
 
   private async createInstallationToken(installationId: string) {
     const jwt = this.appJwt();
-    const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, { method: "POST", headers: this.headers(jwt) });
+    const response = await this.githubFetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, { method: "POST", headers: this.headers(jwt) });
     if (!response.ok) throw new BadRequestException("GitHub App installation token could not be created.");
     const body = await response.json() as { token?: string };
     if (!body.token) throw new BadRequestException("GitHub returned an empty installation token.");
@@ -224,6 +225,38 @@ export class GithubAppService {
     const unsigned = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iat: now - 30, exp: now + 540, iss: appId })}`;
     const signer = createSign("RSA-SHA256"); signer.update(unsigned); signer.end();
     return `${unsigned}.${signer.sign(privateKey).toString("base64url")}`;
+  }
+
+  private async githubFetch(input: string | URL, init?: RequestInit) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      if (!this.isTransientNetworkError(error)) throw error;
+      throw new ServiceUnavailableException({
+        code: "github_api_temporarily_unreachable",
+        message: "GitHub API is temporarily unreachable. Retry shortly.",
+      });
+    }
+  }
+
+  private isTransientNetworkError(error: unknown) {
+    const cause = error && typeof error === "object" && "cause" in error
+      ? (error as { cause?: unknown }).cause
+      : undefined;
+    const candidate = cause && typeof cause === "object" ? cause : error;
+    const code = candidate && typeof candidate === "object" && "code" in candidate
+      ? String((candidate as { code?: unknown }).code || "")
+      : "";
+    return new Set([
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_HEADERS_TIMEOUT",
+      "UND_ERR_SOCKET",
+      "EAI_AGAIN",
+      "ENOTFOUND",
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "ETIMEDOUT",
+    ]).has(code);
   }
 
   private headers(token: string) { return { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "User-Agent": "Deploy-Guard", "X-GitHub-Api-Version": "2022-11-28" }; }

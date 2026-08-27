@@ -1,0 +1,104 @@
+import "reflect-metadata";
+import { strict as assert } from "node:assert";
+import { randomUUID } from "node:crypto";
+import { DataSource, DataSourceOptions } from "typeorm";
+import AppDataSource from "../src/data-source";
+import { RepairProjectPipelineSchemaDrift1787356802000 } from "../src/migrations/1787356802000-RepairProjectPipelineSchemaDrift";
+import { RepairDeploymentGenerationSchemaDrift1787356803000 } from "../src/migrations/1787356803000-RepairDeploymentGenerationSchemaDrift";
+import { RepairStableReleaseSchemaDrift1787356804000 } from "../src/migrations/1787356804000-RepairStableReleaseSchemaDrift";
+import { RepairDeploymentContractEcsPlanSchemaDrift1787356805000 } from "../src/migrations/1787356805000-RepairDeploymentContractEcsPlanSchemaDrift";
+import { RepairNotificationSchemaDrift1787356809600 } from "../src/migrations/1787356809600-RepairNotificationSchemaDrift";
+import { assertProductStartSchemaIntegrity } from "../src/projects/product-start-schema-integrity.service";
+
+const database = `deployguard_product_start_${randomUUID().replaceAll("-", "")}`;
+const base = AppDataSource.options as DataSourceOptions;
+let admin: DataSource | null = null;
+let testDatabase: DataSource | null = null;
+
+async function close() {
+  if (testDatabase?.isInitialized) await testDatabase.destroy();
+  testDatabase = null;
+  if (admin?.isInitialized) {
+    await admin.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${database}' AND pid <> pg_backend_pid()`);
+    await admin.query(`DROP DATABASE IF EXISTS "${database}"`);
+    await admin.destroy();
+  }
+  admin = null;
+}
+
+void (async () => {
+  admin = new DataSource({ ...base, entities: [], migrations: [], synchronize: false, logging: false } as DataSourceOptions);
+  await admin.initialize();
+  await admin.query(`CREATE DATABASE "${database}"`);
+
+  testDatabase = new DataSource({ ...base, database, entities: [], migrations: [], synchronize: false, logging: false } as DataSourceOptions);
+  await testDatabase.initialize();
+  await testDatabase.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+  await testDatabase.query(`CREATE TABLE migrations (id serial PRIMARY KEY, timestamp bigint NOT NULL, name varchar NOT NULL)`);
+  await testDatabase.query(`INSERT INTO migrations (timestamp, name) VALUES (1760000000000, 'CreateProjectPipelineTables1760000000000')`);
+  await testDatabase.query(`CREATE TABLE users (id integer PRIMARY KEY)`);
+  await testDatabase.query(`CREATE TABLE projects (id uuid PRIMARY KEY)`);
+  await testDatabase.query(`CREATE TABLE project_preflight_reports (id uuid PRIMARY KEY)`);
+  await testDatabase.query(`CREATE TABLE project_detection_profiles (id uuid PRIMARY KEY)`);
+  await testDatabase.query(`CREATE TABLE project_service_bindings (id uuid PRIMARY KEY)`);
+  await testDatabase.query(`CREATE TABLE project_configuration_snapshots (id uuid PRIMARY KEY, pipeline_run_id uuid)`);
+  await testDatabase.query(`CREATE TABLE project_deployment_contracts (id uuid PRIMARY KEY, project_id uuid NOT NULL, runtime_plan jsonb NOT NULL)`);
+  await testDatabase.query(`CREATE TABLE project_database_tiers (
+    id uuid PRIMARY KEY,
+    active_generation_id uuid,
+    external_host varchar,
+    external_port integer,
+    external_tls_required boolean NOT NULL DEFAULT true,
+    efs_file_system_id varchar,
+    efs_access_point_id varchar,
+    credentials_secret_arn varchar,
+    database_url_secret_arn varchar
+  )`);
+  await testDatabase.query(`CREATE TABLE project_environment_routes (
+    id uuid PRIMARY KEY,
+    project_id uuid NOT NULL,
+    environment_name varchar(64) NOT NULL,
+    listener_priority integer NOT NULL,
+    live_generation_id uuid,
+    candidate_generation_id uuid
+  )`);
+
+  await assert.rejects(
+    () => assertProductStartSchemaIntegrity(testDatabase!),
+    /project_pipeline_runs\.created_at/,
+    "the product-start guard must reject migration-history drift before reconciliation starts",
+  );
+
+  const runner = testDatabase.createQueryRunner();
+  await runner.connect();
+  await new RepairProjectPipelineSchemaDrift1787356802000().up(runner);
+  await new RepairDeploymentGenerationSchemaDrift1787356803000().up(runner);
+  await new RepairStableReleaseSchemaDrift1787356804000().up(runner);
+  await new RepairDeploymentContractEcsPlanSchemaDrift1787356805000().up(runner);
+  await new RepairNotificationSchemaDrift1787356809600().up(runner);
+  await runner.release();
+
+  await assertProductStartSchemaIntegrity(testDatabase);
+  const tables = await testDatabase.query(`
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN ('project_pipeline_runs', 'project_pipeline_events', 'project_deployment_generations', 'project_stable_releases')
+    ORDER BY table_name
+  `);
+  assert.deepEqual(tables.map((row: { table_name: string }) => row.table_name), ["project_deployment_generations", "project_pipeline_events", "project_pipeline_runs", "project_stable_releases"]);
+  const notificationTables = await testDatabase.query(`
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN ('notification_preferences', 'notification_subscriptions', 'notification_deliveries')
+    ORDER BY table_name
+  `);
+  assert.deepEqual(notificationTables.map((row: { table_name: string }) => row.table_name), ["notification_deliveries", "notification_preferences", "notification_subscriptions"]);
+  const history = await testDatabase.query(`SELECT name FROM migrations ORDER BY id`);
+  assert.deepEqual(history.map((row: { name: string }) => row.name), ["CreateProjectPipelineTables1760000000000"]);
+  console.log("Product-start schema-integrity regression passed.");
+})().finally(close).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

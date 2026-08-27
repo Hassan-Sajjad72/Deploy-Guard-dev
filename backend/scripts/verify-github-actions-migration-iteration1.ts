@@ -3,6 +3,7 @@ import { strict as assert } from "assert";
 import { generateKeyPairSync } from "crypto";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { ServiceUnavailableException } from "@nestjs/common";
 import { GithubAppService, DEPLOYGUARD_WORKFLOW_PATH } from "../src/projects/github-app.service";
 import { authorizeGithubRepositoryInTrust, githubTrustAuthorizesRepository } from "../src/projects/github-actions-oidc-trust.service";
 import { githubActionsStagePresentation } from "../src/projects/pipeline/github-actions-stage-presentation";
@@ -14,7 +15,7 @@ async function run() {
     GITHUB_APP_ID: "12345",
     GITHUB_APP_SLUG: "deployguard-test",
     GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@2b1b5d8f2ba4191f2d94eec88573ea98c6786ba8",
+    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0def2608f708a2cfcbc93c4b816694b39b44bafa",
   };
   const rows: any[] = [];
   const repository = {
@@ -61,11 +62,11 @@ async function run() {
     assert.deepEqual({ verified: generated.verified, generated: generated.generated, path: generated.path }, { verified: true, generated: true, path: DEPLOYGUARD_WORKFLOW_PATH });
     const put = calls.find((call) => call.method === "PUT");
     const pinnedValidation = calls.find((call) => call.url.includes("/Deploy-Guard-dev/contents/.github/workflows/deployguard-reusable.yml?ref="));
-    assert.ok(pinnedValidation?.url.endsWith("ref=2b1b5d8f2ba4191f2d94eec88573ea98c6786ba8"), "compatibility gate reads the exact immutable SHA");
+    assert.ok(pinnedValidation?.url.endsWith("ref=0def2608f708a2cfcbc93c4b816694b39b44bafa"), "compatibility gate reads the exact immutable SHA");
     assert.ok(calls.indexOf(pinnedValidation!) < calls.indexOf(put!), "pinned reusable validates before customer workflow mutation");
     const workflow = Buffer.from(put?.body.content, "base64").toString("utf8");
     assert.match(workflow, /workflow_dispatch:/);
-    assert.match(workflow, /Hassan-Sajjad72\/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@2b1b5d8f2ba4191f2d94eec88573ea98c6786ba8/);
+    assert.match(workflow, /Hassan-Sajjad72\/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@0def2608f708a2cfcbc93c4b816694b39b44bafa/);
     assert.match(workflow, /id-token:\s*write/);
     assert.equal(GITHUB_ACTIONS_CALLER_INPUT_NAMES.length, 21, "packed GitHub workflow_dispatch stays below 25 inputs");
     for (const input of GITHUB_ACTIONS_CALLER_INPUT_NAMES) assert.match(workflow, new RegExp(`\\b${input}:`));
@@ -92,6 +93,17 @@ async function run() {
     assert.equal(verified.generated, false);
     await service.removeManagedWorkflow(42, "sample-owner/sample-app", "main", "9001");
     assert.equal(workflowExists, false, "caller removal tolerates one stale GitHub Contents read and verifies eventual absence");
+    global.fetch = (async () => {
+      const error = new TypeError("fetch failed") as TypeError & { cause?: { code: string } };
+      error.cause = { code: "UND_ERR_CONNECT_TIMEOUT" };
+      throw error;
+    }) as typeof fetch;
+    await assert.rejects(
+      service.listRepositories(42),
+      (error: unknown) => error instanceof ServiceUnavailableException
+        && (error.getResponse() as { code?: string }).code === "github_api_temporarily_unreachable",
+      "transient GitHub transport failures return a bounded 503 without masking HTTP auth/permission responses",
+    );
     const projectsController = readFileSync(join(__dirname, "../src/projects/projects.controller.ts"), "utf8");
     assert.match(projectsController, /@Controller\("api\/projects"\)/);
     assert.match(projectsController, /@Post\("github\/installations\/:installationId\/connect"\)/);

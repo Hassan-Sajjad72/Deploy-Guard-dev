@@ -1,0 +1,17 @@
+import { strict as assert } from "node:assert"; import { resolve } from "path";
+import { InfrastructureLifecycleService } from "../src/infrastructure-lifecycle/infrastructure-lifecycle.service";
+import { UserRole } from "../src/users/user.entity";
+const service = Object.create(InfrastructureLifecycleService.prototype) as InfrastructureLifecycleService;
+const filtered = service.filterDestroyTargets(["module.app.aws_ecs_service.main", "module.storage.aws_efs_file_system.data", "aws_kms_key.backup", "module.shared.aws_ecr_repository.global", "aws_s3_bucket.project_assets"]);
+assert.equal(filtered.targets.length, 5);
+assert.equal(filtered.preserved.length, 0);
+const databasePreserved = service.filterDestroyTargets(["module.database_service.aws_ecs_service.database[0]", "module.database_service.aws_efs_file_system.database[0]", "module.database_service.aws_kms_key.efs[0]", "module.database_service.aws_backup_vault.database[0]"]);
+assert.deepEqual(databasePreserved.preserved.sort(), ["module.database_service.aws_backup_vault.database[0]", "module.database_service.aws_efs_file_system.database[0]", "module.database_service.aws_kms_key.efs[0]"].sort());
+assert.deepEqual(service.filterDestroyTargets(databasePreserved.preserved, true).preserved, []);
+service.assertSharedStateBucketNotTracked(JSON.stringify({ resources: [{ type: "aws_ecs_service", instances: [{ attributes: { id: "app" } }] }] }));
+assert.throws(() => service.assertSharedStateBucketNotTracked(JSON.stringify({ resources: [{ type: "aws_s3_bucket", instances: [{ attributes: { bucket: "deployguard-state-bucket" } }] }] })), /shared Terraform state bucket/);
+assert.equal(service.validateWorkspace("/tmp/deployguard/project-a", "/tmp/deployguard"), resolve("/tmp/deployguard/project-a"));
+assert.throws(() => service.validateWorkspace("/etc", "/tmp/deployguard"));
+assert.throws(() => (service as any).assertAdmin({ role: UserRole.DEVELOPER }), /Admin permission/);
+assert.doesNotThrow(() => (service as any).assertAdmin({ role: UserRole.ADMIN }));
+console.log("Infrastructure lifecycle safety verification passed");

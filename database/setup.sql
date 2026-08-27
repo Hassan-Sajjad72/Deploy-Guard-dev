@@ -1,0 +1,11 @@
+-- DeployGuard control-plane schema bootstrap
+--
+-- This file intentionally contains no DDL. The only authoritative bootstrap
+-- path is the TypeORM migration catalog in backend/src/migrations.
+--
+-- Local product: npm run product:start
+-- Container product: docker compose up --build
+-- Standalone migration: npm --prefix backend run migration:run
+--
+-- Do not use `synchronize`, manually create tables, or run this file as a
+-- schema installer. Those paths can create migration-history drift.
