@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+.output/
+.svelte-kit/
+.astro/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.DS_Store
+.env.local
