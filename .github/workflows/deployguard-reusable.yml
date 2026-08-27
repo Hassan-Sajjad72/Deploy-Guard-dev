@@ -200,6 +200,7 @@ jobs:
               ))
               and (.environment | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | type == "string")))
               and (.secretReferences | type == "object" and all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:"))))
+              and (.componentRuntime | type == "object" and length > 0 and all(to_entries[]; (.key | test("^[a-z][a-z0-9-]{0,31}$")) and (.value.environment | type == "object") and (.value.secretReferences | type == "object") and (.value.environment | all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | type == "string"))) and (.value.secretReferences | all(to_entries[]; (.key | test("^[A-Z][A-Z0-9_]{0,127}$")) and (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:"))))))
               and (.deploymentContext.schemaVersion == 1)
               and (.deploymentContext.deploymentMode | IN("FRESH", "UPDATE", "RETRY", "RESTORE", "RESET_FRESH"))
               and (.deploymentContext.persistentState | IN("NONE", "PERSISTENT"))
@@ -591,49 +592,41 @@ jobs:
           PREFLIGHT_ID="dg-preflight-${OPERATION_ID:0:8}-${GITHUB_RUN_ID}"
           PREFLIGHT_ATTEMPTS="${DEPLOYGUARD_PREFLIGHT_ATTEMPTS:-60}"
           NETWORK="$PREFLIGHT_ID"
-          ENV_FILE="$(mktemp "$RUNNER_TEMP/deployguard-preflight-env.XXXXXX")"
+          ENV_DIR="$(mktemp -d "$RUNNER_TEMP/deployguard-preflight-env.XXXXXX")"
           CONTAINERS=()
           cleanup_executable_preflight() {
             for container in "${CONTAINERS[@]}"; do docker rm -f "$container" >/dev/null 2>&1 || true; done
             docker network rm "$NETWORK" >/dev/null 2>&1 || true
-            rm -f "$ENV_FILE"
+            rm -rf "$ENV_DIR"
           }
           trap cleanup_executable_preflight EXIT
           docker network create --internal "$NETWORK" >/dev/null
-          chmod 600 "$ENV_FILE"
-          PREFLIGHT_ENV_FILE="$ENV_FILE" node <<'NODE'
+          PREFLIGHT_ENV_DIR="$ENV_DIR" node <<'NODE'
           const fs = require("fs");
           const runtime = JSON.parse(fs.readFileSync(".deployguard/runtime-config.json", "utf8"));
           const plan = JSON.parse(fs.readFileSync(".deployguard/build-plan.json", "utf8"));
-          const target = (plan.components || []).find((item) => item.role === "backend" || item.role === "application") || (plan.components || [])[0];
-          const owned = new Set((target?.environmentOwnership || []).filter((item) => item.component !== "frontend").map((item) => item.key));
-          const values = Object.fromEntries(Object.entries(runtime.environment || {}).filter(([key]) => !owned.size || owned.has(key) || key.startsWith("DEPLOYGUARD_") || ["PORT", "HOST"].includes(key)));
           const database = runtime.managedDatabase;
           const password = "deployguard_preflight_password";
-          if (database) {
-            const replacements = new Map([[String(database.host), "database"], [String(database.port), String(database.port)], [String(database.databaseName), String(database.databaseName)], [String(database.databaseUser), String(database.databaseUser)]]);
-            for (const [key, value] of Object.entries(database.runtimeAliases || {})) values[key] = replacements.get(String(value)) || String(value);
-            const url = `${database.urlScheme}://${encodeURIComponent(database.databaseUser)}:${encodeURIComponent(password)}@database:${database.port}/${database.databaseName}${database.urlQuery || ""}`;
-            for (const [key, property] of Object.entries(database.secretAliases || {})) values[key] = property === "url" ? url : password;
-          }
-          for (const [name, reference] of Object.entries(runtime.secretReferences || {})) {
-            if (database?.secretAliases?.[name]) continue;
-            if (owned.size && !owned.has(name)) continue;
-            const segments = String(reference).split(":");
-            const field = segments.at(-3);
-            const arn = segments.slice(0, -3).join(":");
-            if (!field || !arn.startsWith("arn:")) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: immutable secret reference for ${name} is invalid.`);
-            values[name] = `deployguard_preflight_${"7".repeat(64)}`;
-          }
-          const missing = (target?.environmentOwnership || [])
-            .filter((item) => item?.required === true && item.phase === "runtime" && item.source !== "repository")
-            .map((item) => String(item.key || ""))
-            .filter((key) => key && values[key] === undefined);
-          if (missing.length) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: missing required runtime configuration: ${[...new Set(missing)].sort().join(", ")}.`);
-          for (const [key, value] of Object.entries(values).sort(([a], [b]) => a.localeCompare(b))) {
-            const rendered = String(value);
-            if (/[\r\n\0]/.test(rendered)) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: ${key} cannot be represented safely.`);
-            fs.appendFileSync(process.env.PREFLIGHT_ENV_FILE, `${key}=${rendered}\n`, { mode: 0o600 });
+          for (const component of plan.components || []) {
+            const componentRuntime = runtime.componentRuntime?.[component.id];
+            if (!componentRuntime) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: runtime materialization is missing canonical component ${component.id}.`);
+            const values = { ...(componentRuntime.environment || {}) };
+            if (database && database.ownerComponentId === component.id) {
+              const replacements = new Map([[String(database.host), "database"], [String(database.port), String(database.port)], [String(database.databaseName), String(database.databaseName)], [String(database.databaseUser), String(database.databaseUser)]]);
+              for (const [key, value] of Object.entries(database.runtimeAliases || {})) values[key] = replacements.get(String(value)) || String(value);
+              const url = `${database.urlScheme}://${encodeURIComponent(database.databaseUser)}:${encodeURIComponent(password)}@database:${database.port}/${database.databaseName}${database.urlQuery || ""}`;
+              for (const [key, property] of Object.entries(database.secretAliases || {})) values[key] = property === "url" ? url : password;
+            }
+            for (const [name, reference] of Object.entries(componentRuntime.secretReferences || {})) {
+              if (database?.ownerComponentId === component.id && database?.secretAliases?.[name]) continue;
+              const segments = String(reference).split(":"); const field = segments.at(-3); const arn = segments.slice(0, -3).join(":");
+              if (!field || !arn.startsWith("arn:")) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: immutable secret reference for ${name} is invalid.`);
+              values[name] = `deployguard_preflight_${"7".repeat(64)}`;
+            }
+            const missing = (component.environmentOwnership || []).filter((item) => item?.componentId === component.id && item.required === true && item.phase === "runtime" && item.source !== "repository").map((item) => String(item.key || "")).filter((key) => key && values[key] === undefined);
+            if (missing.length) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: missing required runtime configuration for ${component.id}: ${[...new Set(missing)].sort().join(", ")}.`);
+            const file = `${process.env.PREFLIGHT_ENV_DIR}/${component.id}.env`; fs.writeFileSync(file, "", { mode: 0o600 });
+            for (const [key, value] of Object.entries(values).sort(([a], [b]) => a.localeCompare(b))) { const rendered = String(value); if (/[\r\n\0]/.test(rendered)) throw new Error(`EXECUTABLE_PREFLIGHT_FAILED: ${key} cannot be represented safely.`); fs.appendFileSync(file, `${key}=${rendered}\n`, { mode: 0o600 }); }
           }
           NODE
           DATABASE_ENGINE="$(jq -r '.managedDatabase.engine // empty' .deployguard/runtime-config.json)"
@@ -660,29 +653,22 @@ jobs:
             USER_VALUE="$(docker image inspect "$image" --format '{{.Config.User}}')"
             [ -n "$USER_VALUE" ] && [ "$USER_VALUE" != "0" ] && [ "$USER_VALUE" != "root" ] || { echo "EXECUTABLE_PREFLIGHT_FAILED: a final application image is configured to run as root." >&2; exit 1; }
           done < <(printf '%s' "$COMPONENTS" | jq -r '.[].imageUri')
-          # BuildPlan v2 owns runtime identity. A sole SSR frontend is a
-          # runtime owner just as a backend/application service is; do not
-          # reinterpret that upstream fact from the component role here.
-          BACKEND="$(printf '%s' "$COMPONENTS" | jq -c 'if length == 1 then .[0] else map(select(.role == "backend" or .role == "application")) | if length == 1 then .[0] else empty end end')"
-          FRONTEND="$(printf '%s' "$COMPONENTS" | jq -c 'map(select(.role == "frontend"))[0] // empty')"
-          OWNER_CONTAINER="$PREFLIGHT_ID-runtime"
-          if [ -n "$BACKEND" ]; then
-            BACKEND_IMAGE="$(printf '%s' "$BACKEND" | jq -r '.imageUri')"; BACKEND_PORT="$(printf '%s' "$BACKEND" | jq -r '.port')"
-            CONTAINERS+=("$OWNER_CONTAINER")
-            docker run -d --name "$OWNER_CONTAINER" --network "$NETWORK" --env-file "$ENV_FILE" "$BACKEND_IMAGE" >/dev/null
-          elif [ -n "$FRONTEND" ]; then
-            FRONTEND_IMAGE="$(printf '%s' "$FRONTEND" | jq -r '.imageUri')"; FRONTEND_PORT="$(printf '%s' "$FRONTEND" | jq -r '.port')"
-            CONTAINERS+=("$OWNER_CONTAINER")
-            docker run -d --name "$OWNER_CONTAINER" --network "$NETWORK" --env-file "$ENV_FILE" "$FRONTEND_IMAGE" >/dev/null
-          else
-            echo "EXECUTABLE_PREFLIGHT_FAILED: immutable component set is empty." >&2; exit 1
-          fi
+          [ "$(printf '%s' "$COMPONENTS" | jq 'length')" -gt 0 ] || { echo "EXECUTABLE_PREFLIGHT_FAILED: immutable component set is empty." >&2; exit 1; }
+          declare -A COMPONENT_CONTAINERS
+          NAMESPACE_CONTAINER=""
+          while IFS= read -r component; do
+            COMPONENT_ID="$(printf '%s' "$component" | jq -r '.id')"; COMPONENT_IMAGE="$(printf '%s' "$component" | jq -r '.imageUri')"; COMPONENT_CONTAINER="$PREFLIGHT_ID-$COMPONENT_ID"
+            CONTAINERS+=("$COMPONENT_CONTAINER"); COMPONENT_CONTAINERS["$COMPONENT_ID"]="$COMPONENT_CONTAINER"
+            if [ -z "$NAMESPACE_CONTAINER" ]; then docker run -d --name "$COMPONENT_CONTAINER" --network "$NETWORK" --env-file "$ENV_DIR/$COMPONENT_ID.env" "$COMPONENT_IMAGE" >/dev/null; NAMESPACE_CONTAINER="$COMPONENT_CONTAINER"; else docker run -d --name "$COMPONENT_CONTAINER" --network "container:$NAMESPACE_CONTAINER" --env-file "$ENV_DIR/$COMPONENT_ID.env" "$COMPONENT_IMAGE" >/dev/null; fi
+          done < <(printf '%s' "$COMPONENTS" | jq -c '.[]')
           check_component() {
-            local component="$1" port mode path container_ip
+            local component="$1" component_id container port mode path container_ip
+            component_id="$(printf '%s' "$component" | jq -r '.id')"; container="${COMPONENT_CONTAINERS[$component_id]}"
             port="$(printf '%s' "$component" | jq -r '.port')"; mode="$(printf '%s' "$component" | jq -r '.healthCheckMode // "http"')"; path="$(printf '%s' "$component" | jq -r '.healthPath')"
-            container_ip="$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$OWNER_CONTAINER" 2>/dev/null || true)"
+            [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ] || { docker logs --tail 40 "$container" >&2 || true; echo "EXECUTABLE_PREFLIGHT_FAILED: component $component_id exited during startup." >&2; return 1; }
+            container_ip="$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$NAMESPACE_CONTAINER" 2>/dev/null || true)"
             if [ -z "$container_ip" ]; then
-              docker logs --tail 40 "$OWNER_CONTAINER" >&2 || true
+              docker logs --tail 40 "$container" >&2 || true
               echo "EXECUTABLE_PREFLIGHT_FAILED: component did not expose its immutable port contract and may have exited during startup." >&2
               return 1
             fi
@@ -690,28 +676,25 @@ jobs:
               if (echo >"/dev/tcp/$container_ip/$port") >/dev/null 2>&1; then
                 if [ "$mode" = "tcp" ] || curl --fail --silent --show-error --max-time 5 "http://$container_ip:$port$path" >/dev/null; then return 0; fi
               fi
-              [ "$attempt" -lt "$PREFLIGHT_ATTEMPTS" ] || { docker logs --tail 40 "$OWNER_CONTAINER" >&2 || true; echo "EXECUTABLE_PREFLIGHT_FAILED: component failed startup/readiness on its immutable port contract." >&2; return 1; }
+              [ "$attempt" -lt "$PREFLIGHT_ATTEMPTS" ] || { docker logs --tail 40 "$container" >&2 || true; echo "EXECUTABLE_PREFLIGHT_FAILED: component failed startup/readiness on its immutable port contract." >&2; return 1; }
               sleep 2
             done
           }
-          [ -z "$BACKEND" ] || check_component "$BACKEND"
-          if [ -n "$FRONTEND" ] && [ -n "$BACKEND" ]; then
-            FRONTEND_CONTAINER="$PREFLIGHT_ID-frontend"; CONTAINERS+=("$FRONTEND_CONTAINER")
-            FRONTEND_IMAGE="$(printf '%s' "$FRONTEND" | jq -r '.imageUri')"; FRONTEND_PORT="$(printf '%s' "$FRONTEND" | jq -r '.port')"
-            docker run -d --name "$FRONTEND_CONTAINER" --network "container:$OWNER_CONTAINER" "$FRONTEND_IMAGE" >/dev/null
-          fi
-          [ -z "$FRONTEND" ] || check_component "$FRONTEND"
+          while IFS= read -r component; do check_component "$component"; done < <(printf '%s' "$COMPONENTS" | jq -c '.[]')
           BINDING_MOUNT="$(jq -r '.platformBackendMount' .deployguard/build-plan.json)"
           BINDING_COUNT="$(jq '(.serviceBindings // []) | length' .deployguard/build-plan.json)"
-          if [ "$BINDING_COUNT" -gt 0 ] && [ -n "$FRONTEND" ]; then
+          FRONTEND_ID="$(jq -r '.serviceBindings[0].sourceComponent // empty' .deployguard/build-plan.json)"
+          FRONTEND_CONTAINER=""
+          [ -z "$FRONTEND_ID" ] || FRONTEND_CONTAINER="${COMPONENT_CONTAINERS[$FRONTEND_ID]:-}"
+          if [ "$BINDING_COUNT" -gt 0 ] && [ -n "$FRONTEND_CONTAINER" ]; then
             # Validate the generated proxy contract itself; a concrete app
             # endpoint is optional and is verified separately when proven.
             docker exec "$FRONTEND_CONTAINER" nginx -T 2>/dev/null | grep -F "location ${BINDING_MOUNT%/}/" >/dev/null \
               || { echo "EXECUTABLE_PREFLIGHT_FAILED: generated platform service binding is absent from the frontend proxy." >&2; exit 1; }
           fi
           RELATIONSHIP_PATH="$(jq -r '.relationships[0].verificationPath // empty' .deployguard/build-plan.json)"
-          if [ -n "$RELATIONSHIP_PATH" ] && [ -n "$FRONTEND" ]; then
-            OWNER_IP="$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$OWNER_CONTAINER")"
+          if [ -n "$RELATIONSHIP_PATH" ] && [ -n "$FRONTEND_CONTAINER" ]; then
+            OWNER_IP="$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$NAMESPACE_CONTAINER")"; FRONTEND_PORT="$(printf '%s' "$COMPONENTS" | jq -r --arg id "$FRONTEND_ID" '.[] | select(.id == $id) | .port')"
             curl --fail --silent --show-error --max-time 5 "http://$OWNER_IP:$FRONTEND_PORT$RELATIONSHIP_PATH" >/dev/null || { echo "EXECUTABLE_PREFLIGHT_FAILED: proven frontend/backend relationship endpoint failed." >&2; exit 1; }
           fi
           echo "Executable immutable application contract passed before persistence and Terraform."
@@ -1099,26 +1082,11 @@ jobs:
             components                  = try(var.build_plan.components, [{ id = "application", role = "application", port = var.app_port, healthPath = var.health_check_path, language = var.build_plan.language }])
             primary_component           = try([for component in local.components : component if component.role == "frontend"][0], local.components[0])
             backend_component           = try([for component in local.components : component if component.role == "backend"][0], null)
-            declared_runtime_components = [for component in local.components : component if component.role == "backend" || component.role == "application"]
-            runtime_owner_component     = length(local.declared_runtime_components) == 1 ? local.declared_runtime_components[0] : (length(local.components) == 1 ? local.components[0] : null)
             full_stack                  = local.backend_component != null && local.primary_component.role == "frontend"
             managed_database            = try(local.runtime_config.managedDatabase, null)
             managed_database_configured = local.managed_database != null && try(local.managed_database.provider, "") == "managed"
-            application_secret_arns     = distinct([for reference in values(try(local.runtime_config.secretReferences, {})) : join(":", slice(split(":", reference), 0, 7))])
-            app_environment_map = merge(
-              { HOST = "0.0.0.0", PORT = tostring(var.app_port) },
-              try(local.runtime_config.environment, {}),
-              try(local.managed_database.runtimeAliases, {})
-            )
-            app_environment = [for key in sort(keys(local.app_environment_map)) : { name = key, value = tostring(local.app_environment_map[key]) }]
-            app_project_secrets = [for key in sort(keys(try(local.runtime_config.secretReferences, {}))) : {
-              name      = key
-              valueFrom = local.runtime_config.secretReferences[key]
-            }]
-            app_database_secrets = [for key in sort(keys(try(local.managed_database.secretAliases, {}))) : {
-              name      = key
-              valueFrom = local.managed_database.secretAliases[key] == "url" ? var.project_persistence_outputs.database_url_secret_arn : var.project_persistence_outputs.database_password_secret_arn
-            } if local.managed_database_configured]
+            component_runtime          = try(local.runtime_config.componentRuntime, {})
+            application_secret_arns     = distinct(flatten([for runtime in values(local.component_runtime) : [for reference in values(try(runtime.secretReferences, {})) : join(":", slice(split(":", reference), 0, 7))]]))
           }
           resource "aws_cloudwatch_log_group" "app" {
             name              = "${local.log_group_prefix}/app"
@@ -1221,8 +1189,8 @@ jobs:
               name         = component.id
               image        = var.component_images[component.id]
               essential    = true
-              environment  = local.runtime_owner_component != null && component.id == local.runtime_owner_component.id ? local.app_environment : [for item in local.app_environment : item if contains(["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"], item.name)]
-              secrets      = local.runtime_owner_component != null && component.id == local.runtime_owner_component.id ? concat(local.app_project_secrets, local.app_database_secrets) : []
+              environment  = [for key in sort(keys(try(local.component_runtime[component.id].environment, {}))) : { name = key, value = tostring(local.component_runtime[component.id].environment[key]) }]
+              secrets      = [for key in sort(keys(try(local.component_runtime[component.id].secretReferences, {}))) : { name = key, valueFrom = local.component_runtime[component.id].secretReferences[key] }]
               portMappings = [{ containerPort = tonumber(component.port), hostPort = tonumber(component.port), protocol = "tcp" }]
               dependsOn    = local.full_stack && component.role == "frontend" ? [{ containerName = local.backend_component.id, condition = "HEALTHY" }] : []
               healthCheck = {

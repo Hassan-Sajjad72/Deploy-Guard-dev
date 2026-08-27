@@ -9,6 +9,8 @@ export type BuildPlanEnvironmentOwnership = {
   key: string;
   owner: "application" | "repository" | "platform" | "infrastructure";
   component?: "frontend" | "backend" | "application" | "platform";
+  /** Exact BuildPlan component which consumes this value at runtime. */
+  componentId?: "frontend" | "backend" | "application";
   source?: "application" | "repository" | "platform" | "managed_database";
   exposure?: "public" | "private";
   requirement?: "required" | "optional" | "unknown";
@@ -229,22 +231,6 @@ export function buildPlanComponents(plan: BuildPlan): BuildPlanComponent[] {
     database: plan.database || { required: false, provider: "none", engine: null },
     persistentStorageRequired: false,
   }];
-}
-
-export function buildPlanRuntimeOwner(plan: BuildPlan): {
-  component: BuildPlanComponent | null;
-  blocker: string | null;
-} {
-  const components = buildPlanComponents(plan);
-  const runtimeOwners = components.filter((component) => component.role === "backend" || component.role === "application");
-  if (runtimeOwners.length === 1) return { component: runtimeOwners[0], blocker: null };
-  if (components.length === 1) return { component: components[0], blocker: null };
-  return {
-    component: null,
-    blocker: runtimeOwners.length > 1
-      ? "Multiple runtime configuration owners were resolved for this multi-component repository."
-      : "A runtime configuration owner could not be resolved for this multi-component repository.",
-  };
 }
 
 export function requireBuildPlan(value: { buildPlan?: BuildPlan | null }): BuildPlan {

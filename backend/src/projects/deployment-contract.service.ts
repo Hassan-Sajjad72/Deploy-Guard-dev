@@ -63,6 +63,7 @@ type EnvironmentEvidence = {
   public?: boolean;
   ownership: "user" | "repository_build" | "platform";
   component?: "frontend" | "backend" | "platform";
+  componentId?: "frontend" | "backend" | "application";
   exposure?: "public" | "private";
   requirement?: "required" | "optional" | "unknown";
   detectedDefault?: string;
@@ -126,17 +127,18 @@ export class DeploymentContractService {
     ]);
     const analysisRaw = (profile.rawProfile || {}) as Record<string, unknown>;
     const topology = this.applicationTopology(analysisRaw);
-    const topologyRuntimeOwners = topology?.components.filter((component) => component.role === "backend" || component.role === "application" || (component.role === "frontend" && component.runtimeType === "server" && Boolean(component.databaseType))) || [];
-    const topologyBackend = topologyRuntimeOwners.length === 1 ? topologyRuntimeOwners[0] : null;
-    const canonicalComponent = topologyBackend || (topology?.components.length === 1 ? topology.components[0] : null);
-    const unresolvedMultiComponentRuntimeOwner = Boolean(topology && topology.components.length > 1 && !topologyBackend);
+    const topologyDatabaseOwner = topology?.managedDatabase
+      ? topology.components.find((component) => component.id === topology.managedDatabase!.ownerComponentId) || null
+      : null;
+    const canonicalComponent = topologyDatabaseOwner || (topology?.components.length === 1 ? topology.components[0] : null);
+    const unresolvedMultiComponentRuntimeOwner = Boolean(topology && topology.managedDatabase && !topologyDatabaseOwner);
     const contractProfile = canonicalComponent?.profile || profile;
     const raw = (contractProfile.rawProfile || {}) as Record<string, unknown>;
     const databaseRequired = topology
-      ? Boolean(topologyBackend && (topologyBackend.profile.requiresDatabase || topology.managedDatabase))
+      ? Boolean(topologyDatabaseOwner && (topologyDatabaseOwner.profile.requiresDatabase || topology.managedDatabase))
       : contractProfile.requiresDatabase || raw.databaseRequired === true;
     const detectedDatabaseEngine = this.databaseEngine(topology
-      ? topology.managedDatabase?.engine || topologyBackend?.databaseType
+      ? topology.managedDatabase?.engine || topologyDatabaseOwner?.databaseType
       : raw.databaseEngine || contractProfile.databaseType);
     // Database detection is an authoritative platform decision.  A project that
     // needs a database never waits for a second, manual provider-selection
@@ -175,7 +177,7 @@ export class DeploymentContractService {
       ? new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service === (databaseTier.engine || detectedDatabaseEngine || "postgres")).flatMap((group) => [...group.aliases]))
       : new Set<string>();
     const evidence = topology
-      ? this.uniqueEnvironmentEvidence(topology.components.flatMap((component) => this.topologyEnvironmentEvidence(component.environment)))
+      ? this.uniqueEnvironmentEvidence(topology.components.flatMap((component) => this.topologyEnvironmentEvidence(component.environment, component.id)))
       : this.environmentEvidence(raw);
     const userEvidence = evidence.filter((item) => item.ownership === "user");
     const platformVariableNames = new Set([
@@ -677,11 +679,13 @@ export class DeploymentContractService {
       ? "static"
       : profile.language === "python" || profile.ecosystem === "python" ? "python" : "javascript";
     const template = this.templateRegistry.getTemplate(profile.selectedTemplate || component.frameworkVariant);
-    const evidence = this.topologyEnvironmentEvidence(component.environment);
+    const evidence = this.topologyEnvironmentEvidence(component.environment, component.id);
     // A server-rendered frontend is an application runtime, not a static
     // asset host.  It may therefore be the proven owner of the managed
     // database in a single-service SSR topology.
-    const componentDatabase = (component.role === "backend" || component.role === "application" || (component.role === "frontend" && component.runtimeType === "server")) && Boolean(component.databaseType);
+    // The topology producer already established this component's managed
+    // database relationship.  Do not narrow it again from its role label.
+    const componentDatabase = Boolean(component.databaseType);
     const databaseAliases = new Set(componentDatabase
       ? SERVICE_ALIAS_GROUPS.filter((group) => group.service === (databaseEngine || component.databaseType || "postgres")).flatMap((group) => [...group.aliases])
       : []);
@@ -733,7 +737,7 @@ export class DeploymentContractService {
       dockerStrategy,
       ...(dockerStrategy === "custom" && this.stringValue(raw.dockerfilePath) ? { dockerfilePath: this.stringValue(raw.dockerfilePath)! } : {}),
       dockerTemplate: profile.selectedTemplate || component.frameworkVariant,
-      environmentOwnership: this.buildPlanEnvironmentOwnership(evidence, databaseAliases, platformNames),
+      environmentOwnership: this.buildPlanEnvironmentOwnership(evidence, databaseAliases, platformNames, component.id),
       database: {
         required: componentDatabase,
         provider: componentDatabase ? "managed" : "none",
@@ -880,7 +884,7 @@ export class DeploymentContractService {
       .filter((item) => /^[A-Z][A-Z0-9_]*$/.test(item.key));
   }
 
-  private topologyEnvironmentEvidence(environment: DetectedApplicationTopology["components"][number]["environment"]): EnvironmentEvidence[] {
+  private topologyEnvironmentEvidence(environment: DetectedApplicationTopology["components"][number]["environment"], componentId: "frontend" | "backend" | "application"): EnvironmentEvidence[] {
     return environment.map((item) => ({
       key: item.name,
       required: item.requirement === "required",
@@ -888,6 +892,7 @@ export class DeploymentContractService {
       secret: item.exposure === "private" && isSecretConfigurationKey(item.name),
       public: item.exposure === "public",
       component: item.owner === "frontend" ? "frontend" as const : item.owner === "platform" ? "platform" as const : "backend" as const,
+      componentId: item.owner === "platform" ? undefined : componentId,
       exposure: item.exposure,
       requirement: item.requirement,
       ownership: item.owner === "database" || item.owner === "platform"
@@ -969,12 +974,13 @@ export class DeploymentContractService {
     return imageVersion || String(detected || "").replace(/^(?:node-lts|python-)/, language === "javascript" ? "22" : "");
   }
 
-  private buildPlanEnvironmentOwnership(evidence: EnvironmentEvidence[], managed: Set<string>, platform: Set<string>): BuildPlanEnvironmentOwnership[] {
+  private buildPlanEnvironmentOwnership(evidence: EnvironmentEvidence[], managed: Set<string>, platform: Set<string>, componentId?: "frontend" | "backend" | "application"): BuildPlanEnvironmentOwnership[] {
     const entries = new Map<string, BuildPlanEnvironmentOwnership>();
     for (const item of evidence) entries.set(item.key, {
       key: item.key,
       owner: platform.has(item.key) ? "platform" : managed.has(item.key) ? "infrastructure" : item.ownership === "repository_build" || item.detectedDefault ? "repository" : "application",
       component: platform.has(item.key) ? "platform" : item.component || "application",
+      componentId: platform.has(item.key) ? undefined : item.componentId || componentId,
       source: platform.has(item.key) ? "platform" : managed.has(item.key) ? "managed_database" : item.ownership === "repository_build" || item.detectedDefault ? "repository" : "application",
       exposure: item.exposure || (isPublicFrontendConfigurationKey(item.key) && item.phase === "build" ? "public" : "private"),
       requirement: item.requirement || (item.required ? "unknown" : "optional"),

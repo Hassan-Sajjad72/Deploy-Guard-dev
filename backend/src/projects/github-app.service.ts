@@ -9,7 +9,17 @@ import { BUILD_PLAN_WORKFLOW_INPUT_NAMES, GITHUB_ACTIONS_CALLER_INPUT_NAMES, GIT
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, GithubActionsWorkflowContractError, parsePinnedReusableWorkflow } from "./github-actions-workflow-contract";
 
 export const DEPLOYGUARD_WORKFLOW_PATH = ".github/workflows/deployguard.yml";
-export const DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW = "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0def2608f708a2cfcbc93c4b816694b39b44bafa";
+/**
+ * The deployment release is configured by the control plane at publication
+ * time.  There is deliberately no source fallback: an old pinned workflow is
+ * an executable release, not a harmless default.
+ */
+export function canonicalDeployguardReusableWorkflow(config: ConfigService) {
+  const reference = config.get<string>("DEPLOYGUARD_REUSABLE_WORKFLOW", "").trim();
+  if (!reference) throw new ServiceUnavailableException("DeployGuard reusable workflow release revision is not configured.");
+  parsePinnedReusableWorkflow(reference);
+  return reference;
+}
 
 export function renderDeployguardCallerWorkflow(reusable: string) {
   const names = [...GITHUB_ACTIONS_CALLER_INPUT_NAMES];
@@ -129,7 +139,7 @@ export class GithubAppService {
 
   async ensureWorkflow(userId: number, repositoryFullName: string, branch: string, installationId?: string | null) {
     const credential = await this.tokenForRepository(userId, repositoryFullName, installationId);
-    const reusable = this.config.get<string>("DEPLOYGUARD_REUSABLE_WORKFLOW", DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW);
+    const reusable = canonicalDeployguardReusableWorkflow(this.config);
     const content = renderDeployguardCallerWorkflow(reusable);
     await this.validatePinnedReusableWorkflow(credential.token, reusable, content);
     const url = `https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}?ref=${encodeURIComponent(branch)}`;

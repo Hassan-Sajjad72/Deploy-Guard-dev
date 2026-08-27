@@ -56,6 +56,12 @@ const configuration: GithubActionsRuntimeConfiguration = {
     DB_USER: "dg_user",
   },
   secretReferences: { JWT_SECRET: `${secretArn}:JWT_SECRET::` },
+  componentRuntime: {
+    application: {
+      environment: { PORT: "3000", JWT_EXPIRES_IN: "1h" },
+      secretReferences: { JWT_SECRET: `${secretArn}:JWT_SECRET::` },
+    },
+  },
   deploymentContext: { schemaVersion: 1, deploymentMode: "FRESH", persistentState: "NONE", recoveryState: "NOT_REQUIRED", recoveryRequired: false, recoveryEvidenceAvailable: false, persistentPreviouslyEstablished: false, deploymentAllowed: true, reason: "Fresh fixture." },
   retentionProtectedRelease: {
     imageDigests: [`sha256:${"a".repeat(64)}`],
@@ -79,6 +85,7 @@ const configuration: GithubActionsRuntimeConfiguration = {
     bindingFingerprint,
     provider: "managed",
     engine: "postgres",
+    ownerComponentId: "application",
     host: `db.project-${projectId}.deployguard.local`,
     port: 5432,
     databaseName: "app",
@@ -333,12 +340,9 @@ async function main() {
   }).toString("utf8").trim();
   assert.equal(executeWorkflowRuntimeJq(workflowRuntime), "true", "the exact workflow jq filter accepts a valid deploy runtime configuration");
   for (const required of [
-    /runtime_owner_component\s+=\s+length\(local\.declared_runtime_components\) == 1/,
-    /component\.id == local\.runtime_owner_component\.id \? local\.app_environment/,
-    /component\.id == local\.runtime_owner_component\.id \? concat\(local\.app_project_secrets, local\.app_database_secrets\) : \[\]/,
-    /valueFrom\s+=\s+local\.runtime_config\.secretReferences\[key\]/,
-    /managed_database\.secretAliases\[key\] == "url"/,
-    /project_persistence_outputs\.database_password_secret_arn/,
+    /component_runtime\s+=\s+try\(local\.runtime_config\.componentRuntime, \{\}\)/,
+    /local\.component_runtime\[component\.id\]\.environment/,
+    /local\.component_runtime\[component\.id\]\.secretReferences/,
     /Action = \["secretsmanager:GetSecretValue"\]/,
     /Resource = concat\([\s\S]*local\.application_secret_arns/,
     /pg_isready -U \$POSTGRES_USER -d \$POSTGRES_DB/,

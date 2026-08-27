@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { execFileSync } from "child_process";
 import { DeploymentContractDockerInput, DockerTemplateEngineService } from "../src/projects/templates/docker-template-engine.service";
 import { TemplateRegistryService } from "../src/projects/templates/template-registry.service";
-import { BUILD_PLAN_DETECTOR_VERSION, buildPlanRuntimeOwner } from "../src/projects/build-plan";
+import { BUILD_PLAN_DETECTOR_VERSION } from "../src/projects/build-plan";
 import { DeploymentContractService } from "../src/projects/deployment-contract.service";
 
 const registry = new TemplateRegistryService();
@@ -92,10 +92,7 @@ assert.deepEqual(frontendRelationshipPlan.secretEnvVars, [], "database credentia
 assert.deepEqual(backendDatabasePlan.secretEnvVars, ["DB_PASSWORD"], "database credentials reach only the database-owning backend");
 assert.deepEqual(backendDatabasePlan.buildTimeEnvVars, [], "frontend values cannot overwrite backend build configuration");
 
-assert.equal(buildPlanRuntimeOwner({ ...base, components: [frontendComponent] }).component?.id, "frontend", "the only single component may own runtime configuration");
-const unresolvedOwner = buildPlanRuntimeOwner({ ...base, components: [frontendComponent, { ...frontendComponent, id: "application", role: "frontend" } as any] });
-assert.equal(unresolvedOwner.component, null, "multi-component repositories cannot fall back to their first component");
-assert.match(unresolvedOwner.blocker || "", /runtime configuration owner could not be resolved/i);
+assert.equal(frontendComponent.environmentOwnership.every((item) => item.componentId === "frontend" || item.component === "platform"), true, "component ownership must remain exact rather than resolve a global runtime owner");
 
 function render(templateKey: string, input: Partial<DeploymentContractDockerInput>) {
   const template = registry.getTemplate(templateKey);
@@ -280,8 +277,8 @@ assert.match(workflow, /cd "\$APPLICATION_DIRECTORY"/);
 assert.doesNotMatch(workflow, /Generate Dockerfile when absent|FROM node:20-alpine AS build|streamlit run app\.py --server\.address/);
 assert.doesNotMatch(workflow, /--build-arg APP_PORT|--build-arg STATIC_OUTPUT_DIR/);
 assert.match(workflow, /SHORT_SHA="\$\{\{ inputs\.commit_sha \}\}"/);
-assert.match(workflow, /HOST\s*=\s*"0\.0\.0\.0",\s*PORT\s*=\s*tostring\(var\.app_port\)/);
-assert.match(workflow, /app_environment\s*=\s*\[for key in sort\(keys\(local\.app_environment_map\)\)\s*:\s*\{ name = key, value = tostring\(local\.app_environment_map\[key\]\) \}\]/);
+assert.match(workflow, /component_runtime\s+=\s+try\(local\.runtime_config\.componentRuntime, \{\}\)/);
+assert.match(workflow, /local\.component_runtime\[component\.id\]\.environment/);
 
 const dispatch = readFileSync(join(__dirname, "../src/projects/github-actions-deployment.service.ts"), "utf8");
 for (const field of ["commit_sha", "generated_dockerfile_base64", "build_time_public_config_base64"]) assert.match(dispatch, new RegExp(`${field}:`));

@@ -30,6 +30,7 @@
     "test:destroy-retry-semantics": "ts-node scripts/verify-destroy-retry-semantics.ts",
     "test:destroy-finalization-resilience": "ts-node scripts/verify-destroy-finalization-resilience.ts",
     "test:immutable-release-workflow": "ts-node scripts/verify-immutable-release-workflow.ts",
+    "test:release-identity": "ts-node scripts/verify-release-identity.ts",
     "test:deployment-requirements": "ts-node scripts/verify-deployment-requirements.ts",
     "test:configuration-ownership": "ts-node scripts/verify-configuration-ownership.ts",
     "test:environment-classification": "ts-node scripts/verify-environment-classification.ts",

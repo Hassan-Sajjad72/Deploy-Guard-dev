@@ -35,7 +35,10 @@ function fixture(user: string, options: { listenPort?: number; contractPort?: nu
   const component = { id: "frontend", role: "frontend", imageUri: image, port: contractPort, healthPath: "/", healthCheckMode: "http", environmentOwnership: options.ownership || [] };
   writeFileSync(join(root, ".deployguard/component-images.json"), JSON.stringify([component]));
   writeFileSync(join(root, ".deployguard/build-plan.json"), JSON.stringify({ components: [component], relationships: [] }));
-  writeFileSync(join(root, ".deployguard/runtime-config.json"), JSON.stringify({ environment: options.runtime || {}, secretReferences: {}, managedDatabase: null }));
+  writeFileSync(join(root, ".deployguard/runtime-config.json"), JSON.stringify({
+    environment: options.runtime || {}, secretReferences: {}, managedDatabase: null,
+    componentRuntime: { frontend: { environment: options.runtime || {}, secretReferences: {} } },
+  }));
 }
 
 function execute() {
@@ -53,16 +56,16 @@ try {
   assert.equal(passed.status, 0, `${passed.stdout}\n${passed.stderr}`);
   assert.match(passed.stdout, /Executable immutable application contract passed before persistence and Terraform/);
   fixture("app", {
-    ownership: [{ key: "POSTGRES_USER", component: "backend", phase: "runtime", source: "application", required: true }],
+    ownership: [{ key: "POSTGRES_USER", componentId: "frontend", phase: "runtime", source: "application", required: true }],
     runtime: { DB_USER: "sibling-alias-only" },
   });
   const missingAlias = execute();
   assert.notEqual(missingAlias.status, 0, "a sibling alias must not satisfy the exact required runtime key");
-  assert.match(missingAlias.stderr, /missing required runtime configuration: POSTGRES_USER/);
+  assert.match(missingAlias.stderr, /missing required runtime configuration for frontend: POSTGRES_USER/);
   fixture("app", { command: ["sh", "-c", "exit 17"] });
   const crashing = execute();
   assert.notEqual(crashing.status, 0, "a crashing immutable image must fail executable preflight");
-  assert.match(crashing.stderr, /component did not expose its immutable port contract|component failed startup\/readiness/);
+  assert.match(crashing.stderr, /component frontend exited during startup|component did not expose its immutable port contract|component failed startup\/readiness/);
   fixture("app", { listenPort: 8080, contractPort: 8099 });
   const wrongPort = execute();
   assert.notEqual(wrongPort.status, 0, "a wrong immutable port contract must fail executable preflight");

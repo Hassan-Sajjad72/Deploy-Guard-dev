@@ -66,6 +66,8 @@ const expected = {
   databaseBindingId: null,
   runtimeDatabaseBindingId: null,
   secretReferenceNames: [] as string[],
+  generationId: attempt15.generationId,
+  promotionIntentFingerprint: null,
 };
 assert.deepEqual(validateGithubActionsRuntimeEvidence(evidence, expected), [], "null no-database identities are canonically equal");
 assert.ok(validateGithubActionsRuntimeEvidence(null, expected).some((issue) => issue.field === "deploymentResult"));
@@ -82,7 +84,7 @@ const roundTrip = extractGithubActionsReleaseEvidence(marker(JSON.parse(JSON.str
 assert.equal(roundTrip?.appPort, 8080);
 assert.equal(roundTrip?.deploymentOperationId, operationId);
 
-const runtime: GithubActionsRuntimeConfiguration = {
+const runtime = {
   schemaVersion: 1,
   configurationSnapshotId: snapshotId,
   configurationFingerprint: fingerprint,
@@ -90,10 +92,11 @@ const runtime: GithubActionsRuntimeConfiguration = {
   generationId: "11111111-1111-4111-8111-111111111111",
   environment: { NODE_ENV: "production" },
   secretReferences: {},
+  componentRuntime: { application: { environment: { NODE_ENV: "production" }, secretReferences: {} } },
   deploymentContext: { schemaVersion: 1, deploymentMode: "FRESH", persistentState: "NONE", recoveryState: "NOT_REQUIRED", recoveryRequired: false, recoveryEvidenceAvailable: false, persistentPreviouslyEstablished: false, deploymentAllowed: true, reason: "Fresh fixture." },
   retentionProtectedRelease: { imageDigests: [], taskDefinitionArns: [] },
   managedDatabase: null,
-};
+} as unknown as GithubActionsRuntimeConfiguration;
 const references = environmentReferencesBase64(runtime);
 const values: Record<string, string> = {
   deployment_action: "deploy", deployment_operation_id: operationId, project_id: projectId, environment_name: "dev",

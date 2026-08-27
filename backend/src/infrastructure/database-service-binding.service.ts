@@ -20,7 +20,7 @@ import { ProjectPersistentStorage } from "../storage/project-persistent-storage.
 import { Project } from "../projects/project.entity";
 import { canonicalEnvironmentName } from "../projects/canonical-environment";
 import { managedDatabaseProfile } from "../projects/managed-database-engine";
-import { buildPlanRuntimeOwner, requireBuildPlan } from "../projects/build-plan";
+import { requireBuildPlan } from "../projects/build-plan";
 import { RuntimeEvidenceContractError, RuntimeEvidenceContractIssue } from "../projects/github-actions-release-evidence";
 import {
   aliasesFor,
@@ -625,11 +625,10 @@ export class DatabaseServiceBindingService {
     }
 
     const region = this.config.get<string>("AWS_REGION", "us-east-1");
-    const runtimeOwner = buildPlanRuntimeOwner(buildPlan);
-    const runtimeComponent = runtimeOwner.component;
-    if (runtimeOwner.blocker) blockers.push(runtimeOwner.blocker);
+    // Platform metadata is deliberately per component.  Selecting a consumer
+    // from a role would silently reintroduce the old global runtime owner.
     const platformValues: Record<string, string> = {
-      PORT: String(runtimeComponent?.port || ""), HOST: "0.0.0.0", NODE_ENV: "production",
+      HOST: "0.0.0.0", NODE_ENV: "production",
       AWS_REGION: region, AWS_DEFAULT_REGION: region, DEPLOYGUARD_PROJECT_ID: projectId,
       DEPLOYGUARD_GENERATION_ID: generationId || "unassigned",
       DEPLOYGUARD_ENVIRONMENT: environment, DEPLOYGUARD_OPERATION_ID: pipelineRunId || "preflight",
@@ -637,17 +636,8 @@ export class DatabaseServiceBindingService {
       DEPLOYGUARD_DATABASE_LOG_GROUP: `/deployguard/${projectId}/${environment}/database`,
       DEPLOYGUARD_DEPLOYMENT_LOG_GROUP: `/deployguard/${projectId}/${environment}/deployment`,
     };
-    for (const key of runtimeComponent
-      ? platformRuntimeVariableNames(runtimeComponent.language === "static" ? "javascript" : runtimeComponent.language, runtimeComponent.runtimeType)
-      : []) {
-      runtimeVariables[key] = platformValues[key];
-      const definition = reservedVariable(key)!;
-      putOwnership(key, {
-        owner: definition.category === "infrastructure_generated" ? "managed_service" : "platform",
-        source: definition.source, sourceRevision: contract.contractHash,
-        required: true, secret: definition.secret, protected: true, serviceBindingId: null, detectedReference: contract.detectionProfileId,
-      });
-    }
+    // Component-local platform values are added when the runtime payload is
+    // materialized; they cannot be represented by a single global PORT.
 
     if (contract.persistentStorageRequired) {
       const storageRevision = storage?.updatedAt?.toISOString() || contract.contractHash;

@@ -1,7 +1,7 @@
 import type { DeploymentProfileDraft } from "./stack-detection.service";
 import type { RepositoryEvidence } from "./repository-evidence.types";
 
-export const TOPOLOGY_ANALYZER_VERSION = "topology-detection-v4" as const;
+export const TOPOLOGY_ANALYZER_VERSION = "topology-detection-v5" as const;
 export const TOPOLOGY_SCHEMA_VERSION = 3 as const;
 
 export type TopologyShape =

@@ -24,7 +24,8 @@ const declaredWorkflowInputs = Array.from(workflowInputBlock.matchAll(/^\s{6}([a
 assert.deepEqual(declaredWorkflowInputs, [...GITHUB_ACTIONS_INPUT_NAMES].sort(), "the inspected reusable workflow and backend operation contract must declare exactly the same inputs");
 
 const githubApp = source("backend/src/projects/github-app.service.ts");
-assert.match(githubApp, /deployguard-reusable\.yml@[0-9a-f]{40}/, "caller must pin the exact reusable workflow SHA");
+assert.match(githubApp, /canonicalDeployguardReusableWorkflow/, "caller must resolve one configured canonical reusable-workflow revision");
+assert.doesNotMatch(githubApp, /DEFAULT_DEPLOYGUARD_REUSABLE_WORKFLOW/, "caller must not retain a stale reusable-workflow fallback");
 assert.match(githubApp, /GITHUB_ACTIONS_WORKFLOW_INPUTS\.map/, "managed caller must forward the authoritative typed input registry");
 const dispatch = source("backend/src/projects/github-actions-deployment.service.ts");
 assert.match(dispatch, /\.\.\.buildPlanWorkflowInputs\(plan\)/);
@@ -118,6 +119,7 @@ const configuration: GithubActionsRuntimeConfiguration = {
   retiredGenerationCleanup: null,
   environment: { FEATURE_FLAG: applicationValue, PORT: "3000", PUBLIC_ORIGIN: "https://repository.example" },
   secretReferences: {},
+  componentRuntime: { application: { environment: { PORT: "3000" }, secretReferences: {} } },
   deploymentContext: { schemaVersion: 1, deploymentMode: "FRESH", persistentState: "NONE", recoveryState: "NOT_REQUIRED", recoveryRequired: false, recoveryEvidenceAvailable: false, persistentPreviouslyEstablished: false, deploymentAllowed: true, reason: "Fresh fixture." },
   retentionProtectedRelease: { imageDigests: [], taskDefinitionArns: [] },
   promotion: {
@@ -168,13 +170,12 @@ assert.doesNotThrow(() => assertInitialGithubActionsIdentity(project, profileIde
 assert.throws(() => assertInitialGithubActionsIdentity(project, profileIdentity, contractIdentity, "b".repeat(40)), (error: any) => error?.code === "stale_commit");
 
 for (const terraformParity of [
-  /app_environment_map = merge\(/,
-  /PORT = tostring\(var\.app_port\)/,
+  /component_runtime\s+=\s+try\(local\.runtime_config\.componentRuntime, \{\}\)/,
   /container_port\s+=\s+tonumber\(local\.primary_component\.port\)/,
   /resource "aws_lb_target_group" "app"[\s\S]*?port\s+=\s+tonumber\(local\.primary_component\.port\)/,
   /health_check\s*\{[\s\S]*?path\s+=\s+try\(local\.primary_component\.healthCheckMode, "http"\) == "http" \? local\.primary_component\.healthPath : "\/"/,
   /matcher\s+=\s+try\(local\.primary_component\.healthCheckMode, "http"\) == "http" \? "200-399" : "200-499"/,
-  /component\.id == local\.runtime_owner_component\.id \? local\.app_environment : \[for item in local\.app_environment : item if contains\(\["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"\], item\.name\)\]/,
+  /local\.component_runtime\[component\.id\]\.environment/,
 ]) assert.match(workflow, terraformParity, "Terraform/ECS must consume the same workflow runtime values");
 
 console.log("Iteration 4 certification passed: exact workflow inputs, immutable BuildPlan validation, environment value filtering, readiness/snapshot agreement, lock/binding policies, stale-commit rejection, and Terraform/ECS parity.");

@@ -458,7 +458,12 @@ export class StackDetectionService {
       else if (backends.length === 1 && components.length === 1) shape = "BACKEND_API";
       else if (components.length === 1 && components[0].role === "application") shape = "SSR_APPLICATION";
     }
-    const runtimeOwner = components.find((component) => component.role === "backend" || component.role === "application" || (component.role === "frontend" && component.runtimeType === "server" && Boolean(component.databaseType))) || null;
+    // Database ownership is a component fact established by repository
+    // evidence.  Roles are presentation/topology labels and must not choose a
+    // different consumer downstream.
+    const databaseOwners = components.filter((component) => Boolean(component.databaseType));
+    if (databaseOwners.length > 1) blockers.push("Multiple components require managed databases; choose a bounded database owner before deployment.");
+    const runtimeOwner = databaseOwners.length === 1 ? databaseOwners[0] : null;
     for (const component of components) evidence.push(...component.evidence);
     const managedDatabase = runtimeOwner?.databaseType
       ? { engine: runtimeOwner.databaseType, ownerComponentId: runtimeOwner.id }

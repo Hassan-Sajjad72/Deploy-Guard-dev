@@ -673,7 +673,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         const previousGeneration = protectedRelease?.generationId
           ? await runRepository.manager.getRepository(ProjectDeploymentGeneration).findOne({ where: { id: protectedRelease.generationId, projectId: project.id } })
           : null;
-        runtimeConfiguration = this.runtimeConfiguration(snapshot, effective, materialized, deploymentContext!, generation, route, protectedRelease, previousGeneration, operationId, stableUrl);
+        runtimeConfiguration = this.runtimeConfiguration(plan, snapshot, effective, materialized, deploymentContext!, generation, route, protectedRelease, previousGeneration, operationId, stableUrl);
         snapshot.secretReferences = {
           ...snapshot.secretReferences,
           ...(materialized?.valueFromByName || {}),
@@ -1422,6 +1422,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
   }
 
   private runtimeConfiguration(
+    plan: BuildPlan,
     snapshot: ProjectConfigurationSnapshot,
     effective: EffectiveDeploymentConfiguration,
     materialized: RuntimeSecretMaterialization | null,
@@ -1454,6 +1455,42 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     if (Object.keys(effective.projectSecretValues).some((key) => !secretReferences[key])) {
       throw new BadRequestException("A required application secret could not be converted to an ECS secret reference.");
     }
+    const databaseOwnerComponentId = plan.components?.find((component) => component.database.required)?.id || null;
+    const componentRuntime = Object.fromEntries(buildPlanComponents(plan).map((component) => {
+      const owned = new Set(component.environmentOwnership
+        .filter((item) => item.componentId === component.id)
+        .map((item) => item.key));
+      const required = component.environmentOwnership
+        .filter((item) => item.componentId === component.id && item.required && item.phase === "runtime" && item.source !== "repository")
+        .map((item) => item.key);
+      const environment = Object.fromEntries(Object.entries(snapshot.plainValues)
+        .filter(([key]) => owned.has(key)));
+      const secrets = Object.fromEntries(Object.entries(secretReferences)
+        .filter(([key]) => owned.has(key)));
+      // These values are intentionally platform-wide metadata, but PORT is
+      // still component-specific and derives only from that component's plan.
+      Object.assign(environment, {
+        HOST: "0.0.0.0",
+        PORT: String(component.port),
+        NODE_ENV: "production",
+        DEPLOYGUARD_PROJECT_ID: generation.projectId,
+        DEPLOYGUARD_GENERATION_ID: generation.id,
+        DEPLOYGUARD_ENVIRONMENT: snapshot.environment,
+        DEPLOYGUARD_OPERATION_ID: operationId,
+      });
+      if (databaseOwnerComponentId === component.id && binding) {
+        Object.assign(environment, runtimeAliases);
+        for (const [key, reference] of Object.entries(secretAliases)) {
+          const valueFrom = binding.databaseUrlSecretReference && reference === "url"
+            ? binding.databaseUrlSecretReference
+            : binding.passwordSecretReference;
+          if (valueFrom) secrets[key] = valueFrom;
+        }
+      }
+      const missing = required.filter((key) => environment[key] === undefined && secrets[key] === undefined);
+      if (missing.length) throw new BadRequestException(`Required runtime configuration is missing for component ${component.id}: ${missing.sort().join(", ")}.`);
+      return [component.id, { environment, secretReferences: secrets }];
+    }));
     const databaseProfile = binding ? managedDatabaseProfile(binding.engine) : null;
     if (binding && (binding.provider !== "managed" || !databaseProfile || !binding.usernameReference)) {
       throw new BadRequestException("GitHub Actions requires a canonical supported managed database binding for this database-backed release.");
@@ -1492,6 +1529,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       } : null,
       environment: { ...snapshot.plainValues },
       secretReferences,
+      componentRuntime,
       deploymentContext,
       retentionProtectedRelease: {
         imageDigests: [...new Set([...(protectedImageDigest ? [protectedImageDigest] : []), ...protectedComponentDigests])],
@@ -1515,6 +1553,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         bindingFingerprint: binding.configurationFingerprint,
         provider: "managed",
         engine: binding.engine,
+        ownerComponentId: databaseOwnerComponentId || (() => { throw new BadRequestException("Managed database binding has no canonical BuildPlan component owner."); })(),
         image: databaseProfile!.image,
         dataPath: databaseProfile!.dataPath,
         healthCheck: databaseProfile!.healthCheck,

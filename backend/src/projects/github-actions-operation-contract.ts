@@ -211,6 +211,11 @@ export type GithubActionsRuntimeConfiguration = {
   };
   environment: Record<string, string>;
   secretReferences: Record<string, string>;
+  /** Immutable, exact BuildPlan-component materialization for ECS/preflight. */
+  componentRuntime: Record<string, {
+    environment: Record<string, string>;
+    secretReferences: Record<string, string>;
+  }>;
   deploymentContext: DeploymentRecoveryDecision;
   retentionProtectedRelease: {
     imageDigests: string[];
@@ -222,6 +227,7 @@ export type GithubActionsRuntimeConfiguration = {
     bindingFingerprint: string;
     provider: "managed";
     engine: ManagedDatabaseEngine;
+    ownerComponentId: string;
     image?: string;
     dataPath?: string;
     healthCheck?: string[];
@@ -330,6 +336,9 @@ function canonicalizeRuntimeConfiguration(configuration: GithubActionsRuntimeCon
     ...configuration,
     environment: sort(configuration.environment),
     secretReferences: sort(configuration.secretReferences),
+    componentRuntime: Object.fromEntries(Object.entries(configuration.componentRuntime)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, value]) => [id, { environment: sort(value.environment), secretReferences: sort(value.secretReferences) }])),
     retentionProtectedRelease: {
       imageDigests: [...new Set(configuration.retentionProtectedRelease.imageDigests)].sort(),
       taskDefinitionArns: [...new Set(configuration.retentionProtectedRelease.taskDefinitionArns)].sort(),
@@ -401,6 +410,12 @@ function assertRuntimeConfiguration(configuration: GithubActionsRuntimeConfigura
     || !validRecord(configuration.environment, (value) => Buffer.byteLength(value) <= 4096 && !/[\r\n\0]/.test(value))
     || Object.keys(configuration.environment).some(isSecretConfigurationKey)
     || !validRecord(configuration.secretReferences, (value) => SECRET_VALUE_FROM.test(value))
+    || !configuration.componentRuntime || typeof configuration.componentRuntime !== "object" || Array.isArray(configuration.componentRuntime)
+    || Object.entries(configuration.componentRuntime).some(([id, value]) => !/^[a-z][a-z0-9-]{0,31}$/.test(id)
+      || !value || typeof value !== "object" || Array.isArray(value)
+      || !validRecord((value as GithubActionsRuntimeConfiguration["componentRuntime"][string]).environment, (item) => Buffer.byteLength(item) <= 4096 && !/[\r\n\0]/.test(item))
+      || Object.keys((value as GithubActionsRuntimeConfiguration["componentRuntime"][string]).environment).some(isSecretConfigurationKey)
+      || !validRecord((value as GithubActionsRuntimeConfiguration["componentRuntime"][string]).secretReferences, (item) => SECRET_VALUE_FROM.test(item)))
     || !configuration.retentionProtectedRelease
     || !Array.isArray(configuration.retentionProtectedRelease.imageDigests)
     || configuration.retentionProtectedRelease.imageDigests.length > 10
