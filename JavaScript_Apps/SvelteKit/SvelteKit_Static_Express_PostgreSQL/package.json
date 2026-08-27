@@ -1,9 +1,0 @@
-{
-  "name": "17_sveltekit_static_express_postgres",
-  "private": true,
-  "workspaces": [
-    "frontend",
-    "backend"
-  ],
-  "packageManager": "npm@10.9.0"
-}
