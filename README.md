@@ -1,53 +1,34 @@
-# Framework Application Test Collection
+# Astro static + Fastify — MySQL
 
-This repository contains independent application fixtures covering a variety of web frameworks, runtime architectures, and database combinations.
+This is one complete application folder with:
+- `frontend/` — the named frontend framework
+- `backend/` — a minimal API that owns the database connection
+- `.env` / `.env.example` — local fixture configuration
 
-The complete collection is preserved on the `main` branch.
+There is no Dockerfile and no Docker Compose deployment file. DeployGuard must infer and generate deployment behavior.
 
-Each application is also available on its own Git branch. This allows a specific application to be referenced using a normal GitHub repository + branch pair without requiring a separate GitHub repository for every fixture.
+## Database
+Start MySQL locally, for example:
+`docker run --rm --name dg-mysql -e MYSQL_DATABASE=appdb -e MYSQL_USER=app -e MYSQL_PASSWORD=app -e MYSQL_ROOT_PASSWORD=root -p 3306:3306 mysql:8.4`
 
-GitHub is being used to provide stable, reproducible source-control references for integration, deployment, framework-detection, and compatibility testing.
 
-The applications intentionally vary in:
+## Backend
+```bash
+cd backend
+npm install
+npm start
+```
+Backend listens on port `3001` and exposes `/health`.
 
-- framework
-- language
-- repository layout
-- frontend/backend topology
-- runtime commands
-- environment-variable requirements
-- PostgreSQL, MySQL, and MongoDB usage
+## Frontend
+In a second terminal:
+```bash
+cd frontend
+npm install
+npm run build
+```
 
-Applications should be treated as independent projects.
+For frameworks with a development command, you can also run the framework dev server from `frontend/`.
 
-No production credentials should be stored in this repository.
-
-| Branch | Framework | Stack / Architecture | Database |
-| --- | --- | --- | --- |
-| Angular_Express_MongoDB | Angular | Angular frontend with Express backend | MongoDB |
-| Astro_Node_MongoDB | Astro | Astro Node application | MongoDB |
-| Astro_Static_Fastify_MySQL | Astro | Astro static frontend with Fastify backend | MySQL |
-| CRA_Express_PostgreSQL | Create React App | Create React App frontend with Express backend | PostgreSQL |
-| Express_JS_PostgreSQL | Express | Express JavaScript application | PostgreSQL |
-| Express_TS_MongoDB | Express | Express TypeScript application | MongoDB |
-| Fastify_JS_MySQL | Fastify | Fastify JavaScript application | MySQL |
-| Fastify_TS_PostgreSQL | Fastify | Fastify TypeScript application | PostgreSQL |
-| NestJS_MongoDB | NestJS | NestJS application | MongoDB |
-| NextJS_SSR_PostgreSQL | Next.js | Next.js server-rendered application | PostgreSQL |
-| NextJS_Standalone_MongoDB | Next.js | Next.js standalone application | MongoDB |
-| NextJS_Static_Express_MySQL | Next.js | Next.js static frontend with Express backend | MySQL |
-| Nuxt_SSR_PostgreSQL | Nuxt | Nuxt server-rendered application | PostgreSQL |
-| Nuxt_Static_Fastify_MongoDB | Nuxt | Nuxt static frontend with Fastify backend | MongoDB |
-| Remix_Node_PostgreSQL | Remix | Remix Node application | PostgreSQL |
-| SvelteKit_Node_MySQL | SvelteKit | SvelteKit Node application | MySQL |
-| SvelteKit_Static_Express_PostgreSQL | SvelteKit | SvelteKit static frontend with Express backend | PostgreSQL |
-| Vite_React_Express_PostgreSQL | Vite React | Vite React frontend with Express backend | PostgreSQL |
-| Vite_Vue_Fastify_MySQL | Vite Vue | Vite Vue frontend with Fastify backend | MySQL |
-| Webpack_React_Fastify_MongoDB | Webpack React | Webpack React frontend with Fastify backend | MongoDB |
-| Django_ASGI_MySQL | Django | Django ASGI application | MySQL |
-| Django_WSGI_PostgreSQL | Django | Django WSGI application | PostgreSQL |
-| FastAPI_MySQL | FastAPI | FastAPI application | MySQL |
-| FastAPI_Nested_PostgreSQL | FastAPI | FastAPI application with nested backend package | PostgreSQL |
-| Flask_Factory_MongoDB | Flask | Flask application factory | MongoDB |
-| Flask_PostgreSQL | Flask | Flask application | PostgreSQL |
-| Streamlit_MongoDB | Streamlit | Streamlit application | MongoDB |
+## DeployGuard purpose
+Test this whole application directory as a repository. It intentionally represents a frontend + backend topology with environment-variable ownership split between browser/build-time values and backend runtime/DB values.
