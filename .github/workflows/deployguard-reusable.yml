@@ -660,7 +660,10 @@ jobs:
             USER_VALUE="$(docker image inspect "$image" --format '{{.Config.User}}')"
             [ -n "$USER_VALUE" ] && [ "$USER_VALUE" != "0" ] && [ "$USER_VALUE" != "root" ] || { echo "EXECUTABLE_PREFLIGHT_FAILED: a final application image is configured to run as root." >&2; exit 1; }
           done < <(printf '%s' "$COMPONENTS" | jq -r '.[].imageUri')
-          BACKEND="$(printf '%s' "$COMPONENTS" | jq -c 'map(select(.role == "backend" or .role == "application"))[0] // empty')"
+          # BuildPlan v2 owns runtime identity. A sole SSR frontend is a
+          # runtime owner just as a backend/application service is; do not
+          # reinterpret that upstream fact from the component role here.
+          BACKEND="$(printf '%s' "$COMPONENTS" | jq -c 'if length == 1 then .[0] else map(select(.role == "backend" or .role == "application")) | if length == 1 then .[0] else empty end end')"
           FRONTEND="$(printf '%s' "$COMPONENTS" | jq -c 'map(select(.role == "frontend"))[0] // empty')"
           OWNER_CONTAINER="$PREFLIGHT_ID-runtime"
           if [ -n "$BACKEND" ]; then
@@ -670,14 +673,9 @@ jobs:
           elif [ -n "$FRONTEND" ]; then
             FRONTEND_IMAGE="$(printf '%s' "$FRONTEND" | jq -r '.imageUri')"; FRONTEND_PORT="$(printf '%s' "$FRONTEND" | jq -r '.port')"
             CONTAINERS+=("$OWNER_CONTAINER")
-            docker run -d --name "$OWNER_CONTAINER" --network "$NETWORK" "$FRONTEND_IMAGE" >/dev/null
+            docker run -d --name "$OWNER_CONTAINER" --network "$NETWORK" --env-file "$ENV_FILE" "$FRONTEND_IMAGE" >/dev/null
           else
             echo "EXECUTABLE_PREFLIGHT_FAILED: immutable component set is empty." >&2; exit 1
-          fi
-          if [ -n "$FRONTEND" ] && [ -n "$BACKEND" ]; then
-            FRONTEND_CONTAINER="$PREFLIGHT_ID-frontend"; CONTAINERS+=("$FRONTEND_CONTAINER")
-            FRONTEND_IMAGE="$(printf '%s' "$FRONTEND" | jq -r '.imageUri')"; FRONTEND_PORT="$(printf '%s' "$FRONTEND" | jq -r '.port')"
-            docker run -d --name "$FRONTEND_CONTAINER" --network "container:$OWNER_CONTAINER" "$FRONTEND_IMAGE" >/dev/null
           fi
           check_component() {
             local component="$1" port mode path container_ip
@@ -697,6 +695,11 @@ jobs:
             done
           }
           [ -z "$BACKEND" ] || check_component "$BACKEND"
+          if [ -n "$FRONTEND" ] && [ -n "$BACKEND" ]; then
+            FRONTEND_CONTAINER="$PREFLIGHT_ID-frontend"; CONTAINERS+=("$FRONTEND_CONTAINER")
+            FRONTEND_IMAGE="$(printf '%s' "$FRONTEND" | jq -r '.imageUri')"; FRONTEND_PORT="$(printf '%s' "$FRONTEND" | jq -r '.port')"
+            docker run -d --name "$FRONTEND_CONTAINER" --network "container:$OWNER_CONTAINER" "$FRONTEND_IMAGE" >/dev/null
+          fi
           [ -z "$FRONTEND" ] || check_component "$FRONTEND"
           BINDING_MOUNT="$(jq -r '.platformBackendMount' .deployguard/build-plan.json)"
           BINDING_COUNT="$(jq '(.serviceBindings // []) | length' .deployguard/build-plan.json)"
@@ -1096,6 +1099,8 @@ jobs:
             components                  = try(var.build_plan.components, [{ id = "application", role = "application", port = var.app_port, healthPath = var.health_check_path, language = var.build_plan.language }])
             primary_component           = try([for component in local.components : component if component.role == "frontend"][0], local.components[0])
             backend_component           = try([for component in local.components : component if component.role == "backend"][0], null)
+            declared_runtime_components = [for component in local.components : component if component.role == "backend" || component.role == "application"]
+            runtime_owner_component     = length(local.declared_runtime_components) == 1 ? local.declared_runtime_components[0] : (length(local.components) == 1 ? local.components[0] : null)
             full_stack                  = local.backend_component != null && local.primary_component.role == "frontend"
             managed_database            = try(local.runtime_config.managedDatabase, null)
             managed_database_configured = local.managed_database != null && try(local.managed_database.provider, "") == "managed"
@@ -1216,8 +1221,8 @@ jobs:
               name         = component.id
               image        = var.component_images[component.id]
               essential    = true
-              environment  = component.role == "backend" || component.role == "application" ? local.app_environment : [for item in local.app_environment : item if contains(["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"], item.name)]
-              secrets      = component.role == "backend" || component.role == "application" ? concat(local.app_project_secrets, local.app_database_secrets) : []
+              environment  = local.runtime_owner_component != null && component.id == local.runtime_owner_component.id ? local.app_environment : [for item in local.app_environment : item if contains(["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"], item.name)]
+              secrets      = local.runtime_owner_component != null && component.id == local.runtime_owner_component.id ? concat(local.app_project_secrets, local.app_database_secrets) : []
               portMappings = [{ containerPort = tonumber(component.port), hostPort = tonumber(component.port), protocol = "tcp" }]
               dependsOn    = local.full_stack && component.role == "frontend" ? [{ containerName = local.backend_component.id, condition = "HEALTHY" }] : []
               healthCheck = {

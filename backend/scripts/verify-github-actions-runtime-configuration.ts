@@ -333,8 +333,9 @@ async function main() {
   }).toString("utf8").trim();
   assert.equal(executeWorkflowRuntimeJq(workflowRuntime), "true", "the exact workflow jq filter accepts a valid deploy runtime configuration");
   for (const required of [
-    /environment\s+=\s+component\.role == "backend" \|\| component\.role == "application" \? local\.app_environment : \[for item in local\.app_environment : item if contains\(\["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"\], item\.name\)\]/,
-    /secrets\s+=\s+component\.role == "backend" \|\| component\.role == "application" \? concat\(local\.app_project_secrets, local\.app_database_secrets\) : \[\]/,
+    /runtime_owner_component\s+=\s+length\(local\.declared_runtime_components\) == 1/,
+    /component\.id == local\.runtime_owner_component\.id \? local\.app_environment/,
+    /component\.id == local\.runtime_owner_component\.id \? concat\(local\.app_project_secrets, local\.app_database_secrets\) : \[\]/,
     /valueFrom\s+=\s+local\.runtime_config\.secretReferences\[key\]/,
     /managed_database\.secretAliases\[key\] == "url"/,
     /project_persistence_outputs\.database_password_secret_arn/,

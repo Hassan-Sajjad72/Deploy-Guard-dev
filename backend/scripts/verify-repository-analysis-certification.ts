@@ -174,7 +174,7 @@ for (const terraformParity of [
   /resource "aws_lb_target_group" "app"[\s\S]*?port\s+=\s+tonumber\(local\.primary_component\.port\)/,
   /health_check\s*\{[\s\S]*?path\s+=\s+try\(local\.primary_component\.healthCheckMode, "http"\) == "http" \? local\.primary_component\.healthPath : "\/"/,
   /matcher\s+=\s+try\(local\.primary_component\.healthCheckMode, "http"\) == "http" \? "200-399" : "200-499"/,
-  /environment\s+=\s+component\.role == "backend" \|\| component\.role == "application" \? local\.app_environment : \[for item in local\.app_environment : item if contains\(\["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"\], item\.name\)\]/,
+  /component\.id == local\.runtime_owner_component\.id \? local\.app_environment : \[for item in local\.app_environment : item if contains\(\["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"\], item\.name\)\]/,
 ]) assert.match(workflow, terraformParity, "Terraform/ECS must consume the same workflow runtime values");
 
 console.log("Iteration 4 certification passed: exact workflow inputs, immutable BuildPlan validation, environment value filtering, readiness/snapshot agreement, lock/binding policies, stale-commit rejection, and Terraform/ECS parity.");

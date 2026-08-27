@@ -55,7 +55,7 @@ const workflow = read(".github/workflows/deployguard-reusable.yml");
 assert.match(workflow, /--arg environmentName "\$ENVIRONMENT_NAME"/);
 assert.match(workflow, /environmentName:\$environmentName/);
 assert.match(workflow, /Environment\s+=\s+var\.environment_name/);
-assert.match(workflow, /environment\s+=\s+component\.role == "backend" \|\| component\.role == "application" \? local\.app_environment/);
+assert.match(workflow, /component\.id == local\.runtime_owner_component\.id \? local\.app_environment/);
 
 const fingerprint = "1".repeat(64);
 const snapshotId = "66666666-7777-4888-8999-aaaaaaaaaaaa";
