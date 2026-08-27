@@ -1,9 +1,0 @@
-{
-  "name": "19_astro_static_fastify_mysql",
-  "private": true,
-  "workspaces": [
-    "frontend",
-    "backend"
-  ],
-  "packageManager": "npm@10.9.0"
-}
