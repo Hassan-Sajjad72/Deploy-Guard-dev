@@ -1,8 +1,11 @@
 data "aws_availability_zones" "available" {
+  count = length(var.availability_zone_names) == 0 ? 1 : 0
   state = "available"
 }
 
 locals {
+  availability_zone_names = length(var.availability_zone_names) > 0 ? var.availability_zone_names : data.aws_availability_zones.available[0].names
+  nat_gateway_count       = var.nat_mode == "none" ? 0 : var.nat_mode == "single" ? 1 : length(aws_subnet.public)
   common_tags = merge(var.tags, {
     Name                 = "${var.project_name}-${var.environment_name}"
     Project              = "DeployGuard"
@@ -27,7 +30,7 @@ resource "aws_subnet" "public" {
 
   vpc_id                  = aws_vpc.this.id
   cidr_block              = var.public_subnet_cidrs[count.index]
-  availability_zone       = data.aws_availability_zones.available.names[count.index % length(data.aws_availability_zones.available.names)]
+  availability_zone       = local.availability_zone_names[count.index % length(local.availability_zone_names)]
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
@@ -41,7 +44,7 @@ resource "aws_subnet" "private" {
 
   vpc_id            = aws_vpc.this.id
   cidr_block        = var.private_subnet_cidrs[count.index]
-  availability_zone = data.aws_availability_zones.available.names[count.index % length(data.aws_availability_zones.available.names)]
+  availability_zone = local.availability_zone_names[count.index % length(local.availability_zone_names)]
 
   tags = merge(local.common_tags, {
     Name = "${var.project_name}-${var.environment_name}-private-${count.index + 1}"
@@ -78,7 +81,7 @@ resource "aws_route_table_association" "public" {
 }
 
 resource "aws_eip" "nat" {
-  count = var.single_nat_gateway ? 1 : length(aws_subnet.public)
+  count = local.nat_gateway_count
 
   domain = "vpc"
 
@@ -88,10 +91,10 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "this" {
-  count = var.single_nat_gateway ? 1 : length(aws_subnet.public)
+  count = local.nat_gateway_count
 
   allocation_id = aws_eip.nat[count.index].id
-  subnet_id     = aws_subnet.public[var.single_nat_gateway ? 0 : count.index].id
+  subnet_id     = aws_subnet.public[var.nat_mode == "single" ? 0 : count.index].id
 
   tags = merge(local.common_tags, {
     Name = "${var.project_name}-${var.environment_name}-nat-${count.index + 1}"
@@ -103,9 +106,12 @@ resource "aws_nat_gateway" "this" {
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
 
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this[0].id
+  dynamic "route" {
+    for_each = var.nat_mode == "none" ? [] : [1]
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.this[0].id
+    }
   }
 
   tags = merge(local.common_tags, {

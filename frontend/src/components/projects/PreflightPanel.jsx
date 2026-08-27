@@ -5,6 +5,7 @@ import {
   getPreflightReport,
 } from "../../api/projectApi.js";
 import ErrorState from "../common/ErrorState.jsx";
+import { publishProjectStateChanged } from "../../utils/projectStateSync.js";
 
 export default function PreflightPanel({ canManage, projectId }) {
   const [report, setReport] = useState(null);
@@ -31,6 +32,7 @@ export default function PreflightPanel({ canManage, projectId }) {
     try {
       const response = await generatePreflightReport(projectId);
       setReport(response.report);
+      publishProjectStateChanged(projectId);
     } catch (caughtError) {
       setError(caughtError.message);
     } finally {
@@ -43,7 +45,7 @@ export default function PreflightPanel({ canManage, projectId }) {
       <div className="page-header">
         <div>
           <p className="eyebrow">Pre-flight Gate</p>
-          <h2>Pre-Flight Validation</h2>
+          <h2>Pre-flight Validation</h2>
           <p className="muted">
             {report ? `Latest result: ${String(report.validationStatus).replaceAll("_", " ")}` : "No pre-flight report has been generated. Detection must complete before validation."}
           </p>
@@ -59,7 +61,7 @@ export default function PreflightPanel({ canManage, projectId }) {
               onClick={generateReport}
               type="button"
             >
-              {isGenerating ? "Generating..." : "Generate Pre-Flight Report"}
+              {isGenerating ? "Generating..." : "Generate Pre-flight Report"}
             </button>
           ) : null}
         </div>

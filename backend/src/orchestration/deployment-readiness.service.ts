@@ -4,7 +4,6 @@ import { Repository } from "typeorm";
 import { CostEstimateStatus, ProjectCostEstimate } from "../finops/project-cost-estimate.entity";
 import { InfrastructureEnvironmentStatus, ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
-import { ProjectSecurityScan, SecurityPolicyDecision } from "../projects/project-security-scan.entity";
 import { ProjectTerraformState, TerraformStateStatus } from "../state-management/project-terraform-state.entity";
 import { ProjectPersistentStorage } from "../storage/project-persistent-storage.entity";
 
@@ -15,8 +14,6 @@ export class OrchestrationDeploymentReadinessService {
     private readonly costRepository: Repository<ProjectCostEstimate>,
     @InjectRepository(ProjectInfrastructureEnvironment)
     private readonly environmentRepository: Repository<ProjectInfrastructureEnvironment>,
-    @InjectRepository(ProjectSecurityScan)
-    private readonly scanRepository: Repository<ProjectSecurityScan>,
     @InjectRepository(ProjectTerraformState)
     private readonly stateRepository: Repository<ProjectTerraformState>,
     @InjectRepository(ProjectPersistentStorage)
@@ -69,25 +66,6 @@ export class OrchestrationDeploymentReadinessService {
     };
   }
 
-  async verifySecurityGatePassed(projectId: string, pipelineRunId?: string | null) {
-    const scan = await this.scanRepository.findOne({
-      where: pipelineRunId ? { projectId, pipelineRunId } : { projectId },
-      order: { createdAt: "DESC" },
-    });
-    const passed = Boolean(
-      scan &&
-        [SecurityPolicyDecision.ALLOWED, SecurityPolicyDecision.APPROVED_OVERRIDE].includes(
-          scan.policyDecision as SecurityPolicyDecision
-        )
-    );
-
-    return {
-      passed,
-      reason: passed ? null : "Security scan gate must pass before ECS deployment.",
-      scan,
-    };
-  }
-
   async verifyStateLockSafe(projectId: string) {
     const state = await this.stateRepository.findOne({
       where: { projectId },
@@ -122,7 +100,6 @@ export class OrchestrationDeploymentReadinessService {
       this.verifyEcrImageExists(run),
       await this.verifyInfrastructureProvisioned(run.projectId),
       await this.verifyCostGatePassed(run.projectId),
-      await this.verifySecurityGatePassed(run.projectId, run.id),
       await this.verifyStateLockSafe(run.projectId),
       await this.verifyEfsMountConfigIfNeeded(run.projectId),
     ];

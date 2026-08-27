@@ -1,12 +1,18 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import process from "node:process";
+import { assertAuthoritativeDatabaseReachable } from "./authoritative-database.mjs";
+import { loadCanonicalBackendEnvironment } from "./canonical-backend-env.mjs";
 
 const root = process.cwd();
+const canonicalBackendEnv = loadCanonicalBackendEnvironment(root);
 const children = new Set();
-const dependencies = ["postgres", "prometheus", "grafana"];
-const dependencyCompose = ["compose", "-f", "compose.dependencies.yaml"];
-let startedDependencies = [];
+const supportServices = ["prometheus", "grafana"];
+// PostgreSQL is deliberately not a Compose dependency of the AWS product.
+// The backend, migrations, and this preflight all consume backend/.env's
+// authoritative endpoint (currently localhost:5434).
+const dependencyCompose = ["compose", "--env-file", canonicalBackendEnv];
+let startedSupportServices = [];
 let stopping = false;
 
 function assertControlPlaneRuntime() {
@@ -83,8 +89,8 @@ async function stop(exitCode = 0) {
   for (const child of children) signalChild(child, "SIGTERM");
   await new Promise((resolve) => setTimeout(resolve, 750));
   for (const child of children) signalChild(child, "SIGKILL");
-  if (startedDependencies.length) {
-    run("docker", [...dependencyCompose, "stop", ...startedDependencies]);
+  if (startedSupportServices.length) {
+    run("docker", [...dependencyCompose, "stop", ...startedSupportServices]);
   }
   process.exit(exitCode);
 }
@@ -95,11 +101,14 @@ process.on("SIGTERM", () => void stop(0));
 try {
   assertControlPlaneRuntime();
   process.env.PROMETHEUS_SCRAPE_TOKEN ||= "deployguard-local-monitoring";
+  process.env.PROMETHEUS_SCRAPE_TARGET ||= "host.docker.internal:5000";
   process.env.AWS_RUNTIME_MONITORING_ENABLED ||= "true";
   process.env.CLOUDWATCH_LOGS_ENABLED ||= "true";
   process.env.CLOUDWATCH_METRICS_ENABLED ||= "true";
   process.env.PROMETHEUS_ENABLED ||= "true";
   process.env.GRAFANA_BASE_URL ||= `http://localhost:${process.env.GRAFANA_PORT || 3001}/d/deployguard-runtime/deployguard-runtime`;
+  const database = await assertAuthoritativeDatabaseReachable();
+  console.log(`Using canonical PostgreSQL endpoint: ${database.host}:${database.port}/${database.database}`);
   run("docker", [...dependencyCompose, "config", "--quiet"]);
   const runningBefore = new Set(
     capture("docker", [...dependencyCompose, "ps", "--status", "running", "--services"])
@@ -112,8 +121,8 @@ try {
     ...(!runningBefore.has("prometheus") ? [assertPortAvailable(Number(process.env.PROMETHEUS_PORT || 9090), "Prometheus")] : []),
     ...(!runningBefore.has("grafana") ? [assertPortAvailable(Number(process.env.GRAFANA_PORT || 3001), "Grafana")] : []),
   ]);
-  startedDependencies = dependencies.filter((service) => !runningBefore.has(service));
-  run("docker", [...dependencyCompose, "up", "-d", ...dependencies]);
+  startedSupportServices = supportServices.filter((service) => !runningBefore.has(service));
+  run("docker", [...dependencyCompose, "up", "-d", "--no-deps", ...supportServices]);
   run("npm", ["run", "migration:run"], `${root}/backend`);
   run("npm", ["run", "build"], `${root}/backend`);
   run("npm", ["run", "build"], `${root}/frontend`);

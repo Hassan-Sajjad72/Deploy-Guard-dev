@@ -1,12 +1,5 @@
-import { Link } from "react-router-dom";
 import { StatusBadge, formatStatus } from "../common/Premium.jsx";
-
-function formatDate(value) {
-  return value ? new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value)) : "-";
-}
+import { formatDuration, formatLocalDateTime, formatRelativeTime } from "../../utils/time.js";
 
 export default function PipelineEventsTimeline({ events, projectId }) {
   return (
@@ -35,16 +28,8 @@ export default function PipelineEventsTimeline({ events, projectId }) {
               {event.metadata?.terraformStatus ? (
                 <p className="muted">Terraform: {event.metadata.terraformStatus}</p>
               ) : null}
-              {event.metadata?.scanId ? (
-                <Link
-                  className="ghost-button"
-                  to={`/projects/${projectId}/security/scans/${event.metadata.scanId}`}
-                >
-                  View security scan
-                </Link>
-              ) : null}
             </div>
-            <span className="muted">{formatDate(event.createdAt)}</span>
+            <span className="event-time"><time dateTime={event.occurredAt || event.createdAt}>{formatLocalDateTime(event.occurredAt || event.createdAt)}</time><small>{formatRelativeTime(event.occurredAt || event.createdAt)}</small>{event.durationMs != null ? <small>Duration: {formatDuration(event.durationMs)}</small> : null}</span>
           </li>
         ))}
         {events.length === 0 ? (

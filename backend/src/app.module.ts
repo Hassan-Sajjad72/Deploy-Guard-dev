@@ -38,14 +38,11 @@ import { ProjectDeploymentRequirements } from "./projects/project-deployment-req
 import { ProjectDetectionProfile } from "./projects/project-detection-profile.entity";
 import { ProjectEnvironmentVariable } from "./projects/project-environment-variable.entity";
 import { ProjectPipelineEvent } from "./projects/project-pipeline-event.entity";
-import { ProjectPipelineJobFinality } from "./projects/pipeline/project-pipeline-job-finality.entity";
 import { ProjectPipelineRun } from "./projects/project-pipeline-run.entity";
 import { ProjectDeploymentGeneration } from "./projects/project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./projects/project-environment-route.entity";
 import { ProjectPreflightReport } from "./projects/project-preflight-report.entity";
 import { ProjectServiceBinding } from "./projects/project-service-binding.entity";
-import { ProjectSecurityScan } from "./projects/project-security-scan.entity";
-import { ProjectSecurityFinding } from "./projects/project-security-finding.entity";
 import { ProjectUserActivity } from "./projects/project-user-activity.entity";
 import { Project } from "./projects/project.entity";
 import { ProjectsModule } from "./projects/projects.module";
@@ -76,11 +73,11 @@ import { ObservabilityModule } from "./observability/observability.module";
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: "postgres" as const,
-        host: config.get<string>("DATABASE_HOST", config.get<string>("DB_HOST", "localhost")),
-        port: Number(config.get<string>("DATABASE_PORT", config.get<string>("DB_PORT", "5432"))),
-        username: config.get<string>("DATABASE_USERNAME", config.get<string>("DB_USERNAME", "mini_paas_user")),
-        password: config.get<string>("DATABASE_PASSWORD", config.get<string>("DB_PASSWORD", "mini_paas_password")),
-        database: config.get<string>("DATABASE_NAME", config.get<string>("DB_NAME", "mini_paas")),
+        host: config.get<string>("DATABASE_HOST", "localhost"),
+        port: Number(config.get<string>("DATABASE_PORT", "5432")),
+        username: config.get<string>("DATABASE_USERNAME", "mini_paas_user"),
+        password: config.get<string>("DATABASE_PASSWORD", "mini_paas_password"),
+        database: config.get<string>("DATABASE_NAME", "mini_paas"),
         // Historical deployment/audit rows remain readable. Registering an
         // entity does not activate its retired mutation provider.
         entities: [
@@ -88,8 +85,8 @@ import { ObservabilityModule } from "./observability/observability.module";
           ProjectDetectionProfile, ProjectDeploymentContract, ProjectDatabaseTier,
           ProjectServiceBinding, ProjectConfigurationSnapshot,
           ProjectDeploymentRequirements, ProjectPreflightReport, ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
-          ProjectPipelineEvent, ProjectPipelineJobFinality, ProjectUserActivity,
-          ProjectSecurityScan, ProjectSecurityFinding, ProjectCostEstimate,
+          ProjectPipelineEvent, ProjectUserActivity,
+          ProjectCostEstimate,
           ProjectCostResourceBreakdown, ProjectCostSettings,
           ProjectInfrastructureEnvironment, ProjectInfrastructureEvent,
           ProjectServiceDiscoveryRecord, ProjectDeploymentReadinessSnapshot,

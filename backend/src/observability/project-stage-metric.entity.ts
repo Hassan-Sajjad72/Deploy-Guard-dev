@@ -24,7 +24,6 @@ export enum StageMetricStatus {
 export enum StageMetricSource {
   PIPELINE = "pipeline",
   GITHUB_ACTIONS = "github_actions",
-  TRIVY = "trivy",
   DOCKER = "docker",
   ECR = "ecr",
   TERRAFORM = "terraform",

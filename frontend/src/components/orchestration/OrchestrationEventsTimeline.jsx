@@ -1,6 +1,4 @@
-function formatDate(value) {
-  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
-}
+import { formatDuration, formatLocalDateTime, formatRelativeTime } from "../../utils/time";
 
 export default function OrchestrationEventsTimeline({ events = [] }) {
   return (
@@ -14,7 +12,11 @@ export default function OrchestrationEventsTimeline({ events = [] }) {
               <p>{event.message}</p>
               <p className="muted">{event.status}</p>
             </div>
-            <span className="muted">{formatDate(event.createdAt)}</span>
+            <span className="event-time">
+              <span>{formatLocalDateTime(event.occurredAt || event.createdAt)}</span>
+              <small>{formatRelativeTime(event.occurredAt || event.createdAt)}</small>
+              {event.durationMs != null ? <small>Duration: {formatDuration(event.durationMs)}</small> : null}
+            </span>
           </li>
         ))}
       </ul>

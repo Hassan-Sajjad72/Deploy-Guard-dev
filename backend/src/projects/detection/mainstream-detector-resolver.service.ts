@@ -105,7 +105,7 @@ function pythonDependencies(facts: ExtractedRepositoryFacts) {
   const text = facts.dependencyText.toLowerCase();
   const build: string[] = [];
   const runtime: string[] = [];
-  if (/psycopg|psycopg2/.test(text)) { build.push("libpq-dev", "gcc"); runtime.push("libpq5"); }
+  if (/psycopg|psycopg2/.test(text)) { build.push("libpq-dev", "gcc", "libc6-dev"); runtime.push("libpq5"); }
   if (/mysqlclient/.test(text)) { build.push("default-libmysqlclient-dev", "gcc"); runtime.push("libmariadb3"); }
   if (/pillow/.test(text)) { build.push("libjpeg-dev", "zlib1g-dev"); runtime.push("libjpeg62-turbo", "zlib1g"); }
   if (/lxml/.test(text)) { build.push("libxml2-dev", "libxslt1-dev"); runtime.push("libxml2", "libxslt1.1"); }
@@ -207,10 +207,24 @@ const detectors: FrameworkDetector[] = [
     detect(facts) {
       if (!dependency(facts, "@angular/core") || !facts.files.has("angular.json")) return null;
       const manager = packageManager(facts); let output: string | null = null; let project: string | null = null;
-      try { const angular = JSON.parse(facts.textFiles["angular.json"]); project = angular.defaultProject || Object.keys(angular.projects || {}).sort()[0] || null; const options = project ? angular.projects?.[project]?.architect?.build?.options || angular.projects?.[project]?.targets?.build?.options : null; const raw = options?.outputPath; output = typeof raw === "string" ? raw : raw?.base ? `${raw.base}${raw.browser ? `/${raw.browser}` : ""}` : null; } catch { /* exact unsupported evidence below */ }
+      try {
+        const angular = JSON.parse(facts.textFiles["angular.json"]);
+        const projects = angular.projects && typeof angular.projects === "object" ? angular.projects as Record<string, any> : {};
+        const buildOptions = (name: string) => projects[name]?.architect?.build?.options || projects[name]?.targets?.build?.options || null;
+        // defaultProject is Angular's canonical repository evidence.  Without it,
+        // selecting a project by name would turn directory ordering into deployment
+        // configuration, so accept only a single project with a proven build target.
+        if (typeof angular.defaultProject === "string" && buildOptions(angular.defaultProject)) project = angular.defaultProject;
+        else {
+          const buildableProjects = Object.keys(projects).filter((name) => Boolean(buildOptions(name)));
+          if (buildableProjects.length === 1) project = buildableProjects[0];
+        }
+        const raw = project ? buildOptions(project)?.outputPath : null;
+        output = typeof raw === "string" ? raw : raw?.base ? `${raw.base}${raw.browser ? `/${raw.browser}` : ""}` : null;
+      } catch { /* exact input-required evidence below */ }
       const ev = [evidence("angular.json", `Angular application project ${project || "could not be selected"}`), evidence("package.json", "@angular/core dependency and Angular CLI scripts")];
       const plan = withNodeFacts(nodeStatic("angular-static", manager, output || ""), facts);
-      return result(this.id, "angular", "angular-static", output ? 0.98 : 0.75, ev, plan, [], output ? [] : ["ANGULAR_OUTPUT_PATH"], output ? [] : ["Angular outputPath could not be derived from angular.json."]);
+      return result(this.id, "angular", "angular-static", output ? 0.98 : 0.75, ev, plan, [], output ? [] : ["ANGULAR_APPLICATION_SELECTION"], output ? [] : ["Angular has multiple or unresolved buildable applications. Set angular.json defaultProject or provide one authoritative build target."]);
     },
   },
   {
@@ -303,7 +317,7 @@ const detectors: FrameworkDetector[] = [
         if (module && (assignment || factory)) { ev.push(evidence(module.file, factory ? `${factory.name} application factory found by safe structural AST parsing` : `${assignment!.name} application object found by safe structural AST parsing`)); base.runCommand = framework === "flask" ? `gunicorn '${module.module}:${factory ? `${factory.name}()` : assignment!.name}' --bind 0.0.0.0:${'${PORT:-5000}'}` : `uvicorn ${module.module}:${factory ? factory.name : assignment!.name}${factory ? " --factory" : ""} --host 0.0.0.0 --port ${'${PORT:-8000}'}`; }
         return result(this.id, framework, framework === "flask" ? "flask-wsgi" : "fastapi-asgi", module ? 0.99 : 0.75, ev, base, [], base.runCommand ? [] : ["PYTHON_APPLICATION_TARGET"], base.runCommand ? [] : [`${framework} application object or factory could not be proven by safe AST inspection.`], "python");
       }
-      if (framework === "django") { const wsgi = facts.pythonModules.find((item) => /(?:^|\/)wsgi\.py$/.test(item.file)); const asgi = facts.pythonModules.find((item) => /(?:^|\/)asgi\.py$/.test(item.file)); const target = wsgi || asgi; if (target) { const projectModule = target.module.replace(/\.(?:wsgi|asgi)$/, ""); base.dockerTemplate = wsgi ? "django-wsgi" : "django-asgi"; base.runCommand = wsgi ? `gunicorn ${wsgi.module}:application --bind 0.0.0.0:${'${PORT:-8000}'}` : `uvicorn ${asgi!.module}:application --host 0.0.0.0 --port ${'${PORT:-8000}'}`; base.releaseCommand = "python manage.py migrate --noinput"; base.buildCommand = "python manage.py collectstatic --noinput"; base.runtimeFiles = [projectModule, "manage.py", "staticfiles"]; ev.push(evidence(target.file, `${wsgi ? "WSGI" : "ASGI"} application module`)); } return result(this.id, "django", wsgi ? "django-wsgi" : "django-asgi", target ? 0.99 : 0.76, ev, base, [], target ? [] : ["DJANGO_APPLICATION_MODULE"], target ? [] : ["Django wsgi.py or asgi.py could not be derived."], "python"); }
+      if (framework === "django") { const wsgi = facts.pythonModules.find((item) => /(?:^|\/)wsgi\.py$/.test(item.file)); const asgi = facts.pythonModules.find((item) => /(?:^|\/)asgi\.py$/.test(item.file)); const target = wsgi || asgi; if (target) { const projectModule = target.module.replace(/\.(?:wsgi|asgi)$/, ""); base.dockerTemplate = wsgi ? "django-wsgi" : "django-asgi"; base.runCommand = wsgi ? `gunicorn ${wsgi.module}:application --bind 0.0.0.0:${'${PORT:-8000}'}` : `uvicorn ${asgi!.module}:application --host 0.0.0.0 --port ${'${PORT:-8000}'}`; base.releaseCommand = "python manage.py migrate --noinput"; base.buildCommand = "python manage.py collectstatic --noinput"; base.buildInitialization = { contractVersion: "deployguard.build-initialization/v1", mode: "runtime_placeholders", reason: "Django collectstatic imports settings but must not connect to a runtime-managed service while building the image." }; base.runtimeFiles = [projectModule, "manage.py", "staticfiles"]; ev.push(evidence(target.file, `${wsgi ? "WSGI" : "ASGI"} application module`)); } return result(this.id, "django", wsgi ? "django-wsgi" : "django-asgi", target ? 0.99 : 0.76, ev, base, [], target ? [] : ["DJANGO_APPLICATION_MODULE"], target ? [] : ["Django wsgi.py or asgi.py could not be derived."], "python"); }
       const streamlitFile = facts.pythonModules.find((item) => /(?:^|\/)(?:app|main|server)\.py$/.test(item.file)); if (streamlitFile) { base.runCommand = `streamlit run ${streamlitFile.file} --server.address 0.0.0.0 --server.port ${'${PORT:-8000}'}`; base.port = 8000; }
       return result(this.id, "streamlit", "streamlit-server", streamlitFile ? 0.96 : 0.75, ev, base, [], streamlitFile ? [] : ["STREAMLIT_ENTRYPOINT"], [], "python");
     },
@@ -316,8 +330,7 @@ export class MainstreamDetectorResolverService {
   readonly detectors = [...detectors].sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id));
 
   resolve(appPath: string, files: Set<string>) {
-    const facts = this.extract(appPath, files);
-    const matches = this.detectors.map((detector) => ({ detector, result: detector.detect(facts) })).filter((item): item is { detector: FrameworkDetector; result: FrameworkDetectorResult } => Boolean(item.result));
+    const { facts, matches } = this.resolveAll(appPath, files);
     if (!matches.length) return { facts, result: null, ambiguous: [] as string[] };
     const selected = matches[0];
     const selectedResult: FrameworkDetectorResult = {
@@ -346,7 +359,20 @@ export class MainstreamDetectorResolverService {
       (item.detector.priority === selected.detector.priority && Math.abs(item.result.confidence - selected.result.confidence) < 0.05)
       || (backendAmbiguous && backendIds.has(item.result.detectorId))
     )).map((item) => item.result.detectorId);
-    return { facts, result: selectedResult, ambiguous: conflicts };
+    return { facts, result: selectedResult, ambiguous: conflicts, matches: matches.map((item) => item.result) };
+  }
+
+  /**
+   * Exhaustive detector output for topology composition. Priority is retained
+   * only for deterministic presentation/legacy projection; it is not a
+   * topology decision.
+   */
+  resolveAll(appPath: string, files: Set<string>) {
+    const facts = this.extract(appPath, files);
+    const matches = this.detectors
+      .map((detector) => ({ detector, result: detector.detect(facts) }))
+      .filter((item): item is { detector: FrameworkDetector; result: FrameworkDetectorResult } => Boolean(item.result));
+    return { facts, matches };
   }
 
   extract(appPath: string, files = new Set<string>()): ExtractedRepositoryFacts {

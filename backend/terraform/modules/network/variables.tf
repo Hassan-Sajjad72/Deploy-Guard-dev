@@ -22,8 +22,13 @@ variable "private_subnet_cidrs" {
   type = list(string)
 }
 
-variable "single_nat_gateway" {
-  type = bool
+variable "nat_mode" {
+  type = string
+}
+
+variable "availability_zone_names" {
+  type    = list(string)
+  default = []
 }
 
 variable "enable_https" {

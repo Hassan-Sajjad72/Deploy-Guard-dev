@@ -1,60 +1,61 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { generatePreflightReport, getProject, getProjectCurrentState, retryPipelineRun, runStackDetection, startProjectAutomation } from "../api/projectApi.js";
-import AppIcon from "../components/common/AppIcon.jsx";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { getProject, getProjectCurrentState } from "../api/projectApi.js";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
-import { CollapsiblePanel, StatusBadge } from "../components/common/Premium.jsx";
-import { useToast } from "../hooks/useToast.js";
-
-function statusLabel(state) {
-  if (state.liveDeployment?.available) return "Live";
-  if (["failed", "blocked"].includes(state.overallStatus)) return "Needs attention";
-  if (state.overallStatus === "paused") return "Paused";
-  if (["queued", "running"].includes(state.latestPipeline?.status)) return "Deploying";
-  return "Ready";
-}
+import { PageHeader } from "../components/common/DesignSystem.jsx";
+import ProjectOverviewLifecycle from "../components/projects/ProjectOverviewLifecycle.jsx";
+import NotificationSettingsPanel from "../components/projects/NotificationSettingsPanel.jsx";
+import { subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+import { useSerializedProjectRefresh } from "../hooks/useSerializedProjectRefresh.js";
 
 export default function ProjectDetails() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { notify } = useToast();
   const [project, setProject] = useState(null);
-  const [state, setState] = useState(null);
+  const [currentState, setCurrentState] = useState(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
 
-  async function load() {
+  const load = useSerializedProjectRefresh(projectId, useCallback(async (requestedProjectId, isCurrent) => {
     try {
-      const [projectResponse, current] = await Promise.all([getProject(projectId), getProjectCurrentState(projectId)]);
-      setProject(projectResponse.project); setState(current); setError("");
-    } catch (caught) { setError(caught.message); }
-  }
-  useEffect(() => { load(); }, [projectId]);
-  useEffect(() => { if (!["queued", "running"].includes(state?.latestPipeline?.status)) return undefined; const timer = window.setInterval(load, 5000); return () => window.clearInterval(timer); }, [state?.latestPipeline?.status, projectId]);
+      const [projectResponse, current] = await Promise.all([
+        getProject(requestedProjectId),
+        getProjectCurrentState(requestedProjectId),
+      ]);
+      if (!isCurrent()) return;
+      setProject(projectResponse.project);
+      setCurrentState(current);
+      setError("");
+    } catch (caught) {
+      if (!isCurrent()) return;
+      if (caught.status === 404) { navigate("/projects", { replace: true, state: { notice: "Project deletion completed." } }); return; }
+      setError(caught.message);
+    }
+  }, [navigate]));
 
-  async function primaryAction() {
-    setBusy(true); setError("");
-    try {
-      const action = state.nextAction;
-      if (["failed", "blocked"].includes(state.overallStatus) && state.latestPipeline?.id) await retryPipelineRun(projectId, state.latestPipeline.id);
-      else if (action?.type === "run_stack_detection") await runStackDetection(projectId);
-      else if (action?.type === "generate_preflight") await generatePreflightReport(projectId);
-      else if (action?.type === "start_pipeline") await startProjectAutomation(projectId);
-      else { navigate(`/projects/${projectId}/pipeline`); return; }
-      await load(); notify("Project updated.", "success");
-    } catch (caught) { setError(caught.message); } finally { setBusy(false); }
+  useEffect(() => { void load(); }, [load, projectId]);
+  useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
+  useEffect(() => {
+    if (!projectStatePresentation(currentState).active) return undefined;
+    const timer = window.setInterval(load, 5000);
+    return () => window.clearInterval(timer);
+  }, [currentState?.stateAuthority?.activeOperation?.id, currentState?.stateAuthority?.activeOperation?.status, load, projectId]);
+
+  if (!project || !currentState) {
+    return <div className="workspace-page">{error ? <ErrorState message={error} onRetry={load} /> : <LoadingState message="Loading project…" />}</div>;
   }
 
-  if (!project || !state) return error ? <ErrorState message={error} /> : <LoadingState message="Loading project…" />;
-  const needsAttention = ["failed", "blocked", "paused"].includes(state.overallStatus);
-  const progress = state.progressPercentage ?? state.progress?.percentage ?? 0;
-  const actionLabel = needsAttention ? (state.overallStatus === "paused" ? "Open pipeline" : "Retry deployment") : state.nextAction?.enabled ? state.nextAction.label : state.hasPipelineRun ? "Open pipeline" : "Continue";
-  return <div className="workspace-page project-home-page">
-    <header className="project-page-header"><div className="project-title-lockup"><span className="project-glyph project-glyph-large"><AppIcon name="box" size={21} /></span><div><div className="project-title-row"><h1>{project.name}</h1><StatusBadge status={state.overallStatus}>{statusLabel(state)}</StatusBadge></div><p><AppIcon name="github" size={14} />{project.repositoryFullName}<span>·</span><AppIcon name="branch" size={14} />{project.targetBranch}</p></div></div></header>
-    {error ? <ErrorState message={error} /> : null}
-    <div className="project-control-layout"><main className="project-control-main"><section className={`deployment-canvas panel-flat ${needsAttention ? "deployment-canvas-failed" : ""}`}><div className="deployment-canvas-header"><div><p className="eyebrow">Current deployment</p><div className="deployment-stage-title"><span className={["queued", "running"].includes(state.latestPipeline?.status) ? "active-stage-beacon" : ""} /><h2>{state.currentStepLabel}</h2></div><p>{state.userFacingStatus}</p></div><div className="deployment-progress-value"><strong>{progress}%</strong><span>{statusLabel(state)}</span></div></div><div className="deployment-progress-track"><span style={{ width: `${progress}%` }} /></div><div className="simple-primary-actions">{state.liveDeployment?.available ? <a className="button" href={state.liveDeployment.url} rel="noreferrer" target="_blank">Open live app</a> : <button className="button" disabled={busy} onClick={primaryAction} type="button">{busy ? "Working…" : actionLabel}</button>}<Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open pipeline</Link></div></section>
-      {needsAttention && state.overallStatus !== "paused" ? <section className="panel-flat compact-recovery-card"><p className="eyebrow">Deployment stopped</p><h2>{state.failedStageLabel || state.currentStepLabel}</h2><p>{state.latestPipeline?.failureMessage || state.blockedBy?.userMessage || "This deployment step needs attention before it can continue."}</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Review pipeline</Link></section> : null}
-    </main><aside className="project-control-aside">{state.liveDeployment?.available ? <section className="project-live-card panel-flat"><div className="live-card-status"><span /><strong>Live</strong></div><p>{state.liveDeployment.hostname}</p><a className="secondary-button" href={state.liveDeployment.url} rel="noreferrer" target="_blank">Open deployment</a></section> : null}<CollapsiblePanel summary="Developer details"><dl className="developer-detail-grid"><div><dt>App directory</dt><dd>{state.stackDetection?.appDirectory || project.appDirectory || "Automatic"}</dd></div><div><dt>Latest run</dt><dd>{state.latestPipeline?.id?.slice(0, 8) || "—"}</dd></div><div><dt>External CI</dt><dd>{state.environmentModes?.githubActionsRequired ? "Required" : "Optional"}</dd></div><div><dt>Apply</dt><dd>{state.environmentModes?.terraformApplyEnabled ? "Enabled" : "Disabled"}</dd></div></dl></CollapsiblePanel></aside></div>
+  const reconciliation = currentState.stateAuthority?.reconciliation || {};
+  const state = projectStatePresentation(currentState);
+  const lastUpdated = reconciliation.lastReconciledAt
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(reconciliation.lastReconciledAt))
+    : "Unavailable";
+
+  return <div className="workspace-page project-overview-page" data-authoritative-state={projectStatePresentation(currentState).state}>
+    <PageHeader context={`${currentState.repository || project.repositoryFullName} · ${currentState.branch || project.targetBranch} · Source: ${reconciliation.source?.replaceAll("_", " ") || "unavailable"} · Last updated: ${lastUpdated} · ${reconciliation.freshness || "unavailable"}`} eyebrow="Project overview" status={state.state} title={project.name} />
+    {error ? <ErrorState message={error} onRetry={load} /> : null}
+    <ProjectOverviewLifecycle canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} projectId={projectId} />
+    <NotificationSettingsPanel canManage={Boolean(project.canManage)} projectId={projectId} />
   </div>;
 }

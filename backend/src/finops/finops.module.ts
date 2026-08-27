@@ -16,7 +16,6 @@ import { ProjectCostEstimate } from "./project-cost-estimate.entity";
 import { ProjectCostResourceBreakdown } from "./project-cost-resource-breakdown.entity";
 import { ProjectCostSettings } from "./project-cost-settings.entity";
 import { TerraformCostPlanService } from "./terraform-cost-plan.service";
-import { OrchestrationContractsModule } from "../orchestration-contracts/orchestration-contracts.module";
 
 @Module({
   imports: [
@@ -32,7 +31,6 @@ import { OrchestrationContractsModule } from "../orchestration-contracts/orchest
       ProjectPersistentStorage,
     ]),
     AuditLogModule,
-    OrchestrationContractsModule,
   ],
   controllers: [FinopsController],
   providers: [

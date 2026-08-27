@@ -40,10 +40,10 @@ export class DeploymentCheckpointService {
       return this.resume("repo_clone", true, ["repo_clone", "stack_detection", "preflight", "docker_build", "ecr_push", "terraform", "ecs"], false);
     }
     if (/missing_(?:package_manifest|start_command|build_command)|low_confidence_detection/.test(code)) {
-      return this.resume("stack_detection", false, ["stack_detection", "preflight", "docker_build", "security_scan", "ecr_push", "ecs_deploy"], true);
+      return this.resume("stack_detection", false, ["stack_detection", "preflight", "docker_build", "ecr_push", "ecs_deploy"], true);
     }
     if (/missing_build_time_env|build_secret|docker|dependency|npm_script|module_not_found|native_dependency/.test(code)) {
-      return this.resume("docker_build", false, ["docker_build", "security_scan", "ecr_push", "ecs_deploy"], true);
+      return this.resume("docker_build", false, ["docker_build", "ecr_push", "ecs_deploy"], true);
     }
     if (/database/.test(code) || code === "app_connected_to_localhost_database") {
       return this.resume("database_tier_setup", false, ["database_tier_setup", "terraform_plan", "terraform_apply", "ecs_deploy"], true);
@@ -61,9 +61,7 @@ export class DeploymentCheckpointService {
       return this.resume("ecs_task_definition", false, ["ecs_task_definition", "ecs_deploy", "alb_health"], true);
     }
     if (/ecr|image_/.test(code)) return this.resume("ecr_push", false, ["ecr_push", "ecs_deploy"], true);
-    if (/security|vulnerability|secret_leaked|unsafe_dockerfile|privileged|base_image/.test(code)) {
-      return this.resume("security_scan", false, ["security_scan", "ecr_push", "ecs_deploy"], true);
-    }
+    if (/secret_leaked|unsafe_dockerfile|privileged|base_image/.test(code)) return this.resume("dockerfile_generation", false, ["dockerfile_generation", "docker_build", "ecr_push", "ecs_deploy"], true);
     if (/cost|infracost|budget|high_cost|nat_gateway_cost/.test(code)) {
       return this.resume("terraform_apply", false, ["terraform_apply", "ecs_deploy", "alb_health"], true);
     }

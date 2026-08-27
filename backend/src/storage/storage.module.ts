@@ -14,7 +14,6 @@ import { ProjectStorageEvent } from "./project-storage-event.entity";
 import { ProjectStorageRestoreRequest } from "./project-storage-restore-request.entity";
 import { StoragePolicyService } from "./storage-policy.service";
 import { StorageService } from "./storage.service";
-import { OrchestrationContractsModule } from "../orchestration-contracts/orchestration-contracts.module";
 
 @Module({
   imports: [
@@ -29,7 +28,6 @@ import { OrchestrationContractsModule } from "../orchestration-contracts/orchest
       ProjectStorageRestoreRequest,
     ]),
     AuditLogModule,
-    OrchestrationContractsModule,
   ],
   providers: [
     retiredMutationBoundaryProvider,

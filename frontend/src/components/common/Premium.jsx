@@ -1,4 +1,10 @@
 import { Link } from "react-router-dom";
+import {
+  MetricCard as SharedMetricCard,
+  PageHeader as SharedPageHeader,
+  StatusChip,
+  statusTone as sharedStatusTone,
+} from "./DesignSystem.jsx";
 
 export function formatStatus(value) {
   if (!value) return "Unknown";
@@ -9,43 +15,15 @@ export function formatStatus(value) {
 }
 
 export function statusTone(status) {
-  const normalized = String(status || "").toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
-  const danger = new Set(["failed", "failure", "error", "rejected", "cost_rejected", "blocked", "blocked_by_cost_limit", "unhealthy", "corrupt", "orphaned", "state_recovery_required", "state_lock_failed", "storage_failed", "backup_failed", "ecs_service_unhealthy", "ecs_deployment_failed", "rollback_failed"]);
-  const warning = new Set(["paused", "cancelled", "queued", "waiting", "pending", "warning", "requires_approval", "approval_required", "disabled", "disabled_by_config", "safe_mode", "interrupted", "waiting_for_cost_approval", "waiting_for_state_lock"]);
-  const success = new Set(["success", "passed", "complete", "completed", "deployed", "healthy", "approved", "connected", "matched", "ready", "ready_to_start_pipeline", "no_approval_required", "skipped"]);
-  const info = new Set(["running", "started", "planning", "provisioning", "deploying", "active", "ready_for_detection", "ready_for_preflight", "cost_analysis_running", "state_lock_acquiring", "storage_provisioning", "backup_configuring", "ecs_deployment_queued", "ecs_task_definition_registering", "ecs_service_updating", "ecs_waiting_for_stability", "rollback_started"]);
-  if (danger.has(normalized)) return "danger";
-  if (warning.has(normalized)) return "warning";
-  if (success.has(normalized)) return "success";
-  if (info.has(normalized)) return "info";
-  return "neutral";
+  return sharedStatusTone(status);
 }
 
 export function StatusBadge({ children, status, tone }) {
-  const resolvedTone = tone || statusTone(status || children);
-  return (
-    <span className={`status-badge tone-${resolvedTone}`}>
-      <span aria-hidden="true" className="status-dot" />
-      {children || formatStatus(status)}
-    </span>
-  );
+  return <StatusChip status={status} tone={tone}>{children || formatStatus(status)}</StatusChip>;
 }
 
 export function PageHeader({ actions, eyebrow, title, description, status, context }) {
-  return (
-    <div className="page-header premium-page-header">
-      <div className="page-heading">
-        {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
-        <div className="header-title-row">
-          <h1>{title}</h1>
-          {status ? <StatusBadge status={status} /> : null}
-        </div>
-        {description ? <p className="muted">{description}</p> : null}
-        {context ? <p className="page-context">{context}</p> : null}
-      </div>
-      {actions ? <div className="quick-actions">{actions}</div> : null}
-    </div>
-  );
+  return <SharedPageHeader actions={actions} context={context} description={description} eyebrow={eyebrow} status={status} title={title} />;
 }
 
 export function BentoGrid({ children, className = "" }) {
@@ -53,13 +31,7 @@ export function BentoGrid({ children, className = "" }) {
 }
 
 export function MetricCard({ label, value, detail, tone = "neutral" }) {
-  return (
-    <section className={`metric-card tone-${tone}`}>
-      <span className="metric-label">{label}</span>
-      <strong>{value ?? "-"}</strong>
-      {detail ? <p>{detail}</p> : null}
-    </section>
-  );
+  return <SharedMetricCard detail={detail} label={label} tone={tone} value={value} />;
 }
 
 export function ReadinessCard({ actionTo, detail, label, status, tone }) {

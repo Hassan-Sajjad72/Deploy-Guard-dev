@@ -41,9 +41,6 @@ export class ProjectPipelineMetricSummary {
   @Column({ nullable: true, name: "docker_build_duration_ms" })
   dockerBuildDurationMs: number;
 
-  @Column({ nullable: true, name: "trivy_scan_duration_ms" })
-  trivyScanDurationMs: number;
-
   @Column({ nullable: true, name: "ecr_push_duration_ms" })
   ecrPushDurationMs: number;
 

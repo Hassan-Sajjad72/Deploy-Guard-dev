@@ -18,6 +18,10 @@ output "nat_gateway_ids" {
   value = aws_nat_gateway.this[*].id
 }
 
+output "nat_gateway_count" {
+  value = length(aws_nat_gateway.this)
+}
+
 output "public_route_table_id" {
   value = aws_route_table.public.id
 }

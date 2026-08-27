@@ -7,7 +7,7 @@ function formatDate(value) {
     : "-";
 }
 
-export default function EnvVarTable({ canManage, onDelete, onEdit, variables }) {
+export default function EnvVarTable({ canManage, managed = false, onDelete, onEdit, variables }) {
   return (
     <div className="table-wrap panel">
       <table>
@@ -15,7 +15,9 @@ export default function EnvVarTable({ canManage, onDelete, onEdit, variables }) 
           <tr>
             <th>Key</th>
             <th>Value</th>
+            <th>Scope</th>
             <th>Secret</th>
+            <th>Required</th>
             <th>Updated</th>
             {canManage ? <th>Actions</th> : null}
           </tr>
@@ -24,12 +26,14 @@ export default function EnvVarTable({ canManage, onDelete, onEdit, variables }) 
           {variables.map((variable) => (
             <tr key={variable.id}>
               <td>{variable.key}</td>
-              <td>{variable.maskedValue}</td>
+              <td>{managed ? "Managed by DeployGuard" : variable.maskedValue}</td>
+              <td>{variable.scope}</td>
               <td>{variable.isSecret ? "yes" : "no"}</td>
+              <td>{managed ? variable.category?.replaceAll("_", " ") || "managed" : variable.isRequired ? "yes" : "no"}</td>
               <td>{formatDate(variable.updatedAt)}</td>
               {canManage ? (
                 <td>
-                  <div className="quick-actions">
+                  {!variable.protected && !variable.isRequired && ["user_optional", "repository_default"].includes(variable.owner || "user_optional") ? <div className="quick-actions">
                     <button
                       className="secondary-button"
                       onClick={() => onEdit(variable)}
@@ -44,7 +48,7 @@ export default function EnvVarTable({ canManage, onDelete, onEdit, variables }) 
                     >
                       Delete
                     </button>
-                  </div>
+                  </div> : <span className="muted">Managed elsewhere</span>}
                 </td>
               ) : null}
             </tr>

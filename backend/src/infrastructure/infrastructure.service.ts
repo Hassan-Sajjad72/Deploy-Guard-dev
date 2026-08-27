@@ -4,13 +4,12 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Queue } from "bullmq";
 import { Request } from "express";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "fs/promises";
 import { isAbsolute, join, relative, resolve } from "path";
 import { In, Repository } from "typeorm";
@@ -72,11 +71,6 @@ import {
   EcsTaskDefinitionDraft,
 } from "./deployment-contract-validation.service";
 import { TerraformApprovalStateService } from "./terraform-approval-state.service";
-import { InactiveLegacyShadowInsertionAdapter } from "../orchestration-contracts/release-lane/inactive-legacy-shadow-insertion.adapter";
-import {
-  CrossLaneOwnershipClaim,
-  CrossLaneOwnershipEnforcementService,
-} from "../orchestration-contracts/release-lane/cross-lane-ownership-enforcement.service";
 
 type RequestInfo = Request | undefined;
 type ApplyEligibilityClaim = {
@@ -137,8 +131,6 @@ export class InfrastructureService {
     private readonly databaseBindings: DatabaseServiceBindingService,
     private readonly deploymentContractValidation: DeploymentContractValidationService,
     private readonly terraformApprovalState: TerraformApprovalStateService,
-    @Optional() private readonly legacyShadow?: InactiveLegacyShadowInsertionAdapter,
-    @Optional() private readonly crossLane?: CrossLaneOwnershipEnforcementService,
   ) {}
 
   async getDeploymentReadiness(user: User, projectId: string, req?: RequestInfo) {
@@ -167,7 +159,6 @@ export class InfrastructureService {
     environment.status = InfrastructureEnvironmentStatus.QUEUED;
     environment.readinessSnapshot = readiness;
     await this.environmentRepository.save(environment);
-    this.legacyShadow?.observeInfrastructureDeploy({ projectId: project.id, logicalOperationId: run.id });
     await this.enqueue(run, user, "full_deploy");
     await this.event(project.id, run.id, environment.id, "deployment_queued", "queued", "Deployment queued.", user);
     await this.audit("DEPLOYMENT_QUEUED", project.id, user, "success", {
@@ -184,7 +175,6 @@ export class InfrastructureService {
     const environment = await this.createOrGetInfrastructureEnvironment(project.id, run.id);
     environment.status = InfrastructureEnvironmentStatus.QUEUED;
     await this.environmentRepository.save(environment);
-    this.legacyShadow?.observeInfrastructurePlan({ projectId: project.id, logicalOperationId: run.id });
     await this.enqueue(run, user, "infrastructure_plan");
     await this.event(project.id, run.id, environment.id, "infrastructure_plan_queued", "queued", "Infrastructure plan queued.", user);
     await this.audit("INFRASTRUCTURE_PLAN_QUEUED", project.id, user, "success", {
@@ -202,7 +192,6 @@ export class InfrastructureService {
     const environment = await this.createOrGetInfrastructureEnvironment(project.id, run.id);
     environment.status = InfrastructureEnvironmentStatus.QUEUED;
     await this.environmentRepository.save(environment);
-    this.legacyShadow?.observeInfrastructureApply({ projectId: project.id, logicalOperationId: run.id });
     await this.enqueue(run, user, "infrastructure_apply");
     await this.event(project.id, run.id, environment.id, "infrastructure_apply_queued", "queued", "Infrastructure apply queued.", user);
 
@@ -1174,18 +1163,9 @@ export class InfrastructureService {
   }
 
   private async createInfrastructureRun(project: Project, user: User, jobType: PipelineJobData["jobType"]) {
-    const runId = randomUUID();
-    const claim = await this.acquireInfrastructureOwnership(
-      project.id,
-      runId,
-      user.id,
-      jobType,
-    );
     let run: ProjectPipelineRun;
-    try {
-      run = await this.runRepository.save(
+    run = await this.runRepository.save(
         this.runRepository.create({
-        ...(claim.enabled ? { id: runId } : {}),
         projectId: project.id,
         triggeredByUserId: user.id,
         repositoryUrl: project.repositoryUrl,
@@ -1195,8 +1175,7 @@ export class InfrastructureService {
         currentStage: "deployment_queued",
         metadata: { jobType },
         })
-      );
-      await this.crossLane?.linkLegacyRun(claim, run.id);
+    );
       const snapshot = await this.databaseBindings.createRunConfigurationSnapshot(project.id, run.id, "production");
       run.configurationSnapshotId = snapshot.id;
       run.metadata = {
@@ -1207,31 +1186,7 @@ export class InfrastructureService {
         configurationSnapshotId: snapshot.id,
         configurationSnapshotCreatedAt: snapshot.createdAt?.toISOString() || new Date().toISOString(),
       };
-      return await this.runRepository.save(run);
-    } catch (error) {
-      await this.crossLane?.release(claim);
-      throw error;
-    }
-  }
-
-  private acquireInfrastructureOwnership(
-    projectId: string,
-    runId: string,
-    userId: number,
-    jobType: PipelineJobData["jobType"],
-  ): Promise<CrossLaneOwnershipClaim> {
-    return this.crossLane?.acquireLegacy({
-      projectId,
-      operationId: runId,
-      actorId: `user:${userId}`,
-      operationClass: jobType === "infrastructure_plan"
-        ? "legacy_infrastructure_plan"
-        : jobType === "infrastructure_apply"
-          ? "legacy_infrastructure_apply"
-          : jobType === "resume_after_state_lock"
-            ? "legacy_state_lock_resume"
-          : "legacy_infrastructure_deploy",
-    }) ?? Promise.resolve({ enabled: false });
+    return await this.runRepository.save(run);
   }
 
   private async enqueue(run: ProjectPipelineRun, user: User, jobType: PipelineJobData["jobType"]) {
@@ -1479,14 +1434,6 @@ export class InfrastructureService {
       const operation = next.metadata?.operation === "apply" ? "apply" : "plan";
 
       if (queuedRun) {
-        const claim = await this.acquireInfrastructureOwnership(
-          projectId,
-          queuedRun.id,
-          queuedRun.triggeredByUserId,
-          "resume_after_state_lock",
-        );
-        await this.crossLane?.linkLegacyRun(claim, queuedRun.id);
-        this.legacyShadow?.observeStateLockResume({ projectId, logicalOperationId: queuedRun.id });
         await this.pipelineQueue.add(
           "resumeAfterStateLock",
           {

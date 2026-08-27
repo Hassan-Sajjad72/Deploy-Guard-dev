@@ -26,7 +26,7 @@ export default function EnvVarForm({
           name="value"
           onChange={onChange}
           required={!form.id}
-          type="password"
+          type={form.isSecret ? "password" : "text"}
           value={form.value}
         />
       </div>
@@ -39,6 +39,11 @@ export default function EnvVarForm({
         />{" "}
         Secret
       </label>
+      <div className="form-grid">
+        <label className="field"><span>Scope</span><select name="scope" onChange={onChange} value={form.scope}><option value="build">Build</option><option value="runtime">Runtime</option><option value="both">Build and runtime</option></select></label>
+        <label className="field"><span>Environment</span><select name="environment" onChange={onChange} value={form.environment}><option value="production">Production</option><option value="development">Development</option></select></label>
+      </div>
+      <p className="muted">Custom variables are optional. Required values are managed from Deployment Requirements.</p>
       <div className="quick-actions">
         <button className="button" disabled={isSubmitting} type="submit">
           {isSubmitting ? "Saving..." : submitLabel}

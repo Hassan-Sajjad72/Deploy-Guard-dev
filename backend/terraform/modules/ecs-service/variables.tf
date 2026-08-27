@@ -19,7 +19,22 @@ variable "enable_ecs_service" {
   default = false
 }
 
+variable "enable_ecs_foundation" {
+  type    = bool
+  default = false
+}
+
+variable "enable_ecs_foundation_service" {
+  type    = bool
+  default = false
+}
+
 variable "container_image" {
+  type    = string
+  default = ""
+}
+
+variable "baseline_container_image" {
   type    = string
   default = ""
 }
@@ -48,6 +63,17 @@ variable "environment_variables" {
   default = {}
 }
 
+variable "secret_environment_variables" {
+  type      = map(string)
+  default   = {}
+  sensitive = true
+}
+
+variable "external_secret_environment_variables" {
+  type    = map(string)
+  default = {}
+}
+
 variable "efs_enabled" {
   type    = bool
   default = false
@@ -65,11 +91,16 @@ variable "efs_access_point_id" {
 
 variable "efs_container_path" {
   type    = string
-  default = "/app/data"
+  default = "/app/uploads"
 }
 
-variable "private_subnet_ids" {
+variable "subnet_ids" {
   type = list(string)
+}
+
+variable "assign_public_ip" {
+  type    = bool
+  default = false
 }
 
 variable "app_security_group_id" {
@@ -81,7 +112,7 @@ variable "target_group_arn" {
   default = null
 }
 
-variable "cloud_map_namespace_id" {
+variable "service_discovery_service_arn" {
   type    = string
   default = null
 }
@@ -124,6 +155,11 @@ variable "health_check_grace_seconds" {
 variable "enable_container_insights" {
   type    = bool
   default = false
+}
+
+variable "enable_autoscaling" {
+  type    = bool
+  default = true
 }
 
 variable "tags" {

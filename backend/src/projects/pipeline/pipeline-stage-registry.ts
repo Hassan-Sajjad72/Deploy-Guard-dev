@@ -54,8 +54,6 @@ export const PIPELINE_STAGE_REGISTRY: readonly PipelineStageDefinition[] = [
   stage("template_generation", "Template Generation", 50, true, false, "templates", "container_configuration", "Generate and check container configuration", 50, ["dockerfile_generated", "dockerignore_generated", "dockerfile_generation"]),
   stage("dockerfile_security_check", "Dockerfile Security Check", 60, true, false, "dockerfile", "container_configuration", "Generate and check container configuration", 50, ["dockerfile_check"]),
   stage("docker_build", "Docker Build", 70, true, false, "docker", "docker_build", "Build image", 60, ["building_image"]),
-  stage("trivy_image_scan", "Trivy Image Scan", 80, false, true, "security", "security_review", "Scan image and evaluate security policy", 70, ["trivy_scan", "security_scan"]),
-  stage("security_gate", "Security Gate", 90, true, false, "security", "security_review", "Scan image and evaluate security policy", 70, ["security_policy"]),
   stage("ecr_push", "ECR Push", 100, true, false, "ecr", "ecr_push", "Push immutable image to ECR", 80, ["tagging_image", "ecr_"]),
   stage("terraform_plan", "Terraform Plan", 110, true, false, "terraform", "terraform_plan", "Lock state and prepare Terraform plan", 90, ["terraform_stage", "infrastructure_plan", "terraform_plan_lock", "state_lock_plan"]),
   stage("finops_estimate", "FinOps Estimate", 120, true, false, "finops", "finops", "Estimate cost and enforce FinOps gate", 100, ["cost_analysis", "cost_breakdown", "cost_policy"]),

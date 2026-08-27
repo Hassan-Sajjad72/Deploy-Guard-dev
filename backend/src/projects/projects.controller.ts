@@ -120,15 +120,13 @@ export class ProjectsController {
   @Get("workspace-summary")
   async getWorkspaceSummary(@Req() req: Request) {
     const projects = await this.projectsService.listProjects(req.user!);
-    const states = await Promise.allSettled(
-      projects.map((project) =>
-        this.projectCurrentStateService.getCurrentState(req.user!, project.id)
-      )
+    const states = await Promise.all(
+      projects.map((project) => this.projectCurrentStateService.getCurrentState(req.user!, project.id)),
     );
 
     const summaries = projects.map((project, index) => ({
       project,
-      currentState: states[index].status === "fulfilled" ? states[index].value : null,
+      currentState: states[index],
     }));
     const ranked = rankWorkspaceSummaries(summaries, req.user!.id);
     const stateValues = summaries.map((summary) => summary.currentState?.developerState);
@@ -582,10 +580,6 @@ export class ProjectsController {
   }
 
   private async refreshPreflightAfterEnvironmentSave(req: Request, projectId: string) {
-    try {
-      return await this.preflightService.generateReport(req.user!, projectId, req);
-    } catch {
-      return null;
-    }
+    return this.preflightService.generateReport(req.user!, projectId, req);
   }
 }

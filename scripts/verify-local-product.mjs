@@ -1,7 +1,8 @@
 import process from "node:process";
-import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { loadCanonicalBackendEnvironment } from "./canonical-backend-env.mjs";
 
-if (existsSync(".env")) process.loadEnvFile(".env");
+loadCanonicalBackendEnvironment(process.cwd());
 
 const nodeMajor = Number(process.versions.node.split(".")[0]);
 if (nodeMajor !== 22) throw new Error(`DeployGuard product verification requires Node 22; current runtime is ${process.version}.`);
@@ -12,6 +13,15 @@ const prometheusBase = (process.env.PROMETHEUS_BASE_URL || "http://localhost:909
 const grafanaConfiguredUrl = process.env.GRAFANA_BASE_URL || "http://localhost:3001/d/deployguard-runtime/deployguard-runtime";
 const grafanaBase = new URL(grafanaConfiguredUrl).origin;
 const WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION = "deployguard.workflow-aws/v2";
+const expectedCapabilityFingerprint = execFileSync(
+  process.execPath,
+  [
+    "-r", "./node_modules/ts-node/register/transpile-only",
+    "-e",
+    "const { workflowCapabilityFingerprint } = require('./src/projects/github-actions-aws-capability-contract'); process.stdout.write(workflowCapabilityFingerprint());",
+  ],
+  { cwd: `${process.cwd()}/backend`, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+).trim();
 
 if (!process.env.PRODUCT_VERIFY_ALLOW_REMOTE && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(apiBase)) {
   throw new Error("Refusing to verify a non-local API. Set PRODUCT_VERIFY_ALLOW_REMOTE=true to override.");
@@ -33,6 +43,7 @@ if (ready.body.status !== "ready" || ready.body.dependencies?.database?.status !
 }
 if (ready.body.capabilityContract?.stale
   || ready.body.capabilityContract?.version !== WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION
+  || ready.body.capabilityContract?.fingerprint !== expectedCapabilityFingerprint
   || !/^[a-f0-9]{64}$/.test(ready.body.capabilityContract?.fingerprint || "")) {
   throw new Error(`Running AWS capability contract is invalid or stale: ${JSON.stringify(ready.body.capabilityContract)}`);
 }

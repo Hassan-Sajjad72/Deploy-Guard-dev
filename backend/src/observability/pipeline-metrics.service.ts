@@ -12,7 +12,6 @@ const STAGE_SOURCE: Record<string, StageMetricSource> = {
   github_actions: StageMetricSource.GITHUB_ACTIONS,
   repository_clone: StageMetricSource.PIPELINE,
   docker_build: StageMetricSource.DOCKER,
-  trivy_scan: StageMetricSource.TRIVY,
   ecr_push: StageMetricSource.ECR,
   terraform_plan: StageMetricSource.TERRAFORM,
   finops_cost_analysis: StageMetricSource.FINOPS,
@@ -107,7 +106,6 @@ export class PipelineMetricsService {
     summary.totalDurationMs = this.duration(run?.startedAt, run?.completedAt || run?.failedAt);
     summary.githubActionsDurationMs = this.stageDuration(metrics, "github_actions");
     summary.dockerBuildDurationMs = this.stageDuration(metrics, "docker_build");
-    summary.trivyScanDurationMs = this.stageDuration(metrics, "trivy_scan");
     summary.ecrPushDurationMs = this.stageDuration(metrics, "ecr_push");
     summary.terraformPlanDurationMs = this.stageDuration(metrics, "terraform_plan");
     summary.terraformApplyDurationMs = this.stageDuration(metrics, "terraform_apply");
@@ -173,7 +171,6 @@ export class PipelineMetricsService {
       this.fromEvents("github_actions", pipelineEvents, ["github_actions_trigger_started"], ["github_actions_triggered"], ["github_actions_trigger_failed"]),
       this.fromEvents("repository_clone", pipelineEvents, ["cloning"], ["cloning"], []),
       this.fromEvents("docker_build", pipelineEvents, ["building_image"], ["building_image"], []),
-      this.fromEvents("trivy_scan", pipelineEvents, ["security_scan_started"], ["security_scan_completed", "security_gate_passed"], ["security_gate_blocked", "security_approval_required"]),
       this.fromEvents("ecr_push", pipelineEvents, ["ecr_push_started"], ["ecr_image_pushed"], ["ecr_push_failed"]),
       this.fromEvents("terraform_plan", pipelineEvents, ["terraform_plan_started", "infrastructure_plan_started"], ["terraform_stage_completed", "infrastructure_plan_completed"], ["terraform_stage_failed"]),
       this.fromEvents("finops_cost_analysis", pipelineEvents, ["cost_analysis_started"], ["cost_approval_required", "deployment_blocked_by_cost_limit"], ["cost_analysis_failed"]),

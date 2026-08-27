@@ -35,6 +35,26 @@ variable "single_nat_gateway" {
   default = true
 }
 
+variable "nat_mode" {
+  type    = string
+  default = null
+
+  validation {
+    condition     = var.nat_mode == null || contains(["none", "single", "per_az"], var.nat_mode)
+    error_message = "nat_mode must be none, single, or per_az when set."
+  }
+}
+
+variable "availability_zone_names" {
+  type    = list(string)
+  default = []
+}
+
+variable "offline_plan_mode" {
+  type    = bool
+  default = false
+}
+
 variable "cloud_map_namespace" {
   type = string
 }
@@ -52,6 +72,26 @@ variable "app_port" {
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+variable "manage_ecr_repository" {
+  type    = bool
+  default = false
+}
+
+variable "ecr_repository_name" {
+  type    = string
+  default = ""
+}
+
+variable "ecr_image_tag_mutability" {
+  type    = string
+  default = "IMMUTABLE"
+}
+
+variable "enable_cloud_map" {
+  type    = bool
+  default = true
 }
 
 variable "enable_efs" {
@@ -114,6 +154,32 @@ variable "enable_ecs_service" {
   default = false
 }
 
+variable "enable_ecs_foundation" {
+  description = "Creates release-independent ECS cluster, roles, and log group without an application task definition or service."
+  type        = bool
+  default     = false
+}
+
+variable "enable_ecs_foundation_service" {
+  type    = bool
+  default = false
+}
+
+variable "ecs_baseline_container_image" {
+  type    = string
+  default = ""
+}
+
+variable "ecs_egress_strategy" {
+  type    = string
+  default = "nat"
+
+  validation {
+    condition     = contains(["nat", "public_ip"], var.ecs_egress_strategy)
+    error_message = "ecs_egress_strategy must be nat or public_ip."
+  }
+}
+
 variable "ecs_container_image" {
   type    = string
   default = ""
@@ -137,6 +203,56 @@ variable "ecs_task_memory" {
 variable "ecs_environment_variables" {
   type    = map(string)
   default = {}
+}
+
+variable "ecs_secret_environment_variables" {
+  type      = map(string)
+  default   = {}
+  sensitive = true
+}
+
+variable "database_secret_alias_types" {
+  description = "Application environment aliases mapped to managed database secret outputs."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for value in values(var.database_secret_alias_types) : contains(["password", "url"], value)])
+    error_message = "Managed database secret alias types must be password or url."
+  }
+}
+
+variable "database_service" {
+  type = object({
+    enabled             = bool
+    engine              = string
+    image               = string
+    port                = number
+    cpu                 = number
+    memory              = number
+    database_name       = string
+    database_user       = string
+    efs_enabled         = bool
+    efs_mount_path      = string
+    cloud_map_name      = string
+    persistence_enabled = bool
+    backup_enabled      = bool
+  })
+  default = {
+    enabled             = false
+    engine              = "postgres"
+    image               = "postgres:16"
+    port                = 5432
+    cpu                 = 512
+    memory              = 1024
+    database_name       = "app"
+    database_user       = "deployguard"
+    efs_enabled         = true
+    efs_mount_path      = "/var/lib/postgresql/data"
+    cloud_map_name      = "db"
+    persistence_enabled = true
+    backup_enabled      = true
+  }
 }
 
 variable "ecs_use_fargate_spot" {
@@ -177,6 +293,11 @@ variable "ecs_healthcheck_grace_seconds" {
 variable "ecs_container_insights" {
   type    = bool
   default = false
+}
+
+variable "ecs_enable_autoscaling" {
+  type    = bool
+  default = true
 }
 
 variable "alb_health_check_path" {

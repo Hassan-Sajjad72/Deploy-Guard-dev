@@ -3,7 +3,7 @@ export type RecoveryCategory =
   | "source" | "build" | "runtime" | "database" | "storage" | "network"
   | "health" | "security" | "cost" | "terraform" | "cleanup" | "auth" | "unknown";
 export type RecoveryEvidenceSource =
-  | "preflight" | "cloudwatch" | "ecs" | "alb" | "terraform" | "trivy"
+  | "preflight" | "cloudwatch" | "ecs" | "alb" | "terraform"
   | "github" | "docker" | "database" | "efs" | "settings";
 
 export type RecoveryEvidence = {

@@ -66,7 +66,7 @@ export default function ProjectSettingsForm({
       </form>
 
       <form className="form-stack panel" onSubmit={onSaveRepository}>
-        <div><p className="eyebrow">Repository</p><h2>GitHub source</h2><p className="muted">{isDeveloperMode ? "Use an HTTPS GitHub URL. Private repository access depends on the backend token configuration." : "Change the GitHub repository connected to this project."}</p></div>
+        <div><p className="eyebrow">Repository</p><h2>GitHub source</h2><p className="muted">{isDeveloperMode ? "Choose a repository authorized by your DeployGuard GitHub App installation." : "Change the GitHub repository connected to this project."}</p></div>
         <div className="field">
           <label htmlFor="repositoryUrl">GitHub repository URL</label>
           <input

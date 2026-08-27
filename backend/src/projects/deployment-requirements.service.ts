@@ -21,7 +21,7 @@ import { ProjectsService } from "./projects.service";
 import { RecoveryIssue } from "./recovery/recovery-issue.types";
 import { PreflightService } from "./templates/preflight.service";
 import { analysisFingerprint } from "./analysis-fingerprint";
-import { ignoredSubmittedVariableNames, ManagedServiceKind, normalizeConfigurationKey, provenRepositoryOwnedVariableKeys, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
+import { ignoredSubmittedVariableNames, isSecretConfigurationKey, ManagedServiceKind, normalizeConfigurationKey, provenRepositoryOwnedVariableKeys, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { requireBuildPlan } from "./build-plan";
 import { evaluateBuildPlanReadiness } from "./build-plan-readiness";
@@ -30,8 +30,6 @@ import {
   DatabaseServiceBindingService,
 } from "../infrastructure/database-service-binding.service";
 import { ManagedDatabaseEngine } from "./managed-database-engine";
-
-const SECRET_NAME = /(SECRET|TOKEN|PASSWORD|PRIVATE|API_KEY|(?:DATABASE|POSTGRES(?:QL)?|MYSQL|MONGO(?:DB)?)_(?:URL|URI)|CREDENTIAL|AUTH_KEY)/;
 
 type Evidence = {
   key: string;
@@ -162,7 +160,7 @@ export class DeploymentRequirementsService {
         await envRepo.save(envRepo.create({
           ...(prior || {}), projectId, key: normalizeConfigurationKey(key), normalizedKey: normalizeConfigurationKey(key),
           value: this.crypto.encrypt(plain),
-          isSecret: evidenceItem?.secret === true || SECRET_NAME.test(key),
+          isSecret: evidenceItem?.secret === true || isSecretConfigurationKey(key),
           scope: evidenceItem?.phase === "build" ? "build" : "runtime",
           isRequired: requiredUserKeys.includes(key),
           environment: environmentName,
@@ -309,7 +307,7 @@ export class DeploymentRequirementsService {
         label: key,
         description: key === "JWT_SECRET" ? "Used by your app to sign authentication tokens." : "Required by the application at runtime.",
         owner: "user_required",
-        secret: item?.secret === true || SECRET_NAME.test(key),
+        secret: item?.secret === true || isSecretConfigurationKey(key),
         required: true,
         scope: item?.phase || "runtime",
         detectedFrom: (item?.sources || ["Repository scan"]).join(", "),
@@ -421,7 +419,7 @@ export class DeploymentRequirementsService {
     return [...new Set(contract.requiredEnvVars)]
       .filter((key) => key !== "PORT" && key !== "HOST")
       .filter((key) => !serviceAlias(key, (contract.databaseEngine || "postgres") as ManagedServiceKind))
-      .filter((key) => !evidence.find((item) => item.key === key)?.detectedDefault || SECRET_NAME.test(key))
+      .filter((key) => !evidence.find((item) => item.key === key)?.detectedDefault || isSecretConfigurationKey(key))
       .sort();
   }
 

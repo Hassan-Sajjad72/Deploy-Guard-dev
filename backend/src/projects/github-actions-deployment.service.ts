@@ -13,7 +13,7 @@ import { GithubAppService } from "./github-app.service";
 import { GithubActionsDispatchError, GithubActionsService, githubWorkflowDispatchInputs } from "./pipeline/github-actions.service";
 import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
 import { GithubActionsAwsCapabilityService, WorkflowAwsCapabilityError } from "./github-actions-aws-capability.service";
-import { githubActionsExecutionStageFromLog, githubActionsPlatformCapabilityFailure, githubActionsStagePresentation, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
+import { githubActionsExecutionStageFromLog, githubActionsFailureMessage, githubActionsPlatformCapabilityFailure, githubActionsStagePresentation, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
 import { DeploymentContractService } from "./deployment-contract.service";
 import { RepositoryWorkspaceService } from "./detection/repository-workspace.service";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
@@ -69,10 +69,13 @@ import {
   GithubActionsCandidateEvidence,
   PromotionIntent,
   promotionIntentFingerprint,
+  relationshipVerificationMatchesBuildPlan,
 } from "./github-actions-promotion-evidence";
 import { managedDatabaseProfile } from "./managed-database-engine";
 import { serviceAlias } from "./configuration-ownership";
 import { SharedPlatformFoundationService } from "./shared-platform-foundation.service";
+import { AuditLogService } from "../audit-log/audit-log.service";
+import { ProductStartSchemaIntegrityService } from "./product-start-schema-integrity.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 const MAX_STABLE_RELEASE_RECONCILIATION_ATTEMPTS = 3;
@@ -130,9 +133,12 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     private readonly sharedPlatformFoundation: SharedPlatformFoundationService,
     @InjectRepository(ProjectConfigurationSnapshot) private readonly configurationSnapshots: Repository<ProjectConfigurationSnapshot>,
     @InjectRepository(ProjectStableRelease) private readonly stableReleases: Repository<ProjectStableRelease>,
+    private readonly auditLogs: AuditLogService,
+    private readonly schemaIntegrity: ProductStartSchemaIntegrityService,
   ) {}
 
-  onModuleInit() {
+  async onModuleInit() {
+    await this.schemaIntegrity.assertReady();
     const configured = Number(this.config.get<string>("GITHUB_ACTIONS_RECONCILIATION_INTERVAL_MS", "15000"));
     const intervalMs = Math.max(5_000, Math.min(300_000, Number.isFinite(configured) ? configured : 15_000));
     this.reconciliationTimer = setInterval(() => void this.reconcileActiveOperations(), intervalMs);
@@ -168,7 +174,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           this.logger.warn(`GitHub Actions operation ${operation.id} did not converge in this bounded sweep: ${error instanceof Error ? error.message : "unknown error"}`);
         }
       }
-      await this.retryPendingRetiredGenerationCleanup();
+      await this.retryPendingGenerationCleanup();
       return { skipped: false, reconciled };
     } finally {
       this.reconciliationSweepRunning = false;
@@ -203,6 +209,24 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       const failed = await this.latestRun(projectId, runRepository);
       if (!failed || failed.status !== PipelineRunStatus.FAILED) throw new BadRequestException("Only the latest failed GitHub Actions deployment can be retried.");
       const action = String(failed.metadata?.deploymentAction || "deploy");
+      if (action === "destroy") {
+        const verifiedAncestor = await this.verifiedDestroyAncestor(failed, project, runRepository);
+        if (verifiedAncestor) {
+          try {
+            await this.projectDeletion.finalize(project, verifiedAncestor);
+            // The project was deleted transactionally. Do not create a new
+            // attempt or dispatch GitHub Actions merely to repeat proven AWS
+            // absence; callers will refresh to the project's 404 state.
+            return this.result("no_op", "Verified AWS deletion was already complete; DeployGuard control-plane cleanup is now complete.", verifiedAncestor);
+          } catch (error) {
+            return this.result(
+              "rejected",
+              error instanceof Error ? error.message : "Project deletion control-plane cleanup remains incomplete.",
+              failed,
+            );
+          }
+        }
+      }
       if (action !== "destroy") await this.sharedPlatformFoundation.assertActive(this.platformFoundation());
       const generation = action === "destroy"
         ? await this.deploymentGenerations.requireActiveGeneration(failed.generationId, project.id, canonicalEnvironmentName(project), runRepository.manager)
@@ -482,26 +506,22 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
   }
 
   async history(user: User, projectId: string) {
-    const project = await this.project(user, projectId);
+    // Pipeline is a persisted operation-history view. Reconciliation and
+    // GitHub job inspection are background responsibilities; doing either
+    // here made page rendering wait on GitHub for every active/historical run.
+    await this.project(user, projectId);
     const operations = await this.runs.createQueryBuilder("run")
       .where("run.projectId = :projectId", { projectId })
       .andWhere("run.metadata ->> 'executionEngine' = 'github_actions'")
       .andWhere("COALESCE(run.metadata ->> 'internalMaintenance', 'false') != 'true'")
       .orderBy("run.createdAt", "DESC").getMany();
-    for (const operation of operations.filter((run) => ACTIVE.includes(run.status))) await this.reconcile(user, project, operation);
-    for (let index = 0; index < operations.length; index += 1) {
-    }
-    let workflowToken: string | null = null;
-    if (operations.some((run) => run.githubWorkflowRunId)) {
-      try {
-        workflowToken = (await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId)).token;
-      } catch { /* persisted history remains available without remote step detail */ }
-    }
     return {
-      operations: await Promise.all(operations.map(async (run) => ({
+      operations: operations.map((run) => ({
         ...this.response(run, null),
-        workflowStages: await this.workflowStages(project, run, workflowToken),
-      }))),
+        // Stage timestamps are written by background reconciliation. A page
+        // read must never fetch them from GitHub itself.
+        workflowStages: this.persistedWorkflowStages(run),
+      })),
     };
   }
 
@@ -761,35 +781,50 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     operation: ProjectPipelineRun,
     jobs: { jobs?: Array<{ conclusion?: string; steps?: Array<{ conclusion?: string; name?: string }> }> },
     log: string | null,
-    message = "Candidate provisioning or health verification failed.",
+    message?: string,
+    cleanup?: { project: Project; token: string },
+    failedStage?: string,
   ) {
     const failedJob = jobs.jobs?.find((job) => job.conclusion === "failure");
     const failedStep = failedJob?.steps?.find((step) => step.conclusion === "failure");
     operation.status = PipelineRunStatus.FAILED;
     operation.failedAt = new Date();
     operation.completedAt = null;
-    operation.currentStage = this.stage(failedStep?.name || "candidate_health_verification");
-    operation.errorMessage = message;
+    operation.currentStage = this.stage(failedStep?.name || failedStage || "candidate_health_verification");
+    const action = ["destroy", "rollback"].includes(String(operation.metadata?.deploymentAction))
+      ? operation.metadata!.deploymentAction as "destroy" | "rollback"
+      : "deploy";
+    const failureMessage = message || `GitHub Actions failed during ${githubActionsStagePresentation(operation.currentStage, action).label}.`;
+    operation.errorMessage = failureMessage;
     operation.metadata = {
       ...(operation.metadata || {}),
       conclusion: "failure",
       failedStage: operation.currentStage,
       promotionState: "candidate_failed_before_cutover",
-      safeLog: this.sanitizer.sanitize(log || message).slice(-24_000),
+      safeLog: this.sanitizer.sanitize(log || failureMessage).slice(-24_000),
     };
     const saved = await this.runs.save(operation);
-    if (saved.generationId) await this.deploymentGenerations.markFailed(saved.generationId, saved.id, message);
+    if (saved.generationId) {
+      await this.deploymentGenerations.markFailed(saved.generationId, saved.id, failureMessage, undefined, {
+        cleanupRequired: Boolean(cleanup),
+      });
+      if (cleanup) {
+        await this.scheduleFailedCandidateCleanup(cleanup.project, saved, cleanup.token)
+          .catch((error) => this.logger.warn(`Failed-candidate cleanup scheduling failed for ${saved.generationId}: ${error instanceof Error ? error.message : "unknown error"}`));
+      }
+    }
     return saved;
   }
 
-  private async beginPromotion(operation: ProjectPipelineRun, candidate: GithubActionsCandidateEvidence, token: string) {
+  private async beginPromotion(project: Project, operation: ProjectPipelineRun, candidate: GithubActionsCandidateEvidence, token: string) {
     const originalInputs = this.releaseInputs(operation);
-    if (!originalInputs) return this.failCandidateOperation(operation, { jobs: [] }, null, "Immutable candidate inputs are unavailable.");
+    if (!originalInputs) return this.failCandidateOperation(operation, { jobs: [] }, null, "Immutable candidate inputs are unavailable.", { project, token });
     const runtime = decodeEnvironmentReferencesBase64(originalInputs.environment_references_base64);
     let immutablePlan: BuildPlan | null = null;
     try { immutablePlan = JSON.parse(Buffer.from(originalInputs.build_plan_base64, "base64").toString("utf8")) as BuildPlan; } catch { /* fail closed below */ }
     const plannedComponents = immutablePlan ? buildPlanComponents(immutablePlan) : [];
     const candidateComponents = candidate.components || [];
+    const relationshipEvidenceMatches = relationshipVerificationMatchesBuildPlan(candidate, immutablePlan);
     const componentEvidenceMatches = !immutablePlan?.components
       ? candidateComponents.length === 0 || candidateComponents.length === 1
       : candidateComponents.length === plannedComponents.length
@@ -805,6 +840,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     const expectedSecretNames = Object.keys(runtime.secretReferences).sort();
     if (
       !componentEvidenceMatches
+      || !relationshipEvidenceMatches
       || candidate.deploymentOperationId !== operation.id
       || candidate.projectId !== operation.projectId
       || candidate.generationId !== operation.generationId
@@ -817,7 +853,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       || candidate.appPort !== Number(originalInputs.app_port)
       || candidate.healthCheckPath !== originalInputs.health_check_path
     ) {
-      return this.failCandidateOperation(operation, { jobs: [] }, null, "Candidate evidence does not match the immutable operation and generation.");
+      return this.failCandidateOperation(operation, { jobs: [] }, null, "Candidate evidence does not match the immutable operation and generation.", { project, token });
     }
     const promotionRuntime = runtimeConfigurationWithPromotionCandidate(runtime, candidate);
     const intent = promotionRuntime.promotion;
@@ -1096,6 +1132,53 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     return Number(row?.maximum || 0) + 1;
   }
 
+  /**
+   * A Destroy retry can outlive the workflow that proved all AWS resources
+   * absent. Follow only its immutable retry lineage; never copy or relabel the
+   * proof for a later attempt.
+   */
+  private async verifiedDestroyAncestor(
+    source: ProjectPipelineRun,
+    project: Project,
+    runRepository: Repository<ProjectPipelineRun>,
+  ) {
+    const environmentName = canonicalEnvironmentName(project);
+    const generationId = source.generationId;
+    if (!generationId) return null;
+    let current: ProjectPipelineRun | null = source;
+    const visited = new Set<string>();
+    for (let depth = 0; current && depth < 32; depth += 1) {
+      if (visited.has(current.id)
+        || current.projectId !== project.id
+        || current.generationId !== generationId
+        || current.metadata?.deploymentAction !== "destroy") return null;
+      visited.add(current.id);
+      const evidence = current.metadata?.destroyVerification as Record<string, unknown> | undefined;
+      const finalizedAfterAwsDeletion = current.status === PipelineRunStatus.COMPLETED
+        || (current.status === PipelineRunStatus.FAILED
+          && current.currentStage === "project_delete_cleanup"
+          && current.metadata?.failureCategory === "project_delete_incomplete");
+      if (
+        finalizedAfterAwsDeletion
+        && evidence?.contractVersion === "deployguard.destroy-result/v2"
+        && evidence.deploymentOperationId === current.id
+        && evidence.projectId === project.id
+        && evidence.environmentName === environmentName
+        && evidence.status === "project_delete_ready"
+        && evidence.generationResourcesRemoved === true
+        && evidence.projectResourcesRemoved === true
+        && evidence.terraformStateArtifactsRemoved === true
+        && evidence.sharedPlatformUntouched === true
+        && Array.isArray(evidence.generationIds)
+        && evidence.generationIds.includes(generationId)
+      ) return current;
+      const parentId = current.metadata?.retryOfOperationId;
+      if (typeof parentId !== "string" || !parentId) return null;
+      current = await runRepository.findOne({ where: { id: parentId, projectId: project.id } });
+    }
+    return null;
+  }
+
   private async redispatch(user: User, project: Project, runRepository: Repository<ProjectPipelineRun>, operation: ProjectPipelineRun, generationId: string) {
     let inputs: GithubActionsOperationInputs;
     try {
@@ -1190,13 +1273,20 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     }
   }
 
-  private async scheduleOperation(runRepository: Repository<ProjectPipelineRun>, operation: ProjectPipelineRun, token: string, inputs: GithubActionsOperationInputs) {
+  private async scheduleOperation(
+    runRepository: Repository<ProjectPipelineRun>,
+    operation: ProjectPipelineRun,
+    token: string,
+    inputs: GithubActionsOperationInputs,
+    excludedWorkflowRunIds: string[] = [],
+  ) {
     try {
       const result = await this.actions.triggerWorkflow({
         repositoryFullName: inputs.repository_full_name,
         targetBranch: inputs.repository_branch,
         token,
         inputs,
+        excludedWorkflowRunIds,
       });
       operation.githubWorkflowRunId = result.workflowRunId;
       operation.githubWorkflowStatus = "queued";
@@ -1277,10 +1367,9 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
   }
 
   private async buildTimePublicConfig(plan: BuildPlan, projectId: string, environment: string) {
-    const relationshipVariables = new Map((plan.relationships || [])
-      .filter((relationship) => relationship.mode === "build-time-url" && relationship.buildTimeVariable)
-      .map((relationship) => [relationship.buildTimeVariable!, relationship.pathPrefix]));
-    const names = [...new Set([...plan.buildTimeEnvVars, ...relationshipVariables.keys()])];
+    const bindingVariables = new Map((plan.serviceBindings || [])
+      .map((binding) => [binding.envAlias, `${binding.platformPathPrefix}${binding.preservedPathname || ""}`]));
+    const names = [...new Set([...plan.buildTimeEnvVars, ...bindingVariables.keys()])];
     if (!names.length) return {};
     const rows = await this.environmentVariables.createQueryBuilder("variable")
       .addSelect("variable.value")
@@ -1293,8 +1382,8 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       if (!/^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$/.test(key) || plan.secretEnvVars.includes(key)) {
         throw new ForbiddenException(`Build-time variable ${key} is not proven public.`);
       }
-      if (relationshipVariables.has(key)) {
-        config[key] = relationshipVariables.get(key)!;
+      if (bindingVariables.has(key)) {
+        config[key] = bindingVariables.get(key)!;
         continue;
       }
       const row = byKey.get(key);
@@ -1552,6 +1641,53 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       && classifiedPersistenceFailure;
   }
 
+  /** Reconciliation updates an existing immutable operation; it must never
+   * recreate a row that project deletion has already removed. A detection
+   * profile is mutable project analysis, so a stale historical association is
+   * detached while its identity/version remains in immutable run metadata. */
+  private async persistReconciledOperation(operation: ProjectPipelineRun) {
+    let detectionProfileId = operation.detectionProfileId || null;
+    let metadata = operation.metadata ? { ...operation.metadata } : null;
+    if (detectionProfileId) {
+      const profile = await this.profiles.findOne({
+        where: { id: detectionProfileId, projectId: operation.projectId },
+        select: { id: true },
+      });
+      if (!profile) {
+        const immutableInputs = metadata?.immutableDispatchInputs as Partial<GithubActionsOperationInputs> | undefined;
+        metadata = {
+          ...(metadata || {}),
+          historicalDetectionProfile: {
+            id: detectionProfileId,
+            version: typeof immutableInputs?.detection_profile_version === "string"
+              ? immutableInputs.detection_profile_version
+              : null,
+          },
+        };
+        detectionProfileId = null;
+      }
+    }
+    await this.runs.update(
+      { id: operation.id, projectId: operation.projectId },
+      {
+        detectionProfileId,
+        githubWorkflowRunId: operation.githubWorkflowRunId,
+        githubWorkflowStatus: operation.githubWorkflowStatus,
+        status: operation.status,
+        currentStage: operation.currentStage,
+        startedAt: operation.startedAt,
+        currentStageStartedAt: operation.currentStageStartedAt,
+        completedAt: operation.completedAt,
+        failedAt: operation.failedAt,
+        errorMessage: operation.errorMessage,
+        metadata,
+      },
+    );
+    operation.detectionProfileId = detectionProfileId;
+    operation.metadata = metadata;
+    return operation;
+  }
+
   private async reconcileLocked(user: User, project: Project, operation: ProjectPipelineRun) {
     if (!ACTIVE.includes(operation.status)) {
       if (this.stableReleaseReconciliationCandidate(operation)) {
@@ -1559,7 +1695,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           ...(operation.metadata || {}),
           stableReleaseReconciliationAttempts: Number(operation.metadata?.stableReleaseReconciliationAttempts || 0) + 1,
         };
-        await this.runs.save(operation);
+        await this.persistReconciledOperation(operation);
       } else {
       if (
         operation.status === PipelineRunStatus.COMPLETED
@@ -1579,7 +1715,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           delete metadata.safeLog;
           delete metadata.advancedSafeLog;
           operation.metadata = metadata;
-          await this.runs.save(operation);
+          await this.persistReconciledOperation(operation);
         }
       }
       return operation;
@@ -1603,7 +1739,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           failedStage: "workflow_dispatch",
           safeLog: "The dispatch process ended before GitHub returned an immutable run identity. No GitHub Actions run is claimed for this operation.",
         };
-        return this.runs.save(operation);
+        return this.persistReconciledOperation(operation);
       }
       const credential = await this.githubApp.tokenForRepository(user.id, repositoryFullName, project.githubInstallationId);
       const knownRows = await this.runs.createQueryBuilder("run")
@@ -1623,7 +1759,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           operation.failedAt = new Date();
           operation.errorMessage = "GitHub Actions did not expose a workflow run for the accepted dispatch.";
           operation.metadata = { ...(operation.metadata || {}), conclusion: "failure", failedStage: "workflow_run_discovery", safeLog: "No GitHub Actions run was found after the dispatch recovery window. No secret-bearing log was stored." };
-          return this.runs.save(operation);
+          return this.persistReconciledOperation(operation);
         }
         return operation;
       }
@@ -1642,10 +1778,14 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       operation.failedAt = new Date();
       operation.errorMessage = "GitHub Actions returned a run for a different immutable operation identity.";
       operation.metadata = { ...(operation.metadata || {}), conclusion: "failure", failedStage: "immutable_operation_validation", safeLog: "Workflow run repository, branch or commit did not match the persisted immutable operation. No credential or input value was stored." };
-      return this.runs.save(operation);
+      return this.persistReconciledOperation(operation);
     }
     operation.metadata = { ...(operation.metadata || {}), workflowUrl: remote.html_url };
     const jobs = await this.actions.getWorkflowJobs(repositoryFullName, operation.githubWorkflowRunId, credential.token);
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      workflowStages: this.workflowStagesFromJobs(operation, jobs),
+    };
     const currentStep = jobs.jobs?.flatMap((job) => job.steps || []).find((step) => step.status === "in_progress");
     if (currentStep?.name) operation.currentStage = this.stage(currentStep.name);
     let retiredCleanup: ReturnType<typeof generationCleanupEvidence> = null;
@@ -1673,14 +1813,55 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         this.logger.warn(`Durable result artifact for operation ${operation.id} was unavailable: ${error instanceof Error ? error.message : "unknown error"}`);
       }
       const completionEvidence = [completedJobLog || "", durableResultLog].filter(Boolean).join("\n");
-      const workflowPhase = String(operation.metadata?.workflowPhase || "candidate");
+      let workflowPhase = String(operation.metadata?.workflowPhase || "candidate");
       const releaseAction = ["deploy", "rollback"].includes(String(operation.metadata?.deploymentAction || ""));
+      if (releaseAction && workflowPhase === "candidate" && remote.conclusion !== "success") {
+        return this.failCandidateOperation(operation, jobs, completedJobLog, undefined, { project, token: credential.token });
+      }
       if (releaseAction && workflowPhase === "candidate") {
-        if (remote.conclusion !== "success") return this.failCandidateOperation(operation, jobs, completedJobLog);
+        const cleanup = { project, token: credential.token };
         const candidate = extractGithubActionsCandidateEvidence(completionEvidence);
-        if (!candidate) return this.failCandidateOperation(operation, jobs, completedJobLog, "Exact healthy-candidate evidence was missing or invalid.");
+        if (!candidate) return this.failCandidateOperation(operation, jobs, completedJobLog, "Exact healthy-candidate evidence was missing or invalid.", cleanup);
+        let immutablePlan: BuildPlan | null = null;
         try {
-          return await this.beginPromotion(operation, candidate, credential.token);
+          const originalInputs = this.releaseInputs(operation);
+          immutablePlan = originalInputs ? JSON.parse(Buffer.from(originalInputs.build_plan_base64, "base64").toString("utf8")) as BuildPlan : null;
+        } catch { /* fail closed below */ }
+        if (!relationshipVerificationMatchesBuildPlan(candidate, immutablePlan)) {
+          return this.failCandidateOperation(operation, jobs, completedJobLog, "Candidate relationship evidence does not match the immutable BuildPlan.", cleanup);
+        }
+        if (completionEvidence.includes("DEPLOYGUARD_RELEASE_RESULT=")) {
+          try {
+            const originalInputs = this.releaseInputs(operation);
+            if (!originalInputs) {
+              return this.failCandidateOperation(operation, jobs, completedJobLog, "Immutable candidate inputs are unavailable.", cleanup);
+            }
+            const runtime = decodeEnvironmentReferencesBase64(originalInputs.environment_references_base64);
+            const promotionRuntime = runtimeConfigurationWithPromotionCandidate(runtime, candidate);
+            operation.metadata = {
+              ...(operation.metadata || {}),
+              candidateWorkflowRunId: operation.githubWorkflowRunId,
+              candidateEvidence: candidate,
+              promotionIntent: promotionRuntime.promotion,
+              promotionIntentFingerprint: promotionRuntime.promotion.intentFingerprint,
+              promotionState: "route_changed_awaiting_finalization",
+              workflowPhase: "promotion",
+            };
+            workflowPhase = "promotion";
+          } catch (error) {
+            return this.failCandidateOperation(
+              operation,
+              jobs,
+              completedJobLog,
+              error instanceof GithubActionsOperationContractError
+                ? "Promotion rejected the persisted immutable runtime configuration."
+                : "Inline promotion evidence could not be prepared.",
+              cleanup,
+            );
+          }
+        } else {
+        try {
+          return await this.beginPromotion(project, operation, candidate, credential.token);
         } catch (error) {
           if (error instanceof GithubActionsOperationContractError && error.code === "invalid_contract") {
             return this.failCandidateOperation(
@@ -1688,9 +1869,11 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
               jobs,
               completedJobLog,
               "Promotion rejected the persisted immutable runtime configuration.",
+              cleanup,
             );
           }
           throw error;
+        }
         }
       }
       if (releaseAction && workflowPhase === "compensation") {
@@ -1863,7 +2046,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         };
       }
     }
-    const saved = await this.runs.save(operation);
+    const saved = await this.persistReconciledOperation(operation);
     if (saved.status === PipelineRunStatus.COMPLETED && saved.metadata?.deploymentAction !== "destroy" && retiredCleanup) {
       if (retiredCleanup.status === "cleaned") {
         await this.deploymentGenerations.markCleaned(retiredCleanup.generationId, { cleanupOperationId: saved.id });
@@ -1910,7 +2093,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
             ? error.message
             : "PROJECT_DELETE_INCOMPLETE: final control-plane cleanup did not complete.",
         };
-        const failed = await this.runs.save(saved);
+        const failed = await this.persistReconciledOperation(saved);
         await this.notifications.dispatch({
           projectId: failed.projectId,
           pipelineRunId: failed.id,
@@ -1956,12 +2139,9 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     return saved;
   }
 
-  /**
-   * Cleanup is deliberately a separate, internal operation. The caller is
-   * created only after promoteVerified has committed the successor LIVE, so a
-   * cleanup failure can leave only the retired generation CLEANUP_PENDING and
-   * can never roll back, block, or become the visible result of that release.
-   */
+  /** Cleanup is a separate internal operation. A retired target is scheduled
+   * only after its successor is LIVE; a failed candidate target is scheduled
+   * only after its immutable candidate workflow has terminally failed. */
   private async scheduleRetiredGenerationCleanup(project: Project, release: ProjectPipelineRun, token: string) {
     const inputs = this.releaseInputs(release);
     if (!inputs) return;
@@ -1974,68 +2154,111 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     }
     const retired = runtime.retiredGenerationCleanup;
     if (!retired) return;
-    // This validates the exact state key and rejects any project/shared
-    // persistence manifest before an IAM-capable workflow is dispatched.
+    await this.dispatchGenerationCleanup(project, release, token, runtime, {
+      ...retired,
+      cleanupReason: "retired",
+    });
+  }
+
+  private async scheduleFailedCandidateCleanup(project: Project, failed: ProjectPipelineRun, token: string) {
+    const inputs = this.releaseInputs(failed);
+    if (!inputs || !failed.generationId) return;
+    let runtime: GithubActionsRuntimeConfiguration;
     try {
-      await this.deploymentGenerations.cleanupTarget(retired.generationId);
-    } catch (error) {
-      this.logger.warn(`Retired cleanup target ${retired.generationId} was rejected: ${error instanceof Error ? error.message : "unknown error"}`);
+      runtime = decodeEnvironmentReferencesBase64(inputs.environment_references_base64);
+    } catch {
+      this.logger.warn(`Failed-candidate cleanup was not scheduled for ${failed.id}: immutable runtime configuration is unavailable.`);
       return;
     }
+    const target = await this.deploymentGenerations.cleanupTarget(failed.generationId);
+    await this.dispatchGenerationCleanup(project, failed, token, runtime, {
+      generationId: target.generationId,
+      terraformStateKey: target.terraformStateKey,
+      resourceManifest: target.resources,
+      cleanupReason: "failed_candidate",
+    });
+  }
+
+  private async dispatchGenerationCleanup(
+    project: Project,
+    source: ProjectPipelineRun,
+    token: string,
+    sourceRuntime: GithubActionsRuntimeConfiguration,
+    target: NonNullable<GithubActionsRuntimeConfiguration["retiredGenerationCleanup"]>,
+  ) {
+    // cleanupTarget validates the exact state key and rejects any project or
+    // shared-persistence manifest before an IAM-capable workflow is dispatched.
+    try {
+      await this.deploymentGenerations.cleanupTarget(target.generationId);
+    } catch (error) {
+      this.logger.warn(`Generation cleanup target ${target.generationId} was rejected: ${error instanceof Error ? error.message : "unknown error"}`);
+      return;
+    }
+    const existing = await this.runs.createQueryBuilder("run")
+      .where("run.generationId = :generationId", { generationId: target.generationId })
+      .andWhere("COALESCE(run.metadata ->> 'internalMaintenance', 'false') = 'true'")
+      .andWhere("run.status IN (:...statuses)", { statuses: ACTIVE })
+      .getOne();
+    if (existing) return;
 
     const cleanupId = randomUUID();
     const cleanupRuntime: GithubActionsRuntimeConfiguration = {
-      ...runtime,
-      environment: { ...runtime.environment, DEPLOYGUARD_OPERATION_ID: cleanupId },
+      ...sourceRuntime,
+      retiredGenerationCleanup: target,
+      environment: { ...sourceRuntime.environment, DEPLOYGUARD_OPERATION_ID: cleanupId },
       promotion: {
-        ...runtime.promotion,
+        ...sourceRuntime.promotion,
         operationId: cleanupId,
         candidate: null,
         intentFingerprint: null,
       },
     };
     const cleanupInputs: GithubActionsOperationInputs = {
-      ...inputs,
+      ...this.releaseInputs(source)!,
       deployment_action: "cleanup",
       deployment_operation_id: cleanupId,
-      image_tag: immutableImageTag(release.commitSha, cleanupId),
+      image_tag: immutableImageTag(source.commitSha, cleanupId),
       environment_references_base64: environmentReferencesBase64(cleanupRuntime),
     };
     const cleanup = await this.runs.save(this.runs.create({
       id: cleanupId,
-      projectId: release.projectId,
-      generationId: retired.generationId,
-      triggeredByUserId: release.triggeredByUserId,
+      projectId: source.projectId,
+      generationId: target.generationId,
+      triggeredByUserId: source.triggeredByUserId,
       // Detection is a mutable project-level readiness projection, not part of
       // a retired generation's immutable cleanup identity. The source entity
       // can still carry a profile ID that PostgreSQL has already SET NULL after
       // that profile was replaced/deleted, so maintenance operations must not
       // copy the stale in-memory association.
       detectionProfileId: null,
-      repositoryUrl: release.repositoryUrl,
-      repositoryFullName: release.repositoryFullName,
-      targetBranch: release.targetBranch,
-      commitSha: release.commitSha,
+      repositoryUrl: source.repositoryUrl,
+      repositoryFullName: source.repositoryFullName,
+      targetBranch: source.targetBranch,
+      commitSha: source.commitSha,
       imageTag: cleanupInputs.image_tag,
-      configurationSnapshotId: release.configurationSnapshotId,
-      databaseServiceBindingId: release.databaseServiceBindingId,
+      configurationSnapshotId: source.configurationSnapshotId,
+      databaseServiceBindingId: source.databaseServiceBindingId,
       status: PipelineRunStatus.QUEUED,
-      currentStage: "retired_generation_cleanup_dispatch",
+      currentStage: "generation_cleanup_dispatch",
       startedAt: new Date(),
       githubWorkflowStatus: "dispatching",
       metadata: {
         executionEngine: "github_actions",
         deploymentAction: "cleanup",
         internalMaintenance: true,
-        cleanupGenerationId: retired.generationId,
-        sourceReleaseOperationId: release.id,
+        cleanupGenerationId: target.generationId,
+        cleanupKind: target.cleanupReason || "retired",
+        sourceOperationId: source.id,
+        sourceReleaseOperationId: source.id,
         immutableDispatchInputs: cleanupInputs,
         immutableDispatchFingerprint: immutableDispatchFingerprint(cleanupInputs),
       },
     }));
-    await this.deploymentGenerations.markCleanupPending(retired.generationId, {
+    await this.deploymentGenerations.markCleanupPending(target.generationId, {
       cleanupOperationId: cleanup.id,
-      sourceReleaseOperationId: release.id,
+      cleanupKind: target.cleanupReason || "retired",
+      sourceOperationId: source.id,
+      sourceReleaseOperationId: source.id,
       dispatchState: "prepared",
     });
     try {
@@ -2045,30 +2268,38 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       await this.awsCapabilities.ensure({
         action: "destroy",
         projectId: project.id,
-        environmentName: runtime.environmentName,
-        generationId: retired.generationId,
+        environmentName: sourceRuntime.environmentName,
+        generationId: target.generationId,
       });
       await this.scheduleNewOperation(this.runs, cleanup, token, cleanupInputs);
     } catch (error) {
-      await this.deploymentGenerations.markCleanupPending(retired.generationId, {
+      await this.deploymentGenerations.markCleanupPending(target.generationId, {
         cleanupOperationId: cleanup.id,
-        sourceReleaseOperationId: release.id,
-        error: error instanceof Error ? error.message.slice(0, 1000) : "Retired generation cleanup dispatch failed.",
+        cleanupKind: target.cleanupReason || "retired",
+        sourceOperationId: source.id,
+        sourceReleaseOperationId: source.id,
+        error: error instanceof Error ? error.message.slice(0, 1000) : "Generation cleanup dispatch failed.",
       });
-      this.logger.warn(`Retired cleanup dispatch failed for ${retired.generationId}: ${error instanceof Error ? error.message : "unknown error"}`);
+      this.logger.warn(`Generation cleanup dispatch failed for ${target.generationId}: ${error instanceof Error ? error.message : "unknown error"}`);
     }
   }
 
-  /** Retry a retired cleanup at a bounded cadence. It is intentionally not in
+  /** Retry cleanup debt at a bounded cadence. It is intentionally not in
    * the developer operation lane, so a temporary cleanup failure never holds
    * a later Deploy/Rollback hostage. */
-  private async retryPendingRetiredGenerationCleanup() {
+  private async retryPendingGenerationCleanup() {
     const retryAfterMs = 5 * 60 * 1_000;
-    const pending = await this.dataSource.getRepository(ProjectDeploymentGeneration).find({
-      where: { status: "cleanup_pending" as ProjectDeploymentGeneration["status"] },
-      order: { updatedAt: "ASC" },
-      take: 10,
-    });
+    const pending = await this.dataSource.getRepository(ProjectDeploymentGeneration)
+      .createQueryBuilder("generation")
+      .where("generation.status = :cleanupPending", { cleanupPending: "cleanup_pending" })
+      .orWhere("generation.status = :failed AND generation.cleanupMetadata ->> 'cleanupKind' = :failedCandidate AND generation.cleanupMetadata ->> 'cleanupStatus' = :pending", {
+        failed: "failed",
+        failedCandidate: "failed_candidate",
+        pending: "pending",
+      })
+      .orderBy("generation.updatedAt", "ASC")
+      .take(10)
+      .getMany();
     for (const generation of pending) {
       const metadata = generation.cleanupMetadata || {};
       const lastAttempt = typeof metadata.lastAttemptAt === "string" ? Date.parse(metadata.lastAttemptAt) : Number.NaN;
@@ -2079,16 +2310,22 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         .andWhere("run.status IN (:...statuses)", { statuses: ACTIVE })
         .getOne();
       if (existing) continue;
-      const sourceId = typeof metadata.sourceReleaseOperationId === "string" ? metadata.sourceReleaseOperationId : null;
+      const sourceId = typeof metadata.sourceOperationId === "string"
+        ? metadata.sourceOperationId
+        : typeof metadata.sourceReleaseOperationId === "string" ? metadata.sourceReleaseOperationId : null;
       if (!sourceId) continue;
       const release = await this.runs.findOne({ where: { id: sourceId, projectId: generation.projectId } });
       const project = await this.projects.findOne({ where: { id: generation.projectId } });
       if (!release || !project) continue;
       try {
         const credential = await this.githubApp.tokenForRepository(release.triggeredByUserId, project.repositoryFullName, project.githubInstallationId);
-        await this.scheduleRetiredGenerationCleanup(project, release, credential.token);
+        if (metadata.cleanupKind === "failed_candidate") {
+          await this.scheduleFailedCandidateCleanup(project, release, credential.token);
+        } else {
+          await this.scheduleRetiredGenerationCleanup(project, release, credential.token);
+        }
       } catch (error) {
-        this.logger.warn(`Retired cleanup retry could not be scheduled for ${generation.id}: ${error instanceof Error ? error.message : "unknown error"}`);
+        this.logger.warn(`Generation cleanup retry could not be scheduled for ${generation.id}: ${error instanceof Error ? error.message : "unknown error"}`);
       }
     }
   }
@@ -2505,11 +2742,8 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     });
   }
 
-  private async workflowStages(project: Project, run: ProjectPipelineRun, token: string | null) {
-    if (!run.githubWorkflowRunId || !token) return [];
-    try {
-      const response = await this.actions.getWorkflowJobs(project.repositoryFullName, run.githubWorkflowRunId, token);
-      return (response.jobs || []).flatMap((job) => (job.steps || []).flatMap((step) => {
+  private workflowStagesFromJobs(run: ProjectPipelineRun, response: { jobs?: Array<Record<string, any>> }) {
+    return (response.jobs || []).flatMap((job) => (job.steps || []).flatMap((step) => {
         const presentation = githubActionsWorkflowStepPresentation(
           step.name,
           run.metadata?.deploymentAction === "destroy" ? "destroy" : run.metadata?.deploymentAction === "rollback" ? "rollback" : "deploy",
@@ -2537,10 +2771,11 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           failureReason: status === "failed" ? "GitHub Actions reports this workflow stage failed." : null,
         }];
       }));
-    } catch {
-      // History remains useful even when GitHub no longer exposes job detail.
-      return [];
-    }
+  }
+
+  private persistedWorkflowStages(run: ProjectPipelineRun) {
+    const stages = run.metadata?.workflowStages;
+    return Array.isArray(stages) ? stages : [];
   }
 
   private async loadBalancerUrl(project: Project, generationId: string) {
@@ -2612,7 +2847,9 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         && run.metadata.safeLog.trim().length > 0,
       errorMessage: oidcFailure
         ? "DeployGuard could not connect securely to AWS. This is a platform configuration defect; no application credential or project setting is required."
-        : run.errorMessage || null,
+        : run.status === PipelineRunStatus.FAILED
+          ? githubActionsFailureMessage(run.errorMessage, run.metadata?.failedStage || run.currentStage, deploymentAction)
+          : run.errorMessage || null,
       requestedAt: run.createdAt,
       createdAt: run.createdAt,
       completedAt: run.completedAt,

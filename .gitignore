@@ -298,6 +298,7 @@ desktop.ini
 *.pid
 *.pid.lock
 *.seed
+.deployguard-test-results/
 
 
 # ============================================================

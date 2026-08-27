@@ -6,6 +6,7 @@ import { acquireProjectConfigurationAdvisoryLock } from "../infrastructure/datab
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { getOrchestrationConfig } from "../orchestration/orchestration.config";
 import {
+  DETECTION_INPUT_FINGERPRINT_VERSION,
   analysisFingerprint,
   deploymentContractFingerprint,
   detectionFingerprint,
@@ -23,12 +24,15 @@ import { DatabaseTierProvider, DatabaseTierStatus, ProjectDatabaseTier } from ".
 import { Project } from "./project.entity";
 import { DockerTemplateEngineService } from "./templates/docker-template-engine.service";
 import { TemplateRegistryService } from "./templates/template-registry.service";
-import { isPublicFrontendConfigurationKey, platformRuntimeVariableNames, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
-import { BUILD_PLAN_DETECTOR_VERSION, BUILD_PLAN_VERSION, BuildPlan, BuildPlanComponent, BuildPlanEnvironmentOwnership, buildPlanComponents, requireBuildPlan } from "./build-plan";
+import { isPublicFrontendConfigurationKey, isSecretConfigurationKey, platformRuntimeVariableNames, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
+import { BUILD_PLAN_DETECTOR_VERSION, BUILD_PLAN_VERSION, BuildInitialization, BuildPlan, BuildPlanComponent, BuildPlanEnvironmentOwnership, BuildPlanImageFamily, buildPlanComponents, requireBuildPlan } from "./build-plan";
 import type { DeploymentProfileDraft, DetectedApplicationTopology } from "./detection/stack-detection.service";
 import { evaluateBuildPlanReadiness } from "./build-plan-readiness";
 import { deploymentContractMatchesIdentity, RepositoryAnalysisIdentity } from "./deployment-contract-identity";
 import { ManagedDatabaseEngine, managedDatabaseEngine, managedDatabaseProfile } from "./managed-database-engine";
+import { hasCurrentCanonicalTopology } from "./detection/topology.types";
+import { readinessWarningDetails, type ReadinessWarningDetail } from "./readiness-warning";
+import { PLATFORM_BACKEND_MOUNT } from "./service-binding";
 
 const SUPPORTED_FRAMEWORKS = new Set([
   "vite-react",
@@ -49,7 +53,6 @@ const SUPPORTED_FRAMEWORKS = new Set([
   "django",
   "streamlit",
 ]);
-const SECRET_NAME = /(SECRET|TOKEN|PASSWORD|PRIVATE|API_KEY|(?:DATABASE|POSTGRES(?:QL)?|MYSQL|MONGO(?:DB)?)_(?:URL|URI)|CREDENTIAL)/;
 const BUILD_TIME_NAME = /^(VITE_|NEXT_PUBLIC_|REACT_APP_)/;
 
 type EnvironmentEvidence = {
@@ -99,7 +102,7 @@ export class DeploymentContractService {
       projects.findOne({ where: { id: projectId } }),
       profiles.findOne({ where: { projectId } }),
     ]);
-    if (!project || !profile || !profile.commitSha || profile.repositoryFullName?.toLowerCase() !== project.repositoryFullName?.toLowerCase() || profile.targetBranch !== project.targetBranch || profile.inputFingerprint !== detectionFingerprint(project, profile.commitSha)) return null;
+    if (!project || !profile || !profile.commitSha || profile.repositoryFullName?.toLowerCase() !== project.repositoryFullName?.toLowerCase() || profile.targetBranch !== project.targetBranch || profile.inputFingerprint !== detectionFingerprint(project, profile.commitSha) || !hasCurrentCanonicalTopology(profile.rawProfile)) return null;
     return this.upsertFromDetection(project, profile, manager);
   }
 
@@ -121,13 +124,20 @@ export class DeploymentContractService {
       environment.find({ where: { projectId: project.id, environment: canonicalEnvironmentName(project), isActive: true }, order: { key: "ASC" } }),
       databaseTiers.findOne({ where: { projectId: project.id } }),
     ]);
-    const raw = (profile.rawProfile || {}) as Record<string, unknown>;
-    const topology = this.applicationTopology(raw);
-    const topologyBackend = topology?.components.find((component) => component.role === "backend") || null;
-    const databaseRequired = topologyBackend
-      ? topologyBackend.profile.requiresDatabase || Boolean(topology.managedDatabase)
-      : profile.requiresDatabase || raw.databaseRequired === true;
-    const detectedDatabaseEngine = this.databaseEngine(topology?.managedDatabase?.engine || topologyBackend?.databaseType || raw.databaseEngine || profile.databaseType);
+    const analysisRaw = (profile.rawProfile || {}) as Record<string, unknown>;
+    const topology = this.applicationTopology(analysisRaw);
+    const topologyRuntimeOwners = topology?.components.filter((component) => component.role === "backend" || component.role === "application") || [];
+    const topologyBackend = topologyRuntimeOwners.length === 1 ? topologyRuntimeOwners[0] : null;
+    const canonicalComponent = topologyBackend || (topology?.components.length === 1 ? topology.components[0] : null);
+    const unresolvedMultiComponentRuntimeOwner = Boolean(topology && topology.components.length > 1 && !topologyBackend);
+    const contractProfile = canonicalComponent?.profile || profile;
+    const raw = (contractProfile.rawProfile || {}) as Record<string, unknown>;
+    const databaseRequired = topology
+      ? Boolean(topologyBackend && (topologyBackend.profile.requiresDatabase || topology.managedDatabase))
+      : contractProfile.requiresDatabase || raw.databaseRequired === true;
+    const detectedDatabaseEngine = this.databaseEngine(topology
+      ? topology.managedDatabase?.engine || topologyBackend?.databaseType
+      : raw.databaseEngine || contractProfile.databaseType);
     // Database detection is an authoritative platform decision.  A project that
     // needs a database never waits for a second, manual provider-selection
     // screen: DeployGuard owns the detected database service and its persistence.
@@ -138,13 +148,13 @@ export class DeploymentContractService {
       ? persistedDatabaseTier.engine
       : null;
     const databaseEngineMismatch = Boolean(establishedDatabaseEngine && detectedDatabaseEngine && establishedDatabaseEngine !== detectedDatabaseEngine);
-    const databaseTier = databaseRequired
+    const databaseTier = databaseRequired && detectedDatabaseEngine
       ? databaseTiers.create({
           ...(persistedDatabaseTier || {}),
           projectId: project.id,
           requiredByDetection: true,
           provider: DatabaseTierProvider.MANAGED,
-          engine: establishedDatabaseEngine || detectedDatabaseEngine || persistedDatabaseTier?.engine || "postgres",
+          engine: establishedDatabaseEngine || detectedDatabaseEngine,
           status: persistedDatabaseTier?.provider === DatabaseTierProvider.MANAGED
             ? persistedDatabaseTier.status
             : DatabaseTierStatus.PENDING,
@@ -160,27 +170,29 @@ export class DeploymentContractService {
           lastError: persistedDatabaseTier?.provider === DatabaseTierProvider.MANAGED ? persistedDatabaseTier.lastError : null,
         })
       : persistedDatabaseTier;
-    const databaseEngine = databaseTier?.engine || detectedDatabaseEngine;
+    const databaseEngine = databaseRequired ? databaseTier?.engine || detectedDatabaseEngine : null;
     const managedDatabaseVariables = databaseRequired && databaseTier?.provider === DatabaseTierProvider.MANAGED
       ? new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service === (databaseTier.engine || detectedDatabaseEngine || "postgres")).flatMap((group) => [...group.aliases]))
       : new Set<string>();
     const evidence = topology
-      ? this.uniqueEnvironmentEvidence(topology.components.flatMap((component) => this.environmentEvidence(component.profile.rawProfile || {})))
+      ? this.uniqueEnvironmentEvidence(topology.components.flatMap((component) => this.topologyEnvironmentEvidence(component.environment)))
       : this.environmentEvidence(raw);
     const userEvidence = evidence.filter((item) => item.ownership === "user");
     const platformVariableNames = new Set([
-      ...platformRuntimeVariableNames(this.language(profile), this.runtimeType(raw, profile)),
-      ...(topology?.relationships || []).map((relationship) => relationship.buildTimeVariable).filter((value): value is string => Boolean(value)),
+      ...(topology && !canonicalComponent ? [] : platformRuntimeVariableNames(this.language(contractProfile), this.runtimeType(raw, contractProfile))),
+      ...(topology?.serviceBindings || []).map((binding) => binding.envAlias),
     ]);
     const repositoryRequired = userEvidence.filter((item) => item.required).map((item) => item.key).filter((key) => !platformVariableNames.has(key));
     const requiredEnvVars = this.unique(repositoryRequired);
     const optionalEnvVars = this.unique([
-      ...this.stringArray(raw.optionalEnvironmentVariables),
+      ...(topology ? [] : this.stringArray(raw.optionalEnvironmentVariables)),
       ...userEvidence.filter((item) => !item.required).map((item) => item.key).filter((key) => !platformVariableNames.has(key)),
     ]);
+    const unknownEnvVars = new Set(userEvidence.filter((item) => item.requirement === "unknown").map((item) => item.key));
     const configured = new Map(environmentVariables.map((item) => [item.key, item]));
     const missingEnvVars = requiredEnvVars.filter((key) => !configured.has(key) && !managedDatabaseVariables.has(key));
-    const missingOptionalEnvVars = optionalEnvVars.filter((key) => !configured.has(key));
+    const missingOptionalEnvVars = optionalEnvVars.filter((key) => !unknownEnvVars.has(key) && !configured.has(key));
+    const missingUnknownEnvVars = optionalEnvVars.filter((key) => unknownEnvVars.has(key) && !configured.has(key) && !managedDatabaseVariables.has(key));
     const buildTimeEnvVars = this.unique([
       ...userEvidence.filter((item) => item.phase === "build").map((item) => item.key),
       ...[...requiredEnvVars, ...optionalEnvVars].filter((key) => BUILD_TIME_NAME.test(key)),
@@ -191,15 +203,15 @@ export class DeploymentContractService {
     ]);
     const secretEnvVars = this.unique([
       ...userEvidence.filter((item) => item.secret).map((item) => item.key),
-      ...[...requiredEnvVars, ...optionalEnvVars].filter((key) => SECRET_NAME.test(key) && !BUILD_TIME_NAME.test(key)),
+      ...[...requiredEnvVars, ...optionalEnvVars].filter((key) => isSecretConfigurationKey(key) && !BUILD_TIME_NAME.test(key)),
     ]);
-    const runtimeType = this.runtimeType(raw, profile);
-    const language = this.language(profile);
-    const template = this.templateRegistry.getTemplate(profile.selectedTemplate || "");
-    const dockerStrategy = profile.selectedTemplate === "custom-dockerfile" ? "custom" as const : "generated" as const;
-    const port = profile.expectedPort || template?.defaultPort || null;
-    const healthPath = profile.healthCheckPath || "/";
-    const framework = profile.framework || null;
+    const runtimeType = this.runtimeType(raw, contractProfile);
+    const language = this.language(contractProfile);
+    const template = this.templateRegistry.getTemplate(contractProfile.selectedTemplate || "");
+    const dockerStrategy = contractProfile.selectedTemplate === "custom-dockerfile" ? "custom" as const : "generated" as const;
+    const port = contractProfile.expectedPort || template?.defaultPort || null;
+    const healthPath = contractProfile.healthCheckPath || "/";
+    const framework = contractProfile.framework || null;
     const large = Boolean(framework && ["nextjs", "django"].includes(framework));
     const orchestration = getOrchestrationConfig(this.config);
     const environmentName = canonicalEnvironmentName(project);
@@ -244,7 +256,7 @@ export class DeploymentContractService {
       containerPort: port,
       targetGroupPort: port,
       healthCheckPath: healthPath,
-      command: runtimeType === "static" ? "nginx static runtime" : profile.startCommand,
+      command: runtimeType === "static" ? "nginx static runtime" : contractProfile.startCommand,
       cpu: large ? orchestration.largeCpu : orchestration.defaultCpu,
       memory: large ? orchestration.largeMemory : orchestration.defaultMemory,
       environmentMappings,
@@ -273,22 +285,45 @@ export class DeploymentContractService {
         persistenceEnabled: databaseTier?.provider === DatabaseTierProvider.MANAGED && databaseTier.persistenceEnabled,
       },
     };
-    const blockers = this.unique([
-      ...(profile.errors || []),
-      ...this.stringArray(raw.deployabilityBlockers),
-    ]);
+    const blockers = this.unique(topology
+      ? [
+          ...topology.blockers,
+          ...topology.components.flatMap((component) => component.profile.errors || []),
+          ...topology.components.flatMap((component) => this.stringArray(component.profile.rawProfile?.deployabilityBlockers)),
+        ]
+      : [
+          ...(contractProfile.errors || []),
+          ...this.stringArray(raw.deployabilityBlockers),
+        ]);
+    // A selectable topology is intentionally INPUT_REQUIRED. Do not replace
+    // that actionable choice with a terminal runtime-owner blocker before a
+    // component selection has been made.
+    if (unresolvedMultiComponentRuntimeOwner && topology?.analysisState !== "INPUT_REQUIRED") {
+      blockers.push("A runtime configuration owner could not be resolved for this multi-component repository.");
+    }
     if (databaseEngineMismatch) {
       blockers.push(`Repository analysis requires ${managedDatabaseProfile(detectedDatabaseEngine)?.label}, but this project owns established ${managedDatabaseProfile(establishedDatabaseEngine)?.label} persistence. Full project Destroy is required before changing database engines.`);
     }
-    const applicationPersistentStorageRequired = profile.requiresPersistentStorage || raw.persistentStorageRequired === true;
+    const applicationPersistentStorageRequired = topology
+      ? topology.components.some((component) => component.profile.requiresPersistentStorage || component.profile.rawProfile?.persistentStorageRequired === true)
+      : contractProfile.requiresPersistentStorage || raw.persistentStorageRequired === true;
     if (applicationPersistentStorageRequired) {
       blockers.push("Application file-system persistence is not supported by the active GitHub Actions deployment engine. Use external object storage or remove the local persistent-file requirement.");
     }
-    const warnings = this.unique([
-      ...(profile.warnings || []),
-      ...this.stringArray(raw.deployabilityWarnings),
-    ]);
-    if (raw.inputFingerprintVersion !== 3) {
+    const warnings = this.unique(topology
+      ? [
+          ...topology.warnings,
+          ...topology.components.flatMap((component) => component.profile.warnings || []),
+          ...topology.components.flatMap((component) => this.stringArray(component.profile.rawProfile?.deployabilityWarnings)),
+        ]
+      : [
+          ...(contractProfile.warnings || []),
+          ...this.stringArray(raw.deployabilityWarnings),
+        ]);
+    const explicitWarningDetails = topology
+      ? topology.components.flatMap((component) => this.warningDetails(component.profile.rawProfile?.deployabilityWarningDetails))
+      : this.warningDetails(raw.deployabilityWarningDetails);
+    if (analysisRaw.inputFingerprintVersion !== DETECTION_INPUT_FINGERPRINT_VERSION || !hasCurrentCanonicalTopology(analysisRaw)) {
       blockers.push("Detection evidence predates the current deployment contract. Run stack detection again.");
     }
     if (!language) blockers.push("Only JavaScript and Python web applications are supported.");
@@ -300,11 +335,11 @@ export class DeploymentContractService {
     if (!dependencyManifest) blockers.push("A supported dependency manifest could not be identified in the application root.");
     if (!this.stringValue(raw.installCommand)) blockers.push("A deterministic dependency installation command could not be inferred.");
     if (raw.appRootConfidence === "low") blockers.push("Application root could not be selected unambiguously. Configure the application directory and run detection again.");
-    if (!profile.selectedTemplate || profile.selectedTemplate === "custom-dockerfile-required") {
+    if (!contractProfile.selectedTemplate || contractProfile.selectedTemplate === "custom-dockerfile-required") {
       blockers.push("No safe Docker deployment strategy is available for this repository.");
     }
-    if (profile.selectedTemplate !== "custom-dockerfile" && template && profile.packageManager && !template.supportedPackageManagers.includes(profile.packageManager)) {
-      blockers.push(`Package manager ${profile.packageManager} is not supported by the selected Docker template.`);
+    if (contractProfile.selectedTemplate !== "custom-dockerfile" && template && contractProfile.packageManager && !template.supportedPackageManagers.includes(contractProfile.packageManager)) {
+      blockers.push(`Package manager ${contractProfile.packageManager} is not supported by the selected Docker template.`);
     }
     if (!port) blockers.push("A container and ALB target port could not be inferred safely.");
     if (!healthPath.startsWith("/")) blockers.push("Health-check path must start with '/'.");
@@ -316,36 +351,33 @@ export class DeploymentContractService {
     if (databaseTier?.provider === DatabaseTierProvider.EXTERNAL && this.localDatabaseHost(databaseTier.externalHost)) {
       blockers.push("External database host cannot be localhost because the application runs in ECS.");
     }
-    if (databaseRequired && raw.databaseLocalhostDetected === true && !databaseTier?.provider) {
-      blockers.push("Local database configuration detected. 127.0.0.1 and localhost point to the ECS application container, not the DeployGuard-managed database.");
+    if (databaseRequired && raw.databaseLocalhostDetected === true) {
+      blockers.push("Local database configuration detected. Localhost and Docker Compose service aliases are not valid ECS database hosts; use the DeployGuard-managed database environment contract.");
     }
     if (runtimeType === "static") {
-      if (!profile.buildCommand) blockers.push("Static applications require a production build command.");
+      if (!contractProfile.buildCommand) blockers.push("Static applications require a production build command.");
       if (!this.stringValue(raw.outputDirectory)) blockers.push("Static build output directory could not be inferred safely.");
     } else {
-      if (!profile.startCommand) blockers.push("A safe production start command could not be inferred.");
+      if (!contractProfile.startCommand) blockers.push("A safe production start command could not be inferred.");
       if (raw.bindsToPortEnv !== true && dockerStrategy === "generated") {
         blockers.push("Server does not prove that it binds to the platform PORT environment variable.");
       }
       if (raw.bindHost === "localhost") blockers.push("Server binds only to localhost instead of 0.0.0.0.");
       if (!this.stringValue(raw.bindHost)) blockers.push("Server bind host could not be proven safe for ECS.");
     }
-    if (missingEnvVars.length) {
-      warnings.push(`Likely runtime application configuration is not set: ${missingEnvVars.join(", ")}. You can provide it before or after an explicit Deploy.`);
-    }
     if (missingOptionalEnvVars.length) warnings.push(`Optional environment variables are not configured: ${missingOptionalEnvVars.join(", ")}.`);
+    if (missingUnknownEnvVars.length) warnings.push(`Configuration requiredness could not be proven; provide or explicitly classify these values before deployment: ${missingUnknownEnvVars.join(", ")}.`);
+    const warningDetails = readinessWarningDetails(warnings, explicitWarningDetails);
     const unsupportedSecretBuild = buildTimeEnvVars.filter((key) => secretEnvVars.includes(key));
     if (unsupportedSecretBuild.length) {
       blockers.push(`Secret variables cannot be used during image build: ${unsupportedSecretBuild.join(", ")}.`);
     }
-    const missingBuildTimeEnvVars = missingEnvVars.filter((key) => buildTimeEnvVars.includes(key));
-    if (missingBuildTimeEnvVars.length) blockers.push(`Required public build configuration is missing: ${missingBuildTimeEnvVars.join(", ")}.`);
     const overridesHash = analysisFingerprint(project.deploymentOverrides || {});
     if (profile.inputFingerprint !== detectionFingerprint(project, profile.commitSha)) {
       blockers.push("Repository settings or deployment overrides changed after detection. Run stack detection again.");
     }
-    const lockfile = this.selectLockfile(profile.packageManager, this.stringArray(raw.lockfiles));
-    const runtimeVersion = this.pinnedRuntimeVersion(language, profile.runtimeVersion, template?.baseImage || null);
+    const lockfile = this.selectLockfile(contractProfile.packageManager, this.stringArray(raw.lockfiles));
+    const runtimeVersion = this.pinnedRuntimeVersion(language, contractProfile.runtimeVersion, template?.baseImage || null);
     const environmentOwnership = this.buildPlanEnvironmentOwnership(evidence, managedDatabaseVariables, platformVariableNames);
     const plan: BuildPlan = {
       planVersion: BUILD_PLAN_VERSION,
@@ -353,32 +385,44 @@ export class DeploymentContractService {
       repositoryFullName: project.repositoryFullName || "",
       branch: project.targetBranch,
       commitSha: profile.commitSha || "",
-      detectorId: this.stringValue(raw.detectorId) || `${profile.framework || "unknown"}:${profile.frameworkVariant || profile.selectedTemplate || "unknown"}`,
+      detectorId: this.stringValue(raw.detectorId) || `${contractProfile.framework || "unknown"}:${contractProfile.frameworkVariant || contractProfile.selectedTemplate || "unknown"}`,
       language: language || "javascript",
       framework: framework || "unknown",
-      frameworkMode: profile.frameworkVariant || profile.selectedTemplate || "unknown",
-      confidence: profile.confidence || "low",
+      frameworkMode: contractProfile.frameworkVariant || contractProfile.selectedTemplate || "unknown",
+      confidence: contractProfile.confidence || "low",
+      platformBackendMount: PLATFORM_BACKEND_MOUNT,
       evidence: this.buildPlanEvidence(raw, profile),
       appRoot: this.stringValue(raw.appDirectory) || ".",
       repositoryInstallRoot: this.stringValue(raw.repositoryInstallRoot) || this.stringValue(raw.appDirectory) || ".",
-      packageManager: profile.packageManager || "",
+      packageManager: contractProfile.packageManager || "",
       dependencyManifest: dependencyManifest || "",
       lockfile,
       runtimeVersion,
       baseImage: dockerStrategy === "custom" ? this.stringValue(raw.dockerfileBuildImage) || "" : this.stringValue(raw.resolvedBaseImage) || template?.baseImage || "",
       runtimeImage: dockerStrategy === "custom" ? this.stringValue(raw.dockerfileRuntimeImage) || "" : this.stringValue(raw.resolvedRuntimeImage) || template?.runtimeImage || "",
+      ...(dockerStrategy === "generated" ? {
+        buildImageFamily: this.imageFamily(this.stringValue(raw.resolvedBaseImage) || template?.baseImage || ""),
+        runtimeImageFamily: this.imageFamily(this.stringValue(raw.resolvedRuntimeImage) || template?.runtimeImage || ""),
+      } : {}),
       installCommand: this.stringValue(raw.installCommand) || "",
-      buildCommand: profile.buildCommand || null,
-      buildCommands: profile.buildCommand ? [profile.buildCommand] : [],
+      buildCommand: contractProfile.buildCommand || null,
+      buildCommands: contractProfile.buildCommand ? [contractProfile.buildCommand] : [],
+      ...(this.buildInitialization(raw, contractProfile.buildCommand || null, language, framework) ? {
+        buildInitialization: this.buildInitialization(raw, contractProfile.buildCommand || null, language, framework),
+      } : {}),
       releaseCommand: this.stringValue(raw.releaseCommand),
       releaseCommands: this.stringValue(raw.releaseCommand) ? [this.stringValue(raw.releaseCommand)!] : [],
-      runCommand: profile.startCommand || null,
+      runCommand: contractProfile.startCommand || null,
       runtimeFiles: this.stringArray(raw.runtimeFiles),
       outputDirectory: this.stringValue(raw.outputDirectory),
       buildSystemDependencies: this.unique(this.stringArray(raw.buildSystemDependencies)),
       runtimeSystemDependencies: this.unique(this.stringArray(raw.runtimeSystemDependencies)),
+      systemDependencyEvidence: {
+        build: this.unique(this.stringArray(raw.buildSystemDependencies)),
+        runtime: this.unique(this.stringArray(raw.runtimeSystemDependencies)),
+      },
       port: port || 0,
-      portSource: project.deploymentOverrides?.port ? "override" : this.stringValue(raw.portSource) || (profile.expectedPort ? "detected" : template?.defaultPort ? "template_default" : "unknown"),
+      portSource: project.deploymentOverrides?.port ? "override" : this.stringValue(raw.portSource) || (contractProfile.expectedPort ? "detected" : template?.defaultPort ? "template_default" : "unknown"),
       healthPath,
       bindHost: this.stringValue(raw.bindHost),
       bindsToPortEnv: raw.bindsToPortEnv === true,
@@ -390,20 +434,47 @@ export class DeploymentContractService {
       },
       environmentOwnership,
       requiredInputs: requiredEnvVars,
-      requiredUserInputs: this.stringArray(raw.detectorRequiredInputs),
+      // A repository-proven required alias is an actionable configuration
+      // boundary, not a deployable default. Keep the exact alias and stop
+      // before image/preflight/Terraform until it is supplied.
+      requiredUserInputs: this.unique([...this.stringArray(raw.detectorRequiredInputs), ...(topology?.requiredUserInputs || []), ...missingEnvVars, ...missingUnknownEnvVars]),
       optionalInputs: optionalEnvVars,
       buildTimeEnvVars,
       runtimeEnvVars,
       secretEnvVars,
       dockerStrategy,
-      dockerTemplate: profile.selectedTemplate || "custom-dockerfile-required",
+      ...(dockerStrategy === "custom" && this.stringValue(raw.dockerfilePath) ? { dockerfilePath: this.stringValue(raw.dockerfilePath)! } : {}),
+      dockerTemplate: contractProfile.selectedTemplate || "custom-dockerfile-required",
       warnings: this.unique(warnings),
+      warningDetails,
       blockers: this.unique(blockers),
+      serviceBindings: (topology?.serviceBindings || []).map((binding) => ({ ...binding })),
     };
-    plan.components = topology?.components.length
+    plan.components = topology
       ? topology.components.map((component) => this.componentBuildPlan(component, plan, databaseEngine))
       : buildPlanComponents(plan);
-    plan.relationships = topology?.relationships || [];
+    const publicComponent = plan.components.find((component) => component.role === "frontend") || plan.components[0];
+    plan.relationships = (topology?.relationships || [])
+      .filter((relationship) => relationship.kind === "CALLS")
+      .map((relationship) => ({
+        from: "frontend" as const,
+        to: "backend" as const,
+        kind: "http" as const,
+        mode: relationship.mode,
+        pathPrefix: relationship.pathPrefix,
+        stripPathPrefix: relationship.stripPathPrefix,
+        buildTimeVariable: relationship.buildTimeVariable,
+        verificationPath: relationship.verificationPath,
+      }));
+    if (topology) plan.topology = {
+      schemaVersion: 3,
+      shape: topology.shape,
+      analysisState: topology.analysisState,
+      confidence: topology.confidence,
+      artifacts: topology.artifacts,
+      relationships: topology.relationships as unknown as Array<Record<string, unknown>>,
+      serviceBindings: plan.serviceBindings,
+    };
     if (topology) {
       for (const component of topology.components) {
         for (const error of component.profile.errors || []) if (!plan.blockers.includes(error)) plan.blockers.push(error);
@@ -422,17 +493,17 @@ export class DeploymentContractService {
       language,
       framework,
       runtimeType,
-      packageManager: profile.packageManager || null,
+      packageManager: contractProfile.packageManager || null,
       dependencyManifest,
       lockfile,
-      nodeVersion: language === "javascript" ? profile.runtimeVersion || null : null,
-      pythonVersion: language === "python" ? profile.runtimeVersion || null : null,
+      nodeVersion: language === "javascript" ? contractProfile.runtimeVersion || null : null,
+      pythonVersion: language === "python" ? contractProfile.runtimeVersion || null : null,
       installCommand: this.stringValue(raw.installCommand),
-      buildCommand: profile.buildCommand || null,
-      startCommand: profile.startCommand || null,
+      buildCommand: contractProfile.buildCommand || null,
+      startCommand: contractProfile.startCommand || null,
       outputDirectory: this.stringValue(raw.outputDirectory),
       port,
-      portSource: project.deploymentOverrides?.port ? "override" : this.stringValue(raw.portSource) || (profile.expectedPort ? "detected" : template?.defaultPort ? "template_default" : null),
+      portSource: project.deploymentOverrides?.port ? "override" : this.stringValue(raw.portSource) || (contractProfile.expectedPort ? "detected" : template?.defaultPort ? "template_default" : null),
       bindsToPortEnv: raw.bindsToPortEnv === true,
       bindHost: this.stringValue(raw.bindHost),
       healthPath,
@@ -447,11 +518,11 @@ export class DeploymentContractService {
       persistentStorageRequired: applicationPersistentStorageRequired,
       privateRegistryRequired: raw.privateRegistryRequired === true || requiredEnvVars.includes("NPM_TOKEN"),
       dockerStrategy,
-      dockerTemplate: profile.selectedTemplate || null,
+      dockerTemplate: contractProfile.selectedTemplate || null,
       ecsPlan,
       blockers: this.unique(blockers),
       warnings: this.unique(warnings),
-      confidence: profile.confidence || "low",
+      confidence: contractProfile.confidence || "low",
       generatedAt: new Date(),
       detectionSourceCommit: profile.commitSha || null,
       overridesHash,
@@ -478,9 +549,17 @@ export class DeploymentContractService {
           if (!componentTemplate) throw new Error(`Docker template '${component.dockerTemplate}' is unavailable for component '${component.id}'.`);
           const componentPlan = this.componentAsBuildPlan(authoritativePlan, component);
           const rendered = this.dockerTemplateEngine.renderDockerfile(componentTemplate, componentPlan);
-          const dockerfile = fullStack && component.role === "frontend" && rendered
+          const staticBindingProxy = fullStack && component.role === "frontend" && component.runtimeType === "static";
+          const webBindingProxy = fullStack && component.role === "frontend" && component.runtimeType === "server" && component.language === "javascript";
+          // Static services retain their nginx runtime. JavaScript web
+          // frontends retain their detected application command behind a
+          // non-root nginx wrapper, so the same platform-owned mount works
+          // without turning SSR into a static application.
+          const dockerfile = staticBindingProxy && rendered
             ? rendered.replace(/\n(?:USER nginx\n)?EXPOSE /, "\nCOPY --chown=101:101 .deployguard-nginx.conf /etc/nginx/conf.d/default.conf\nUSER nginx\nEXPOSE ")
-            : rendered;
+            : webBindingProxy && rendered
+              ? `${rendered}\nUSER root\nRUN apk add --no-cache nginx && mkdir -p /var/lib/nginx/tmp /run/nginx && chown -R app:app /var/lib/nginx /run/nginx /var/log/nginx\nCOPY --chown=app:app .deployguard-web-frontend-nginx.conf /etc/nginx/http.d/default.conf\nCOPY --chown=app:app .deployguard-web-frontend-entrypoint.sh /usr/local/bin/deployguard-web-frontend\nRUN chmod 0755 /usr/local/bin/deployguard-web-frontend\nUSER app\nCMD [\"/usr/local/bin/deployguard-web-frontend\"]\n`
+              : rendered;
           return [component.id, dockerfile];
         }));
         entity.generatedDockerfile = authoritativePlan.components && authoritativePlan.components.length > 1
@@ -574,10 +653,10 @@ export class DeploymentContractService {
   }
 
   private applicationTopology(raw: Record<string, unknown>): DetectedApplicationTopology | null {
+    if (!hasCurrentCanonicalTopology(raw)) return null;
     const candidate = raw.componentTopology;
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
     const topology = candidate as DetectedApplicationTopology;
-    if (topology.schemaVersion !== 1 || !Array.isArray(topology.components) || !Array.isArray(topology.relationships) || !Array.isArray(topology.blockers)) return null;
     return topology;
   }
 
@@ -593,8 +672,8 @@ export class DeploymentContractService {
       ? "static"
       : profile.language === "python" || profile.ecosystem === "python" ? "python" : "javascript";
     const template = this.templateRegistry.getTemplate(profile.selectedTemplate || component.frameworkVariant);
-    const evidence = this.environmentEvidence(raw);
-    const componentDatabase = component.role === "backend" && Boolean(component.databaseType);
+    const evidence = this.topologyEnvironmentEvidence(component.environment);
+    const componentDatabase = (component.role === "backend" || component.role === "application") && Boolean(component.databaseType);
     const databaseAliases = new Set(componentDatabase
       ? SERVICE_ALIAS_GROUPS.filter((group) => group.service === (databaseEngine || component.databaseType || "postgres")).flatMap((group) => [...group.aliases])
       : []);
@@ -607,6 +686,7 @@ export class DeploymentContractService {
       role: component.role,
       root: component.root,
       buildContext: component.buildContext,
+      repositoryInstallRoot: this.stringValue(raw.repositoryInstallRoot) || parent.repositoryInstallRoot,
       detectorId: this.stringValue(raw.detectorId) || `${component.framework}:${component.frameworkVariant}`,
       language,
       framework: component.framework,
@@ -618,16 +698,32 @@ export class DeploymentContractService {
       runtimeVersion: staticWeb ? "static" : this.pinnedRuntimeVersion(language as DeploymentContractLanguage, profile.runtimeVersion, template?.baseImage || null),
       baseImage: dockerStrategy === "custom" ? this.stringValue(raw.dockerfileBuildImage) || "" : this.stringValue(raw.resolvedBaseImage) || template?.baseImage || "",
       runtimeImage: dockerStrategy === "custom" ? this.stringValue(raw.dockerfileRuntimeImage) || "" : this.stringValue(raw.resolvedRuntimeImage) || template?.runtimeImage || "",
+      ...(dockerStrategy === "generated" ? {
+        buildImageFamily: this.imageFamily(this.stringValue(raw.resolvedBaseImage) || template?.baseImage || ""),
+        runtimeImageFamily: this.imageFamily(this.stringValue(raw.resolvedRuntimeImage) || template?.runtimeImage || ""),
+      } : {}),
       installCommand: staticWeb ? "true" : this.stringValue(raw.installCommand) || "",
+      buildSystemDependencies: this.unique(this.stringArray(raw.buildSystemDependencies)),
+      runtimeSystemDependencies: this.unique(this.stringArray(raw.runtimeSystemDependencies)),
+      systemDependencyEvidence: {
+        build: this.unique(this.stringArray(raw.buildSystemDependencies)),
+        runtime: this.unique(this.stringArray(raw.runtimeSystemDependencies)),
+      },
       buildCommand: profile.buildCommand || null,
+      ...(this.buildInitialization(raw, profile.buildCommand || null, language, component.framework) ? {
+        buildInitialization: this.buildInitialization(raw, profile.buildCommand || null, language, component.framework),
+      } : {}),
+      releaseCommand: this.stringValue(raw.releaseCommand),
       runCommand: profile.startCommand || null,
       runtimeFiles: this.stringArray(raw.runtimeFiles),
       outputDirectory: staticWeb ? "." : this.stringValue(raw.outputDirectory),
       port: component.port,
       healthPath: component.healthCheckPath,
+      healthCheckMode: component.healthCheckMode,
       bindHost: this.stringValue(raw.bindHost),
       bindsToPortEnv: raw.bindsToPortEnv === true,
       dockerStrategy,
+      ...(dockerStrategy === "custom" && this.stringValue(raw.dockerfilePath) ? { dockerfilePath: this.stringValue(raw.dockerfilePath)! } : {}),
       dockerTemplate: profile.selectedTemplate || component.frameworkVariant,
       environmentOwnership: this.buildPlanEnvironmentOwnership(evidence, databaseAliases, platformNames),
       database: {
@@ -635,47 +731,105 @@ export class DeploymentContractService {
         provider: componentDatabase ? "managed" : "none",
         engine: componentDatabase ? databaseEngine || component.databaseType : null,
       },
+      persistentStorageRequired: profile.requiresPersistentStorage || raw.persistentStorageRequired === true,
     };
   }
 
   private componentAsBuildPlan(parent: BuildPlan, component: BuildPlanComponent): BuildPlan {
     const environmentOwnership = component.environmentOwnership;
+    const requiredInputs = environmentOwnership.filter((item) => item.required && item.source !== "repository").map((item) => item.key);
+    const requiredUserInputs = environmentOwnership
+      .filter((item) => item.owner === "application" && item.source !== "repository" && (item.required || item.requirement === "unknown"))
+      .map((item) => item.key);
+    const optionalInputs = environmentOwnership.filter((item) => !item.required && item.owner === "application" && item.source !== "repository").map((item) => item.key);
     return {
-      ...parent,
+      planVersion: parent.planVersion,
+      detectorVersion: parent.detectorVersion,
+      repositoryFullName: parent.repositoryFullName,
+      branch: parent.branch,
+      commitSha: parent.commitSha,
       detectorId: component.detectorId,
       language: component.language === "static" ? "javascript" : component.language,
       framework: component.framework,
       frameworkMode: component.frameworkMode,
+      confidence: parent.confidence,
+      platformBackendMount: parent.platformBackendMount || PLATFORM_BACKEND_MOUNT,
+      evidence: parent.evidence,
       appRoot: component.root,
-      repositoryInstallRoot: component.buildContext,
+      repositoryInstallRoot: component.repositoryInstallRoot,
       packageManager: component.packageManager,
       dependencyManifest: component.dependencyManifest,
       lockfile: component.lockfile,
       runtimeVersion: component.runtimeVersion,
       baseImage: component.baseImage,
       runtimeImage: component.runtimeImage,
+      ...(component.buildImageFamily ? { buildImageFamily: component.buildImageFamily } : {}),
+      ...(component.runtimeImageFamily ? { runtimeImageFamily: component.runtimeImageFamily } : {}),
       installCommand: component.installCommand,
+      buildSystemDependencies: component.buildSystemDependencies || [],
+      runtimeSystemDependencies: component.runtimeSystemDependencies || [],
+      systemDependencyEvidence: component.systemDependencyEvidence || { build: [], runtime: [] },
       buildCommand: component.buildCommand,
       buildCommands: component.buildCommand ? [component.buildCommand] : [],
+      ...(component.buildInitialization ? { buildInitialization: component.buildInitialization } : {}),
+      releaseCommand: component.releaseCommand || null,
+      releaseCommands: component.releaseCommand ? [component.releaseCommand] : [],
       runCommand: component.runCommand,
       runtimeFiles: component.runtimeFiles,
       outputDirectory: component.outputDirectory,
+      portSource: "component_topology",
       port: component.port,
-      healthPath: component.healthPath,
+      healthPath: component.healthCheckMode === "tcp" ? parent.healthPath : component.healthPath || parent.healthPath,
       bindHost: component.bindHost,
       bindsToPortEnv: component.bindsToPortEnv,
       runtimeType: component.runtimeType,
       database: component.database,
       environmentOwnership,
-      requiredInputs: environmentOwnership.filter((item) => item.required).map((item) => item.key),
-      buildTimeEnvVars: environmentOwnership.filter((item) => item.phase === "build").map((item) => item.key),
-      runtimeEnvVars: environmentOwnership.filter((item) => item.phase === "runtime").map((item) => item.key),
-      secretEnvVars: environmentOwnership.filter((item) => item.secret).map((item) => item.key),
+      requiredInputs,
+      requiredUserInputs,
+      optionalInputs,
+      buildTimeEnvVars: environmentOwnership.filter((item) => item.phase === "build" && item.source !== "repository").map((item) => item.key),
+      runtimeEnvVars: environmentOwnership.filter((item) => item.phase === "runtime" && item.source !== "repository").map((item) => item.key),
+      secretEnvVars: environmentOwnership.filter((item) => item.secret && item.source !== "repository").map((item) => item.key),
       dockerStrategy: component.dockerStrategy,
+      ...(component.dockerfilePath ? { dockerfilePath: component.dockerfilePath } : {}),
       dockerTemplate: component.dockerTemplate,
+      warnings: parent.warnings,
+      warningDetails: parent.warningDetails,
+      blockers: parent.blockers,
       components: [component],
-      relationships: [],
+      relationships: (parent.relationships || []).filter((relationship) => relationship.from === component.id || relationship.to === component.id),
+      serviceBindings: (parent.serviceBindings || []).filter((binding) => binding.sourceComponent === component.id || binding.targetComponent === component.id),
+      topology: parent.topology,
     };
+  }
+
+  private buildInitialization(
+    raw: Record<string, unknown>,
+    buildCommand: string | null,
+    language: string,
+    framework: string,
+  ): BuildInitialization | undefined {
+    const candidate = raw.buildInitialization;
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      const value = candidate as Record<string, unknown>;
+      if (value.contractVersion === "deployguard.build-initialization/v1"
+        && (value.mode === "none" || value.mode === "runtime_placeholders" || value.mode === "external_service_required")
+        && typeof value.reason === "string" && value.reason.trim().length > 0) {
+        return { contractVersion: value.contractVersion, mode: value.mode, reason: value.reason.trim() };
+      }
+    }
+    // Old immutable BuildPlans remain deployable while being conservative: the
+    // one known settings-initializing Django build gets the same ephemeral
+    // contract, rather than silently running with missing runtime values.
+    if (language === "python" && framework === "django" && /(?:^|\s)manage\.py\s+collectstatic(?:\s|$)/.test(buildCommand || "")) {
+      return {
+        contractVersion: "deployguard.build-initialization/v1",
+        mode: "runtime_placeholders",
+        reason: "Legacy Django collectstatic imports settings before managed runtime services are provisioned.",
+      };
+    }
+    return undefined;
   }
 
   private uniqueEnvironmentEvidence(items: EnvironmentEvidence[]) {
@@ -718,11 +872,27 @@ export class DeploymentContractService {
       .filter((item) => /^[A-Z][A-Z0-9_]*$/.test(item.key));
   }
 
-  private runtimeType(raw: Record<string, unknown>, profile: ProjectDetectionProfile): DeploymentRuntimeType {
+  private topologyEnvironmentEvidence(environment: DetectedApplicationTopology["components"][number]["environment"]): EnvironmentEvidence[] {
+    return environment.map((item) => ({
+      key: item.name,
+      required: item.requirement === "required",
+      phase: item.phase === "build" ? "build" as const : "runtime" as const,
+      secret: item.exposure === "private" && isSecretConfigurationKey(item.name),
+      public: item.exposure === "public",
+      component: item.owner === "frontend" ? "frontend" as const : item.owner === "platform" ? "platform" as const : "backend" as const,
+      exposure: item.exposure,
+      requirement: item.requirement,
+      ownership: item.owner === "database" || item.owner === "platform"
+        ? "platform" as const
+        : item.management === "repository-default" ? "repository_build" as const : "user" as const,
+    })).filter((item) => /^[A-Z][A-Z0-9_]*$/.test(item.key));
+  }
+
+  private runtimeType(raw: Record<string, unknown>, profile: { staticOutput: boolean }): DeploymentRuntimeType {
     return raw.runtimeType === "static" || profile.staticOutput ? "static" : "server";
   }
 
-  private language(profile: ProjectDetectionProfile): DeploymentContractLanguage | null {
+  private language(profile: { language: string | null; ecosystem: string }): DeploymentContractLanguage | null {
     if (profile.language === "javascript" || profile.ecosystem === "node") return "javascript";
     if (profile.language === "python" || profile.ecosystem === "python") return "python";
     return null;
@@ -750,8 +920,30 @@ export class DeploymentContractService {
     return typeof value === "string" && value.trim() ? value.trim() : null;
   }
 
+  private warningDetails(value: unknown): ReadinessWarningDetail[] {
+    if (!Array.isArray(value)) return [];
+    const valid = value.filter((item): item is ReadinessWarningDetail => Boolean(
+      item && typeof item === "object"
+      && typeof item.code === "string"
+      && item.severity === "warning"
+      && (item.scope === "application" || item.scope === "platform")
+      && item.deploymentAllowed === true
+      && typeof item.message === "string",
+    ));
+    return valid.filter((item, index) => valid.findIndex((candidate) => candidate.code === item.code) === index);
+  }
+
   private unique(values: string[]) {
     return [...new Set(values.map((item) => item.trim()).filter(Boolean))].sort();
+  }
+
+  private imageFamily(image: string): BuildPlanImageFamily | undefined {
+    const normalized = image.toLowerCase();
+    if (!normalized) return undefined;
+    if (/(?:^|[-:.])alpine(?:\d|[-:.]|$)/.test(normalized)) return { distro: "alpine", packageManager: "apk" };
+    if (/(?:^|[-:.])(?:slim|bookworm|bullseye|buster)(?:[-:.]|$)/.test(normalized)
+      || /^(?:python|node):\d/.test(normalized)) return { distro: "debian", packageManager: "apt" };
+    return undefined;
   }
 
   private databaseEngine(value: unknown): ManagedDatabaseEngine | null {

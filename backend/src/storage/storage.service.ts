@@ -4,14 +4,12 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Queue } from "bullmq";
 import { Request } from "express";
 import { DataSource, Repository } from "typeorm";
-import { randomUUID } from "node:crypto";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { acquireProjectConfigurationAdvisoryLock } from "../infrastructure/database-service-binding.service";
 import { ProjectPipelineRun, PipelineRunStatus } from "../projects/project-pipeline-run.entity";
@@ -24,11 +22,6 @@ import { ProjectPersistentStorage, PersistentStorageStatus } from "./project-per
 import { ProjectStorageEvent } from "./project-storage-event.entity";
 import { getStorageConfig } from "./storage.config";
 import { StoragePolicyService } from "./storage-policy.service";
-import { InactiveLegacyShadowInsertionAdapter } from "../orchestration-contracts/release-lane/inactive-legacy-shadow-insertion.adapter";
-import {
-  CrossLaneOwnershipClaim,
-  CrossLaneOwnershipEnforcementService,
-} from "../orchestration-contracts/release-lane/cross-lane-ownership-enforcement.service";
 
 type RequestInfo = Request | undefined;
 
@@ -51,8 +44,6 @@ export class StorageService {
     private readonly backupService: BackupService,
     private readonly dataSource: DataSource,
     private readonly config: ConfigService,
-    @Optional() private readonly legacyShadow?: InactiveLegacyShadowInsertionAdapter,
-    @Optional() private readonly crossLane?: CrossLaneOwnershipEnforcementService,
   ) {}
 
   async getRecommendation(user: User, projectId: string) {
@@ -103,25 +94,14 @@ export class StorageService {
 
   async provision(user: User, projectId: string, req?: RequestInfo) {
     const project = await this.findProjectForManage(user, projectId);
-    const runId = randomUUID();
-    const claim: CrossLaneOwnershipClaim = await (
-      this.crossLane?.acquireLegacy({
-        projectId: project.id,
-        operationId: runId,
-        actorId: `user:${user.id}`,
-        operationClass: "legacy_storage_provision",
-      }) ?? Promise.resolve({ enabled: false } as const)
-    );
     let created: { storage: ProjectPersistentStorage; run: ProjectPipelineRun };
-    try {
-      created = await this.dataSource.transaction(async (manager) => {
+    created = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, project.id, "production");
       const storageRepository = manager.getRepository(ProjectPersistentStorage);
       const runRepository = manager.getRepository(ProjectPipelineRun);
       const currentStorage = await this.persistStorageConfig(storageRepository, project.id, { enabled: true });
       if (!currentStorage.enabled) throw new BadRequestException("Persistent storage is disabled for this project.");
       const currentRun = await runRepository.save(runRepository.create({
-        ...(claim.enabled ? { id: runId } : {}),
         projectId: project.id,
         triggeredByUserId: user.id,
         repositoryUrl: project.repositoryUrl || "storage-provision",
@@ -134,14 +114,8 @@ export class StorageService {
       currentStorage.pipelineRunId = currentRun.id;
       const savedStorage = await storageRepository.save(currentStorage);
       return { storage: savedStorage, run: currentRun };
-      });
-      await this.crossLane?.linkLegacyRun(claim, created.run.id);
-    } catch (error) {
-      await this.crossLane?.release(claim);
-      throw error;
-    }
+    });
     const { storage, run } = created;
-    this.legacyShadow?.observeStorageProvision({ projectId: project.id, logicalOperationId: run.id });
     await this.pipelineQueue.add(
       "storage_provision",
       {

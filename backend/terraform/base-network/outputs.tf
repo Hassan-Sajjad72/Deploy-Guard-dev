@@ -39,19 +39,39 @@ output "internal_security_group_id" {
 }
 
 output "cloud_map_namespace_id" {
-  value = module.cloud_map.namespace_id
+  value = var.enable_cloud_map ? module.cloud_map[0].namespace_id : null
 }
 
 output "cloud_map_namespace_name" {
-  value = module.cloud_map.namespace_name
+  value = var.enable_cloud_map ? module.cloud_map[0].namespace_name : null
 }
 
 output "cloud_map_service_discovery_domain" {
-  value = module.cloud_map.service_discovery_domain
+  value = var.enable_cloud_map ? module.cloud_map[0].service_discovery_domain : null
 }
 
 output "default_cloud_map_service_id" {
-  value = module.cloud_map.default_service_id
+  value = var.enable_cloud_map ? module.cloud_map[0].default_service_id : null
+}
+
+output "ecr_repository_name" {
+  value = module.registry.repository_name
+}
+
+output "ecr_repository_url" {
+  value = module.registry.repository_url
+}
+
+output "canary_nat_gateway_count" {
+  value = module.network.nat_gateway_count
+}
+
+output "canary_ecr_image_tag_mutability" {
+  value = module.registry.image_tag_mutability
+}
+
+output "canary_ecs_assign_public_ip" {
+  value = (var.enable_ecs_foundation || var.enable_ecs_foundation_service) && var.ecs_egress_strategy == "public_ip"
 }
 
 output "efs_enabled" {
@@ -162,6 +182,14 @@ output "ecs_task_definition_arn" {
   value = module.ecs_service.ecs_task_definition_arn
 }
 
+output "ecs_execution_role_arn" {
+  value = module.ecs_service.ecs_execution_role_arn
+}
+
+output "ecs_task_role_arn" {
+  value = module.ecs_service.ecs_task_role_arn
+}
+
 output "ecs_capacity_provider_strategy" {
   value = module.ecs_service.ecs_capacity_provider_strategy
 }
@@ -194,6 +222,10 @@ output "ecs_log_group_name" {
   value = module.ecs_service.ecs_log_group_name
 }
 
+output "deployment_log_group_name" {
+  value = module.ecs_service.deployment_log_group_name
+}
+
 output "spot_event_rule_name" {
   value = module.eventbridge_spot.spot_event_rule_name
 }
@@ -205,3 +237,17 @@ output "spot_event_rule_arn" {
 output "spot_event_log_group_name" {
   value = module.eventbridge_spot.spot_event_log_group_name
 }
+
+output "database_enabled" { value = module.database_service.enabled }
+output "database_internal_host" { value = module.database_service.internal_host }
+output "database_port" { value = module.database_service.port }
+output "database_service_arn" { value = module.database_service.service_arn }
+output "database_cloud_map_service_arn" { value = module.database_service.cloud_map_service_arn }
+output "database_cloud_map_service_id" { value = module.database_service.cloud_map_service_id }
+output "database_task_definition_arn" { value = module.database_service.task_definition_arn }
+output "database_security_group_id" { value = module.database_service.security_group_id }
+output "database_efs_file_system_id" { value = module.database_service.efs_file_system_id }
+output "database_efs_access_point_id" { value = module.database_service.efs_access_point_id }
+output "database_password_secret_arn" { value = module.database_service.password_secret_arn }
+output "database_url_secret_arn" { value = module.database_service.database_url_secret_arn }
+output "database_backup_plan_id" { value = module.database_service.backup_plan_id }

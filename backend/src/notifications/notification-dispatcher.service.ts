@@ -40,7 +40,6 @@ export class NotificationDispatcherService {
     if (/cancel/.test(value)) return { type: "deployment_cancelled", kind: "stage" };
     if (/fail|blocked/.test(value)) return { type: "deployment_failed", kind: "critical" };
     if (/completed|deployed|stable_release/.test(value)) return { type: "deployment_succeeded", kind: "success" };
-    if (/scan|trivy|security/.test(value)) return { type: "scanning", kind: "stage" };
     if (/terraform|provision|state_lock/.test(value)) return { type: "provisioning", kind: "stage" };
     if (/build|docker/.test(value)) return { type: "building", kind: "stage" };
     if (/queue/.test(value)) return { type: "queued", kind: "stage" };

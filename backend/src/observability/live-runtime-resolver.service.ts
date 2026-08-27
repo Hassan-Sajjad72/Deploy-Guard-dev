@@ -110,13 +110,22 @@ export class LiveRuntimeResolverService {
     const region = this.config.get<string>("AWS_REGION", "us-east-1");
     const ecs = this.ecs(region);
     const elb = this.elb(region);
-    const [serviceResult, taskDefinitionResult, targetGroupResult, taskResult, healthResult] = await Promise.all([
+    const resolved = await Promise.allSettled([
       ecs.send(new DescribeServicesCommand({ cluster, services: [release.ecsServiceArn] })),
       ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: release.taskDefinitionArn })),
       elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [targetGroupArn] })),
       ecs.send(new ListTasksCommand({ cluster, serviceName: release.ecsServiceArn, desiredStatus: "RUNNING" })),
       elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: targetGroupArn })),
     ]);
+    const unexpected = resolved.find((result) => result.status === "rejected" && !this.isExpectedRuntimeAbsence(result.reason));
+    if (unexpected?.status === "rejected") throw unexpected.reason;
+    if (resolved.some((result) => result.status === "rejected")) {
+      this.cache.delete(project.id);
+      throw new ServiceUnavailableException("The previously authoritative LIVE runtime is no longer present in AWS.");
+    }
+    const [serviceResult, taskDefinitionResult, targetGroupResult, taskResult, healthResult] = resolved.map(
+      (result) => (result as PromiseFulfilledResult<any>).value,
+    );
     const service = serviceResult.services?.[0];
     const taskDefinition = taskDefinitionResult.taskDefinition;
     const targetGroup = targetGroupResult.TargetGroups?.[0];
@@ -164,4 +173,15 @@ export class LiveRuntimeResolverService {
 
   protected ecs(region: string) { return new ECSClient({ region }); }
   protected elb(region: string) { return new ElasticLoadBalancingV2Client({ region }); }
+  private isExpectedRuntimeAbsence(error: unknown) {
+    const name = String((error as { name?: unknown })?.name || "");
+    return [
+      "TargetGroupNotFoundException",
+      "TargetGroupNotFound",
+      "RuleNotFoundException",
+      "ServiceNotFoundException",
+      "ClusterNotFoundException",
+      "ResourceNotFoundException",
+    ].includes(name);
+  }
 }

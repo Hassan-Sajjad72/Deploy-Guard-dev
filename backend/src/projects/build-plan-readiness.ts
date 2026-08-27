@@ -21,7 +21,10 @@ export function evaluateBuildPlanReadiness(
   ])].sort();
   const configurationBlockers = (configuration.blockers || [])
     .filter((message) => !/^Required application configuration is unresolved:/i.test(message));
-  const blockers = [...new Set([...plan.blockers.filter((message) => !ENTRYPOINT_INPUT.test(message)), ...configurationBlockers])];
+  const topologyBlocker = plan.topology && ["UNRESOLVED", "UNSUPPORTED"].includes(plan.topology.analysisState)
+    ? [`Repository topology is ${plan.topology.analysisState.toLowerCase()} and cannot be dispatched.`]
+    : [];
+  const blockers = [...new Set([...plan.blockers.filter((message) => !ENTRYPOINT_INPUT.test(message)), ...configurationBlockers, ...topologyBlocker])];
   const warnings = [...new Set(plan.warnings)];
   return {
     status: blockers.length ? "BLOCKED" : requiredInputs.length ? "INPUT_REQUIRED" : warnings.length ? "READY_WITH_WARNINGS" : "READY",

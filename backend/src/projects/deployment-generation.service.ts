@@ -97,6 +97,9 @@ export class DeploymentGenerationService {
     if (!generation || !RETRYABLE_STATUSES.includes(generation.status)) {
       throw new BadRequestException({ code: "generation_not_retryable", message: "The failed operation generation is no longer the current candidate. Start a normal New Deploy." });
     }
+    if (generation.cleanupMetadata?.cleanupKind === "failed_candidate") {
+      throw new BadRequestException({ code: "generation_cleanup_started", message: "The failed candidate generation is being cleaned. Start a normal New Deploy." });
+    }
     if (generation.status === DeploymentGenerationStatus.FAILED) {
       generation.status = DeploymentGenerationStatus.DEPLOYING;
       generation.failedAt = null;
@@ -163,7 +166,13 @@ export class DeploymentGenerationService {
     return candidate;
   }
 
-  async markFailed(generationId: string, operationId: string, reason: string, manager?: EntityManager) {
+  async markFailed(
+    generationId: string,
+    operationId: string,
+    reason: string,
+    manager?: EntityManager,
+    options: { cleanupRequired?: boolean } = {},
+  ) {
     const repository = manager?.getRepository(ProjectDeploymentGeneration) || this.generations;
     const generation = await repository.findOne({ where: { id: generationId } });
     if (!generation || generation.status !== DeploymentGenerationStatus.DEPLOYING) return generation;
@@ -172,6 +181,15 @@ export class DeploymentGenerationService {
     generation.status = DeploymentGenerationStatus.FAILED;
     generation.failedAt = new Date();
     generation.metadata = { ...generation.metadata, failedOperationId: operationId, failureReason: reason.slice(0, 1000) };
+    if (options.cleanupRequired) {
+      generation.cleanupMetadata = {
+        ...generation.cleanupMetadata,
+        cleanupKind: "failed_candidate",
+        cleanupRequired: true,
+        cleanupStatus: "pending",
+        sourceOperationId: operationId,
+      };
+    }
     await repository.save(generation);
     const routeRepository = manager?.getRepository(ProjectEnvironmentRoute) || this.routes;
     const route = await routeRepository.findOne({ where: { projectId: generation.projectId, environmentName: generation.environmentName } });
@@ -185,7 +203,19 @@ export class DeploymentGenerationService {
   async markCleanupPending(generationId: string, evidence: Record<string, unknown>, manager?: EntityManager) {
     const repository = manager?.getRepository(ProjectDeploymentGeneration) || this.generations;
     const generation = await repository.findOne({ where: { id: generationId } });
-    if (!generation || !CLEANUP_STATUSES.includes(generation.status)) throw new BadRequestException("Generation is not eligible for retired cleanup.");
+    const failedCandidate = generation?.status === DeploymentGenerationStatus.FAILED
+      && generation.cleanupMetadata?.cleanupKind === "failed_candidate"
+      && generation.cleanupMetadata?.cleanupRequired === true;
+    if (!generation || (!CLEANUP_STATUSES.includes(generation.status) && !failedCandidate)) throw new BadRequestException("Generation is not eligible for cleanup.");
+    if (failedCandidate) {
+      generation.cleanupMetadata = {
+        ...generation.cleanupMetadata,
+        ...evidence,
+        cleanupStatus: "pending",
+        lastAttemptAt: new Date().toISOString(),
+      };
+      return repository.save(generation);
+    }
     generation.status = DeploymentGenerationStatus.CLEANUP_PENDING;
     generation.cleanupMetadata = { ...generation.cleanupMetadata, ...evidence, lastAttemptAt: new Date().toISOString() };
     return repository.save(generation);
@@ -194,8 +224,11 @@ export class DeploymentGenerationService {
   async cleanupTarget(generationId: string, manager?: EntityManager) {
     const repository = manager?.getRepository(ProjectDeploymentGeneration) || this.generations;
     const generation = await repository.findOne({ where: { id: generationId } });
-    if (!generation || !CLEANUP_STATUSES.includes(generation.status)) {
-      throw new BadRequestException("Only a retired generation can be selected for cleanup.");
+    const failedCandidate = generation?.status === DeploymentGenerationStatus.FAILED
+      && generation.cleanupMetadata?.cleanupKind === "failed_candidate"
+      && generation.cleanupMetadata?.cleanupRequired === true;
+    if (!generation || (!CLEANUP_STATUSES.includes(generation.status) && !failedCandidate)) {
+      throw new BadRequestException("Only an eligible retired or failed candidate generation can be selected for cleanup.");
     }
     return generationCleanupTarget({
       projectId: generation.projectId,
@@ -209,7 +242,22 @@ export class DeploymentGenerationService {
   async markCleaned(generationId: string, evidence: Record<string, unknown>, manager?: EntityManager) {
     const repository = manager?.getRepository(ProjectDeploymentGeneration) || this.generations;
     const generation = await repository.findOne({ where: { id: generationId } });
-    if (!generation || !CLEANUP_STATUSES.includes(generation.status)) throw new BadRequestException("Generation is not eligible for cleanup completion.");
+    const failedCandidate = generation?.status === DeploymentGenerationStatus.FAILED
+      && generation.cleanupMetadata?.cleanupKind === "failed_candidate"
+      && generation.cleanupMetadata?.cleanupRequired === true;
+    if (!generation || (!CLEANUP_STATUSES.includes(generation.status) && !failedCandidate)) throw new BadRequestException("Generation is not eligible for cleanup completion.");
+    if (failedCandidate) {
+      generation.cleanedAt = new Date();
+      generation.resourceManifest = {};
+      generation.cleanupMetadata = {
+        ...generation.cleanupMetadata,
+        ...evidence,
+        cleanupStatus: "cleaned",
+        cleanupRequired: false,
+        verifiedCleanedAt: generation.cleanedAt.toISOString(),
+      };
+      return repository.save(generation);
+    }
     generation.status = DeploymentGenerationStatus.CLEANED;
     generation.cleanedAt = new Date();
     generation.resourceManifest = {};

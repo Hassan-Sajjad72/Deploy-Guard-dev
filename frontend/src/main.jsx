@@ -3,8 +3,9 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 import "./styles.css";
+import "./design-system.css";
 
-document.documentElement.dataset.theme = window.localStorage.getItem("deployguard-theme") === "light" ? "light" : "dark";
+document.documentElement.dataset.theme = "light";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

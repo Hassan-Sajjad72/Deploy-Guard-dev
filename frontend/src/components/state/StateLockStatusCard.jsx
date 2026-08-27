@@ -26,6 +26,8 @@ export default function StateLockStatusCard({ canForceRelease, lock, onForceRele
             <dd>{lock.pipelineRunId}</dd>
             <dt>Heartbeat</dt>
             <dd>{formatDate(lock.heartbeatAt)}</dd>
+            <dt>Released</dt>
+            <dd>{formatDate(lock.releasedAt)}</dd>
             <dt>Owner Worker</dt>
             <dd>{lock.ownerWorkerId || "-"}</dd>
           </dl>

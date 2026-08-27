@@ -40,8 +40,6 @@ import { ProjectPipelineRun } from "./projects/project-pipeline-run.entity";
 import { ProjectDeploymentGeneration } from "./projects/project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./projects/project-environment-route.entity";
 import { ProjectPreflightReport } from "./projects/project-preflight-report.entity";
-import { ProjectSecurityFinding } from "./projects/project-security-finding.entity";
-import { ProjectSecurityScan } from "./projects/project-security-scan.entity";
 import { Project } from "./projects/project.entity";
 import { User } from "./users/user.entity";
 import { AiAnalysisSession } from "./ai-troubleshooting/ai-analysis-session.entity";
@@ -69,21 +67,6 @@ import { ProjectCloudState } from "./infrastructure-lifecycle/project-cloud-stat
 import { ProjectStageCheckpoint } from "./projects/recovery/project-stage-checkpoint.entity";
 import { ProjectServiceBinding } from "./projects/project-service-binding.entity";
 import { ProjectConfigurationSnapshot } from "./projects/project-configuration-snapshot.entity";
-import { DeploymentIntent } from "./orchestration-contracts/entities/deployment-intent.entity";
-import { InfrastructureManifest } from "./orchestration-contracts/entities/infrastructure-manifest.entity";
-import { OrchestrationOutbox } from "./orchestration-contracts/entities/orchestration-outbox.entity";
-import { ProjectOperationLease } from "./orchestration-contracts/entities/project-operation-lease.entity";
-import { ProjectStateRevision } from "./orchestration-contracts/entities/project-state-revision.entity";
-import { ReleaseManifest } from "./orchestration-contracts/entities/release-manifest.entity";
-import { ReleaseImageProvenance } from "./orchestration-contracts/entities/release-image-provenance.entity";
-import { InitialReleaseDraft } from "./orchestration-contracts/entities/initial-release-draft.entity";
-import { WorkerCapability } from "./orchestration-contracts/entities/worker-capability.entity";
-import { DeploymentSideEffect } from "./orchestration-contracts/entities/deployment-side-effect.entity";
-import { DeploymentSideEffectReconciliation } from "./orchestration-contracts/entities/deployment-side-effect-reconciliation.entity";
-import { DeploymentSideEffectReconciliationLease } from "./orchestration-contracts/entities/deployment-side-effect-reconciliation-lease.entity";
-import { ProjectReleaseLaneOwnership } from "./orchestration-contracts/entities/release-lane-ownership.entity";
-import { ProjectReleaseLaneShadowObservation } from "./orchestration-contracts/entities/release-lane-shadow-observation.entity";
-import { ProjectPipelineJobFinality } from "./projects/pipeline/project-pipeline-job-finality.entity";
 import { GithubAppInstallation } from "./projects/github-app-installation.entity";
 
 function loadBackendEnv() {
@@ -119,7 +102,8 @@ function loadBackendEnv() {
 }
 
 function getDatabasePort() {
-  const value = process.env.DATABASE_PORT || process.env.DB_PORT || "5433";
+  // Migrations and the running API share one explicit canonical endpoint.
+  const value = process.env.DATABASE_PORT || "5432";
   const port = Number(value);
 
   if (!Number.isInteger(port) || port <= 0) {
@@ -133,13 +117,12 @@ loadBackendEnv();
 
 export default new DataSource({
   type: "postgres",
-  host: process.env.DATABASE_HOST || process.env.DB_HOST || "localhost",
+  host: process.env.DATABASE_HOST || "localhost",
   port: getDatabasePort(),
   username:
-    process.env.DATABASE_USERNAME || process.env.DB_USERNAME || "mini_paas_user",
-  password:
-    process.env.DATABASE_PASSWORD || process.env.DB_PASSWORD || "mini_paas_password",
-  database: process.env.DATABASE_NAME || process.env.DB_NAME || "mini_paas",
+    process.env.DATABASE_USERNAME || "mini_paas_user",
+  password: process.env.DATABASE_PASSWORD || "mini_paas_password",
+  database: process.env.DATABASE_NAME || "mini_paas",
   ssl:
     process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
   entities: [
@@ -160,8 +143,6 @@ export default new DataSource({
     ProjectStageCheckpoint,
     ProjectServiceBinding,
     ProjectConfigurationSnapshot,
-    ProjectSecurityScan,
-    ProjectSecurityFinding,
     ProjectCostEstimate,
     ProjectCostResourceBreakdown,
     ProjectCostSettings,
@@ -210,21 +191,6 @@ export default new DataSource({
     EmergencyCleanupOperation,
     CloudCleanupOperation,
     ProjectCloudState,
-    InfrastructureManifest,
-    ReleaseManifest,
-    ReleaseImageProvenance,
-    InitialReleaseDraft,
-    DeploymentIntent,
-    OrchestrationOutbox,
-    ProjectOperationLease,
-    ProjectStateRevision,
-    WorkerCapability,
-    DeploymentSideEffect,
-    DeploymentSideEffectReconciliation,
-    DeploymentSideEffectReconciliationLease,
-    ProjectReleaseLaneOwnership,
-    ProjectReleaseLaneShadowObservation,
-    ProjectPipelineJobFinality,
     GithubAppInstallation,
   ],
   migrations: ["src/migrations/*.ts"],

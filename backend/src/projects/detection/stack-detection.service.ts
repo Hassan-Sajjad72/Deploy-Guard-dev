@@ -6,6 +6,12 @@ import { RepoDeployabilityScannerService } from "./repo-deployability-scanner.se
 import { ProjectDeploymentOverrides } from "../project.entity";
 import { FrameworkDetectorResult } from "./framework-detector";
 import { MainstreamDetectorResolverService } from "./mainstream-detector-resolver.service";
+import { DeployGuardBuildProvider } from "./build-provider.service";
+import { ApplicationUnitDiscoveryService } from "./application-unit-discovery.service";
+import { RelationshipInferenceService } from "./relationship-inference.service";
+import type { RepositoryEvidence } from "./repository-evidence.types";
+import { TOPOLOGY_ANALYZER_VERSION, TOPOLOGY_SCHEMA_VERSION, type CanonicalTopology, type TopologyComponent, type TopologyEnvironmentVariable } from "./topology.types";
+import { PLATFORM_BACKEND_MOUNT } from "../service-binding";
 
 const IGNORED_DIRECTORIES = new Set([
   ".git",
@@ -63,40 +69,8 @@ export type DeploymentProfileDraft = {
   rawProfile: Record<string, unknown>;
 };
 
-export type DetectedApplicationComponent = {
-  id: "frontend" | "backend";
-  role: "frontend" | "backend";
-  root: string;
-  buildContext: string;
-  framework: string;
-  frameworkVariant: string;
-  runtimeType: "static" | "server";
-  port: number;
-  healthCheckPath: string;
-  databaseType: "postgres" | "mysql" | "mongodb" | null;
-  profile: DeploymentProfileDraft;
-};
-
-export type DetectedApplicationTopology = {
-  schemaVersion: 1;
-  status: "supported" | "blocked";
-  components: DetectedApplicationComponent[];
-  managedDatabase: null | {
-    engine: "postgres" | "mysql" | "mongodb";
-    ownerComponentId: "backend";
-  };
-  relationships: Array<{
-    from: "frontend";
-    to: "backend";
-    kind: "http";
-    mode: "same-origin" | "build-time-url";
-    pathPrefix: string;
-    stripPathPrefix: boolean;
-    buildTimeVariable: string | null;
-    verificationPath: string;
-  }>;
-  blockers: string[];
-};
+export type DetectedApplicationComponent = TopologyComponent;
+export type DetectedApplicationTopology = CanonicalTopology;
 
 type Candidate = { directory: string; relativeDirectory: string; files: Set<string> };
 
@@ -123,12 +97,15 @@ const SUPPORTED_FRAMEWORKS = new Set([
 @Injectable()
 export class StackDetectionService {
   private readonly logger = new Logger(StackDetectionService.name);
+  private readonly unitDiscovery = new ApplicationUnitDiscoveryService();
+  private readonly relationshipInference = new RelationshipInferenceService();
+  private readonly buildProvider: DeployGuardBuildProvider;
 
   constructor(
     private readonly templateMatchingService: TemplateMatchingService,
     private readonly deployabilityScanner: RepoDeployabilityScannerService,
     private readonly detectorResolver: MainstreamDetectorResolverService = new MainstreamDetectorResolverService(),
-  ) {}
+  ) { this.buildProvider = new DeployGuardBuildProvider(this.detectorResolver); }
 
   detect(
     workspacePath: string,
@@ -181,7 +158,7 @@ export class StackDetectionService {
       // Preserve an explicit unknown/failed profile; never infer a default stack.
     } else if (selected) {
       if (appFiles.has("package.json") || appFiles.has("manage.py") || this.hasPythonManifest(appFiles) || ["app.py", "main.py", "wsgi.py", "asgi.py"].some((name) => appFiles.has(name))) {
-        const detection = this.detectorResolver.resolve(appPath, appFiles);
+        const detection = this.buildProvider.resolve(appPath, appFiles);
         if (detection.result) {
           profile = this.applyDetectorResult(profile, detection.result, appPath, workspacePath);
           if (detection.ambiguous.length) profile.errors.push(`${detection.result.language === "javascript" ? "Conflicting JavaScript framework evidence" : "Ambiguous detector results"}: ${[detection.result.detectorId, ...detection.ambiguous].join(", ")}.`);
@@ -206,14 +183,14 @@ export class StackDetectionService {
         profile = this.detectRuby(appPath, profile);
       }
     } else {
-      warnings.push("No known stack manifests were found within scan depth 5.");
+      errors.push("No known stack manifests were found within scan depth 5.");
     }
 
     this.applyOverrides(profile, overrides, appPath, errors);
     // A repository Dockerfile is evidence, not the containerization decision.
     // Only the explicit custom override authorizes custom-Dockerfile analysis.
     const customDockerfileSelected = overrides.dockerfileMode === "custom";
-    const deployability = this.deployabilityScanner.scan(appPath, { ...profile, hasDockerfile: customDockerfileSelected });
+    const deployability = this.deployabilityScanner.scan(appPath, { ...profile, hasDockerfile: customDockerfileSelected && profile.hasDockerfile });
     Object.assign(profile.rawProfile, deployability);
     if (typeof deployability.detectedPort === "number") profile.expectedPort = deployability.detectedPort;
     if (deployability.databaseRequired) profile.requiresDatabase = true;
@@ -227,6 +204,7 @@ export class StackDetectionService {
     }
     if (overrides.outputDirectory) profile.rawProfile.outputDirectory = overrides.outputDirectory.trim();
     if (deployability.detectedHealthPath && !overrides.healthCheckPath) profile.healthCheckPath = deployability.detectedHealthPath;
+    if (customDockerfileSelected && typeof deployability.dockerfileRuntimeCommand === "string") profile.startCommand = deployability.dockerfileRuntimeCommand;
     warnings.push(...deployability.deployabilityWarnings);
     errors.push(...deployability.deployabilityBlockers);
     const ambiguousRootMessage = `Multiple application roots are plausible (${plausibleCandidates.slice(0, 3).map((candidate) => candidate.directory).join(", ")}). Select an application directory in Project Settings.`;
@@ -264,19 +242,31 @@ export class StackDetectionService {
     }
 
     if (template.unsupportedReason) {
-      warnings.push(template.unsupportedReason);
+      if (!errors.includes(template.unsupportedReason)) errors.push(template.unsupportedReason);
     } else if (profile.selectedTemplate === "custom-dockerfile-required") {
-      warnings.push("No safe automatic template was found.");
+      errors.push("No safe automatic template was found.");
     }
     profile.confidence = profile.framework && profile.framework !== "unknown"
       ? "high"
       : profile.ecosystem !== "unknown" ? "medium" : "low";
 
-    if (includeTopology && !preferredAppDirectory && repositoryEntries.length > 0) {
+    if (includeTopology && repositoryEntries.length > 0) {
       const topology = this.detectTopology(workspacePath, commitSha, candidates, overrides);
+      if (topology.status === "supported" && topology.components.length === 1) {
+        const canonical = topology.components[0].profile;
+        const repositoryDiagnostics = profile.rawProfile;
+        profile = {
+          ...canonical,
+          warnings: [...new Set([...canonical.warnings, ...profile.warnings])],
+          errors: [...new Set(canonical.errors)],
+          rawProfile: { ...repositoryDiagnostics, ...canonical.rawProfile },
+        };
+      }
       profile.rawProfile.componentTopology = topology;
       profile.rawProfile.components = topology.components.map(({ profile: _profile, ...component }) => component);
       profile.rawProfile.topologyStatus = topology.status;
+      profile.rawProfile.topologyShape = topology.shape;
+      profile.rawProfile.topologyAnalysisState = topology.analysisState;
       profile.rawProfile.topologyBlockers = topology.blockers;
       if (topology.components.length > 1) {
         const ambiguousIndex = profile.errors.indexOf(ambiguousRootMessage);
@@ -285,7 +275,10 @@ export class StackDetectionService {
         profile.rawProfile.appRootReason = "A bounded application component topology was analyzed instead of selecting one root.";
       }
       for (const blocker of topology.blockers) if (!profile.errors.includes(blocker)) profile.errors.push(blocker);
-      if (topology.status === "blocked") profile.detectionStatus = "manual_input_required";
+      if (topology.status === "blocked") {
+        profile.errors = [...topology.blockers];
+        profile.detectionStatus = "manual_input_required";
+      }
       else if (topology.components.length > 1 && profile.errors.length === 0) profile.detectionStatus = "success";
     }
 
@@ -305,27 +298,125 @@ export class StackDetectionService {
     manifestCandidates: Candidate[],
     overrides: ProjectDeploymentOverrides,
   ): DetectedApplicationTopology {
-    const components: DetectedApplicationComponent[] = [];
-    for (const candidate of manifestCandidates) {
+    const candidateEvidence = manifestCandidates.map((candidate) => {
       const root = relative(repositoryRoot, candidate.directory).replace(/\\/g, "/") || ".";
-      const componentProfile = this.detect(repositoryRoot, commitSha, root, overrides, false);
-      const role = this.componentRole(componentProfile);
-      if (!role || !componentProfile.framework || !SUPPORTED_FRAMEWORKS.has(componentProfile.framework)) continue;
-      components.push({
-        id: role,
-        role,
+      const exhaustive = this.buildProvider.resolveAll(candidate.directory, candidate.files);
+      return {
         root,
-        buildContext: root,
-        framework: componentProfile.framework,
-        frameworkVariant: componentProfile.frameworkVariant || componentProfile.selectedTemplate || "unknown",
-        runtimeType: componentProfile.staticOutput ? "static" : "server",
-        port: componentProfile.expectedPort || (componentProfile.staticOutput ? 8080 : 0),
-        healthCheckPath: componentProfile.staticOutput ? "/" : componentProfile.healthCheckPath || "/",
-        databaseType: role === "backend" && ["postgres", "mysql", "mongodb"].includes(String(componentProfile.databaseType || ""))
-          ? componentProfile.databaseType as "postgres" | "mysql" | "mongodb"
-          : null,
-        profile: componentProfile,
-      });
+        absoluteRoot: candidate.directory,
+        files: candidate.files,
+        manifests: Array.from(candidate.files).filter((name) => MANIFEST_NAMES.has(name)),
+        matches: exhaustive.matches.map((item) => item.result),
+      };
+    });
+    const units = this.unitDiscovery.discover(repositoryRoot, candidateEvidence);
+    const components: DetectedApplicationComponent[] = [];
+    const relationships: DetectedApplicationTopology["relationships"] = [];
+    const serviceBindings: DetectedApplicationTopology["serviceBindings"] = [];
+    const requiredUserInputs: string[] = [];
+    const artifacts: DetectedApplicationTopology["artifacts"] = [];
+    const evidence: RepositoryEvidence[] = units.flatMap((unit) => unit.evidence);
+    const unresolvedEvidence: RepositoryEvidence[] = [];
+    const blockers: string[] = [];
+    const warnings: string[] = [];
+    let shape: DetectedApplicationTopology["shape"] | null = null;
+    // A server-rendered web service is the public frontend when the same
+    // repository also contains a distinct backend service.  A lone SSR
+    // service remains an application/runtime owner.  This is role assignment
+    // from the already-detected service inventory, not framework inference.
+    const hasSeparateBackendService = units.some((unit) => unit.deployable
+      && unit.matches.some((match) => this.backendFramework(match.framework) && !match.unsupportedReasons.length));
+
+    for (const unit of units.filter((item) => item.deployable)) {
+      const unsupportedRuntime = unit.matches.find((match) => match.confidence >= 0.9 && match.unsupportedReasons.length > 0);
+      if (unsupportedRuntime) {
+        blockers.push(...unsupportedRuntime.unsupportedReasons);
+        shape = "UNSUPPORTED";
+        continue;
+      }
+      const frontendMatches = unit.matches.filter((match) => match.partialBuildPlan.runtimeType === "static" && !match.unsupportedReasons.length);
+      const backendMatches = unit.matches.filter((match) => this.backendFramework(match.framework) && !match.unsupportedReasons.length);
+      const ssrMatches = unit.matches.filter((match) => match.partialBuildPlan.runtimeType === "server" && !this.backendFramework(match.framework) && !match.unsupportedReasons.length);
+      if (backendMatches.length > 1) {
+        blockers.push(`Application unit '${unit.root}' has multiple competing backend runtimes: ${backendMatches.map((item) => item.framework).join(", ")}.`);
+        continue;
+      }
+      if (ssrMatches.length === 1 && backendMatches.length === 1) {
+        const source = this.readFrontendSource(unit.absoluteRoot);
+        const customServerProven = /\bnext\s*\(\s*\{|\b(?:getRequestHandler|handle)\s*\(/.test(source)
+          && /\.(?:listen)\s*\(/.test(source);
+        if (!customServerProven) {
+          blockers.push(`Application unit '${unit.root}' contains both an SSR runtime and a backend runtime, but custom-server ownership is not proven.`);
+          unresolvedEvidence.push(...unit.evidence.filter((item) => item.kind === "framework"));
+          continue;
+        }
+        const backend = backendMatches[0];
+        const profile = this.profileForDetector(repositoryRoot, unit.absoluteRoot, unit.files, commitSha, overrides, backend);
+        profile.buildCommand = ssrMatches[0].partialBuildPlan.buildCommand;
+        profile.rawProfile.runtimeFiles = ssrMatches[0].partialBuildPlan.runtimeFiles;
+        const component = this.topologyComponent("application", unit.root, profile, ["custom-server", "ssr-runtime"], unit.evidence);
+        components.push(component);
+        relationships.push({
+          kind: "SHARES_ROOT",
+          from: `capability:${unit.id}:custom-server`,
+          to: `capability:${unit.id}:ssr-runtime`,
+          evidence: unit.evidence.filter((item) => item.kind === "framework" || item.kind === "entrypoint"),
+        });
+        shape = "CUSTOM_SERVER_SSR";
+        continue;
+      }
+      if (frontendMatches.length && backendMatches.length === 1) {
+        const frontend = frontendMatches[0];
+        const backend = backendMatches[0];
+        const serving = this.relationshipInference.inferStaticServing(unit.absoluteRoot, unit.root);
+        evidence.push(...serving.evidence);
+        const output = frontend.partialBuildPlan.outputDirectory;
+        if (serving.status === "proven" && output && serving.path === output.replace(/^\.\//, "")) {
+          const profile = this.profileForDetector(repositoryRoot, unit.absoluteRoot, unit.files, commitSha, overrides, backend);
+          profile.buildCommand = frontend.partialBuildPlan.buildCommand;
+          profile.rawProfile.outputDirectory = output;
+          profile.rawProfile.runtimeFiles = [...new Set([...(profile.rawProfile.runtimeFiles as string[] || []), output])];
+          const component = this.topologyComponent("backend", unit.root, profile, ["backend-runtime", "frontend-build", "serves-static"], unit.evidence);
+          components.push(component);
+          relationships.push({
+            kind: "SHARES_ROOT",
+            from: `capability:${unit.id}:frontend-build`,
+            to: `capability:${unit.id}:backend-runtime`,
+            evidence: unit.evidence.filter((item) => item.kind === "framework" || item.kind === "manifest"),
+          });
+          const artifactId = `artifact:${unit.root}:${output}`;
+          artifacts.push({ id: artifactId, root: unit.root, path: output, kind: "static-output", producedBy: component.id });
+          relationships.push({ kind: "BUILDS_INTO", from: component.id, to: artifactId, evidence: unit.evidence.filter((item) => item.kind === "static-output") });
+          relationships.push({ kind: "SERVES", from: component.id, to: artifactId, evidence: serving.evidence });
+          shape = backend.language === "python" ? "PYTHON_SERVES_FRONTEND" : "MONOLITH_SERVES_FRONTEND";
+        } else {
+          const reason = serving.status === "unresolved"
+            ? "the static-serving path is dynamic or resolves to multiple artifacts"
+            : "no production static-serving relationship matches the frontend build artifact";
+          blockers.push(`Application unit '${unit.root}' contains frontend-build and backend-runtime capabilities, but ${reason}.`);
+          unresolvedEvidence.push(...unit.evidence.filter((item) => item.kind === "framework" || item.kind === "static-output"));
+        }
+        continue;
+      }
+      if (ssrMatches.length > 1) {
+        blockers.push(`Application unit '${unit.root}' has multiple competing SSR runtimes: ${ssrMatches.map((item) => item.framework).join(", ")}.`);
+        continue;
+      }
+      const selected = backendMatches[0] || ssrMatches[0] || frontendMatches[0];
+      if (!selected) continue;
+      const profile = this.profileForDetector(repositoryRoot, unit.absoluteRoot, unit.files, commitSha, overrides, selected);
+      const role = backendMatches[0]
+        ? "backend"
+        : frontendMatches[0] ? "frontend"
+          : hasSeparateBackendService ? "frontend" : "application";
+      components.push(this.topologyComponent(role, unit.root, profile, [selected.partialBuildPlan.runtimeType === "static" ? "frontend-build" : "http-runtime"], unit.evidence));
+      if (frontendMatches[0]?.partialBuildPlan.outputDirectory) {
+        const output = frontendMatches[0].partialBuildPlan.outputDirectory!;
+        const artifactId = `artifact:${unit.root}:${output}`;
+        artifacts.push({ id: artifactId, root: unit.root, path: output, kind: "static-output", producedBy: role });
+        relationships.push({ kind: "BUILDS_INTO", from: role, to: artifactId, evidence: unit.evidence.filter((item) => item.kind === "static-output") });
+      }
+      if (ssrMatches[0]) shape = "SSR_APPLICATION";
     }
     for (const root of this.findStaticWebRoots(repositoryRoot)) {
       if (components.some((component) => component.root === root)) continue;
@@ -334,34 +425,70 @@ export class StackDetectionService {
 
     const frontends = components.filter((component) => component.role === "frontend");
     const backends = components.filter((component) => component.role === "backend");
-    const blockers: string[] = [];
     if (frontends.length > 1) blockers.push("The bounded full-stack contract supports exactly one frontend component; multiple frontends were detected.");
-    if (backends.length > 1) blockers.push("The bounded full-stack contract supports at most one backend component; multiple backends were detected.");
+    // This is a developer-selectable service identity, not an application
+    // routing defect. Preserve the candidates and require an explicit choice
+    // before compiling a dispatchable two-service BuildPlan.
+    if (backends.length > 1) requiredUserInputs.push("Choose which of these backend service roots should be deployed.");
     if (components.length === 0) blockers.push("No supported deployable application component was detected.");
-    if (frontends.length === 1 && backends.length === 1 && frontends[0].runtimeType !== "static") {
-      blockers.push("This bounded full-stack release supports a static frontend with one backend; a server-rendered frontend plus backend is outside the current contract.");
-    }
     if (frontends.length === 1 && backends.length === 1 && frontends[0].profile.selectedTemplate === "custom-dockerfile") {
-      blockers.push("A full-stack custom frontend Dockerfile cannot be selected until it proves the DeployGuard-managed /api proxy contract. Use DeployGuard-generated frontend containerization or provide a supported single-component custom deployment.");
+      blockers.push("A full-stack custom frontend Dockerfile cannot be selected until it proves the declared DeployGuard-managed frontend/backend proxy contract. Use DeployGuard-generated frontend containerization or provide a supported single-component custom deployment.");
     }
 
-    const relationships: DetectedApplicationTopology["relationships"] = [];
     if (frontends.length === 1 && backends.length === 1) {
-      const relationship = this.frontendBackendRelationship(repositoryRoot, frontends[0].root, backends[0]);
-      if (relationship.blocker) blockers.push(relationship.blocker);
-      if (relationship.value) relationships.push(relationship.value);
+      const relationship = this.frontendBackendRelationship(repositoryRoot, frontends[0], backends[0]);
+      // Route discovery is optional evidence.  A runnable frontend and backend
+      // are not unsafe merely because static analysis cannot reconstruct an
+      // application's URL/rewrite semantics.
+      if (relationship.value?.kind === "CALLS") {
+        relationships.push(relationship.value);
+      }
+      const bindings = this.serviceBindings(frontends[0], backends[0]);
+      serviceBindings.push(...bindings.values);
+      requiredUserInputs.push(...bindings.requiredUserInputs);
     }
-    const backend = backends.length === 1 ? backends[0] : null;
-    const managedDatabase = backend?.databaseType
-      ? { engine: backend.databaseType, ownerComponentId: "backend" as const }
+    if (!shape) {
+      if (frontends.length === 1 && backends.length === 1) shape = units.length > 2 ? "BOUNDED_MONOREPO" : "DECOUPLED_FRONTEND_BACKEND";
+      else if (frontends.length === 1 && components.length === 1) shape = "STATIC_FRONTEND";
+      else if (backends.length === 1 && components.length === 1) shape = "BACKEND_API";
+      else if (components.length === 1 && components[0].role === "application") shape = "SSR_APPLICATION";
+    }
+    const runtimeOwner = components.find((component) => component.role === "backend" || component.role === "application") || null;
+    for (const component of components) evidence.push(...component.evidence);
+    const managedDatabase = runtimeOwner?.databaseType
+      ? { engine: runtimeOwner.databaseType, ownerComponentId: runtimeOwner.id as "backend" | "application" }
       : null;
+    if (managedDatabase) relationships.push({ kind: "USES_DATABASE", from: managedDatabase.ownerComponentId, to: `database:${managedDatabase.engine}`, evidence: runtimeOwner?.evidence.filter((item) => item.kind === "database" || item.kind === "dependency") || [] });
+    const workspaceRoot = units.find((unit) => unit.root === "." && unit.evidence.some((item) => item.kind === "workspace"));
+    if (workspaceRoot) for (const member of units.filter((unit) => unit.root !== ".")) relationships.push({ kind: "WORKSPACE_MEMBER", from: workspaceRoot.id, to: member.id, evidence: workspaceRoot.evidence.filter((item) => item.kind === "workspace") });
+    if (!runtimeOwner && components.some((component) => component.profile.requiresDatabase)) blockers.push("DATABASE_RUNTIME_OWNER_MISSING");
+    if (components.some((component) => component.profile.rawProfile.databaseRequired === true && !component.databaseType)) blockers.push("DATABASE_ENGINE_AMBIGUOUS");
+    if (this.requiredWorkerEvidence(repositoryRoot)) {
+      blockers.push("A required worker process is outside the bounded deployment topology.");
+      shape = "UNSUPPORTED";
+    }
+    const requiredTopologyInputs = components.some((component) => Array.isArray(component.profile.rawProfile.detectorRequiredInputs) && component.profile.rawProfile.detectorRequiredInputs.length > 0);
+    if (!shape && manifestCandidates.length > 0 && components.length === 0 && blockers.length === 1) shape = "UNSUPPORTED";
+    const analysisState = shape === "UNSUPPORTED" ? "UNSUPPORTED" : blockers.length ? "UNRESOLVED" : requiredTopologyInputs || requiredUserInputs.length ? "INPUT_REQUIRED" : "SUPPORTED";
     return {
-      schemaVersion: 1,
+      schemaVersion: TOPOLOGY_SCHEMA_VERSION,
+      analyzerVersion: TOPOLOGY_ANALYZER_VERSION,
+      shape: blockers.length && shape !== "UNSUPPORTED" ? "UNRESOLVED" : shape || "UNRESOLVED",
+      analysisState,
       status: blockers.length ? "blocked" : "supported",
+      confidence: blockers.length ? "unresolved" : relationships.some((item) => item.kind === "SERVES" || item.kind === "CALLS") ? "proven" : "bounded",
+      evidence,
+      applicationUnits: units.map((unit) => ({ id: unit.id, root: unit.root, manifests: unit.manifests, deployable: unit.deployable, detectorIds: unit.matches.map((item) => item.detectorId) })),
       components: components.sort((left, right) => (left.role === "frontend" ? -1 : 1) - (right.role === "frontend" ? -1 : 1)),
       managedDatabase,
+      databases: managedDatabase ? [{ id: `database:${managedDatabase.engine}`, engine: managedDatabase.engine, ownerComponentId: managedDatabase.ownerComponentId }] : [],
       relationships,
+      serviceBindings,
+      requiredUserInputs: [...new Set(requiredUserInputs)].sort(),
+      artifacts,
+      unresolvedEvidence,
       blockers,
+      warnings,
     };
   }
 
@@ -370,6 +497,149 @@ export class StackDetectionService {
     if (["express", "nestjs", "fastify", "flask", "fastapi", "django"].includes(profile.framework || "")) return "backend";
     if (["nextjs", "nuxt", "sveltekit", "astro", "remix", "streamlit"].includes(profile.framework || "")) return "frontend";
     return null;
+  }
+
+  private profileForDetector(
+    repositoryRoot: string,
+    appPath: string,
+    appFiles: Set<string>,
+    commitSha: string | null,
+    overrides: ProjectDeploymentOverrides,
+    detected: FrameworkDetectorResult,
+  ) {
+    const root = relative(repositoryRoot, appPath).replace(/\\/g, "/") || ".";
+    const hasDockerfile = appFiles.has("Dockerfile");
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const profile = this.applyDetectorResult(this.baseProfile(commitSha, hasDockerfile, warnings, errors, {
+      appDirectory: root,
+      appRootConfidence: "high",
+      repositoryDockerfileDetected: hasDockerfile,
+      deploymentOverrides: overrides,
+    }), detected, appPath, repositoryRoot);
+    const facts = this.buildProvider.extract(appPath, appFiles);
+    if (profile.ecosystem === "node") {
+      const database = this.detectNodeDatabase(facts.dependencies);
+      profile.requiresDatabase = Boolean(database);
+      profile.databaseType = database;
+      this.detectPersistentStorage(appPath, appFiles, profile, facts.dependencies);
+    } else {
+      this.detectPythonPersistentStorage(appPath, appFiles, profile, facts.dependencyText.toLowerCase());
+    }
+    this.applyOverrides(profile, overrides, appPath, errors);
+    const deployability = this.deployabilityScanner.scan(appPath, { ...profile, hasDockerfile: overrides.dockerfileMode === "custom" && profile.hasDockerfile });
+    Object.assign(profile.rawProfile, deployability);
+    if (typeof deployability.detectedPort === "number") profile.expectedPort = deployability.detectedPort;
+    if (deployability.detectedHealthPath && !overrides.healthCheckPath) profile.healthCheckPath = deployability.detectedHealthPath;
+    if (overrides.dockerfileMode === "custom" && typeof deployability.dockerfileRuntimeCommand === "string") profile.startCommand = deployability.dockerfileRuntimeCommand;
+    if (deployability.databaseRequired) profile.requiresDatabase = true;
+    if (["postgres", "mysql", "mongodb"].includes(String(deployability.databaseEngine || ""))) profile.databaseType = String(deployability.databaseEngine);
+    warnings.push(...deployability.deployabilityWarnings);
+    errors.push(...deployability.deployabilityBlockers);
+    const template = this.templateMatchingService.selectTemplate({ ...profile, dockerfileMode: overrides.dockerfileMode || "generated" });
+    profile.selectedTemplate = template.selectedTemplate;
+    profile.dockerfileRequired = template.dockerfileRequired;
+    profile.detectionStatus = errors.length ? "manual_input_required" : template.detectionStatus;
+    profile.rawProfile.templateMatched = template.templateMatched;
+    profile.rawProfile.containerizationSource = template.selectedTemplate === "custom-dockerfile" ? "repository" : "deployguard";
+    profile.rawProfile.detected = true;
+    profile.rawProfile.repositoryDockerfileIgnored = hasDockerfile && template.selectedTemplate !== "custom-dockerfile";
+    return profile;
+  }
+
+  private topologyComponent(
+    role: "frontend" | "backend" | "application",
+    root: string,
+    profile: DeploymentProfileDraft,
+    capabilities: string[],
+    evidence: RepositoryEvidence[],
+  ): DetectedApplicationComponent {
+    const databaseType = (role === "backend" || role === "application") && ["postgres", "mysql", "mongodb"].includes(String(profile.databaseType || ""))
+      ? profile.databaseType as "postgres" | "mysql" | "mongodb"
+      : null;
+    const rawEnvironment = Array.isArray(profile.rawProfile.environmentVariables)
+      ? profile.rawProfile.environmentVariables as Array<Record<string, unknown>>
+      : [];
+    const environment: TopologyEnvironmentVariable[] = rawEnvironment.filter((item) => item.productionRelevant !== false).map((item): TopologyEnvironmentVariable => ({
+      name: String(item.key || ""),
+      componentId: item.component === "platform" ? "platform" : role,
+      owner: item.component === "platform" ? "platform" : item.database === true ? "database" : role === "frontend" ? "frontend" : "backend",
+      phase: item.phase === "build" ? "build" : "runtime",
+      exposure: item.exposure === "public" ? "public" : "private",
+      requirement: item.requirement === "required" || item.requirement === "optional" ? item.requirement : "unknown",
+      management: item.ownership === "platform" || item.database === true ? "DeployGuard-managed" : item.ownership === "repository_build" ? "repository-default" : "user-supplied",
+      provenance: Array.isArray(item.sources) ? item.sources.map(String) : [],
+    })).filter((item) => /^[A-Z][A-Z0-9_]*$/.test(item.name));
+    const componentEvidence = [...evidence];
+    for (const variable of environment) componentEvidence.push({ kind: "env-reference", file: variable.provenance[0] || root, root, value: variable.name, confidence: "direct", references: variable.provenance });
+    if (databaseType) componentEvidence.push({ kind: "database", technology: databaseType, file: root, root, value: databaseType, confidence: "strong" });
+    const portSource = String(profile.rawProfile.portSource || "");
+    if (profile.expectedPort && ["source", "dockerfile_expose", "override", "platform_generated", "template_default"].includes(portSource)) {
+      componentEvidence.push({ kind: "port", file: root, root, value: String(profile.expectedPort), confidence: portSource === "source" ? "direct" : "strong" });
+    }
+    const explicitHealthPath = profile.staticOutput
+      ? "/"
+      : typeof profile.rawProfile.detectedHealthPath === "string"
+        ? profile.rawProfile.detectedHealthPath
+        : typeof (profile.rawProfile.deploymentOverrides as ProjectDeploymentOverrides | undefined)?.healthCheckPath === "string"
+          ? (profile.rawProfile.deploymentOverrides as ProjectDeploymentOverrides).healthCheckPath!
+          : profile.framework === "streamlit" && profile.healthCheckPath === "/_stcore/health"
+            ? "/_stcore/health"
+          : null;
+    if (explicitHealthPath) componentEvidence.push({ kind: "health-route", file: root, root, value: explicitHealthPath, confidence: profile.staticOutput ? "strong" : "direct" });
+    return {
+      id: role,
+      role,
+      root,
+      buildContext: root,
+      framework: profile.framework || "unknown",
+      frameworkVariant: profile.frameworkVariant || profile.selectedTemplate || "unknown",
+      runtimeType: profile.staticOutput ? "static" : "server",
+      port: profile.expectedPort || (profile.staticOutput ? 8080 : 0),
+      healthCheckPath: explicitHealthPath,
+      healthCheckMode: explicitHealthPath ? "http" : "tcp",
+      databaseType,
+      capabilities,
+      evidence: componentEvidence,
+      environment,
+      profile,
+    };
+  }
+
+  private backendFramework(framework: string) {
+    return ["express", "nestjs", "fastify", "flask", "fastapi", "django"].includes(framework);
+  }
+
+  private requiredWorkerEvidence(repositoryRoot: string) {
+    const visit = (directory: string, depth: number): boolean => {
+      if (depth > 5) return false;
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (IGNORED_DIRECTORIES.has(entry.name)) continue;
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (visit(path, depth + 1)) return true;
+          continue;
+        }
+        if (entry.name === "Procfile") {
+          const procfile = this.readOptionalFile(directory, entry.name) || "";
+          if (/^\s*(?:worker|queue|consumer|scheduler|clock|beat|cron)\s*:/im.test(procfile)) return true;
+        }
+        if (entry.name === "package.json") {
+          const scripts = this.readJsonFile(path)?.scripts;
+          if (scripts && typeof scripts === "object" && Object.entries(scripts as Record<string, unknown>).some(([name, command]) =>
+            /^(?:worker|queue|consumer|scheduler|cron|beat)(?::[\w-]+)?$/i.test(name) && typeof command === "string" && command.trim(),
+          )) return true;
+        }
+        // A dedicated worker/consumer source that instantiates a queue worker is
+        // process evidence even when its package script lives in a workspace.
+        if (/\.(?:[cm]?[jt]s|py)$/i.test(entry.name) && /(?:worker|consumer|scheduler|cron|tasks?)\b/i.test(entry.name)) {
+          const source = this.readOptionalFile(directory, entry.name) || "";
+          if (/\b(?:BullMQ|bullmq|\bbull\b|Celery|celery|Dramatiq|dramatiq|\brq\b|Queue\s*\(|new\s+Worker\s*\()/i.test(source)) return true;
+        }
+      }
+      return false;
+    };
+    return visit(repositoryRoot, 0);
   }
 
   private findStaticWebRoots(repositoryRoot: string) {
@@ -381,10 +651,9 @@ export class StackDetectionService {
       if (names.has("index.html")) {
         const root = relative(repositoryRoot, directory).replace(/\\/g, "/") || ".";
         const html = this.readOptionalFile(directory, "index.html") || "";
-        const strongName = /^(frontend|client|web|site|public)$/i.test(basename(directory));
         const assetEvidence = /<(?:script|link)\b[^>]*(?:src|href)=["'][^"']+/i.test(html)
           && (entries.some((entry) => entry.isDirectory() && /^(?:css|js|assets|images?)$/i.test(entry.name)) || /\.(?:css|js)(?:[?"'])/i.test(html));
-        if (strongName && assetEvidence) found.push(root);
+        if (assetEvidence) found.push(root);
       }
       for (const entry of entries) if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name)) visit(join(directory, entry.name), depth + 1);
     };
@@ -434,50 +703,154 @@ export class StackDetectionService {
       errors: [],
       rawProfile,
     };
-    return { id: "frontend", role: "frontend", root, buildContext: root, framework: "static-web", frameworkVariant: "static-web", runtimeType: "static", port: 8080, healthCheckPath: "/index.html", databaseType: null, profile };
+    return { id: "frontend", role: "frontend", root, buildContext: root, framework: "static-web", frameworkVariant: "static-web", runtimeType: "static", port: 8080, healthCheckPath: "/index.html", healthCheckMode: "http", databaseType: null, capabilities: ["frontend-build"], evidence: [{ kind: "entrypoint", file: root === "." ? "index.html" : `${root}/index.html`, root, value: "static web entrypoint", confidence: "direct" }], environment: [], profile };
   }
 
-  private frontendBackendRelationship(repositoryRoot: string, frontendRoot: string, backend: DetectedApplicationComponent): {
+  private frontendBackendRelationship(repositoryRoot: string, frontend: DetectedApplicationComponent, backend: DetectedApplicationComponent): {
     value: DetectedApplicationTopology["relationships"][number] | null;
-    blocker: string | null;
   } {
+    const frontendRoot = frontend.root;
     const source = this.readFrontendSource(join(repositoryRoot, frontendRoot));
-    const external = [...source.matchAll(/https?:\/\/[^\s"'`)]+/gi)].map((match) => match[0]);
-    const unsupported = external.find((url) => /(?:railway\.app|onrender\.com|vercel\.app|herokuapp\.com)/i.test(url));
-    if (unsupported) {
-      return { value: null, blocker: `Frontend component '${frontendRoot}' contains a hard-coded external backend URL (${unsupported}). Replace it with a relative API path or a supported public build-time API URL variable before deploying.` };
-    }
     const variable = source.match(/\b(?:VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*(?:API|BACKEND|SERVER)(?:_BASE)?_(?:URL|URI|ORIGIN|ENDPOINT|HOST)[A-Z0-9_]*\b/)?.[0] || null;
-    const publicPaths = this.frontendRequestPaths(source).filter((path) => path === "/api" || path.startsWith("/api/"));
+    const publicPaths = this.frontendRequestPaths(source);
+    const variableEvidence = (frontend.profile.rawProfile.environmentVariables as Array<Record<string, unknown>> | undefined)
+      ?.find((item) => item.key === variable);
+    const configuredPrefix = this.developmentApiPathname(variableEvidence?.detectedDefault);
     const backendPaths = this.backendRoutePaths(join(repositoryRoot, backend.root));
-    const preservedMatches = publicPaths.filter((path) => backendPaths.includes(path));
-    const preservedPath = preservedMatches.find((path) => /health|ready|status/i.test(path))
-      || preservedMatches[0]
-      || backendPaths.find((path) => (path === "/api" || path.startsWith("/api/")) && /health|ready|status/i.test(path))
-      || backendPaths.find((path) => path === "/api" || path.startsWith("/api/"))
-      || null;
-    const strippedMatches = publicPaths.filter((path) => backendPaths.includes(path.slice("/api".length) || "/"));
-    const strippedPath = strippedMatches.find((path) => /health|ready|status/i.test(path)) || strippedMatches[0] || null;
-    const mode = variable ? "build-time-url" as const : "same-origin" as const;
-    if (preservedPath) {
-      return { value: { from: "frontend", to: "backend", kind: "http", mode, pathPrefix: "/api", stripPathPrefix: false, buildTimeVariable: variable, verificationPath: preservedPath }, blocker: null };
+    const backendGetPaths = this.backendGetRoutePaths(join(repositoryRoot, backend.root));
+    if (configuredPrefix) {
+      const joinedPaths = publicPaths.map((path) => path === configuredPrefix || path.startsWith(`${configuredPrefix}/`)
+        ? path
+        : `${configuredPrefix}${path === "/" ? "" : path}`);
+      const preserves = backendPaths.some((path) => path === configuredPrefix || path.startsWith(`${configuredPrefix}/`));
+      const strips = publicPaths.some((path) => backendPaths.includes(path));
+      if (preserves && strips) {
+        return { value: null };
+      }
+      if (preserves) {
+        const verificationPath = joinedPaths.find((path) => path !== configuredPrefix && backendGetPaths.includes(path)) || null;
+        return { value: { from: "frontend", to: "backend", kind: "CALLS", evidence: [{ kind: "proxy", file: frontendRoot, root: frontendRoot, value: configuredPrefix, confidence: "direct" }], mode: "same-origin", pathPrefix: configuredPrefix, stripPathPrefix: false, buildTimeVariable: variable, verificationPath } };
+      }
+      if (strips) {
+        const verifiedBackendPath = publicPaths.find((path) => backendGetPaths.includes(path));
+        const verificationPath = verifiedBackendPath ? `${configuredPrefix}${verifiedBackendPath === "/" ? "" : verifiedBackendPath}` : null;
+        return { value: { from: "frontend", to: "backend", kind: "CALLS", evidence: [{ kind: "proxy", file: frontendRoot, root: frontendRoot, value: configuredPrefix, confidence: "direct" }], mode: "same-origin", pathPrefix: configuredPrefix, stripPathPrefix: true, buildTimeVariable: variable, verificationPath } };
+      }
+      return { value: null };
     }
-    if (strippedPath) {
-      return { value: { from: "frontend", to: "backend", kind: "http", mode, pathPrefix: "/api", stripPathPrefix: true, buildTimeVariable: variable, verificationPath: strippedPath }, blocker: null };
+    const preservedMatches = publicPaths.flatMap((publicPath) => backendPaths
+      .filter((backendPath) => publicPath === backendPath || (backendPath !== "/" && publicPath.startsWith(`${backendPath}/`)))
+      .map((backendPath) => ({ publicPath, backendPath })));
+    const preserved = preservedMatches.sort((left, right) => right.backendPath.length - left.backendPath.length)[0] || null;
+    const preservedPrefix = this.commonPathPrefix(preservedMatches.map((item) => item.publicPath));
+    const stripped = publicPaths.flatMap((publicPath) => backendPaths
+      .filter((backendPath) => backendPath !== "/" && publicPath.endsWith(backendPath) && publicPath !== backendPath)
+      .map((backendPath) => ({ publicPath, backendPath, prefix: publicPath.slice(0, -backendPath.length).replace(/\/$/, "") || "/" })))
+      .filter((item) => item.prefix !== "/")
+      .sort((left, right) => right.prefix.length - left.prefix.length)[0] || null;
+    const mode = variable && publicPaths.length === 0 ? "build-time-url" as const : "same-origin" as const;
+    const buildTimeVariable = variable;
+    const exactPreserved = preserved?.publicPath === preserved?.backendPath;
+    if (preserved && stripped && !exactPreserved) {
+      return { value: null };
     }
-    if (variable && backendPaths.includes(backend.healthCheckPath)) {
-      return { value: { from: "frontend", to: "backend", kind: "http", mode, pathPrefix: "/api", stripPathPrefix: true, buildTimeVariable: variable, verificationPath: `/api${backend.healthCheckPath === "/" ? "" : backend.healthCheckPath}` }, blocker: null };
+    if (preserved) {
+      const verificationPath = publicPaths.find((path) => backendGetPaths.includes(path)) || null;
+      const pathPrefix = preservedPrefix || preserved.backendPath;
+      return { value: { from: "frontend", to: "backend", kind: "CALLS", evidence: [{ kind: "proxy", file: frontendRoot, root: frontendRoot, value: pathPrefix, confidence: "direct" }], mode, pathPrefix, stripPathPrefix: false, buildTimeVariable, verificationPath } };
     }
-    const relativeApi = publicPaths.length > 0;
-    if (relativeApi) {
-      return { value: null, blocker: `Frontend component '${frontendRoot}' uses /api routes, but repository evidence does not prove whether backend component '${backend.root}' owns or strips that prefix.` };
+    if (stripped) {
+      const verificationPath = backendGetPaths.includes(stripped.backendPath) ? stripped.publicPath : null;
+      return { value: { from: "frontend", to: "backend", kind: "CALLS", evidence: [{ kind: "proxy", file: frontendRoot, root: frontendRoot, value: stripped.publicPath, confidence: "direct" }], mode, pathPrefix: stripped.prefix, stripPathPrefix: true, buildTimeVariable, verificationPath } };
     }
-    return { value: null, blocker: `Frontend component '${frontendRoot}' and backend were detected, but their API relationship could not be proven. Use relative /api requests or a supported public build-time API URL variable.` };
+    if (publicPaths.length > 0) {
+      return { value: null };
+    }
+    return { value: null };
+  }
+
+  /**
+   * Bind only an explicitly public development URL that deterministically
+   * identifies this repository's backend.  External URLs are intentionally
+   * absent from the result and therefore remain untouched.
+   */
+  private serviceBindings(frontend: DetectedApplicationComponent, backend: DetectedApplicationComponent) {
+    const values: DetectedApplicationTopology["serviceBindings"] = [];
+    const requiredUserInputs: string[] = [];
+    const variables = Array.isArray(frontend.profile.rawProfile.environmentVariables)
+      ? frontend.profile.rawProfile.environmentVariables as Array<Record<string, unknown>>
+      : [];
+    for (const variable of variables) {
+      const envAlias = typeof variable.key === "string" ? variable.key : "";
+      if (!/^(?:VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$/.test(envAlias)
+        || !/(?:API|BACKEND|SERVER)(?:_BASE)?_(?:URL|URI|ORIGIN|ENDPOINT|HOST)/.test(envAlias)) continue;
+      const value = typeof variable.detectedDefault === "string" ? variable.detectedDefault : null;
+      const local = value ? this.localServiceUrl(value) : null;
+      if (!local) continue; // no URL evidence, or an explicitly external URL
+      if (local.port !== backend.port) {
+        if (variable.required === true) requiredUserInputs.push(`Choose the backend service for ${envAlias}.`);
+        continue;
+      }
+      values.push({
+        sourceComponent: "frontend",
+        envAlias,
+        targetComponent: "backend",
+        bindingMode: "platform-proxy",
+        preservedPathname: local.pathname,
+        platformPathPrefix: PLATFORM_BACKEND_MOUNT,
+      });
+    }
+    return { values, requiredUserInputs };
+  }
+
+  private localServiceUrl(value: string): { port: number; pathname: string | null } | null {
+    try {
+      const url = new URL(value);
+      if (!/^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])$/i.test(url.hostname) || !url.port) return null;
+      const pathname = url.pathname.replace(/\/+$/, "") || "/";
+      return { port: Number(url.port), pathname: pathname === "/" ? null : pathname };
+    } catch {
+      return null;
+    }
   }
 
   private frontendRequestPaths(source: string) {
-    const paths = [...source.matchAll(/(?:fetch|axios(?:\.(?:get|post|put|patch|delete))?)\s*\(\s*[`"'](\/[A-Za-z0-9_./:-]*)/gi)]
-      .map((match) => match[1].replace(/\/$/, "") || "/");
+    const paths = [...source.matchAll(/(?:fetch|[A-Za-z_$][A-Za-z0-9_$]*\.(?:get|post|put|patch|delete))\s*\(\s*[`"'](\/?[A-Za-z0-9][A-Za-z0-9_./:-]*)/gi)]
+      .map((match) => `/${match[1].replace(/^\//, "")}`.replace(/\/$/, "") || "/");
+    return [...new Set(paths)];
+  }
+
+  private commonPathPrefix(paths: string[]) {
+    const unique = [...new Set(paths)];
+    if (!unique.length) return null;
+    const segments = unique.map((path) => path.split("/").filter(Boolean));
+    const common: string[] = [];
+    for (let index = 0; index < segments[0].length; index += 1) {
+      const value = segments[0][index];
+      if (!segments.every((parts) => parts[index] === value)) break;
+      common.push(value);
+    }
+    return common.length ? `/${common.join("/")}` : null;
+  }
+
+  private developmentApiPathname(value: unknown) {
+    if (typeof value !== "string" || !value.trim()) return null;
+    try {
+      const url = new URL(value);
+      if (!/^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])$/i.test(url.hostname)) return null;
+      const pathname = url.pathname.replace(/\/+$/, "") || "/";
+      return pathname === "/" ? null : pathname;
+    } catch {
+      return null;
+    }
+  }
+
+  private backendGetRoutePaths(root: string) {
+    const source = this.readFrontendSource(root);
+    const paths = [
+      ...source.matchAll(/\b(?:app|router|server)\s*\.\s*get\s*\(\s*[`"'](\/[A-Za-z0-9_./:-]*)/gi),
+      ...source.matchAll(/@(?:app|router)\.get\s*\(\s*[`"'](\/[A-Za-z0-9_./:-]*)/gi),
+    ].map((match) => match[1].replace(/\/$/, "") || "/");
     return [...new Set(paths)];
   }
 
@@ -494,7 +867,56 @@ export class StackDetectionService {
     for (const pattern of patterns) {
       for (const match of source.matchAll(pattern)) paths.push(match[1].startsWith("/") ? match[1] : `/${match[1]}`);
     }
+    paths.push(...this.djangoRoutePaths(root));
     return [...new Set(paths.map((path) => path.replace(/\/$/, "") || "/"))];
+  }
+
+  private djangoRoutePaths(root: string) {
+    const modules = new Map<string, string>();
+    const visit = (directory: string, depth: number) => {
+      if (depth > 5) return;
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const absolute = join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (!IGNORED_DIRECTORIES.has(entry.name)) visit(absolute, depth + 1);
+        } else if (entry.name === "urls.py") {
+          const module = relative(root, absolute).replace(/\\/g, "/").replace(/\.py$/, "").replace(/\//g, ".");
+          modules.set(module, readFileSync(absolute, "utf8").slice(0, 200_000));
+        }
+      }
+    };
+    visit(root, 0);
+    if (!modules.size) return [];
+    const source = this.readFrontendSource(root);
+    const configuredRoot = source.match(/\bROOT_URLCONF\s*=\s*[`"']([A-Za-z0-9_.]+)[`"']/)?.[1] || null;
+    const roots = configuredRoot && modules.has(configuredRoot)
+      ? [configuredRoot]
+      : [...modules.keys()].filter((module) => module.endsWith(".urls"));
+    const paths: string[] = [];
+    const normalize = (prefix: string, route: string) => {
+      const value = `${prefix}/${route}`.replace(/\/+/, "/").replace(/^\/+|\/+$/g, "");
+      return value && !/[<>]/.test(value) ? `/${value}` : value === "" ? "/" : null;
+    };
+    const walk = (module: string, prefix: string, ancestors: Set<string>) => {
+      if (ancestors.has(module)) return;
+      const text = modules.get(module);
+      if (!text) return;
+      const nextAncestors = new Set(ancestors).add(module);
+      for (const match of text.matchAll(/\b(?:path|re_path)\s*\(\s*[`"']([^`"']*)[`"']\s*,\s*([^\n]+)/g)) {
+        const route = match[1];
+        const target = match[2].trim();
+        const included = target.match(/^include\s*\(\s*[`"']([A-Za-z0-9_.]+)[`"']/)?.[1] || null;
+        if (included) {
+          const nestedPrefix = normalize(prefix, route);
+          if (nestedPrefix) walk(included, nestedPrefix, nextAncestors);
+          continue;
+        }
+        const path = normalize(prefix, route);
+        if (path) paths.push(path);
+      }
+    };
+    for (const module of roots) walk(module, "", new Set());
+    return [...new Set(paths)];
   }
 
   private readFrontendSource(root: string) {
@@ -504,7 +926,7 @@ export class StackDetectionService {
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
         if (entry.isDirectory()) {
           if (!IGNORED_DIRECTORIES.has(entry.name)) visit(join(directory, entry.name), depth + 1);
-        } else if (/\.(?:html|js|jsx|ts|tsx|vue|svelte)$/i.test(entry.name)) {
+        } else if (/\.(?:html|js|jsx|mjs|cjs|ts|tsx|vue|svelte|py)$/i.test(entry.name)) {
           chunks.push(readFileSync(join(directory, entry.name), "utf8").slice(0, 200_000));
         }
       }
@@ -538,6 +960,7 @@ export class StackDetectionService {
       runtimeFiles: plan.runtimeFiles,
       resolvedBaseImage: plan.baseImage,
       resolvedRuntimeImage: plan.runtimeImage,
+      buildInitialization: plan.buildInitialization,
       releaseCommand: plan.releaseCommand,
       outputDirectory: plan.outputDirectory,
       buildSystemDependencies: plan.buildSystemDependencies,
@@ -585,8 +1008,12 @@ export class StackDetectionService {
     if (overrides.healthCheckPath) profile.healthCheckPath = overrides.healthCheckPath;
     if (overrides.runtimeType) profile.staticOutput = overrides.runtimeType === "static";
     if (overrides.dockerfileMode === "custom") {
-      profile.hasDockerfile = existsSync(join(appPath, "Dockerfile"));
-      if (!profile.hasDockerfile) errors.push("Dockerfile mode is custom, but no Dockerfile exists in the selected application directory.");
+      const candidates = ["Dockerfile", "Dockerfile.prod", "docker/Dockerfile", "docker/backend.Dockerfile"]
+        .filter((path) => existsSync(join(appPath, path)));
+      profile.hasDockerfile = candidates.length === 1;
+      if (candidates.length === 1) profile.rawProfile.dockerfilePath = candidates[0];
+      if (candidates.length === 0) errors.push("Dockerfile mode is custom, but no supported Dockerfile path exists in the selected application directory.");
+      if (candidates.length > 1) errors.push(`Dockerfile mode is custom, but multiple Dockerfile paths are plausible (${candidates.join(", ")}). Select an unambiguous application directory or retain one authoritative Dockerfile.`);
     }
   }
 
@@ -827,8 +1254,28 @@ export class StackDetectionService {
     return found.sort()[0] || null;
   }
   private commandUsesPackageManager(command: string, packageManager: string) { return new RegExp(`^\\s*${packageManager.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(command); }
-  private detectNodeDatabase(dependencies: Record<string, unknown>) { const names = Object.keys(dependencies); if (names.some((name) => ["mongoose", "mongodb"].includes(name))) return "mongodb"; if (names.some((name) => ["mysql", "mysql2"].includes(name))) return "mysql"; if (names.some((name) => ["pg", "postgres"].includes(name))) return "postgres"; if (names.some((name) => ["typeorm", "prisma", "sequelize"].includes(name))) return "postgres"; if (names.some((name) => ["redis", "ioredis"].includes(name))) return "redis"; return null; }
-  private detectPersistentStorage(path: string, files: Set<string>, profile: DeploymentProfileDraft, dependencies: Record<string, unknown>) { const dirs = ["uploads", "media", "storage"].filter((name) => files.has(name)); if (dirs.length || dependencies.multer || this.hasSqliteUsage(path, files)) { profile.requiresPersistentStorage = true; profile.rawProfile.persistentStorageReason = dirs[0] || (dependencies.multer ? "multer dependency detected." : "sqlite file usage detected."); } }
-  private detectPythonPersistentStorage(_path: string, files: Set<string>, profile: DeploymentProfileDraft, dependencies: string) { const dirs = ["uploads", "media", "storage"].filter((name) => files.has(name)); if (dirs.length || /sqlite|upload/.test(dependencies)) { profile.requiresPersistentStorage = true; profile.rawProfile.persistentStorageReason = dirs[0] || "sqlite/upload usage detected."; } }
+  private detectNodeDatabase(dependencies: Record<string, unknown>) { const names = Object.keys(dependencies); if (names.some((name) => ["mongoose", "mongodb"].includes(name))) return "mongodb"; if (names.some((name) => ["mysql", "mysql2"].includes(name))) return "mysql"; if (names.some((name) => ["pg", "postgres"].includes(name))) return "postgres"; return null; }
+  private detectPersistentStorage(path: string, files: Set<string>, profile: DeploymentProfileDraft, dependencies: Record<string, unknown>) {
+    const categories = [
+      ...["uploads", "media", "storage"].filter((name) => files.has(name)).map(() => "writable-directory"),
+      ...(dependencies.multer ? ["upload-library"] : []),
+      ...(this.hasSqliteUsage(path, files) ? ["local-database-file"] : []),
+    ];
+    if (categories.length) {
+      profile.rawProfile.filesystemPersistenceDetected = true;
+      profile.rawProfile.filesystemPersistenceEvidence = [...new Set(categories)];
+    }
+  }
+  private detectPythonPersistentStorage(_path: string, files: Set<string>, profile: DeploymentProfileDraft, dependencies: string) {
+    const categories = [
+      ...["uploads", "media", "storage"].filter((name) => files.has(name)).map(() => "writable-directory"),
+      ...(/sqlite/.test(dependencies) ? ["local-database-file"] : []),
+      ...(/upload/.test(dependencies) ? ["upload-library"] : []),
+    ];
+    if (categories.length) {
+      profile.rawProfile.filesystemPersistenceDetected = true;
+      profile.rawProfile.filesystemPersistenceEvidence = [...new Set(categories)];
+    }
+  }
   private hasSqliteUsage(path: string, files: Set<string>) { if (Array.from(files).some((file) => /\.(sqlite|sqlite3|db)$/.test(file))) return true; return ["package.json", "server.js", "app.js", "index.js"].some((file) => /sqlite/i.test(this.readOptionalFile(path, file) || "")); }
 }

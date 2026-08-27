@@ -11,6 +11,7 @@ import {
   promotionIntentFingerprint,
 } from "./github-actions-promotion-evidence";
 import { ManagedDatabaseEngine, managedDatabaseProfile } from "./managed-database-engine";
+import { isSecretConfigurationKey } from "./configuration-ownership";
 
 export const GITHUB_ACTIONS_WORKFLOW_CONTRACT_VERSION = "deployguard.workflow-call/v2";
 export const GITHUB_ACTIONS_WORKFLOW_INPUTS = [
@@ -63,27 +64,38 @@ export function buildPlanWorkflowInputs(plan: BuildPlan): BuildPlanWorkflowInput
     throw new GithubActionsOperationContractError("invalid_contract", "BuildPlan application root is unsafe.");
   }
   const components = buildPlanComponents(plan);
+  const safeRepositoryPath = (value: unknown) => typeof value === "string" && /^(?:\.|[A-Za-z0-9._/-]+)$/.test(value) && !value.startsWith("/") && !value.split("/").includes("..");
   if (components.length > 2
-    || components.some((component) => !/^(?:\.|[A-Za-z0-9._/-]+)$/.test(component.buildContext) || component.buildContext.startsWith("/") || component.buildContext.split("/").includes(".."))
+    || components.some((component) => !safeRepositoryPath(component.buildContext) || !safeRepositoryPath(component.repositoryInstallRoot))
     || new Set(components.map((component) => component.id)).size !== components.length) {
     throw new GithubActionsOperationContractError("invalid_contract", "BuildPlan component inventory is unsafe or outside the bounded topology.");
   }
   const relationships = plan.relationships || [];
-  const fullStack = components.filter((component) => component.role === "frontend").length === 1
-    && components.filter((component) => component.role === "backend").length === 1;
   const safePath = (value: unknown) => typeof value === "string" && /^\/[A-Za-z0-9._~!$&()*+,;=:@%/-]+$/.test(value);
-  if ((fullStack && relationships.length !== 1)
-    || (!fullStack && relationships.length !== 0)
-    || relationships.some((relationship) => relationship.from !== "frontend"
+  if (relationships.some((relationship) => relationship.from !== "frontend"
       || relationship.to !== "backend"
       || relationship.kind !== "http"
       || !["same-origin", "build-time-url"].includes(relationship.mode)
       || !safePath(relationship.pathPrefix)
-      || !safePath(relationship.verificationPath))) {
-    throw new GithubActionsOperationContractError("invalid_contract", "BuildPlan component routing evidence is incomplete or unsafe.");
+      || (relationship.verificationPath !== null && !safePath(relationship.verificationPath)))) {
+    throw new GithubActionsOperationContractError("invalid_contract", "BuildPlan optional route evidence is unsafe.");
+  }
+  const bindings = plan.serviceBindings || [];
+  if (!safePath(plan.platformBackendMount)) {
+    throw new GithubActionsOperationContractError("invalid_contract", "BuildPlan platform backend mount is unsafe.");
+  }
+  if (bindings.some((binding) => binding.sourceComponent !== "frontend"
+    || binding.targetComponent !== "backend"
+    || binding.bindingMode !== "platform-proxy"
+    || !/^(?:VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$/.test(binding.envAlias)
+    || !safePath(binding.platformPathPrefix)
+    || (binding.preservedPathname !== null && !safePath(binding.preservedPathname))
+    || !components.some((component) => component.id === binding.sourceComponent)
+    || !components.some((component) => component.id === binding.targetComponent))) {
+    throw new GithubActionsOperationContractError("invalid_contract", "BuildPlan service binding is unsafe or references an absent component.");
   }
   const primary = components.find((component) => component.role === "frontend") || components[0];
-  const outputDirectory = primary.runtimeType === "static" ? primary.outputDirectory || "" : "";
+  const outputDirectory = primary.outputDirectory || "";
   if (outputDirectory && (!/^[A-Za-z0-9._/-]+$/.test(outputDirectory) || outputDirectory.startsWith("/") || outputDirectory.split("/").includes(".."))) {
     throw new GithubActionsOperationContractError("invalid_contract", "BuildPlan output directory is unsafe.");
   }
@@ -91,7 +103,10 @@ export function buildPlanWorkflowInputs(plan: BuildPlan): BuildPlanWorkflowInput
     build_plan_base64: Buffer.from(JSON.stringify(plan), "utf8").toString("base64"),
     application_root: primary.root,
     app_port: String(primary.port),
-    health_check_path: primary.healthPath,
+    // ALB liveness falls back to '/' when the repository did not prove an
+    // application health endpoint. Container/preflight TCP health remains
+    // represented by the component's null healthPath.
+    health_check_path: primary.healthPath || "/",
     container_profile: primary.dockerTemplate,
     output_directory: outputDirectory,
   };
@@ -192,6 +207,7 @@ export type GithubActionsRuntimeConfiguration = {
     generationId: string;
     terraformStateKey: string;
     resourceManifest: Record<string, unknown>;
+    cleanupReason?: "retired" | "failed_candidate";
   };
   environment: Record<string, string>;
   secretReferences: Record<string, string>;
@@ -370,7 +386,12 @@ function assertRuntimeConfiguration(configuration: GithubActionsRuntimeConfigura
     || configuration.projectPersistence.ownershipScope !== "project"
     || (configuration.retiredGenerationCleanup !== null && (
       !UUID.test(configuration.retiredGenerationCleanup.generationId)
-      || configuration.retiredGenerationCleanup.generationId === configuration.generationId
+      || (configuration.retiredGenerationCleanup.cleanupReason !== undefined
+        && !["retired", "failed_candidate"].includes(configuration.retiredGenerationCleanup.cleanupReason))
+      || (configuration.retiredGenerationCleanup.generationId === configuration.generationId
+        && configuration.retiredGenerationCleanup.cleanupReason !== "failed_candidate")
+      || (configuration.retiredGenerationCleanup.generationId !== configuration.generationId
+        && configuration.retiredGenerationCleanup.cleanupReason === "failed_candidate")
       || configuration.retiredGenerationCleanup.terraformStateKey !== `projects/${configuration.projectId}/${configuration.environmentName}/${configuration.retiredGenerationCleanup.generationId}/terraform.tfstate`
       || !configuration.retiredGenerationCleanup.resourceManifest
       || typeof configuration.retiredGenerationCleanup.resourceManifest !== "object"
@@ -378,6 +399,7 @@ function assertRuntimeConfiguration(configuration: GithubActionsRuntimeConfigura
     ))
     || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(configuration.environmentName)
     || !validRecord(configuration.environment, (value) => Buffer.byteLength(value) <= 4096 && !/[\r\n\0]/.test(value))
+    || Object.keys(configuration.environment).some(isSecretConfigurationKey)
     || !validRecord(configuration.secretReferences, (value) => SECRET_VALUE_FROM.test(value))
     || !configuration.retentionProtectedRelease
     || !Array.isArray(configuration.retentionProtectedRelease.imageDigests)

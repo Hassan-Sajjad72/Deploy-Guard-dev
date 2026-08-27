@@ -55,9 +55,12 @@ export default function DeploymentProfileCard({ profile }) {
           <MetricCard label="Ecosystem" value={profile.ecosystem || "Unknown"} detail={profile.language || "Language not resolved"} tone={detectionTone} />
           <MetricCard label="Framework" value={profile.framework || "Unknown"} detail={profile.frameworkVariant || "No variant"} tone={profile.framework ? "success" : "neutral"} />
           <MetricCard label="App Directory" value={profile.appDirectory || "."} detail="Build context selected by detection" />
-          <MetricCard label="Health Check" value={profile.healthCheckPath || "/health"} detail={`Expected port ${profile.expectedPort || "-"}`} />
+          <MetricCard label="Runtime" value={profile.runtimeType || (profile.staticOutput ? "static" : "server")} detail={`${profile.appRootConfidence || profile.confidence || "unknown"} app-root confidence`} />
+          <MetricCard label="Health Check" value={profile.healthCheckPath || "/"} detail={`Expected port ${profile.expectedPort || "-"}`} />
         </BentoGrid>
       </section>
+
+      {profile.components?.length ? <section className="panel"><div className="section-heading"><div><p className="eyebrow">Bounded topology</p><h2>Declared components</h2></div><StatusBadge status={profile.topologyStatus || "supported"} tone={profile.topologyStatus === "blocked" ? "danger" : "success"} /></div><dl className="details-list">{profile.components.map((component) => <div key={component.id}><dt>{component.role}</dt><dd>{component.framework} · {component.root} · build context {component.buildContext} · port {component.port}</dd></div>)}{profile.managedDatabase ? <div><dt>Managed database</dt><dd>{profile.managedDatabase.engine} · owned by {profile.managedDatabase.ownerComponentId}</dd></div> : null}</dl></section> : null}
 
       <section className="panel">
         <div className="section-heading">
@@ -77,6 +80,7 @@ export default function DeploymentProfileCard({ profile }) {
             profile.manifestFiles?.length ? profile.manifestFiles.join(", ") : "none"
           )}
           {row("Package Manager", profile.packageManager)}
+          {row("Install Command", profile.installCommand)}
           {row("Runtime Version", profile.runtimeVersion)}
           {row("Build Command", profile.buildCommand)}
           {row("Start Command", profile.startCommand)}
@@ -89,11 +93,16 @@ export default function DeploymentProfileCard({ profile }) {
             profile.requiresPersistentStorage ? "yes" : "no"
           )}
           {row("Static Output", profile.staticOutput ? "yes" : "no")}
+          {row("Output Directory", profile.outputDirectory)}
+          {row("Required Environment", profile.requiredEnvironmentVariables?.join(", ") || "none")}
+          {row("Optional Environment", profile.optionalEnvironmentVariables?.join(", ") || "none")}
+          {row("Source Files Scanned", profile.sourceFileCount)}
           {row("Has Dockerfile", profile.hasDockerfile ? "yes" : "no")}
           {row("Dockerfile Required", profile.dockerfileRequired ? "yes" : "no")}
           {row("Selected Template", profile.selectedTemplate)}
           {row("Template Matched", profile.templateMatched ? "yes" : "no")}
           {row("Confidence", profile.confidence)}
+          {row("App Root Reason", profile.appRootReason)}
           {row("Commit SHA", profile.commitSha)}
         </dl>
       </section>

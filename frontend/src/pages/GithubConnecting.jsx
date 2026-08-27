@@ -9,7 +9,7 @@ import { useAuth } from "../hooks/useAuth.js";
 const RETURN_KEY = "deployguard_oauth_return_to";
 
 function safeReturnTo(value) {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/deploy";
 }
 
 export default function GithubConnecting() {
@@ -46,7 +46,7 @@ export default function GithubConnecting() {
       return undefined;
     }
     if (isAuthenticated) {
-      navigate("/dashboard", { replace: true });
+      navigate("/deploy", { replace: true });
       return undefined;
     }
     const from = location.state?.from;
@@ -59,7 +59,7 @@ export default function GithubConnecting() {
   }, [isAuthenticated, isComplete, isLoading, location.state, navigate, oauthError, refreshUser]);
 
   if (oauthError || callbackFailed) {
-    return <main className="oauth-connecting-page"><section className="oauth-connecting-card"><ErrorState message="GitHub authentication could not be completed. Your account was not changed." /><Link className="button" to="/login">Return to login</Link><Link className="ghost-nav-link" to="/">Back to home</Link></section></main>;
+    return <main className="oauth-connecting-page"><section className="oauth-connecting-card"><ErrorState message="GitHub authentication could not be completed. Your account was not changed." /><Link className="button" to="/">Return to home</Link></section></main>;
   }
 
   if (isComplete) return <main className="oauth-connecting-page"><section className="oauth-connecting-card"><LoadingState message="Opening your DeployGuard workspace…" /></section></main>;

@@ -1,5 +1,7 @@
 import "reflect-metadata";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { GithubActionsDeploymentService } from "../src/projects/github-actions-deployment.service";
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 import {
@@ -14,6 +16,7 @@ const generationId = "404cd3c1-a7dd-4b26-85e9-f531b3cb7ef1";
 const historicalGenerationId = "11111111-2222-4333-8444-555555555555";
 const sourceId = "19686aa8-d31e-4d27-8ab5-429274ebfcbd";
 const commitSha = "a".repeat(40);
+const stableListenerRuleArn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener-rule/app/shared/abc/def";
 const inputs = Object.fromEntries(GITHUB_ACTIONS_INPUT_NAMES.map((name) => [name, "fixture"])) as GithubActionsOperationInputs;
 Object.assign(inputs, {
   deployment_action: "destroy",
@@ -24,7 +27,19 @@ Object.assign(inputs, {
   commit_sha: commitSha,
   environment_references_base64: Buffer.from(JSON.stringify({
     public: ["PUBLIC_SETTING"], secret: ["SECRET_SETTING"], configurationFingerprint: "f".repeat(64),
-    extinction: { projectId, knownGenerationIds: [generationId] },
+    projectDeletion: {
+      contractVersion: "deployguard.project-delete/v2",
+      projectId,
+      environmentName: "dev",
+      targetGenerationId: generationId,
+      generations: [{ generationId, status: "live", terraformStateKey: `projects/${projectId}/dev/${generationId}/terraform.tfstate`, resourceManifest: {} }],
+      projectResources: {
+        terraformStateKey: `projects/${projectId}/dev/project/terraform.tfstate`,
+        ecrRepositoryName: `deployguard-${projectId}`,
+        runtimeSecretName: `deployguard/${projectId}/dev/application/runtime`,
+        stableListenerRuleArn: null,
+      },
+    },
   })).toString("base64"),
 });
 const source: any = {
@@ -58,21 +73,20 @@ async function run() {
   service.oidcTrust = { ensureRepositoryAuthorized: async () => undefined };
   service.awsCapabilities = { ensure: async () => ({ contractVersion: "deployguard.workflow-aws/v1", fingerprint: "fixture", reconciled: false }) };
   service.nextAttempt = async () => 5;
-  service.destroyLifecycles = {
-    begin: async () => undefined,
-    acquire: async () => ({ id: "destroy-lifecycle", status: "DESTROYING", phase: "AWS_CLEANUP" }),
-  };
   let persisted: any = null;
   const repository = {
     manager: {
       query: async () => [],
-      getRepository: () => ({ find: async () => [{ id: historicalGenerationId }, { id: generationId }] }),
+      getRepository: () => ({
+        find: async () => [{ id: historicalGenerationId }, { id: generationId }],
+        findOne: async () => ({ metadata: { listenerRuleArn: stableListenerRuleArn } }),
+      }),
     },
     create: (value: any) => value,
     save: async (value: any) => { persisted = value; return value; },
   };
   let scheduled: { operation: any; inputs: GithubActionsOperationInputs } | null = null;
-  service.schedulePersistedOperation = (operation: any, _token: string, retryInputs: GithubActionsOperationInputs) => {
+  service.scheduleNewOperation = async (_repository: any, operation: any, _token: string, retryInputs: GithubActionsOperationInputs) => {
     scheduled = { operation, inputs: retryInputs };
   };
 
@@ -102,12 +116,20 @@ async function run() {
   const refreshedReferences = JSON.parse(Buffer.from((scheduled as any).inputs.environment_references_base64, "base64").toString("utf8"));
   assert.deepEqual(refreshedReferences.public, ["PUBLIC_SETTING"]);
   assert.deepEqual(refreshedReferences.secret, ["SECRET_SETTING"]);
-  assert.equal(refreshedReferences.extinction.projectId, projectId);
-  assert.deepEqual(refreshedReferences.extinction.knownGenerationIds, [historicalGenerationId, generationId]);
-  assert.equal(refreshedReferences.extinction.resourceManifest.generationId, generationId);
+  assert.equal(refreshedReferences.projectDeletion.projectId, projectId);
+  assert.deepEqual(
+    refreshedReferences.projectDeletion.generations.map((item: any) => item.generationId),
+    [historicalGenerationId, generationId],
+    "Destroy retry refreshes the exact recorded generation inventory",
+  );
+  assert.equal(refreshedReferences.projectDeletion.targetGenerationId, generationId);
+  assert.equal(refreshedReferences.projectDeletion.projectResources.stableListenerRuleArn, stableListenerRuleArn, "Destroy persists the exact stable route identity rather than rediscovering it from deploy configuration");
   assert.equal(source.status, PipelineRunStatus.FAILED, "the source Destroy remains failed");
   assert.equal(result.deployment.operation.deploymentAction, "destroy");
-  assert.equal(result.deployment.message, "Destroy retry queued as a new immutable attempt.");
+  assert.equal(result.deployment.message, "Destroy retry dispatched as a new immutable attempt.");
+
+  const deploymentSource = readFileSync(join(__dirname, "../src/projects/github-actions-deployment.service.ts"), "utf8");
+  assert.match(deploymentSource, /if \(action === "deploy"\) \{\s*await this\.deploymentGenerations\.bindCreatingOperation/, "Destroy must not use the candidate-generation creating-operation binding");
 
   persisted = null;
   scheduled = null;

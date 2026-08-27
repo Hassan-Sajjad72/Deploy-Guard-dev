@@ -12,7 +12,7 @@ import {
 } from "../project-detection-profile.entity";
 import { Project } from "../project.entity";
 import { ProjectsService } from "../projects.service";
-import { detectionFingerprint } from "../analysis-fingerprint";
+import { DETECTION_INPUT_FINGERPRINT_VERSION, detectionFingerprint } from "../analysis-fingerprint";
 import { DeploymentContractService } from "../deployment-contract.service";
 import { acquireProjectConfigurationAdvisoryLock } from "../../infrastructure/database-service-binding.service";
 import { canonicalEnvironmentName } from "../canonical-environment";
@@ -24,6 +24,8 @@ import {
   DeploymentProfileDraft,
   StackDetectionService,
 } from "./stack-detection.service";
+import { hasCurrentCanonicalTopology } from "./topology.types";
+import { readinessWarningDetails } from "../readiness-warning";
 
 @Injectable()
 export class DeploymentProfileService {
@@ -55,7 +57,8 @@ export class DeploymentProfileService {
       if (
         existing?.detectionStatus === DetectionStatus.SUCCESS &&
         existing.commitSha === commitSha &&
-        existing.inputFingerprint === fingerprint
+        existing.inputFingerprint === fingerprint &&
+        hasCurrentCanonicalTopology(existing.rawProfile)
       ) {
         await this.auditLogService.record({
           actorUser: user,
@@ -108,7 +111,7 @@ export class DeploymentProfileService {
       );
       draft.rawProfile.repositoryUrl = project.repositoryUrl;
       draft.rawProfile.targetBranch = project.targetBranch;
-      draft.rawProfile.inputFingerprintVersion = 3;
+      draft.rawProfile.inputFingerprintVersion = DETECTION_INPUT_FINGERPRINT_VERSION;
       const profile = await this.profileRepository.manager.transaction(async (manager) => {
         await acquireProjectConfigurationAdvisoryLock(manager, project.id, canonicalEnvironmentName(project));
         const currentProject = await manager.getRepository(Project).findOne({ where: { id: project.id } });
@@ -301,6 +304,31 @@ export class DeploymentProfileService {
 
   private toProfileResponse(profile: ProjectDetectionProfile) {
     const rawProfile = (profile.rawProfile || {}) as Record<string, unknown>;
+    const topology = rawProfile.componentTopology && typeof rawProfile.componentTopology === "object"
+      ? rawProfile.componentTopology as Record<string, unknown>
+      : null;
+    const topologyComponents = Array.isArray(topology?.components) ? topology.components : [];
+    const explicitWarningDetails = [
+      ...(Array.isArray(rawProfile.deployabilityWarningDetails) ? rawProfile.deployabilityWarningDetails : []),
+      ...topologyComponents.flatMap((component) => {
+        if (!component || typeof component !== "object") return [];
+        const componentProfile = (component as Record<string, any>).profile?.rawProfile;
+        return Array.isArray(componentProfile?.deployabilityWarningDetails) ? componentProfile.deployabilityWarningDetails : [];
+      }),
+    ].filter((item, index, items) => item && typeof item === "object" && items.findIndex((candidate: any) => candidate?.code === (item as any).code) === index);
+    const warningMessages = [
+      ...(profile.warnings || []),
+      ...(Array.isArray(rawProfile.deployabilityWarnings) ? rawProfile.deployabilityWarnings.map(String) : []),
+      ...topologyComponents.flatMap((component) => {
+        if (!component || typeof component !== "object") return [];
+        const componentProfile = (component as Record<string, any>).profile;
+        return [
+          ...(Array.isArray(componentProfile?.warnings) ? componentProfile.warnings.map(String) : []),
+          ...(Array.isArray(componentProfile?.rawProfile?.deployabilityWarnings) ? componentProfile.rawProfile.deployabilityWarnings.map(String) : []),
+        ];
+      }),
+    ];
+    const warningDetails = readinessWarningDetails(warningMessages, explicitWarningDetails as any);
     return {
       id: profile.id,
       projectId: profile.projectId,
@@ -345,6 +373,14 @@ export class DeploymentProfileService {
         ? ((rawProfile.componentTopology as Record<string, unknown>).managedDatabase || null)
         : null,
       topologyStatus: rawProfile.topologyStatus || null,
+      topologyShape: rawProfile.topologyShape || null,
+      topologyAnalysisState: rawProfile.topologyAnalysisState || null,
+      topologySchemaVersion: rawProfile.componentTopology && typeof rawProfile.componentTopology === "object"
+        ? ((rawProfile.componentTopology as Record<string, unknown>).schemaVersion || null)
+        : null,
+      topologyAnalyzerVersion: rawProfile.componentTopology && typeof rawProfile.componentTopology === "object"
+        ? ((rawProfile.componentTopology as Record<string, unknown>).analyzerVersion || null)
+        : null,
       topologyBlockers: Array.isArray(rawProfile.topologyBlockers) ? rawProfile.topologyBlockers : [],
       appRootConfidence: rawProfile.appRootConfidence ?? profile.confidence,
       appRootReason: rawProfile.appRootReason ?? null,
@@ -365,6 +401,7 @@ export class DeploymentProfileService {
       cloneError: rawProfile.cloneError ?? null,
       branchError: rawProfile.branchError ?? null,
       warnings: profile.warnings || [],
+      warningDetails,
       errors: profile.errors || [],
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
