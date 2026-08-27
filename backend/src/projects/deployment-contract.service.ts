@@ -126,7 +126,7 @@ export class DeploymentContractService {
     ]);
     const analysisRaw = (profile.rawProfile || {}) as Record<string, unknown>;
     const topology = this.applicationTopology(analysisRaw);
-    const topologyRuntimeOwners = topology?.components.filter((component) => component.role === "backend" || component.role === "application") || [];
+    const topologyRuntimeOwners = topology?.components.filter((component) => component.role === "backend" || component.role === "application" || (component.role === "frontend" && component.runtimeType === "server" && Boolean(component.databaseType))) || [];
     const topologyBackend = topologyRuntimeOwners.length === 1 ? topologyRuntimeOwners[0] : null;
     const canonicalComponent = topologyBackend || (topology?.components.length === 1 ? topology.components[0] : null);
     const unresolvedMultiComponentRuntimeOwner = Boolean(topology && topology.components.length > 1 && !topologyBackend);
@@ -351,7 +351,12 @@ export class DeploymentContractService {
     if (databaseTier?.provider === DatabaseTierProvider.EXTERNAL && this.localDatabaseHost(databaseTier.externalHost)) {
       blockers.push("External database host cannot be localhost because the application runs in ECS.");
     }
-    if (databaseRequired && raw.databaseLocalhostDetected === true) {
+    // Localhost may be a repository's documented development default.  Once a
+    // managed tier is selected, its exact database aliases are superseded by
+    // the generated service binding, so that default is not an ECS endpoint.
+    // Keep the guard for unresolved or external configuration, where a local
+    // host could still reach the generated runtime unchanged.
+    if (databaseRequired && raw.databaseLocalhostDetected === true && databaseTier?.provider !== DatabaseTierProvider.MANAGED) {
       blockers.push("Local database configuration detected. Localhost and Docker Compose service aliases are not valid ECS database hosts; use the DeployGuard-managed database environment contract.");
     }
     if (runtimeType === "static") {
@@ -673,7 +678,10 @@ export class DeploymentContractService {
       : profile.language === "python" || profile.ecosystem === "python" ? "python" : "javascript";
     const template = this.templateRegistry.getTemplate(profile.selectedTemplate || component.frameworkVariant);
     const evidence = this.topologyEnvironmentEvidence(component.environment);
-    const componentDatabase = (component.role === "backend" || component.role === "application") && Boolean(component.databaseType);
+    // A server-rendered frontend is an application runtime, not a static
+    // asset host.  It may therefore be the proven owner of the managed
+    // database in a single-service SSR topology.
+    const componentDatabase = (component.role === "backend" || component.role === "application" || (component.role === "frontend" && component.runtimeType === "server")) && Boolean(component.databaseType);
     const databaseAliases = new Set(componentDatabase
       ? SERVICE_ALIAS_GROUPS.filter((group) => group.service === (databaseEngine || component.databaseType || "postgres")).flatMap((group) => [...group.aliases])
       : []);

@@ -105,7 +105,7 @@ export type CanonicalTopology = {
   requiredUserInputs: string[];
   artifacts: TopologyArtifact[];
   databases: Array<{ id: string; engine: "postgres" | "mysql" | "mongodb"; ownerComponentId: string }>;
-  managedDatabase: null | { engine: "postgres" | "mysql" | "mongodb"; ownerComponentId: "backend" | "application" };
+  managedDatabase: null | { engine: "postgres" | "mysql" | "mongodb"; ownerComponentId: "frontend" | "backend" | "application" };
   unresolvedEvidence: RepositoryEvidence[];
   blockers: string[];
   warnings: string[];

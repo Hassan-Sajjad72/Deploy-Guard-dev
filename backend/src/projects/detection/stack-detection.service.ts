@@ -449,14 +449,19 @@ export class StackDetectionService {
     }
     if (!shape) {
       if (frontends.length === 1 && backends.length === 1) shape = units.length > 2 ? "BOUNDED_MONOREPO" : "DECOUPLED_FRONTEND_BACKEND";
-      else if (frontends.length === 1 && components.length === 1) shape = "STATIC_FRONTEND";
+      // A single frontend component may be either a static site or a complete
+      // server-rendered application.  The latter is the runtime owner for its
+      // managed database; treating every frontend as static loses that proven
+      // ownership and incorrectly turns a supported SSR application into an
+      // ambiguous database topology.
+      else if (frontends.length === 1 && components.length === 1) shape = frontends[0].runtimeType === "static" ? "STATIC_FRONTEND" : "SSR_APPLICATION";
       else if (backends.length === 1 && components.length === 1) shape = "BACKEND_API";
       else if (components.length === 1 && components[0].role === "application") shape = "SSR_APPLICATION";
     }
-    const runtimeOwner = components.find((component) => component.role === "backend" || component.role === "application") || null;
+    const runtimeOwner = components.find((component) => component.role === "backend" || component.role === "application" || (component.role === "frontend" && component.runtimeType === "server" && Boolean(component.databaseType))) || null;
     for (const component of components) evidence.push(...component.evidence);
     const managedDatabase = runtimeOwner?.databaseType
-      ? { engine: runtimeOwner.databaseType, ownerComponentId: runtimeOwner.id as "backend" | "application" }
+      ? { engine: runtimeOwner.databaseType, ownerComponentId: runtimeOwner.id }
       : null;
     if (managedDatabase) relationships.push({ kind: "USES_DATABASE", from: managedDatabase.ownerComponentId, to: `database:${managedDatabase.engine}`, evidence: runtimeOwner?.evidence.filter((item) => item.kind === "database" || item.kind === "dependency") || [] });
     const workspaceRoot = units.find((unit) => unit.root === "." && unit.evidence.some((item) => item.kind === "workspace"));
@@ -554,7 +559,7 @@ export class StackDetectionService {
     capabilities: string[],
     evidence: RepositoryEvidence[],
   ): DetectedApplicationComponent {
-    const databaseType = (role === "backend" || role === "application") && ["postgres", "mysql", "mongodb"].includes(String(profile.databaseType || ""))
+    const databaseType = (role === "backend" || role === "application" || (role === "frontend" && !profile.staticOutput)) && ["postgres", "mysql", "mongodb"].includes(String(profile.databaseType || ""))
       ? profile.databaseType as "postgres" | "mysql" | "mongodb"
       : null;
     const rawEnvironment = Array.isArray(profile.rawProfile.environmentVariables)

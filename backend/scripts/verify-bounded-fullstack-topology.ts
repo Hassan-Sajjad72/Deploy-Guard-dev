@@ -62,6 +62,17 @@ async function main() {
   ], "a proven SSR web service may be the bounded frontend beside one backend");
   assert.deepEqual(nextExpressMongo.managedDatabase, { engine: "mongodb", ownerComponentId: "backend" });
 
+  const nextSsrPostgres = await detect({
+    ...nextSsr("."),
+    ".env.example": "DB_HOST=localhost\nDB_PORT=5432\nDB_NAME=Smart\nDB_USER=postgres\nDB_PASSWORD=local-only\nJWT_SECRET=replace-me\n",
+    "src/lib/db.js": "const { Client }=require('pg'); module.exports=()=>new Client({host:process.env.DB_HOST,database:process.env.DB_NAME,user:process.env.DB_USER,password:process.env.DB_PASSWORD});",
+    "middleware.js": "if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET required');",
+    "package.json": JSON.stringify({ scripts: { build: "next build", start: "next start" }, dependencies: { next: "15.0.0", react: "19.0.0", pg: "8.12.0" } }),
+  });
+  assert.equal(nextSsrPostgres.status, "supported", nextSsrPostgres.blockers.join(" | "));
+  assert.equal(nextSsrPostgres.shape, "SSR_APPLICATION", "a database-backed SSR frontend is an application runtime, not a static frontend");
+  assert.deepEqual(nextSsrPostgres.managedDatabase, { engine: "postgres", ownerComponentId: "frontend" });
+
   const nextExpressMissingSecrets = await detect({
     ...nextSsr(),
     ...express("Backend", { mongoose: "8.6.0" }),
