@@ -1,0 +1,9 @@
+{
+  "name": "13_next_static_express_mysql",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "packageManager": "npm@10.9.0"
+}

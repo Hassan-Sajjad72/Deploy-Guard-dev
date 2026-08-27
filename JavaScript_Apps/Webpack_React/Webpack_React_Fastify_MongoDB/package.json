@@ -1,0 +1,9 @@
+{
+  "name": "10_webpack_react_fastify_mongodb",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "packageManager": "npm@10.9.0"
+}

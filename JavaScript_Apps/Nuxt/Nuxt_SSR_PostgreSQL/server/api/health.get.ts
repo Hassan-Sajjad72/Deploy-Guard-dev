@@ -1,0 +1,1 @@
+import pg from 'pg';export default defineEventHandler(async()=>{const p=new pg.Pool({connectionString:process.env.DATABASE_URL});await p.query('SELECT 1');await p.end();return{status:'ok',database:'postgresql'}});

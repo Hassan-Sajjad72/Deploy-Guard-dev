@@ -1,0 +1,1 @@
+import pg from'pg';export async function loader(){try{const p=new pg.Pool({connectionString:process.env.DATABASE_URL});await p.query('SELECT 1');await p.end();return Response.json({status:'ok',database:'postgresql'})}catch(e){return Response.json({status:'error',message:String(e)},{status:503})}} export default function Health(){return null}
