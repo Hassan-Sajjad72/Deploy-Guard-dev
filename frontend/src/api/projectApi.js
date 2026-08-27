@@ -1,15 +1,46 @@
 import { apiRequest, getApiBaseUrl } from "./client.js";
 
+// AppLayout's navigation and the route page mount together. Share only an
+// in-flight snapshot so the initial browser waterfall has one current-state
+// read without ever caching stale deployment status.
+const currentStateRequests = new Map();
+
 export function getProjects() {
   return apiRequest("/api/projects");
 }
 
-export function getWorkspaceSummary() {
-  return apiRequest("/api/projects/workspace-summary");
+export function getWorkspaceSummary(history = {}) {
+  const params = new URLSearchParams();
+  const keys = ["historyState", "historyProject", "historyFrom", "historyTo", "historyLimit", "historyCursor"];
+  for (const key of keys) {
+    if (typeof history[key] === "string" && history[key]) params.set(key, history[key]);
+  }
+  const query = params.toString();
+  return apiRequest(`/api/projects/workspace-summary${query ? `?${query}` : ""}`);
+}
+
+export function recordProjectView(projectId, route, section) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/activity/view`, {
+    method: "POST",
+    body: { route, ...(section ? { section } : {}) },
+  });
 }
 
 export function getGithubRepositories() {
   return apiRequest("/api/projects/github/repositories");
+}
+
+export function getGithubConnectionStatus() {
+  return apiRequest("/api/projects/github/status");
+}
+
+export function connectGithubAppInstallation(installationId) {
+  return apiRequest(`/api/projects/github/installations/${encodeURIComponent(installationId)}/connect`, { method: "POST" });
+}
+
+export function inspectGithubRepository(repositoryFullName) {
+  const [owner, repository] = repositoryFullName.split("/");
+  return apiRequest(`/api/projects/github/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`);
 }
 
 export function getGithubRepositoryBranches(repositoryFullName) {
@@ -29,16 +60,76 @@ export function getProject(projectId) {
 }
 
 export function getProjectCurrentState(projectId) {
+  const key = String(projectId);
+  const existing = currentStateRequests.get(key);
+  if (existing) return existing;
+  const request = apiRequest(
+    `/api/projects/${encodeURIComponent(projectId)}/current-state`,
+    { cache: "no-store" }
+  );
+  currentStateRequests.set(key, request);
+  request.then(
+    () => { if (currentStateRequests.get(key) === request) currentStateRequests.delete(key); },
+    () => { if (currentStateRequests.get(key) === request) currentStateRequests.delete(key); },
+  );
+  return request;
+}
+
+export function getProjectDetailedCurrentState(projectId) {
   return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/current-state`
+    `/api/projects/${encodeURIComponent(projectId)}/current-state/details`
   );
 }
 
-export function startProjectAutomation(projectId) {
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/automation/start`,
-    { method: "POST" }
-  );
+export function deployGithubActionsDeployment(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy`, {
+    method: "POST",
+  });
+}
+
+export function getGithubActionsDeploymentStatus(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy/status`);
+}
+
+export function getGithubActionsDeploymentHistory(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy/history`, { cache: "no-store" });
+}
+
+export function retryGithubActionsDeployment(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy/retry`, { method: "POST" });
+}
+
+export function resetAndDeployFresh(projectId, confirmationPhrase) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy/reset-fresh`, {
+    method: "POST",
+    body: { confirmationPhrase },
+  });
+}
+
+export function getGithubActionsRollbackCandidates(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy/rollback-candidates`, { cache: "no-store" });
+}
+
+export function rollbackGithubActionsDeployment(projectId, targetOperationId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy/rollback`, {
+    method: "POST",
+    body: { targetOperationId },
+  });
+}
+
+export function destroyGithubActionsDeployment(projectId, confirmationPhrase) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy/destroy`, { method: "POST", body: { confirmationPhrase } });
+}
+
+export function getDeploymentRequirements(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deployment-requirements`);
+}
+
+export function resolveDeploymentRequirements(projectId, data) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deployment-requirements/resolve`, {
+    method: "POST",
+    body: data,
+  });
 }
 
 export function updateProject(projectId, data) {
@@ -83,6 +174,13 @@ export function createProjectEnvVar(projectId, data) {
   });
 }
 
+export function bulkUpsertProjectEnvVars(projectId, variables) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/env/bulk`, {
+    method: "POST",
+    body: { variables },
+  });
+}
+
 export function updateProjectEnvVar(projectId, envId, data) {
   return apiRequest(
     `/api/projects/${encodeURIComponent(projectId)}/env/${encodeURIComponent(envId)}`,
@@ -122,86 +220,6 @@ export function generatePreflightReport(projectId) {
 
 export function getPreflightReport(projectId) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/preflight`);
-}
-
-export function startPipelineRun(projectId, options) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/pipeline/runs`, {
-    method: "POST",
-    body: options,
-  });
-}
-
-export function getPipelineRuns(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/pipeline/runs`);
-}
-
-export function getPipelineRun(projectId, runId) {
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/pipeline/runs/${encodeURIComponent(runId)}`
-  );
-}
-
-export function getPipelineRunEvents(projectId, runId) {
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/pipeline/runs/${encodeURIComponent(runId)}/events`
-  );
-}
-
-export function cancelPipelineRun(projectId, runId) {
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/pipeline/runs/${encodeURIComponent(runId)}/cancel`,
-    { method: "POST" }
-  );
-}
-
-export function retryPipelineRun(projectId, runId) {
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/pipeline/runs/${encodeURIComponent(runId)}/retry`,
-    { method: "POST" }
-  );
-}
-
-export function triggerSecurityScan(projectId, data) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/security-scans`, {
-    method: "POST",
-    body: data,
-  });
-}
-
-export function getSecurityScans(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/security-scans`);
-}
-
-export function getSecurityScan(projectId, scanId) {
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/security-scans/${encodeURIComponent(scanId)}`
-  );
-}
-
-export function getSecurityScanFindings(projectId, scanId, filters = {}) {
-  const params = new URLSearchParams();
-
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      params.set(key, value);
-    }
-  });
-
-  const query = params.toString();
-
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/security-scans/${encodeURIComponent(scanId)}/findings${query ? `?${query}` : ""}`
-  );
-}
-
-export function approveSecurityScan(projectId, scanId, reason) {
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/security-scans/${encodeURIComponent(scanId)}/approve`,
-    {
-      method: "POST",
-      body: { reason },
-    }
-  );
 }
 
 export function createCostEstimate(projectId) {
@@ -258,24 +276,6 @@ export function getDeploymentReadiness(projectId) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deployment-readiness`);
 }
 
-export function deployProject(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy`, {
-    method: "POST",
-  });
-}
-
-export function runInfrastructurePlan(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/infrastructure/plan`, {
-    method: "POST",
-  });
-}
-
-export function runInfrastructureApply(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/infrastructure/apply`, {
-    method: "POST",
-  });
-}
-
 export function getInfrastructure(projectId) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/infrastructure`);
 }
@@ -292,6 +292,10 @@ export function getServiceDiscovery(projectId) {
 
 export function getTerraformState(projectId) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/state`);
+}
+
+export function getTerraformStateSafetySnapshot(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/state/safety-snapshot`);
 }
 
 export function getTerraformStateVersions(projectId) {
@@ -366,12 +370,6 @@ export function requestBackupRestore(projectId, data) {
   );
 }
 
-export function deployOrchestration(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/orchestration/deploy`, {
-    method: "POST",
-  });
-}
-
 export function getOrchestrationStatus(projectId) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/orchestration/status`);
 }
@@ -431,28 +429,31 @@ export function getObservabilityRuntimeMetrics(projectId, options = {}) {
   );
 }
 
-export function getObservabilityLogs(projectId, options = {}) {
+export function getApplicationRuntimeMetrics(projectId, options = {}) {
   const params = new URLSearchParams();
-  Object.entries(options).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") params.set(key, value);
-  });
+  if (options.range) params.set("range", options.range);
   const query = params.toString();
   return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/observability/logs${query ? `?${query}` : ""}`
+    `/api/projects/${encodeURIComponent(projectId)}/observability/application-metrics${query ? `?${query}` : ""}`
   );
+}
+
+export function getApplicationLogs(projectId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", options.limit);
+  if (options.since) params.set("since", options.since);
+  const query = params.toString();
+  return apiRequest(
+    `/api/projects/${encodeURIComponent(projectId)}/observability/application-logs${query ? `?${query}` : ""}`
+  );
+}
+
+export function getApplicationLogStreamUrl(projectId) {
+  return `${getApiBaseUrl()}/api/projects/${encodeURIComponent(projectId)}/observability/application-logs/stream`;
 }
 
 export function getObservabilityHealth(projectId) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/observability/health`);
-}
-
-export function getObservabilityLogStreamUrl(projectId, options = {}) {
-  const params = new URLSearchParams();
-  Object.entries(options).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") params.set(key, value);
-  });
-  const query = params.toString();
-  return `${getApiBaseUrl()}/api/projects/${encodeURIComponent(projectId)}/observability/logs/stream${query ? `?${query}` : ""}`;
 }
 
 export function forceReleaseTerraformLock(projectId, lockId) {
@@ -462,6 +463,32 @@ export function forceReleaseTerraformLock(projectId, lockId) {
   );
 }
 
+export function clearStaleTerraformLockfile(projectId) {
+  return apiRequest(
+    `/api/projects/${encodeURIComponent(projectId)}/state/lockfile/clear-stale`,
+    { method: "POST" }
+  );
+}
+
 export function getDevOpsTemplates() {
   return apiRequest("/api/templates");
+}
+
+export function getProjectDatabaseTier(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/database-tier`);
+}
+
+export function updateProjectDatabaseTier(projectId, data) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/database-tier`, { method: "PATCH", body: data });
+}
+
+export function getManagedDatabaseReconciliation(projectId) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/database-reconciliation`, { cache: "no-store" });
+}
+
+export function resetManagedDatabase(projectId, confirmationPhrase) {
+  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/database-reset`, {
+    method: "POST",
+    body: { confirmationPhrase },
+  });
 }

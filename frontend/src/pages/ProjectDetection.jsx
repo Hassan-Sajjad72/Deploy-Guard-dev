@@ -13,6 +13,7 @@ import DeploymentProfileCard from "../components/projects/DeploymentProfileCard.
 import ProjectModuleStatusStrip from "../components/projects/ProjectModuleStatusStrip.jsx";
 import PreflightPanel from "../components/projects/PreflightPanel.jsx";
 import { useToast } from "../hooks/useToast.js";
+import { publishProjectStateChanged } from "../utils/projectStateSync.js";
 
 export default function ProjectDetection() {
   const { projectId } = useParams();
@@ -55,6 +56,7 @@ export default function ProjectDetection() {
     try {
       const response = await runStackDetection(projectId);
       setProfile(response.profile);
+      publishProjectStateChanged(projectId);
       notify("Stack detection completed. Review the detected runtime and generate pre-flight when ready.", "success");
     } catch (caughtError) {
       setError(caughtError.message);
@@ -72,7 +74,7 @@ export default function ProjectDetection() {
     <div className="grid">
       <PageHeader
         eyebrow="Detection & Pre-flight"
-        title="Stack Intelligence & Deployment Validation"
+        title="Stack Detection & Pre-flight Validation"
         description="Understand the application runtime, select a safe container strategy, and validate the deployment contract before starting a pipeline."
         actions={
           canManage ? (

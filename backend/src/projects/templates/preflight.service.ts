@@ -19,6 +19,7 @@ import { TemplateRegistryService } from "./template-registry.service";
 import { DatabaseServiceBindingService } from "../../infrastructure/database-service-binding.service";
 import { requireBuildPlan } from "../build-plan";
 import { evaluateBuildPlanReadiness } from "../build-plan-readiness";
+import type { ReadinessWarningDetail } from "../readiness-warning";
 
 type Validation = { code: string; status: "passed" | "failed"; message: string };
 
@@ -113,7 +114,7 @@ export class PreflightService {
     this.addCheck(validations, "START_COMMAND", plan.runtimeType === "static" || Boolean(plan.runCommand), "Server applications require a production run command.");
     this.addCheck(validations, "EXPECTED_PORT", Boolean(plan.port), "Container and ALB target ports are required.");
     this.addCheck(validations, "HEALTH_PATH", plan.healthPath.startsWith("/"), "A valid public health-check path is required.");
-    this.addCheck(validations, "REQUIRED_ENVIRONMENT", true, effective.unresolvedRequiredValues.length ? `Likely runtime application configuration is not set: ${effective.unresolvedRequiredValues.join(", ")}. This is a warning, not a structural deployment blocker.` : "All required application configuration is complete.");
+    this.addCheck(validations, "REQUIRED_ENVIRONMENT", effective.unresolvedRequiredValues.length === 0, effective.unresolvedRequiredValues.length ? `Required application configuration is unresolved: ${effective.unresolvedRequiredValues.join(", ")}.` : "All required application configuration is complete.");
     this.addCheck(validations, "CONFIGURATION_OWNERSHIP", effective.prohibitedOverrides.length === 0 && effective.duplicateOwnershipConflicts.length === 0, "Every configuration key must have one authoritative owner.");
     this.addCheck(validations, "DOCKERFILE_STRATEGY", contract.dockerStrategy === "custom" || Boolean(contract.generatedDockerfile), "A safe custom or generated Dockerfile is required.");
     const generated = contract.generatedDockerfile || "";
@@ -122,7 +123,9 @@ export class PreflightService {
       !/\{\{[A-Z_]+\}\}/.test(generated) &&
       Boolean(contract.commitSha && generated.includes(contract.commitSha)) &&
       (plan.runtimeType === "static" || generated.includes(JSON.stringify(["sh", "-c", plan.runCommand]))) &&
-      (!plan.buildCommand || generated.includes(`RUN ${plan.buildCommand}`))
+      (!plan.buildCommand
+        || generated.includes(`RUN ${plan.buildCommand}`)
+        || generated.includes(Buffer.from(plan.buildCommand, "utf8").toString("base64")))
     );
     this.addCheck(validations, "DOCKERFILE_CONTRACT_PARITY", generatedContractValid, "Generated Dockerfile must exactly preserve the immutable commit, build, and start contract.");
     const buildSecrets = plan.buildTimeEnvVars.filter((key) => plan.secretEnvVars.includes(key));
@@ -132,9 +135,7 @@ export class PreflightService {
     this.addCheck(validations, "ENV_VALUES_NOT_INCLUDED", true, "Environment variable values are not included in the report or contract.");
 
     const configurationBlockers = effective.blockers.filter((blocker) => !/^Required application configuration is unresolved:/i.test(blocker));
-    const configurationWarnings = effective.unresolvedRequiredValues.length
-      ? [`Likely runtime application configuration is not set: ${effective.unresolvedRequiredValues.join(", ")}.`]
-      : [];
+    const configurationWarnings: string[] = [];
     const validationStatus = this.validationStatus(contract, configurationBlockers);
     const readiness = evaluateBuildPlanReadiness(plan, effective);
     const environmentEvidence = this.environmentEvidence(contract);
@@ -200,6 +201,8 @@ export class PreflightService {
       },
       readiness: {
         decision: readiness.status,
+        requiredInputs: readiness.requiredInputs,
+        deployAllowed: readiness.status === "READY" || readiness.status === "READY_WITH_WARNINGS",
         validationStatus,
         contractHash: contract.contractHash,
         configurationFingerprint: effective.configurationFingerprint,
@@ -217,6 +220,7 @@ export class PreflightService {
       },
       validations,
       warnings: [...new Set([...readiness.warnings, ...configurationWarnings])],
+      warningDetails: plan.warningDetails || [],
       errors: readiness.blockers,
     };
     return {
@@ -225,6 +229,7 @@ export class PreflightService {
       generatedDockerfile: contract.generatedDockerfile,
       validationStatus,
       warnings: [...new Set([...contract.warnings, ...configurationWarnings])],
+      warningDetails: plan.warningDetails || [],
       errors: [...new Set([...contract.blockers, ...configurationBlockers])],
     };
   }
@@ -238,6 +243,7 @@ export class PreflightService {
       generatedDockerfile: string | null;
       validationStatus: string;
       warnings: string[];
+      warningDetails: ReadinessWarningDetail[];
       errors: string[];
     }
   ) {
@@ -328,6 +334,10 @@ export class PreflightService {
   }
 
   private toReportResponse(report: ProjectPreflightReport) {
+    const embeddedReadiness = report.report?.readiness && typeof report.report.readiness === "object"
+      ? report.report.readiness as Record<string, unknown>
+      : {};
+    const readinessStatus = typeof embeddedReadiness.decision === "string" ? embeddedReadiness.decision : "BLOCKED";
     return {
       id: report.id,
       projectId: report.projectId,
@@ -349,6 +359,9 @@ export class PreflightService {
       generatedDockerfile: report.generatedDockerfile,
       report: report.report,
       validationStatus: report.validationStatus,
+      readinessStatus,
+      requiredInputs: Array.isArray(embeddedReadiness.requiredInputs) ? embeddedReadiness.requiredInputs.map(String) : [],
+      deployAllowed: readinessStatus === "READY" || readinessStatus === "READY_WITH_WARNINGS",
       warnings: report.warnings || [],
       errors: report.errors || [],
       createdAt: report.createdAt,

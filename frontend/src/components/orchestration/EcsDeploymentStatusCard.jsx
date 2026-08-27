@@ -4,6 +4,7 @@ function value(value) {
 
 export default function EcsDeploymentStatusCard({ deployment }) {
   const stability = deployment?.metadata?.ecsStability || {};
+  const diagnostics = stability.diagnostics || {};
 
   return (
     <section className="panel">
@@ -40,10 +41,25 @@ export default function EcsDeploymentStatusCard({ deployment }) {
           <dd>{value(stability.checkedAt)}</dd>
           <dt>Reason</dt>
           <dd>{value(stability.reason)}</dd>
+          {diagnostics.summary ? <>
+            <dt>Diagnostic</dt>
+            <dd><strong>{diagnostics.summary}</strong></dd>
+            <dt>Stopped task</dt>
+            <dd>{value(diagnostics.lastStoppedTaskArn)}</dd>
+            <dt>Container exit</dt>
+            <dd>{value(diagnostics.containerExitCode)}</dd>
+            <dt>Ports</dt>
+            <dd>Container {value(diagnostics.containerPort)} · target {value(diagnostics.targetPort)}</dd>
+            <dt>Health check</dt>
+            <dd>{value(diagnostics.healthCheckPath)}</dd>
+            <dt>CloudWatch stream</dt>
+            <dd>{value(diagnostics.logStreamName)}</dd>
+          </> : null}
         </dl>
       ) : (
         <p className="muted">No ECS deployment has been recorded yet.</p>
       )}
+      {diagnostics.logLines?.length ? <details><summary>Recent sanitized CloudWatch lines</summary><pre className="metadata">{diagnostics.logLines.join("\n")}</pre></details> : null}
     </section>
   );
 }

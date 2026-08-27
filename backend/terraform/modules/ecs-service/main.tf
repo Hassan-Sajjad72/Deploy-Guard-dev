@@ -1,18 +1,35 @@
 locals {
-  short_project_id = substr(replace(var.project_id, "-", ""), 0, 20)
-  cluster_name     = "deployguard-${var.project_id}-${var.environment_name}"
-  service_name     = "dg-${local.short_project_id}-${var.environment_name}-svc"
-  log_group_name   = "/deployguard/${var.project_id}/${var.environment_name}/app"
+  enable_foundation         = var.enable_ecs_foundation || var.enable_ecs_service || var.enable_ecs_foundation_service
+  enable_service            = var.enable_ecs_service || var.enable_ecs_foundation_service
+  effective_image           = var.enable_ecs_service ? var.container_image : var.baseline_container_image
+  short_project_id          = substr(replace(var.project_id, "-", ""), 0, 20)
+  cluster_name              = "deployguard-${var.project_id}-${var.environment_name}"
+  service_name              = "dg-${local.short_project_id}-${var.environment_name}-svc"
+  log_group_name            = "/deployguard/${var.project_id}/${var.environment_name}/app"
+  deployment_log_group_name = "/deployguard/${var.project_id}/${var.environment_name}/deployment"
   env_list = [
     for key, value in var.environment_variables : {
       name  = key
       value = value
     }
   ]
+  secret_keys = nonsensitive(toset(keys(var.secret_environment_variables)))
+  secret_list = [
+    for key in local.secret_keys : {
+      name      = key
+      valueFrom = aws_secretsmanager_secret.environment[key].arn
+    }
+  ]
+  external_secret_list = [
+    for key, arn in var.external_secret_environment_variables : {
+      name      = key
+      valueFrom = arn
+    }
+  ]
   capacity_provider_strategy = var.use_fargate_spot ? concat(
-    [{ capacity_provider = "FARGATE_SPOT", weight = 1 }],
-    var.enable_fargate_fallback ? [{ capacity_provider = "FARGATE", weight = 0 }] : []
-  ) : [{ capacity_provider = "FARGATE", weight = 1 }]
+    [{ capacity_provider = "FARGATE_SPOT", weight = 1, base = 0 }],
+    var.enable_fargate_fallback ? [{ capacity_provider = "FARGATE", weight = 0, base = 1 }] : []
+  ) : [{ capacity_provider = "FARGATE", weight = 1, base = 1 }]
   mount_points = var.efs_enabled ? [
     {
       sourceVolume  = "persistent-storage"
@@ -22,8 +39,33 @@ locals {
   ] : []
 }
 
+resource "aws_secretsmanager_secret" "environment" {
+  for_each = local.enable_service ? local.secret_keys : toset([])
+
+  name                    = "deployguard/${var.project_id}/${var.environment_name}/${each.key}"
+  recovery_window_in_days = 7
+  tags = merge(var.tags, {
+    ManagedBy            = "DeployGuard"
+    DeployGuardProjectId = var.project_id
+    Environment          = var.environment_name
+    SecretPurpose        = "application_${each.key}"
+    DeployGuardLifecycle = "retained"
+  })
+}
+
+resource "aws_secretsmanager_secret_version" "environment" {
+  for_each = aws_secretsmanager_secret.environment
+
+  secret_id     = each.value.id
+  secret_string = var.secret_environment_variables[each.key]
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 resource "aws_ecs_cluster" "this" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_foundation ? 1 : 0
 
   name = local.cluster_name
 
@@ -41,12 +83,31 @@ resource "aws_ecs_cluster" "this" {
 }
 
 resource "aws_cloudwatch_log_group" "app" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_foundation ? 1 : 0
 
   name              = local.log_group_name
   retention_in_days = 14
 
-  tags = var.tags
+  tags = merge(var.tags, {
+    ManagedBy            = "DeployGuard"
+    DeployGuardProjectId = var.project_id
+    Environment          = var.environment_name
+    LogPurpose           = "app"
+  })
+}
+
+resource "aws_cloudwatch_log_group" "deployment" {
+  count = local.enable_foundation ? 1 : 0
+
+  name              = local.deployment_log_group_name
+  retention_in_days = 14
+
+  tags = merge(var.tags, {
+    ManagedBy            = "DeployGuard"
+    DeployGuardProjectId = var.project_id
+    Environment          = var.environment_name
+    LogPurpose           = "deployment"
+  })
 }
 
 data "aws_iam_policy_document" "ecs_tasks_assume_role" {
@@ -61,7 +122,7 @@ data "aws_iam_policy_document" "ecs_tasks_assume_role" {
 }
 
 resource "aws_iam_role" "execution" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_foundation ? 1 : 0
 
   name               = "dg-${local.short_project_id}-${var.environment_name}-exec"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume_role.json
@@ -69,14 +130,29 @@ resource "aws_iam_role" "execution" {
 }
 
 resource "aws_iam_role_policy_attachment" "execution" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_foundation ? 1 : 0
 
   role       = aws_iam_role.execution[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+resource "aws_iam_role_policy" "environment_secrets" {
+  count = local.enable_service && (length(local.secret_keys) > 0 || length(var.external_secret_environment_variables) > 0) ? 1 : 0
+
+  name = "environment-secrets"
+  role = aws_iam_role.execution[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = concat([for secret in aws_secretsmanager_secret.environment : secret.arn], values(var.external_secret_environment_variables))
+    }]
+  })
+}
+
 resource "aws_iam_role" "task" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_foundation ? 1 : 0
 
   name               = "dg-${local.short_project_id}-${var.environment_name}-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume_role.json
@@ -84,7 +160,7 @@ resource "aws_iam_role" "task" {
 }
 
 resource "aws_iam_role_policy" "efs" {
-  count = var.enable_ecs_service && var.efs_enabled ? 1 : 0
+  count = local.enable_service && var.efs_enabled ? 1 : 0
 
   name = "efs-client"
   role = aws_iam_role.task[0].id
@@ -105,7 +181,7 @@ resource "aws_iam_role_policy" "efs" {
 }
 
 resource "aws_ecs_task_definition" "app" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_service ? 1 : 0
 
   family                   = "dg-${local.short_project_id}-${var.environment_name}"
   requires_compatibilities = ["FARGATE"]
@@ -118,9 +194,10 @@ resource "aws_ecs_task_definition" "app" {
   container_definitions = jsonencode([
     {
       name        = var.container_name
-      image       = var.container_image
+      image       = local.effective_image
       essential   = true
       environment = local.env_list
+      secrets     = concat(local.secret_list, local.external_secret_list)
       mountPoints = local.mount_points
       portMappings = [
         {
@@ -160,27 +237,8 @@ resource "aws_ecs_task_definition" "app" {
   tags = var.tags
 }
 
-resource "aws_service_discovery_service" "app" {
-  count = var.enable_ecs_service && var.cloud_map_namespace_id != null ? 1 : 0
-
-  name = "app"
-
-  dns_config {
-    namespace_id = var.cloud_map_namespace_id
-
-    dns_records {
-      ttl  = 10
-      type = "A"
-    }
-  }
-
-  health_check_custom_config {
-    failure_threshold = 1
-  }
-}
-
 resource "aws_ecs_service" "app" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_service ? 1 : 0
 
   name                               = local.service_name
   cluster                            = aws_ecs_cluster.this[0].id
@@ -196,13 +254,14 @@ resource "aws_ecs_service" "app" {
     content {
       capacity_provider = capacity_provider_strategy.value.capacity_provider
       weight            = capacity_provider_strategy.value.weight
+      base              = capacity_provider_strategy.value.base
     }
   }
 
   network_configuration {
-    subnets          = var.private_subnet_ids
+    subnets          = var.subnet_ids
     security_groups  = [var.app_security_group_id]
-    assign_public_ip = false
+    assign_public_ip = var.assign_public_ip
   }
 
   load_balancer {
@@ -212,9 +271,9 @@ resource "aws_ecs_service" "app" {
   }
 
   dynamic "service_registries" {
-    for_each = length(aws_service_discovery_service.app) > 0 ? [1] : []
+    for_each = var.service_discovery_service_arn == null ? [] : [var.service_discovery_service_arn]
     content {
-      registry_arn = aws_service_discovery_service.app[0].arn
+      registry_arn = service_registries.value
     }
   }
 
@@ -233,7 +292,7 @@ resource "aws_ecs_service" "app" {
 }
 
 resource "aws_appautoscaling_target" "ecs" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_service && var.enable_autoscaling ? 1 : 0
 
   max_capacity       = var.max_tasks
   min_capacity       = var.min_tasks
@@ -243,7 +302,7 @@ resource "aws_appautoscaling_target" "ecs" {
 }
 
 resource "aws_appautoscaling_policy" "cpu" {
-  count = var.enable_ecs_service ? 1 : 0
+  count = local.enable_service && var.enable_autoscaling ? 1 : 0
 
   name               = "${local.service_name}-cpu"
   policy_type        = "TargetTrackingScaling"

@@ -8,6 +8,7 @@
   "scripts": {
     "product:start": "node scripts/local-product.mjs",
     "product:verify": "node scripts/verify-local-product.mjs",
+    "test:canonical-backend-environment": "node scripts/verify-canonical-backend-environment.mjs",
     "product:build": "npm --prefix backend run build && npm --prefix frontend run build",
     "install:all": "cd frontend && npm install && cd ../backend && npm install"
   }

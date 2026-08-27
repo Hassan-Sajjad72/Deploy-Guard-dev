@@ -1,0 +1,116 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { canonicalOverviewState, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
+import { projectStatePresentation } from "../src/utils/projectStatePresentation.js";
+import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPresentation.js";
+
+const overview = readFileSync(new URL("../src/pages/ProjectDetails.jsx", import.meta.url), "utf8");
+const lifecycle = readFileSync(new URL("../src/components/projects/ProjectOverviewLifecycle.jsx", import.meta.url), "utf8");
+const api = readFileSync(new URL("../src/api/projectApi.js", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+
+const actions = (state, canManage = true) => overviewLifecycleActions({ stateAuthority: { state }, canRetry: true, stableUrl: "https://example.test" }, canManage);
+assert.equal(canonicalOverviewState({ stateAuthority: { state: "LIVE" }, developerState: "failed_application" }), "LIVE", "canonical state authority wins over historical state");
+assert.deepEqual(actions("READY"), [{ kind: "command", command: "deploy", label: "Deploy" }]);
+assert.deepEqual(actions("DEPLOYING"), [{ kind: "link", target: "pipeline", label: "View progress" }]);
+const stableRuntimeWithActiveDestroy = {
+  developerState: "live",
+  stableUrl: "https://example.test",
+  stableRelease: { rollbackAvailable: true },
+  stateAuthority: {
+    state: "LIVE",
+    activeOperation: { id: "destroy-1", type: "destroy", status: "destroying", stage: "deploy" },
+    applicationHealth: { status: "healthy" },
+  },
+};
+assert.equal(projectStatePresentation(stableRuntimeWithActiveDestroy).active, true);
+assert.equal(projectStatePresentation(stableRuntimeWithActiveDestroy).state, "DESTROYING");
+assert.equal(canonicalOverviewState(stableRuntimeWithActiveDestroy), "DESTROYING");
+assert.deepEqual(overviewLifecycleActions(stableRuntimeWithActiveDestroy, true), [{ kind: "link", target: "pipeline", label: "View progress" }]);
+assert.equal(overviewLifecycleCopy(stableRuntimeWithActiveDestroy).title, "Infrastructure is being destroyed");
+const stableRuntimeWithActiveRollback = {
+  ...stableRuntimeWithActiveDestroy,
+  stateAuthority: { ...stableRuntimeWithActiveDestroy.stateAuthority, activeOperation: { id: "rollback-1", type: "rollback", status: "verifying", stage: "verify" } },
+};
+assert.equal(projectStatePresentation(stableRuntimeWithActiveRollback).state, "DEPLOYING");
+assert.equal(overviewLifecycleCopy(stableRuntimeWithActiveRollback).title, "Rollback in progress");
+assert.deepEqual(overviewLifecycleActions(stableRuntimeWithActiveRollback, true), [{ kind: "link", target: "pipeline", label: "View progress" }]);
+assert.deepEqual(actions("FAILED"), [
+  { kind: "link", target: "pipeline", label: "View Pipeline" },
+  { kind: "command", command: "retry", label: "Retry Failed Deployment" },
+]);
+const failedDeploy = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy" } }, latestAttempt: { operationType: "deploy" }, canRetry: true };
+const failedDestroy = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "destroy" } }, latestAttempt: { operationType: "destroy" }, canRetry: true };
+const failedRollback = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "rollback" } }, latestAttempt: { operationType: "rollback" }, canRetry: true };
+assert.equal(overviewLifecycleCopy(failedDeploy).title, "Deployment failed");
+assert.equal(overviewLifecycleActions(failedDeploy, true)[1].label, "Retry Failed Deployment");
+assert.equal(overviewLifecycleCopy(failedDestroy).title, "Destroy failed");
+assert.equal(overviewLifecycleActions(failedDestroy, true)[1].label, "Retry Failed Destroy");
+assert.equal(overviewLifecycleCopy(failedRollback).title, "Rollback failed");
+assert.equal(overviewLifecycleActions(failedRollback, true)[1].label, "Retry Failed Rollback");
+const setupFailureRail = deploymentPhasePresentation({ developerState: "failed_application", progress: { phase: "build" } });
+assert.deepEqual(
+  setupFailureRail.map(({ key, status }) => [key, status]),
+  [["analyze", "passed"], ["prepare", "passed"], ["build", "failed"], ["deploy", "waiting"], ["verify", "waiting"]],
+  "Set Up Job failure must not present Build or later phases as completed",
+);
+const failedDestroyWithStableRuntime = {
+  developerState: "live",
+  developerMessage: "The latest destroy operation failed. The verified stable release remains live.",
+  stableUrl: "https://example.test",
+  canRetry: true,
+  latestAttempt: { operationType: "destroy", status: "failed_application" },
+  stateAuthority: {
+    state: "LIVE",
+    activeOperation: null,
+    latestCompletedOperation: { type: "destroy", outcome: "failed" },
+    applicationHealth: { status: "healthy" },
+  },
+};
+assert.equal(projectStatePresentation(failedDestroyWithStableRuntime).state, "LIVE", "runtime truth remains LIVE");
+assert.equal(projectStatePresentation(failedDestroyWithStableRuntime).active, false);
+assert.equal(overviewLifecycleCopy(failedDestroyWithStableRuntime).title, "Destroy failed");
+assert.match(overviewLifecycleCopy(failedDestroyWithStableRuntime).message, /remains live/i);
+assert.deepEqual(overviewLifecycleActions(failedDestroyWithStableRuntime, true), [
+  { kind: "link", target: "pipeline", label: "View Pipeline" },
+  { kind: "command", command: "retry", label: "Retry Failed Destroy" },
+]);
+assert.deepEqual(actions("LIVE"), [
+  { kind: "external", href: "https://example.test", label: "Open Application" },
+  { kind: "command", command: "redeploy", label: "Redeploy" },
+  { kind: "disabled", command: "rollback", label: "Rollback application", reason: "No previous successful release is available." },
+  { kind: "command", command: "destroy", label: "Destroy Infrastructure" },
+]);
+assert.deepEqual(
+  overviewLifecycleActions({ stateAuthority: { state: "LIVE" }, stableUrl: "https://example.test", stableRelease: { rollbackAvailable: true } }, true)[2],
+  { kind: "command", command: "rollback", label: "Rollback application" },
+  "an immutable previous release activates rollback from Overview",
+);
+assert.deepEqual(actions("DESTROYING"), [{ kind: "link", target: "pipeline", label: "View progress" }]);
+assert.deepEqual(actions("DESTROYED"), [{ kind: "command", command: "deploy", label: "Deploy Again" }]);
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED" }, canRetry: false }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }]);
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "READY" } }, false), []);
+assert.doesNotMatch(lifecycle, /getGithubActionsDeploymentHistory|developerAction|estimatedCost|terraform/i);
+assert.match(lifecycle, /acceptedOperation/);
+assert.match(lifecycle, /authority\.activeOperation\?\.id/, "the accepted-operation banner clears when persisted state has no matching active operation");
+assert.match(lifecycle, /setAcceptedOperation\(null\)/, "terminal persisted state clears the local accepted-operation banner");
+assert.match(lifecycle, /dispatching\.current/);
+assert.match(lifecycle, /retryGithubActionsDeployment\(projectId\)/, "failed Destroy uses the existing generic retry handler");
+assert.match(lifecycle, /latestOperationFailed/);
+assert.match(api, /\/deploy\/retry[\s\S]*?method: "POST"/, "failed Destroy uses the existing generic retry endpoint");
+assert.match(lifecycle, /getGithubActionsRollbackCandidates/);
+assert.match(lifecycle, /rollbackGithubActionsDeployment/);
+assert.match(lifecycle, /No previous successful release is available/);
+assert.match(lifecycle, /rollbackError/);
+assert.match(lifecycle, /Repository code will not be rebuilt/);
+assert.match(lifecycle, /<MetricCard/g);
+assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 4, "Overview has exactly four summary cards");
+assert.doesNotMatch(overview, /CanonicalDeploymentView|getProjectDetailedCurrentState/);
+assert.match(overview, /subscribeProjectStateChanged/);
+assert.match(lifecycle, /StageRail/);
+for (const state of ["ready", "deploying", "failed", "live", "destroying", "destroyed"]) {
+  assert.match(styles, new RegExp(`overview-state-${state}`), `responsive lifecycle styling covers ${state}`);
+}
+assert.doesNotMatch(styles, /overview-state-(?:deploying|destroying)[^}]*var\(--(?:cyan|amber)\)/);
+assert.match(styles, /@media\s*\(max-width:\s*560px\)[\s\S]*overview-summary-grid/);
+console.log("Overview canonical lifecycle action and responsive presentation verification passed.");

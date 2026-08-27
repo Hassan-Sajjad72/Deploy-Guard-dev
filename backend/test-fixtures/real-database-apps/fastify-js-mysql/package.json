@@ -1,0 +1,6 @@
+{
+  "name": "deployguard-fastify-mysql-fixture",
+  "private": true,
+  "scripts": { "start": "node index.js" },
+  "dependencies": { "fastify": "^5.2.1", "mysql2": "^3.12.0" }
+}

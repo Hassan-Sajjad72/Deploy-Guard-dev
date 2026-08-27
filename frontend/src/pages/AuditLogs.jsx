@@ -10,6 +10,7 @@ import Pagination from "../components/common/Pagination.jsx";
 import { BentoGrid, MetricCard, PageHeader } from "../components/common/Premium.jsx";
 
 const defaultFilters = {
+  category: "",
   action: "",
   resourceType: "",
   resourceId: "",
@@ -88,7 +89,7 @@ export default function AuditLogs() {
 
   return (
     <div className="grid">
-      <PageHeader eyebrow="Activity & Audit" title="Platform Activity" description="Review who changed what, which resource was affected, and whether the operation succeeded." context="Sensitive metadata is redacted before it is displayed" />
+      <PageHeader eyebrow="Application activity" title="Activity Log" description="Review who changed what, which project or run was affected, and whether the operation succeeded." context="Sensitive metadata is redacted before it is displayed" />
 
       <BentoGrid>
         <MetricCard label="Matching Events" value={pagination.total} detail="Events matching the active filters" />
@@ -101,7 +102,7 @@ export default function AuditLogs() {
       {error ? <ErrorState message={error} /> : null}
       {isLoading ? <LoadingState message="Loading audit logs..." /> : null}
       {!isLoading && !error && logs.length === 0 ? (
-        <EmptyState message="No audit logs found." />
+        <EmptyState message="No activity records match these filters." />
       ) : null}
       {!isLoading && logs.length > 0 ? <AuditLogsTable logs={logs} /> : null}
       {!isLoading && !error ? (

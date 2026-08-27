@@ -11,7 +11,6 @@ import { ProjectDeploymentContract } from "../project-deployment-contract.entity
 import { ProjectPipelineEvent } from "../project-pipeline-event.entity";
 import { ProjectPipelineRun } from "../project-pipeline-run.entity";
 import { ProjectPreflightReport } from "../project-preflight-report.entity";
-import { ProjectSecurityScan } from "../project-security-scan.entity";
 import { ProjectTerraformLock } from "../../state-management/project-terraform-lock.entity";
 import { TerraformStateSafetySnapshot } from "../../state-management/terraform-state-safety-snapshot.service";
 import { DeploymentCheckpointService } from "./deployment-checkpoint.service";
@@ -29,7 +28,6 @@ type PlannerInput = {
   preflight: ProjectPreflightReport | null;
   run: ProjectPipelineRun | null;
   events: ProjectPipelineEvent[];
-  scan: ProjectSecurityScan | null;
   cost: ProjectCostEstimate | null;
   environment: ProjectInfrastructureEnvironment | null;
   lock: ProjectTerraformLock | null;
@@ -101,7 +99,7 @@ export class DeploymentRecoveryPlanner {
       runError, input.deployment?.errorMessage,
       ...(input.contract?.blockers || []), ...(input.preflight?.errors || []),
       ...eventMessages,
-      input.scan?.policyReason, input.cost?.errorMessage, input.databaseTier?.lastError, input.storage?.errorMessage,
+      input.cost?.errorMessage, input.databaseTier?.lastError, input.storage?.errorMessage,
       diagnostics?.summary, ...(diagnostics?.logLines || []), ...(diagnostics?.taskEvents || []),
     ].filter(Boolean).join("\n");
     const currentRunReachedHealthVerification = !input.run ||
@@ -228,7 +226,7 @@ export class DeploymentRecoveryPlanner {
         "Project configuration changed after this immutable deployment run was queued.",
         "This run stopped before Terraform apply. Existing project infrastructure was not created or modified by it.",
         [{ source: "terraform", message: "The saved Terraform plan no longer matches the current project configuration." }],
-        "Create a new immutable run and generate a fresh Terraform plan. Valid repository, build, scan, and ECR checkpoints may be reused.",
+        "Create a new immutable run and generate a fresh Terraform plan. Valid repository, build, and ECR checkpoints may be reused.",
         "Generate a new Terraform plan",
         (id) => `/projects/${id}/recovery`,
         "recovery_center",
@@ -279,12 +277,6 @@ export class DeploymentRecoveryPlanner {
     if (/docker build|npm (?:ci|install)|yarn install|pnpm install|module not found|cannot find module|dockerfile|production dependency|npm script|image too large|native dependency/i.test(combined) && !/unsafe dockerfile|privileged container/i.test(combined)) {
       const code = /dockerfile.*(?:generate|generation).*failed/i.test(combined) ? "dockerfile_generation_failed" : /module not found|cannot find module/i.test(combined) ? "module_not_found" : /production dependency/i.test(combined) ? "missing_production_dependency" : /npm script/i.test(combined) ? "npm_script_missing" : /image too large/i.test(combined) ? "image_too_large" : /native dependency/i.test(combined) ? "unsupported_native_dependency" : /npm|yarn|pnpm/i.test(combined) ? "dependency_install_failed" : "docker_build_failed";
       results.push(this.issue(6, code, "Image build failed", "blocker", "build", this.line(combined, /docker|npm|yarn|pnpm|module/i), "DeployGuard could not build a runnable application image.", [{ source: "docker", message: this.line(combined, /docker|npm|yarn|pnpm|module/i) }], "Review the failed build command and meaningful log line.", "Open build fix", (id) => `/projects/${id}/pipeline?recovery=${code}`, "recovery_center", "build_fix"));
-    }
-
-    if (input.scan && /blocked/i.test(String(input.scan.policyDecision || "")) || /secret leaked|unsafe dockerfile|privileged container|exposed secret|base image warning/i.test(combined)) {
-      const code = /secret leaked/i.test(combined) ? "secret_leaked_in_repo" : /unsafe dockerfile/i.test(combined) ? "unsafe_dockerfile" : /privileged container/i.test(combined) ? "privileged_container_requested" : /exposed secret/i.test(combined) ? "exposed_secret_env" : /base image warning/i.test(combined) ? "base_image_warning" : "critical_vulnerability_blocked";
-      const warning = code === "base_image_warning";
-      results.push(this.issue(warning ? 13 : 7, code, warning ? "Base image should be reviewed" : "Security policy blocked this image", warning ? "warning" : "blocker", "security", input.scan?.policyReason || this.line(combined, /secret leaked|unsafe dockerfile|privileged container|exposed secret|base image/i), warning ? "The image can continue, but its base image should be updated." : "A blocking image or Dockerfile finding must be resolved before release.", [{ source: "trivy", message: input.scan?.policyReason || this.line(combined, /secret leaked|unsafe dockerfile|privileged container|exposed secret|base image/i) }], "Open the security report and remediate the identified finding.", "Open security report", (id) => `/projects/${id}/security?recovery=${code}`, "recovery_center", "security_fix"));
     }
 
     if (/CannotPullContainerError|pull image|\bECR\b|image manifest|no basic auth credentials|image tag missing/i.test(combined)) {

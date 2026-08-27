@@ -1,4 +1,4 @@
-const roles = ["admin", "developer", "readonly"];
+const roles = [["admin", "Admin"], ["developer", "Developer"], ["readonly", "Read-only"]];
 
 export default function UserRoleSelect({ disabled, onChange, value }) {
   return (
@@ -8,9 +8,9 @@ export default function UserRoleSelect({ disabled, onChange, value }) {
       onChange={(event) => onChange(event.target.value)}
       value={value}
     >
-      {roles.map((role) => (
+      {roles.map(([role, label]) => (
         <option key={role} value={role}>
-          {role}
+          {label}
         </option>
       ))}
     </select>

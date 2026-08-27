@@ -34,7 +34,7 @@ export default function ProjectForm({ form, isSubmitting, onChange, onSubmit, su
             {isDeveloperMode ? <label className="field"><span>Project visibility</span><select id="visibility" name="visibility" onChange={onChange} value={form.visibility}><option value="private">Private</option><option value="workspace">Workspace</option></select><small>Private restricts access to the owner and administrators.</small></label> : null}
           </div>
           {isDeveloperMode ? <div className="state muted"><strong>Application directory:</strong> An explicit path limits detection and builds to that folder. If left blank, DeployGuard selects the strongest supported app manifest automatically.</div> : null}
-          <div className="state muted"><strong>{isDeveloperMode ? "Automation safety:" : "After you create it:"}</strong> {isDeveloperMode ? "DeployGuard starts detection, template generation, pre-flight, and its worker pipeline after creation. Infrastructure deployment still respects the backend apply switch." : "DeployGuard prepares and checks the app automatically. Cloud resources are created only when deployment is enabled for this platform."}</div>
+          <div className="state muted"><strong>{isDeveloperMode ? "Automation safety:" : "After you create it:"}</strong> {isDeveloperMode ? "DeployGuard runs detection, template generation, and pre-flight after creation. Deployment runs only through the repository's GitHub Actions workflow." : "DeployGuard prepares and checks the app automatically. Cloud resources are created only after you choose Deploy."}</div>
         </div>
       </section>
 

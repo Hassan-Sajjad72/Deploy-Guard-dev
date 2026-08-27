@@ -104,11 +104,11 @@ export class ProjectPipelineRun {
   preflightReport: ProjectPreflightReport;
 
   @Column({ nullable: true, name: "detection_profile_id" })
-  detectionProfileId: string;
+  detectionProfileId: string | null;
 
   @ManyToOne(() => ProjectDetectionProfile, { nullable: true, onDelete: "SET NULL" })
   @JoinColumn({ name: "detection_profile_id" })
-  detectionProfile: ProjectDetectionProfile;
+  detectionProfile: ProjectDetectionProfile | null;
 
   @Column({ name: "repository_url" })
   repositoryUrl: string;
@@ -169,26 +169,6 @@ export class ProjectPipelineRun {
 
   @Column({ nullable: true, name: "operation_fencing_token", type: "bigint" })
   operationFencingToken: string | null;
-
-  /** Nullable, inactive cross-lane fence correlation for future legacy work. */
-  @Index("IDX_pipeline_runs_cross_lane_ownership")
-  @Column({ nullable: true, name: "cross_lane_ownership_id", type: "uuid" })
-  crossLaneOwnershipId: string | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_lane", length: 16 })
-  crossLaneOwnerLane: "legacy" | "v1" | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_environment_name", length: 64 })
-  crossLaneOwnerEnvironmentName: string | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_lease_id", type: "uuid" })
-  crossLaneOwnerLeaseId: string | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_actor_id", length: 160 })
-  crossLaneOwnerActorId: string | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_fencing_token", type: "bigint" })
-  crossLaneOwnerFencingToken: string | null;
 
   @Column({ nullable: true, name: "github_workflow_run_id" })
   githubWorkflowRunId: string;

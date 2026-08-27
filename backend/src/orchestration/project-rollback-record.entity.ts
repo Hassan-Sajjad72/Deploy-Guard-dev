@@ -51,26 +51,6 @@ export class ProjectRollbackRecord {
   @Column({ nullable: true, name: "error_message", type: "text" })
   errorMessage: string;
 
-  /** Nullable, inactive cross-lane fence correlation for future legacy work. */
-  @Index("IDX_rollback_records_cross_lane_ownership")
-  @Column({ nullable: true, name: "cross_lane_ownership_id", type: "uuid" })
-  crossLaneOwnershipId: string | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_lane", length: 16 })
-  crossLaneOwnerLane: "legacy" | "v1" | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_environment_name", length: 64 })
-  crossLaneOwnerEnvironmentName: string | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_lease_id", type: "uuid" })
-  crossLaneOwnerLeaseId: string | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_actor_id", length: 160 })
-  crossLaneOwnerActorId: string | null;
-
-  @Column({ nullable: true, name: "cross_lane_owner_fencing_token", type: "bigint" })
-  crossLaneOwnerFencingToken: string | null;
-
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 }

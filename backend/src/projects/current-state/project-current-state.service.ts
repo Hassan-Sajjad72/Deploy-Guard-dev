@@ -6,10 +6,8 @@ import { DescribeTagsCommand, DescribeTargetGroupsCommand, DescribeTargetHealthC
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository } from "typeorm";
 import { CostEstimateSource, CostEstimateStatus, ProjectCostEstimate } from "../../finops/project-cost-estimate.entity";
-import { InfrastructureEnvironmentStatus, ProjectInfrastructureEnvironment } from "../../infrastructure/project-infrastructure-environment.entity";
 import { getObservabilityConfig } from "../../observability/observability.config";
 import { ProjectStableRelease, StableReleaseStatus } from "../../orchestration/project-stable-release.entity";
-import { PersistentStorageStatus, ProjectPersistentStorage } from "../../storage/project-persistent-storage.entity";
 import { User } from "../../users/user.entity";
 import { DetectionStatus, ProjectDetectionProfile } from "../project-detection-profile.entity";
 import { ProjectDeploymentContract } from "../project-deployment-contract.entity";
@@ -22,6 +20,7 @@ import { DeveloperProjectCurrentState, ProjectStateAuthority } from "./project-c
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "../project-deployment-generation.entity";
 import { canonicalEnvironmentName } from "../canonical-environment";
 import { retryOperationEligibility } from "../github-actions-operation-contract";
+import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from "../pipeline/github-actions-stage-presentation";
 
 
 type LiveAwsEvidence = {
@@ -44,10 +43,6 @@ export class ProjectCurrentStateService {
     private readonly runRepository: Repository<ProjectPipelineRun>,
     @InjectRepository(ProjectCostEstimate)
     private readonly estimateRepository: Repository<ProjectCostEstimate>,
-    @InjectRepository(ProjectInfrastructureEnvironment)
-    private readonly environmentRepository: Repository<ProjectInfrastructureEnvironment>,
-    @InjectRepository(ProjectPersistentStorage)
-    private readonly storageRepository: Repository<ProjectPersistentStorage>,
     @InjectRepository(ProjectStableRelease)
     private readonly releaseRepository: Repository<ProjectStableRelease>,
     @InjectRepository(ProjectDeploymentGeneration)
@@ -60,21 +55,15 @@ export class ProjectCurrentStateService {
   async getCurrentState(
     user: User,
     projectId: string,
-    _options: { refreshCloudState?: boolean } = {},
+    options: { refreshCloudState?: boolean } = {},
   ): Promise<DeveloperProjectCurrentState> {
-    // The ordinary product surface is deliberately independent of the
-    // retired release-lane/current-infrastructure graph. GitHub Actions runs,
-    // repository detection and structural pre-flight are its only authority.
+    // GitHub Actions runs, repository detection and structural pre-flight are
+    // the only ordinary product authority.
     const project = await this.projectsService.getProjectEntityForView(user, projectId);
     const environmentName = canonicalEnvironmentName(project);
-    const [profile, preflight, infrastructure, storage, route] = await Promise.all([
+    const [profile, preflight, route] = await Promise.all([
       this.profileRepository.findOne({ where: { projectId } }),
       this.preflightRepository.findOne({ where: { projectId } }),
-      this.environmentRepository.findOne({
-        where: { projectId },
-        order: { updatedAt: "DESC" },
-      }),
-      this.storageRepository.findOne({ where: { projectId }, order: { updatedAt: "DESC" } }),
       this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } }),
     ]);
     const projected = await this.withGithubActionsState(
@@ -136,13 +125,17 @@ export class ProjectCurrentStateService {
       } : null,
     };
     const hasAuthoritativeLiveRelease = Boolean(projectedWithCost.stableRelease && projectedWithCost.stableUrl)
+      && !projectedWithCost.destroyCleanupIncomplete
       && !["destroying", "destroyed"].includes(projectedWithCost.developerState);
-    const awsEvidence = hasAuthoritativeLiveRelease && route?.liveGenerationId
+    // The product read-model must be sufficient to paint Overview and
+    // Pipeline. Live AWS inspection is deliberately opt-in: it can require
+    // multiple remote SDK calls and must never sit on the initial page path.
+    const awsEvidence = options.refreshCloudState && hasAuthoritativeLiveRelease && route?.liveGenerationId
       ? await this.liveAwsEvidence(project, route.liveGenerationId, projectedWithCost.stableUrl!)
       : null;
     const generations = await this.generationRepository.find({ where: { projectId, environmentName }, order: { ordinal: "ASC" } });
     return {
-      ...this.withStateAuthority(projectId, environmentName, projectedWithCost, profile, preflight, infrastructure, storage, awsEvidence),
+      ...this.withStateAuthority(projectId, environmentName, projectedWithCost, profile, preflight, awsEvidence),
       generationState: {
         liveGenerationId: route?.liveGenerationId || null,
         candidateGenerationId: route?.candidateGenerationId || null,
@@ -277,19 +270,41 @@ export class ProjectCurrentStateService {
       commit: latestCommit,
       occurredAt: (latest.completedAt || latest.failedAt || latest.updatedAt).toISOString(),
     };
+    const verifiedDestroyAncestor = action === "destroy"
+      ? await this.verifiedDestroyAncestor(latest, projectId, environmentName)
+      : null;
+    const verifiedAwsDeletion = Boolean(verifiedDestroyAncestor);
+    const destroyCleanupIncomplete = verifiedAwsDeletion
+      && latest.status !== PipelineRunStatus.COMPLETED;
+    if (destroyCleanupIncomplete) {
+      return {
+        ...projected,
+        destroyCleanupIncomplete: true,
+        developerState: "platform_attention",
+        developerAction: "none",
+        developerMessage: "AWS project deletion was verified, but DeployGuard control-plane cleanup is incomplete. Retry Failed Destroy to resume cleanup.",
+        progress: { percentage: 90, phase: "verify", label: "Destroy cleanup needs attention" },
+        latestAttempt: {
+          ...latestAttempt,
+          status: "platform_attention",
+          outcome: "blocked",
+          message: latest.errorMessage || "Project deletion control-plane cleanup is incomplete.",
+        },
+        // These are historical records only after the destroy evidence proves
+        // their AWS runtime is absent. They must not revive LIVE authority.
+        stableRelease: null,
+        stableUrl: null,
+        applicationError: { category: "runtime", message: "AWS runtime deletion was verified; remaining DeployGuard cleanup is retryable." },
+        canRetry: retryOperationEligibility(latest, {
+          id: projectId,
+          repositoryFullName: projected.repository || "",
+          targetBranch: projected.branch || "",
+        }) !== "ineligible",
+      };
+    }
     if (latest.status === PipelineRunStatus.COMPLETED) {
       if (action === "destroy") {
-        const verification = latestMetadata.destroyVerification as Record<string, unknown> | undefined;
-        const verifiedDestroyed = verification?.contractVersion === "deployguard.destroy-result/v2"
-          && verification?.status === "project_delete_ready"
-          && verification?.deploymentOperationId === latest.id
-          && verification?.projectId === projectId
-          && verification?.environmentName === environmentName
-          && verification?.generationResourcesRemoved === true
-          && verification?.projectResourcesRemoved === true
-          && verification?.terraformStateArtifactsRemoved === true
-          && verification?.sharedPlatformUntouched === true;
-        if (!verifiedDestroyed) {
+        if (!verifiedAwsDeletion) {
           return {
             ...projected,
             developerState: "platform_attention",
@@ -351,14 +366,16 @@ export class ProjectCurrentStateService {
 
     if (latest.status === PipelineRunStatus.FAILED) {
       const failedStage = String(latestMetadata.failedStage || latest.currentStage || "github_actions");
-      const category = failedStage.includes("build") ? "build"
-        : failedStage.includes("health") ? "health"
+      const failureMessage = githubActionsFailureMessage(latest.errorMessage, failedStage, action);
+      const failurePhase = githubActionsFailureLifecyclePhase(failedStage);
+      const category = failurePhase === "build" ? "build"
+        : failurePhase === "verify" ? "health"
           : "runtime";
       const failedLatestAttempt = {
         ...latestAttempt,
         status: "failed_application" as const,
         outcome: "blocked" as const,
-        message: latest.errorMessage || "The GitHub Actions deployment failed.",
+        message: failureMessage,
       };
       if (stableRelease && stableUrl) {
         return {
@@ -367,15 +384,15 @@ export class ProjectCurrentStateService {
           developerAction: "open_application",
           developerMessage: `The latest ${action} operation failed. The verified stable release remains live.`,
           progress: {
-            percentage: this.githubLifecycleProgress(category === "build" ? "build" : category === "health" ? "verify" : "deploy"),
-            phase: category === "build" ? "build" : category === "health" ? "verify" : "deploy",
+            percentage: this.githubLifecycleProgress(failurePhase),
+            phase: failurePhase,
             label: "Failed",
           },
           latestAttempt: failedLatestAttempt,
           stableRelease,
           stableUrl,
           applicationError: null,
-          canRetry: retryOperationEligibility(latest, {
+          canRetry: latest.status === PipelineRunStatus.FAILED && retryOperationEligibility(latest, {
             id: projectId,
             repositoryFullName: projected.repository || "",
             targetBranch: projected.branch || "",
@@ -386,13 +403,13 @@ export class ProjectCurrentStateService {
         ...projected,
         developerState: "failed_application",
         developerAction: stableRelease ? "redeploy" : "deploy",
-        developerMessage: latest.errorMessage || "The GitHub Actions deployment failed.",
-        progress: { percentage: this.githubLifecycleProgress(category === "build" ? "build" : category === "health" ? "verify" : "deploy"), phase: category === "build" ? "build" : category === "health" ? "verify" : "deploy", label: "Failed" },
+        developerMessage: failureMessage,
+        progress: { percentage: this.githubLifecycleProgress(failurePhase), phase: failurePhase, label: "Failed" },
         latestAttempt: failedLatestAttempt,
         stableRelease,
         stableUrl,
-        applicationError: { category, message: latest.errorMessage || "The GitHub Actions deployment failed." },
-        canRetry: retryOperationEligibility(latest, {
+        applicationError: { category, message: failureMessage },
+        canRetry: latest.status === PipelineRunStatus.FAILED && retryOperationEligibility(latest, {
           id: projectId,
           repositoryFullName: projected.repository || "",
           targetBranch: projected.branch || "",
@@ -401,10 +418,7 @@ export class ProjectCurrentStateService {
     }
 
     const stage = String(latest.currentStage || "github_actions");
-    const phase = stage.includes("build") ? "build"
-      : stage.includes("terraform") ? "deploy"
-        : stage.includes("health") || stage.includes("verify") ? "verify"
-          : "prepare";
+    const phase = this.githubLifecyclePhase(stage, latestMetadata);
     const state = phase === "build" ? "building"
       : phase === "deploy" ? "deploying"
         : phase === "verify" ? "verifying"
@@ -461,9 +475,87 @@ export class ProjectCurrentStateService {
   }
 
   /**
+   * A rollback operation can dispatch a promotion/compensation workflow after
+   * its candidate has already completed Terraform. The execution stage then
+   * briefly becomes `promotion_dispatch` or `github_actions`; neither is an
+   * earlier lifecycle milestone. Preserve the highest confirmed phase from
+   * persisted workflow evidence so a single operation never paints Deploy and
+   * then regresses to Prepare while it converges on LIVE.
+   */
+  private githubLifecyclePhase(
+    currentStage: string,
+    metadata: Record<string, unknown>,
+  ): "prepare" | "build" | "deploy" | "verify" {
+    const phaseForStage = (stage: unknown, recognizePromotion = false) => {
+      const value = String(stage || "").toLowerCase();
+      if (value.includes("build")) return "build" as const;
+      if (value.includes("terraform") || (recognizePromotion && value.startsWith("promotion_"))) return "deploy" as const;
+      if (value.includes("health") || value.includes("verify")) return "verify" as const;
+      return "prepare" as const;
+    };
+    if (metadata.deploymentAction !== "rollback") return phaseForStage(currentStage);
+    const rank = { prepare: 0, build: 1, deploy: 2, verify: 3 } as const;
+    const workflowStages = Array.isArray(metadata.workflowStages) ? metadata.workflowStages : [];
+    const confirmedWorkflowPhase = workflowStages.reduce<"prepare" | "build" | "deploy" | "verify">((highest, item) => {
+      if (!item || typeof item !== "object") return highest;
+      const stage = item as Record<string, unknown>;
+      if (!["passed", "running"].includes(String(stage.status || "").toLowerCase())) return highest;
+      const candidate = phaseForStage(stage.key, true);
+      return rank[candidate] > rank[highest] ? candidate : highest;
+    }, "prepare");
+    const workflowPhase = String(metadata.workflowPhase || "").toLowerCase();
+    const promotionHandoff = ["promotion", "compensation"].includes(workflowPhase)
+      || String(currentStage || "").toLowerCase().startsWith("promotion_");
+    const currentPhase = phaseForStage(currentStage, true);
+    const minimumPhase = promotionHandoff ? "deploy" as const : "prepare" as const;
+    return [currentPhase, confirmedWorkflowPhase, minimumPhase].reduce<"prepare" | "build" | "deploy" | "verify">(
+      (highest, candidate) => rank[candidate] > rank[highest] ? candidate : highest,
+      "prepare",
+    );
+  }
+
+  /** A retry may carry an ancestor's immutable deletion proof, never its own. */
+  private async verifiedDestroyAncestor(source: ProjectPipelineRun, projectId: string, environmentName: string) {
+    const generationId = source.generationId;
+    if (!generationId) return null;
+    let current: ProjectPipelineRun | null = source;
+    const visited = new Set<string>();
+    for (let depth = 0; current && depth < 32; depth += 1) {
+      if (visited.has(current.id)
+        || current.projectId !== projectId
+        || current.generationId !== generationId
+        || current.metadata?.deploymentAction !== "destroy") return null;
+      visited.add(current.id);
+      const evidence = current.metadata?.destroyVerification as Record<string, unknown> | undefined;
+      const finalizedAfterAwsDeletion = current.status === PipelineRunStatus.COMPLETED
+        || (current.status === PipelineRunStatus.FAILED
+          && current.currentStage === "project_delete_cleanup"
+          && current.metadata?.failureCategory === "project_delete_incomplete");
+      if (
+        finalizedAfterAwsDeletion
+        && evidence?.contractVersion === "deployguard.destroy-result/v2"
+        && evidence.deploymentOperationId === current.id
+        && evidence.projectId === projectId
+        && evidence.environmentName === environmentName
+        && evidence.status === "project_delete_ready"
+        && evidence.generationResourcesRemoved === true
+        && evidence.projectResourcesRemoved === true
+        && evidence.terraformStateArtifactsRemoved === true
+        && evidence.sharedPlatformUntouched === true
+        && Array.isArray(evidence.generationIds)
+        && evidence.generationIds.includes(generationId)
+      ) return current;
+      const parentId = current.metadata?.retryOfOperationId;
+      if (typeof parentId !== "string" || !parentId) return null;
+      current = await this.runRepository.findOne({ where: { id: parentId, projectId } });
+    }
+    return null;
+  }
+
+  /**
    * Attach the evidence envelope after GitHub Actions has won state
-   * precedence. Infrastructure records are evidence only here: they never
-   * revive a historical release-lane state or override a newer destroy.
+   * precedence. Retired infrastructure/storage records are not queried and
+   * cannot override a newer destroy.
    */
   private withStateAuthority(
     projectId: string,
@@ -471,8 +563,6 @@ export class ProjectCurrentStateService {
     projected: DeveloperProjectCurrentState,
     profile: ProjectDetectionProfile | null,
     preflight: ProjectPreflightReport | null,
-    infrastructure: ProjectInfrastructureEnvironment | null,
-    storage: ProjectPersistentStorage | null,
     awsEvidence: LiveAwsEvidence | null,
   ): DeveloperProjectCurrentState {
     const latest = projected.latestAttempt;
@@ -491,24 +581,22 @@ export class ProjectCurrentStateService {
         ? "current" as const
         : "stale" as const;
     const destroyed = projected.developerState === "destroyed";
-    const authoritativeLiveRelease = Boolean(projected.stableRelease && projected.stableUrl) && !destroyed;
+    const destroyCleanupIncomplete = projected.destroyCleanupIncomplete === true;
+    const runtimeDeleted = destroyed || destroyCleanupIncomplete;
+    const authoritativeLiveRelease = Boolean(projected.stableRelease && projected.stableUrl) && !runtimeDeleted;
     const liveReleaseObservedAt = projected.stableRelease?.promotedAt || observedAt;
-    const infrastructureStatus = destroyed
+    const infrastructureStatus = runtimeDeleted
       ? { exists: false, status: "destroyed" as const, source: "github_actions" as const }
       : authoritativeLiveRelease
         ? { exists: true, status: "active" as const, source: "github_actions" as const }
-        : infrastructure?.status === InfrastructureEnvironmentStatus.PROVISIONED
-          ? { exists: true, status: "active" as const, source: "infrastructure_record" as const }
-          : infrastructure?.status === InfrastructureEnvironmentStatus.DESTROYED
-            ? { exists: false, status: "destroyed" as const, source: "infrastructure_record" as const }
-            : infrastructure
-              ? { exists: false, status: "not_provisioned" as const, source: "infrastructure_record" as const }
-              : { exists: null, status: "unknown" as const, source: "unavailable" as const };
+        : { exists: null, status: "unknown" as const, source: "unavailable" as const };
     const canonical = projected.developerState === "ready"
       ? "READY" as const
       : projected.developerState === "destroyed"
           ? "DESTROYED" as const
-          : isActive && operationType === "destroy"
+          : destroyCleanupIncomplete
+            ? "BLOCKED" as const
+            : isActive && operationType === "destroy"
             ? "DESTROYING" as const
             : isActive
               ? "DEPLOYING" as const
@@ -521,8 +609,8 @@ export class ProjectCurrentStateService {
       state: canonical,
       reason: projected.developerMessage,
       activeOperation: isActive && latest ? {
-        // The run id is intentionally the public operation identity; no
-        // worker lease, queue id or release-lane detail leaks to the UI.
+        // The run id is intentionally the public operation identity; internal
+        // queue detail never leaks to the UI.
         id: latest.operationId || "active-github-actions-operation",
         type: operationType,
         status: latest.status,
@@ -563,11 +651,6 @@ export class ProjectCurrentStateService {
       : authority.infrastructure.status === "destroyed"
         ? "destroyed" as const
         : "unavailable" as const;
-    const storageIsConfigured = Boolean(storage?.enabled && [
-      PersistentStorageStatus.PROVISIONED,
-      PersistentStorageStatus.BACKUP_CONFIGURED,
-      PersistentStorageStatus.RESTORED,
-    ].includes(storage.status as PersistentStorageStatus));
     return {
       ...projected,
       stateAuthority: authority,
@@ -588,7 +671,7 @@ export class ProjectCurrentStateService {
             ? `projects/${projectId}/${environmentName}/${projected.stableRelease.generationId}/terraform.tfstate`
             : null,
           lastApplyAt: authoritativeLiveRelease ? liveReleaseObservedAt : null,
-          lastDestroyAt: destroyed ? observedAt : null,
+          lastDestroyAt: runtimeDeleted ? observedAt : null,
         },
         cost: {
           status: projected.estimatedCost?.status || "unavailable",
@@ -602,13 +685,7 @@ export class ProjectCurrentStateService {
           unavailableReason: projected.estimatedCost?.unavailableReason || null,
           breakdown: projected.estimatedCost?.breakdown || [],
         },
-        persistentStorage: storageIsConfigured ? {
-          type: "EFS",
-          status: String(storage!.status),
-          encrypted: Boolean(storage!.encrypted),
-          backupEnabled: Boolean(storage!.backupEnabled),
-          region: storage!.awsRegion || null,
-        } : null,
+        persistentStorage: null,
       },
     };
   }
@@ -695,10 +772,11 @@ export class ProjectCurrentStateService {
   async getDetailedCurrentState(
     user: User,
     projectId: string,
-    _options: { refreshCloudState?: boolean } = {},
   ) {
     const [currentState, deploymentContract] = await Promise.all([
-      this.getCurrentState(user, projectId),
+      // Detailed infrastructure inspection is an explicit, privileged surface.
+      // It may enrich the persisted projection with read-only AWS evidence.
+      this.getCurrentState(user, projectId, { refreshCloudState: true }),
       this.contractRepository.findOne({ where: { projectId } }),
     ]);
     return {

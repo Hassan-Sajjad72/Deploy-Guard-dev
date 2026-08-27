@@ -5,7 +5,7 @@ import {
   getObservabilityRuntimeMetrics,
   getObservabilitySummary,
 } from "../api/projectApi.js";
-import { getProjectCurrentState } from "../api/projectApi.js";
+import { getProjectDetailedCurrentState } from "../api/projectApi.js";
 import EmptyState from "../components/common/EmptyState.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
@@ -25,7 +25,7 @@ export default function ProjectObservability() {
 
   useEffect(() => {
     let mounted = true;
-    getProjectCurrentState(projectId)
+    getProjectDetailedCurrentState(projectId)
       .then(async (currentState) => {
         if (!currentState.hasRealDeployment) return { currentState };
         const [summary, runtime, health] = await Promise.all([

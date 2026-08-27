@@ -114,14 +114,14 @@ export class AdminController {
   @UseGuards(requireRole([UserRole.ADMIN]))
   async listProjects(@Req() req: Request) {
     const projects = await this.projectsService.listProjects(req.user!);
-    const states = await Promise.allSettled(
+    const states = await Promise.all(
       projects.map((project) => this.projectCurrentStateService.getCurrentState(req.user!, project.id)),
     );
 
     return {
       summaries: projects.map((project, index) => ({
         project,
-        currentState: states[index].status === "fulfilled" ? states[index].value : null,
+        currentState: states[index],
       })),
     };
   }

@@ -27,7 +27,7 @@ import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { ProjectActivityService } from "./project-activity.service";
 import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
 import { analysisFingerprint } from "./analysis-fingerprint";
-import { classifyConfigurationVariable, ignoredSubmittedVariableNames, managedAliasError, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, provenRepositoryOwnedVariableKeys, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
+import { classifyConfigurationVariable, ignoredSubmittedVariableNames, isSecretConfigurationKey, managedAliasError, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, provenRepositoryOwnedVariableKeys, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import {
   acquireProjectConfigurationAdvisoryLock,
@@ -986,8 +986,7 @@ export class ProjectsService {
     const runtime = Boolean(contract?.runtimeEnvVars.includes(key));
     const scope = build && runtime ? "both" : build ? "build" : "runtime";
     const publicBuild = /^(VITE_|NEXT_PUBLIC_|REACT_APP_)/.test(key) && (scope === "build" || scope === "both");
-    const isSecret = !publicBuild && (Boolean(contract?.secretEnvVars.includes(key)) ||
-      /(SECRET|TOKEN|PASSWORD|PRIVATE|API_KEY|DATABASE_URL|CREDENTIAL|AUTH_KEY)/.test(key));
+    const isSecret = !publicBuild && (Boolean(contract?.secretEnvVars.includes(key)) || isSecretConfigurationKey(key));
     return {
       key,
       required: Boolean(contract?.requiredEnvVars.includes(key)),

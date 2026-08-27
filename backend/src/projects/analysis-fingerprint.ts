@@ -1,6 +1,9 @@
 import { createHash } from "crypto";
 import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { Project } from "./project.entity";
+import { TOPOLOGY_ANALYZER_VERSION, TOPOLOGY_SCHEMA_VERSION } from "./detection/topology.types";
+
+export const DETECTION_INPUT_FINGERPRINT_VERSION = 5 as const;
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
@@ -107,7 +110,9 @@ export function deploymentContractFingerprint(
 
 export function detectionFingerprint(project: Project, commitSha: string | null) {
   return analysisFingerprint({
-    version: 3,
+    version: DETECTION_INPUT_FINGERPRINT_VERSION,
+    topologyAnalyzerVersion: TOPOLOGY_ANALYZER_VERSION,
+    topologySchemaVersion: TOPOLOGY_SCHEMA_VERSION,
     repository: project.repositoryFullName || project.repositoryUrl,
     repositoryUrl: project.repositoryUrl,
     targetBranch: project.targetBranch,

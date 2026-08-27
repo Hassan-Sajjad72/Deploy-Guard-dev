@@ -23,7 +23,6 @@
   "exclude": [
     "dist",
     "node_modules",
-    "src/orchestration-contracts/**",
     "src/infrastructure-lifecycle/**",
     "src/orchestration/**",
     "src/state-management/**",

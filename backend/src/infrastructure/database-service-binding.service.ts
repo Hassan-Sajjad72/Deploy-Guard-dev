@@ -20,7 +20,7 @@ import { ProjectPersistentStorage } from "../storage/project-persistent-storage.
 import { Project } from "../projects/project.entity";
 import { canonicalEnvironmentName } from "../projects/canonical-environment";
 import { managedDatabaseProfile } from "../projects/managed-database-engine";
-import { buildPlanComponents, requireBuildPlan } from "../projects/build-plan";
+import { buildPlanRuntimeOwner, requireBuildPlan } from "../projects/build-plan";
 import { RuntimeEvidenceContractError, RuntimeEvidenceContractIssue } from "../projects/github-actions-release-evidence";
 import {
   aliasesFor,
@@ -87,6 +87,14 @@ export async function acquireProjectConfigurationAdvisoryLock(
   const key = projectConfigurationAdvisoryLockKey(projectId, environment);
   await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [key]);
   return key;
+}
+
+export function unresolvedExactRequiredConfiguration(
+  requiredKeys: readonly string[],
+  resolvedKeys: Iterable<string>,
+) {
+  const exact = new Set(Array.from(resolvedKeys, normalizeConfigurationKey));
+  return requiredKeys.filter((key) => !exact.has(normalizeConfigurationKey(key)));
 }
 
 @Injectable()
@@ -617,10 +625,11 @@ export class DatabaseServiceBindingService {
     }
 
     const region = this.config.get<string>("AWS_REGION", "us-east-1");
-    const runtimeComponent = buildPlanComponents(buildPlan).find((component) => component.role === "backend")
-      || buildPlanComponents(buildPlan)[0];
+    const runtimeOwner = buildPlanRuntimeOwner(buildPlan);
+    const runtimeComponent = runtimeOwner.component;
+    if (runtimeOwner.blocker) blockers.push(runtimeOwner.blocker);
     const platformValues: Record<string, string> = {
-      PORT: String(runtimeComponent.port || ""), HOST: "0.0.0.0", NODE_ENV: "production",
+      PORT: String(runtimeComponent?.port || ""), HOST: "0.0.0.0", NODE_ENV: "production",
       AWS_REGION: region, AWS_DEFAULT_REGION: region, DEPLOYGUARD_PROJECT_ID: projectId,
       DEPLOYGUARD_GENERATION_ID: generationId || "unassigned",
       DEPLOYGUARD_ENVIRONMENT: environment, DEPLOYGUARD_OPERATION_ID: pipelineRunId || "preflight",
@@ -628,7 +637,9 @@ export class DatabaseServiceBindingService {
       DEPLOYGUARD_DATABASE_LOG_GROUP: `/deployguard/${projectId}/${environment}/database`,
       DEPLOYGUARD_DEPLOYMENT_LOG_GROUP: `/deployguard/${projectId}/${environment}/deployment`,
     };
-    for (const key of platformRuntimeVariableNames(runtimeComponent.language === "static" ? "javascript" : runtimeComponent.language, runtimeComponent.runtimeType)) {
+    for (const key of runtimeComponent
+      ? platformRuntimeVariableNames(runtimeComponent.language === "static" ? "javascript" : runtimeComponent.language, runtimeComponent.runtimeType)
+      : []) {
       runtimeVariables[key] = platformValues[key];
       const definition = reservedVariable(key)!;
       putOwnership(key, {
@@ -668,7 +679,8 @@ export class DatabaseServiceBindingService {
         };
         for (const [property, value] of Object.entries(properties)) {
           const aliases = aliasesFor(service, property as never);
-          const selected = [...new Set([aliases[0], ...aliases.filter((key) => expectedKeys.has(key))])].filter(Boolean);
+          const evidenced = aliases.filter((key) => expectedKeys.has(key));
+          const selected = evidenced.length ? evidenced : aliases.slice(0, 1);
           for (const key of selected) {
             if (!value) blockers.push(`${key} is missing from the database binding.`);
             else runtimeVariables[key] = value;
@@ -681,9 +693,8 @@ export class DatabaseServiceBindingService {
         ] as const;
         for (const [property, reference] of secretProperties) {
           const aliases = aliasesFor(service, property);
-          const selected = property === "password"
-            ? [...new Set([aliases[0], ...aliases.filter((key) => expectedKeys.has(key))])].filter(Boolean)
-            : aliases.filter((key) => expectedKeys.has(key));
+          const evidenced = aliases.filter((key) => expectedKeys.has(key));
+          const selected = property === "password" && !evidenced.length ? aliases.slice(0, 1) : evidenced;
           const externalValueKey = binding.provider === "external"
             ? aliases.find((key) => projectSecretValues[key] !== undefined || secretReferences[key] !== undefined)
             : undefined;
@@ -707,12 +718,10 @@ export class DatabaseServiceBindingService {
     }
 
     const resolvedKeys = new Set([...Object.keys(runtimeVariables), ...Object.keys(buildArguments), ...Object.keys(projectSecretValues), ...Object.keys(secretReferences)]);
-    const unresolvedRequiredValues = buildPlan.requiredInputs.filter((key) => {
-      const normalized = normalizeConfigurationKey(key);
-      if (resolvedKeys.has(normalized)) return false;
-      const alias = serviceAlias(normalized, service);
-      return !alias || !alias.aliases.some((candidate) => resolvedKeys.has(candidate));
-    });
+    // Repository ENV names are an immutable application boundary. Semantic
+    // aliases may share one managed value internally, but a sibling alias must
+    // never make an evidenced required name appear resolved.
+    const unresolvedRequiredValues = unresolvedExactRequiredConfiguration(buildPlan.requiredInputs, resolvedKeys);
     if (unresolvedRequiredValues.length) blockers.push(`Required application configuration is unresolved: ${unresolvedRequiredValues.join(", ")}.`);
     blockers.push(...duplicateOwnershipConflicts);
     const sourceRevisions = Object.fromEntries(Object.entries(ownership).map(([key, value]) => [key, value.sourceRevision]));
@@ -820,9 +829,12 @@ export class DatabaseServiceBindingService {
       new DescribeTaskDefinitionCommand({ taskDefinition: taskDefinitionArn })
     );
     const containers = response.taskDefinition?.containerDefinitions || [];
-    const bindingContainer = containers.find((item) => (item.environment || []).some((entry) => entry.name === "DB_HOST"))
-      || containers.find((item) => item.name === "app")
-      || containers[0];
+    const expectedBindingKeys = Object.keys(effective.ownership)
+      .filter((key) => effective.ownership[key]?.serviceBindingId === effective.binding?.id);
+    const bindingContainer = containers.find((item) => {
+      const names = new Set([...(item.environment || []), ...(item.secrets || [])].map((entry) => String(entry.name)));
+      return expectedBindingKeys.some((key) => names.has(key));
+    }) || containers.find((item) => item.name === "backend" || item.name === "app") || containers[0];
     const runtimeIdentityContainer = containers.find((item) => {
       const identity = Object.fromEntries((item.environment || []).map((entry) => [String(entry.name), String(entry.value || "")]));
       return identity.DEPLOYGUARD_OPERATION_ID === pipelineRunId
@@ -834,12 +846,16 @@ export class DatabaseServiceBindingService {
     const secrets = Object.fromEntries((bindingContainer?.secrets || []).map((item) => [String(item.name), String(item.valueFrom || "")]));
     const blockers: string[] = [];
     const contractIssues: RuntimeEvidenceContractIssue[] = [];
-    for (const key of ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER"]) {
-      if (environment[key] !== effective.runtimeVariables[key]) blockers.push(`${key} does not match the immutable database binding.`);
-    }
-    if (LOCAL_HOST.test(environment.DB_HOST || "")) blockers.push("Application task definition contains a localhost database host.");
-    for (const key of ["DB_PASSWORD", "DATABASE_URL"]) {
-      if (effective.secretReferences[key] && secrets[key] !== effective.secretReferences[key]) blockers.push(`${key} does not use the binding secret reference.`);
+    for (const key of expectedBindingKeys) {
+      if (effective.runtimeVariables[key] !== undefined && environment[key] !== effective.runtimeVariables[key]) {
+        blockers.push(`${key} does not match the immutable database binding.`);
+      }
+      if (effective.secretReferences[key] !== undefined && secrets[key] !== effective.secretReferences[key]) {
+        blockers.push(`${key} does not use the binding secret reference.`);
+      }
+      if (serviceAlias(key, effective.binding?.engine || "postgres")?.property === "host" && LOCAL_HOST.test(environment[key] || "")) {
+        blockers.push(`${key} contains a localhost database host.`);
+      }
     }
     if (expectedRelease) {
       const releaseContainer = containers.find((item) => item.image === expectedRelease.imageUri) || bindingContainer;

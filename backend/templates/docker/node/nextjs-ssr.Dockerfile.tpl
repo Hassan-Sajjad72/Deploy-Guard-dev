@@ -1,19 +1,22 @@
-FROM node:22-alpine3.21 AS deps
+FROM {{BUILD_BASE_IMAGE}} AS deps
+{{BUILD_SYSTEM_DEPENDENCIES}}
 WORKDIR /app
 COPY . .
 RUN {{INSTALL_COMMAND}}
 
-FROM node:22-alpine3.21 AS builder
+FROM {{BUILD_BASE_IMAGE}} AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN {{BUILD_COMMAND}}
+{{BUILD_STEP}}
 RUN {{PRUNE_COMMAND}}
 
-FROM node:22-alpine3.21 AS runner
+FROM {{RUNTIME_BASE_IMAGE}} AS runner
+{{RUNTIME_SYSTEM_DEPENDENCIES}}
 WORKDIR /app
 ENV NODE_ENV=production
-RUN addgroup -S app && adduser -S app -G app
+LABEL io.deployguard.framework="{{FRAMEWORK}}" io.deployguard.framework-mode="{{FRAMEWORK_MODE}}" io.deployguard.source-commit="{{COMMIT_SHA}}" io.deployguard.application-root="{{APP_ROOT}}" io.deployguard.install-root="{{REPOSITORY_INSTALL_ROOT}}" io.deployguard.runtime-files="{{RUNTIME_FILES}}" io.deployguard.health-path="{{HEALTH_CHECK_PATH}}"
+RUN addgroup -S app && adduser -S app -G app && chown app:app /app
 COPY --from=builder --chown=app:app /app ./
 USER app
 EXPOSE {{EXPECTED_PORT}}

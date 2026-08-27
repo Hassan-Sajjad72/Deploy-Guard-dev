@@ -4,7 +4,6 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  Optional,
 } from "@nestjs/common";
 import { Queue } from "bullmq";
 import { ConfigService } from "@nestjs/config";
@@ -43,11 +42,6 @@ import {
   SubscriptionTier,
 } from "./project-cost-settings.entity";
 import { TerraformCostPlanService } from "./terraform-cost-plan.service";
-import { InactiveLegacyShadowInsertionAdapter } from "../orchestration-contracts/release-lane/inactive-legacy-shadow-insertion.adapter";
-import {
-  CrossLaneOwnershipClaim,
-  CrossLaneOwnershipEnforcementService,
-} from "../orchestration-contracts/release-lane/cross-lane-ownership-enforcement.service";
 
 type RequestInfo = Request | undefined;
 
@@ -112,8 +106,6 @@ export class FinopsService {
     private readonly policyService: FinopsPolicyService,
     private readonly infracostService: InfracostService,
     private readonly terraformCostPlanService: TerraformCostPlanService,
-    @Optional() private readonly legacyShadow?: InactiveLegacyShadowInsertionAdapter,
-    @Optional() private readonly crossLane?: CrossLaneOwnershipEnforcementService,
   ) {}
 
   async createEstimate(user: User, projectId: string, req?: RequestInfo) {
@@ -268,18 +260,6 @@ export class FinopsService {
     if (!run) {
       throw new NotFoundException("Pipeline run for cost approval was not found.");
     }
-    const claim: CrossLaneOwnershipClaim = await (
-      this.crossLane?.acquireLegacy({
-        projectId,
-        operationId: pipelineRunId,
-        actorId: `user:${triggeredByUserId}`,
-        operationClass: "legacy_cost_approval_resume",
-      }) ?? Promise.resolve({ enabled: false } as const)
-    );
-    await this.crossLane?.linkLegacyRun(claim, pipelineRunId);
-
-    this.legacyShadow?.observeCostApprovalResume({ projectId, logicalOperationId: pipelineRunId });
-
     await this.pipelineQueue.add(
       "resumeAfterCostApproval",
       {

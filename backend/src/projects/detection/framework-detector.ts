@@ -31,6 +31,7 @@ export type PartialDetectorBuildPlan = {
   baseImage: string;
   runtimeImage: string;
   buildCommand: string | null;
+  buildInitialization?: import("../build-plan").BuildInitialization;
   releaseCommand: string | null;
   runCommand: string | null;
   outputDirectory: string | null;

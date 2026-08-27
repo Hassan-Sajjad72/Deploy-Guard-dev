@@ -5,7 +5,6 @@ import { ProjectCostEstimate } from "../finops/project-cost-estimate.entity";
 import { InfrastructureModule } from "../infrastructure/infrastructure.module";
 import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
-import { ProjectSecurityScan } from "../projects/project-security-scan.entity";
 import { Project } from "../projects/project.entity";
 import { ProjectTerraformState } from "../state-management/project-terraform-state.entity";
 import { ProjectPersistentStorage } from "../storage/project-persistent-storage.entity";
@@ -19,17 +18,14 @@ import { ProjectOrchestrationEvent } from "./project-orchestration-event.entity"
 import { ProjectRollbackRecord } from "./project-rollback-record.entity";
 import { ProjectSpotInterruptionEvent } from "./project-spot-interruption-event.entity";
 import { ProjectStableRelease } from "./project-stable-release.entity";
-import { RollbackService } from "./rollback.service";
 import { SpotInterruptionService } from "./spot-interruption.service";
 import { NotificationsModule } from "../notifications/notifications.module";
-import { OrchestrationContractsModule } from "../orchestration-contracts/orchestration-contracts.module";
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       Project,
       ProjectPipelineRun,
-      ProjectSecurityScan,
       ProjectCostEstimate,
       ProjectInfrastructureEnvironment,
       ProjectTerraformState,
@@ -43,14 +39,12 @@ import { OrchestrationContractsModule } from "../orchestration-contracts/orchest
     AuditLogModule,
     InfrastructureModule,
     NotificationsModule,
-    OrchestrationContractsModule,
   ],
   providers: [
     OrchestrationService,
     EcsService,
     AlbService,
     AutoscalingService,
-    RollbackService,
     SpotInterruptionService,
     OrchestrationDeploymentReadinessService,
   ],
@@ -59,7 +53,6 @@ import { OrchestrationContractsModule } from "../orchestration-contracts/orchest
     EcsService,
     AlbService,
     AutoscalingService,
-    RollbackService,
     SpotInterruptionService,
   ],
 })

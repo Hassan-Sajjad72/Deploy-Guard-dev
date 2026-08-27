@@ -4,7 +4,7 @@ import {
   approveCostEstimate,
   getCostEstimate,
   getProject,
-  getProjectCurrentState,
+  getProjectDetailedCurrentState,
   rejectCostEstimate,
 } from "../api/projectApi.js";
 import ErrorState from "../components/common/ErrorState.jsx";
@@ -34,7 +34,7 @@ export default function CostEstimateDetails() {
       const [projectResponse, estimateResponse, stateResponse] = await Promise.all([
         getProject(projectId),
         getCostEstimate(projectId, estimateId),
-        getProjectCurrentState(projectId),
+        getProjectDetailedCurrentState(projectId),
       ]);
       setProject(projectResponse.project);
       setEstimate(estimateResponse.estimate);

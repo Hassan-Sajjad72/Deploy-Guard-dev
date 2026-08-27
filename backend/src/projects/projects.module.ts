@@ -21,12 +21,10 @@ import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
-import { ProjectPipelineJobFinality } from "./pipeline/project-pipeline-job-finality.entity";
 import { ProjectPipelineRun } from "./project-pipeline-run.entity";
 import { GithubActionsService } from "./pipeline/github-actions.service";
 import { ProjectPreflightReport } from "./project-preflight-report.entity";
 import { ProjectServiceBinding } from "./project-service-binding.entity";
-import { ProjectSecurityScan } from "./project-security-scan.entity";
 import { ProjectUserActivity } from "./project-user-activity.entity";
 import { Project } from "./project.entity";
 import { ProjectsController } from "./projects.controller";
@@ -39,18 +37,16 @@ import { RepositoryWorkspaceService } from "./detection/repository-workspace.ser
 import { StackDetectionService } from "./detection/stack-detection.service";
 import { TemplateMatchingService } from "./detection/template-matching.service";
 import { MainstreamDetectorResolverService } from "./detection/mainstream-detector-resolver.service";
-import { SecurityPolicyService } from "./security/security-policy.service";
+import { DeployGuardBuildProvider } from "./detection/build-provider.service";
 import { DockerTemplateEngineService } from "./templates/docker-template-engine.service";
 import { PreflightService } from "./templates/preflight.service";
 import { TemplateRegistryService } from "./templates/template-registry.service";
 import { TemplatesController } from "./templates/templates.controller";
 import { User } from "../users/user.entity";
-import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
 import { ProjectInfrastructureEvent } from "../infrastructure/project-infrastructure-event.entity";
 import { ProjectCostEstimate } from "../finops/project-cost-estimate.entity";
 import { ProjectCostSettings } from "../finops/project-cost-settings.entity";
 import { ProjectTerraformLock } from "../state-management/project-terraform-lock.entity";
-import { ProjectPersistentStorage } from "../storage/project-persistent-storage.entity";
 import { ProjectDeployment } from "../orchestration/project-deployment.entity";
 import { ProjectStableRelease } from "../orchestration/project-stable-release.entity";
 import { ProjectRuntimeMetricSnapshot } from "../observability/project-runtime-metric-snapshot.entity";
@@ -70,6 +66,7 @@ import { GenerationRetentionService } from "./generation-retention.service";
 import { NotificationSubscription } from "../notifications/notification-subscription.entity";
 import { ProjectDeletionService } from "./project-deletion.service";
 import { SharedPlatformFoundationService } from "./shared-platform-foundation.service";
+import { ProductStartSchemaIntegrityService } from "./product-start-schema-integrity.service";
 
 @Module({
   imports: [
@@ -77,12 +74,11 @@ import { SharedPlatformFoundationService } from "./shared-platform-foundation.se
       Project, User, GithubAppInstallation, ProjectEnvironmentVariable,
       ProjectDeploymentContract, ProjectDatabaseTier, ProjectDetectionProfile,
       ProjectPreflightReport, ProjectPipelineRun, ProjectPipelineEvent,
-      ProjectPipelineJobFinality, ProjectDeploymentRequirements,
-      ProjectServiceBinding, ProjectConfigurationSnapshot, ProjectUserActivity, ProjectSecurityScan,
-      // Read-only historical evidence remains queryable, but none of its
-      // retired mutation providers is registered in this module.
-      ProjectInfrastructureEnvironment, ProjectInfrastructureEvent,
-      ProjectPersistentStorage, ProjectCostEstimate, ProjectCostSettings, ProjectTerraformLock,
+      ProjectDeploymentRequirements,
+      ProjectServiceBinding, ProjectConfigurationSnapshot, ProjectUserActivity,
+      // Historical infrastructure/storage records are not part of ordinary
+      // project state authority. Current routing uses generation records.
+      ProjectInfrastructureEvent, ProjectCostEstimate, ProjectCostSettings, ProjectTerraformLock,
       ProjectDeployment, ProjectStableRelease, ProjectRuntimeMetricSnapshot,
       ProjectBackupRecord,
       ProjectDeploymentGeneration,
@@ -100,9 +96,9 @@ import { SharedPlatformFoundationService } from "./shared-platform-foundation.se
     ProjectsService, GithubAppService, GithubActionsService, GithubActionsDeploymentService, GithubActionsRuntimeSecretService,
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
     DeploymentContractService, DatabaseTierService, DeploymentProfileService,
-    RepositoryWorkspaceService, StackDetectionService, RepoDeployabilityScannerService, MainstreamDetectorResolverService,
+    RepositoryWorkspaceService, StackDetectionService, RepoDeployabilityScannerService, MainstreamDetectorResolverService, DeployGuardBuildProvider,
     TemplateMatchingService, TemplateRegistryService, DockerTemplateEngineService,
-    PreflightService, SecurityPolicyService, PipelineStageResolverService,
+    PreflightService, PipelineStageResolverService,
     DeploymentRequirementsService, ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,
     ManagedDatabaseReconciliationService,
@@ -114,6 +110,7 @@ import { SharedPlatformFoundationService } from "./shared-platform-foundation.se
     GenerationRetentionService,
     ProjectDeletionService,
     SharedPlatformFoundationService,
+    ProductStartSchemaIntegrityService,
   ],
   exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService],
 })

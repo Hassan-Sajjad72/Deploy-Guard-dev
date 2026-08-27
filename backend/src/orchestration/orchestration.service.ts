@@ -16,7 +16,6 @@ import { EcsService } from "./ecs.service";
 import { ProjectDeployment, ProjectDeploymentStatus } from "./project-deployment.entity";
 import { ProjectOrchestrationEvent } from "./project-orchestration-event.entity";
 import { ProjectStableRelease } from "./project-stable-release.entity";
-import { RollbackService } from "./rollback.service";
 import { SpotInterruptionService } from "./spot-interruption.service";
 import { getOrchestrationConfig } from "./orchestration.config";
 
@@ -43,7 +42,6 @@ export class OrchestrationService {
     private readonly ecsService: EcsService,
     private readonly albService: AlbService,
     private readonly autoscalingService: AutoscalingService,
-    private readonly rollbackService: RollbackService,
     private readonly spotInterruptionService: SpotInterruptionService,
     private readonly notifications: NotificationDispatcherService
   ) {}
@@ -113,26 +111,6 @@ export class OrchestrationService {
       order: { deployedAt: "DESC" },
       take: 50,
     });
-  }
-
-  async rollback(user: User, projectId: string, dto: { reason?: string }, req?: RequestInfo) {
-    const project = await this.findProjectForManage(user, projectId);
-    await this.audit("MANUAL_ROLLBACK_REQUESTED", project.id, user, "success", { reason: dto.reason || "Manual rollback requested." }, req);
-    await this.event(project.id, null, null, "rollback_started", "running", "Manual rollback started.", user);
-
-    try {
-      const result = await this.rollbackService.rollbackToPreviousStable(project.id, null, dto.reason || "Manual rollback requested.");
-      await this.event(project.id, result.deployment.pipelineRunId || null, result.deployment.id, "rollback_succeeded", "success", "Rollback completed.", user, {
-        toCommitSha: result.release.commitSha,
-      });
-      await this.audit("ROLLBACK_SUCCEEDED", project.id, user, "success", { deploymentId: result.deployment.id, toCommitSha: result.release.commitSha }, req);
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Rollback failed.";
-      await this.event(project.id, null, null, "rollback_failed", "failed", message, user);
-      await this.audit("ROLLBACK_FAILED", project.id, user, "failed", { reason: message }, req);
-      throw error;
-    }
   }
 
   async getTargetHealth(user: User, projectId: string) {

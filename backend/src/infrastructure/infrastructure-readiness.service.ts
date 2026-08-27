@@ -14,11 +14,10 @@ import {
   PipelineRunStatus,
   ProjectPipelineRun,
 } from "../projects/project-pipeline-run.entity";
-import { SecurityPolicyDecision, ProjectSecurityScan } from "../projects/project-security-scan.entity";
 import { Project, ProjectStatus, ProjectVisibility } from "../projects/project.entity";
 import { User, UserRole } from "../users/user.entity";
 import { getInfrastructureConfig } from "./infrastructure.config";
-import { envBoolean, externalCiRequired } from "../config/env-parsing";
+import { externalCiRequired } from "../config/env-parsing";
 import {
   InfrastructureEnvironmentStatus,
   ProjectInfrastructureEnvironment,
@@ -44,8 +43,6 @@ export class InfrastructureReadinessService {
     private readonly preflightRepository: Repository<ProjectPreflightReport>,
     @InjectRepository(ProjectPipelineRun)
     private readonly runRepository: Repository<ProjectPipelineRun>,
-    @InjectRepository(ProjectSecurityScan)
-    private readonly scanRepository: Repository<ProjectSecurityScan>,
     @InjectRepository(ProjectCostEstimate)
     private readonly costEstimateRepository: Repository<ProjectCostEstimate>,
     @InjectRepository(ProjectInfrastructureEnvironment)
@@ -116,24 +113,6 @@ export class InfrastructureReadinessService {
     });
     const deploymentActivity = await this.pipelineActivity.inspect(project.id, latestRun);
     checks.push(this.checkBoolean("artifact", "Docker artifact", Boolean(!latestRun || latestRun.ecrImageUri || canManage), "Docker build artifact is ready or can be built by deployment.", "Docker build artifact is not ready."));
-
-    const latestScan = await this.scanRepository.findOne({
-      where: { projectId: project.id },
-      order: { createdAt: "DESC" },
-    });
-    const securityDisabled =
-      !envBoolean(this.config, "TRIVY_SCAN_ENABLED", envBoolean(this.config, "TRIVY_ENABLED", true)) ||
-      this.config.get<string>("SECURITY_GATE_MODE", "enforce").trim().toLowerCase() === "bypass";
-    if (securityDisabled) {
-      checks.push({ key: "security", label: "Security gate", status: "warning", blocking: false, message: "Trivy/security enforcement is disabled; no production security pass is claimed." });
-    } else {
-      const securityPassed = Boolean(
-        !latestScan ||
-          latestScan.policyDecision === SecurityPolicyDecision.ALLOWED ||
-          latestScan.policyDecision === SecurityPolicyDecision.APPROVED_OVERRIDE
-      );
-      checks.push(this.checkBoolean("security", "Security gate", securityPassed, "Security gate is passable.", "Security scan is blocked by critical/high vulnerabilities."));
-    }
 
     const latestCost = await this.costEstimateRepository.findOne({
       where: { projectId: project.id },

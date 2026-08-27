@@ -108,8 +108,7 @@ export type DeveloperProgressPhase =
 
 /**
  * The product-facing evidence envelope.  These fields deliberately describe
- * what DeployGuard knows, including when an external fact is unavailable,
- * rather than inferring a state from a retired worker/release-lane record.
+ * what DeployGuard knows, including when an external fact is unavailable.
  */
 export type ProjectStateAuthority = {
   state: "READY" | "DEPLOYING" | "FAILED" | "LIVE" | "DESTROYING" | "DESTROYED" | "BLOCKED";
@@ -221,6 +220,11 @@ export type DeveloperProjectCurrentState = {
     category: "repository" | "configuration" | "build" | "runtime" | "health";
     message: string;
   } | null;
+  /**
+   * Exact AWS deletion succeeded but final control-plane erasure is still
+   * retryable. Historical release data must not be treated as a LIVE runtime.
+   */
+  destroyCleanupIncomplete?: boolean;
   canRetry: boolean;
   generationState?: {
     liveGenerationId: string | null;

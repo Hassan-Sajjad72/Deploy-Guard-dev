@@ -44,15 +44,6 @@ export class StageCheckpointService {
     const build = this.hash([source, contract.dependencyManifest, contract.lockfile, contract.installCommand, contract.buildCommand, contract.startCommand, contract.dockerStrategy, contract.dockerTemplate, contract.generatedDockerfile, buildVariables]);
     const image = this.hash([build, run.imageTag]);
     const registryImage = this.hash([image, run.ecrImageUri]);
-    const securityPolicy = this.hash([
-      this.config.get("TRIVY_SCAN_ENABLED"),
-      this.config.get("SECURITY_GATE_MODE"),
-      this.config.get("SECURITY_BYPASS_ENABLED"),
-      this.config.get("SECURITY_BLOCK_CRITICAL"),
-      this.config.get("SECURITY_BLOCK_HIGH"),
-      this.config.get("SECURITY_BLOCK_BASE_IMAGE_CRITICAL"),
-    ]);
-    const security = this.hash([image, securityPolicy]);
     const desiredDatabase = database ? [database.provider, database.engine, database.externalHost, database.externalPort, database.externalTlsRequired, database.internalHost, database.databaseName, database.databaseUser, database.persistenceEnabled] : [contract.databaseRequired, contract.databaseEngine];
     const databaseFingerprint = binding
       ? this.hash([desiredDatabase, binding.id, binding.configurationFingerprint, binding.provider, binding.engine, binding.hostReference, binding.port, binding.databaseName, binding.usernameReference, binding.passwordSecretReference, binding.databaseUrlSecretReference, binding.terraformOutputRevision])
@@ -68,7 +59,6 @@ export class StageCheckpointService {
       preflight: this.hash([source, contract.contractHash]),
       dockerfile_generation: build,
       docker_build: build,
-      security_scan: security,
       ecr_push: registryImage,
       terraform_plan: infrastructure,
       terraform_apply: infrastructure,

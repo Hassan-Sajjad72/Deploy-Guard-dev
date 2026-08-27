@@ -1,0 +1,13 @@
+output "enabled" { value = var.enabled }
+output "internal_host" { value = var.enabled ? local.internal_host : null }
+output "port" { value = var.enabled ? local.port : null }
+output "service_arn" { value = var.enabled ? aws_ecs_service.database[0].id : null }
+output "cloud_map_service_arn" { value = var.enabled ? aws_service_discovery_service.database[0].arn : null }
+output "cloud_map_service_id" { value = var.enabled ? aws_service_discovery_service.database[0].id : null }
+output "task_definition_arn" { value = var.enabled ? aws_ecs_task_definition.database[0].arn : null }
+output "security_group_id" { value = var.enabled ? aws_security_group.database[0].id : null }
+output "efs_file_system_id" { value = var.enabled && var.persistence_enabled && var.efs_enabled ? aws_efs_file_system.database[0].id : null }
+output "efs_access_point_id" { value = var.enabled && var.persistence_enabled && var.efs_enabled ? aws_efs_access_point.database[0].id : null }
+output "password_secret_arn" { value = var.enabled ? aws_secretsmanager_secret.password[0].arn : null }
+output "database_url_secret_arn" { value = var.enabled ? aws_secretsmanager_secret.url[0].arn : null }
+output "backup_plan_id" { value = var.enabled && var.persistence_enabled && var.efs_enabled && var.backup_enabled ? aws_backup_plan.database[0].id : null }

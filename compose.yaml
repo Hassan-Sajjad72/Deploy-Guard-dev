@@ -1,12 +1,14 @@
-name: deployguard
+name: deploy-guard-dev
 
 services:
   postgres:
     image: postgres:16.9-alpine3.21
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-mini_paas}
-      POSTGRES_USER: ${POSTGRES_USER:-mini_paas_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-${DATABASE_NAME:-mini_paas}}
+      POSTGRES_USER: ${POSTGRES_USER:-${DATABASE_USERNAME:-mini_paas_user}}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-${DATABASE_PASSWORD:?Set POSTGRES_PASSWORD or DATABASE_PASSWORD}}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,15 +24,15 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     env_file:
-      - .env
+      - backend/.env
     environment: &backend-environment
       NODE_ENV: development
       PORT: 5000
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
-      DATABASE_USERNAME: ${POSTGRES_USER:-mini_paas_user}
-      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      DATABASE_NAME: ${POSTGRES_DB:-mini_paas}
+      DATABASE_USERNAME: ${POSTGRES_USER:-${DATABASE_USERNAME:-mini_paas_user}}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-${DATABASE_PASSWORD:?Set POSTGRES_PASSWORD or DATABASE_PASSWORD}}
+      DATABASE_NAME: ${POSTGRES_DB:-${DATABASE_NAME:-mini_paas}}
       DATABASE_SSL: "false"
       TYPEORM_SYNCHRONIZE: "false"
       FRONTEND_URL: http://localhost:${FRONTEND_PORT:-5173}
@@ -53,7 +55,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     env_file:
-      - .env
+      - backend/.env
     environment:
       <<: *backend-environment
     ports:
@@ -96,18 +98,21 @@ services:
     command:
       - |
         escaped=$$(printf '%s' "$$PROMETHEUS_SCRAPE_TOKEN" | sed 's/[\\&|]/\\&/g')
-        sed "s|__DEPLOYGUARD_SCRAPE_TOKEN__|$$escaped|g" /etc/prometheus/prometheus.yml.template > /tmp/prometheus.yml
+        target=$$(printf '%s' "$$PROMETHEUS_SCRAPE_TARGET" | sed 's/[\\&|]/\\&/g')
+        sed -e "s|__DEPLOYGUARD_SCRAPE_TOKEN__|$$escaped|g" -e "s|__DEPLOYGUARD_SCRAPE_TARGET__|$$target|g" /etc/prometheus/prometheus.yml.template > /tmp/prometheus.yml
         exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=7d
     environment:
-      PROMETHEUS_SCRAPE_TOKEN: ${PROMETHEUS_SCRAPE_TOKEN:?Set PROMETHEUS_SCRAPE_TOKEN in .env}
+      PROMETHEUS_SCRAPE_TOKEN: ${PROMETHEUS_SCRAPE_TOKEN:-deployguard-local-monitoring}
+      # product:start runs the API on the host against backend/.env's
+      # authoritative PostgreSQL endpoint; Compose supplies monitoring only.
+      PROMETHEUS_SCRAPE_TARGET: ${PROMETHEUS_SCRAPE_TARGET:-host.docker.internal:5000}
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./monitoring/prometheus.compose.yml:/etc/prometheus/prometheus.yml.template:ro
       - prometheus_data:/prometheus
-    depends_on:
-      backend:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
       interval: 10s
@@ -119,7 +124,7 @@ services:
     image: grafana/grafana:12.1.0
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-deployguard-local-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
     ports:
       - "${GRAFANA_PORT:-3001}:3000"

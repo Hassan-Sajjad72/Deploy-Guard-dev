@@ -1,85 +1,86 @@
-import { strict as assert } from "assert";
-import { readFileSync } from "fs";
-import { resolve } from "path";
-import { extractGithubActionsDestroyEvidence, extractGithubActionsDestroyProgress } from "../src/projects/github-actions-destroy-evidence";
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { extractGithubActionsDestroyEvidence } from "../src/projects/github-actions-destroy-evidence";
 
+const root = resolve(__dirname, "../..");
+const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 const operationId = "9ffe6827-f55a-4469-ac80-64530f8cea2e";
+const projectId = "b713ea5b-589b-4ab4-8175-6af7dc2ed402";
+const generations = [
+  "404cd3c1-a7dd-4b26-85e9-f531b3cb7ef1",
+  "11111111-2222-4333-8444-555555555555",
+];
 const evidence = {
+  contractVersion: "deployguard.destroy-result/v2" as const,
   deploymentOperationId: operationId,
-  status: "verified_destroyed",
-  ecsServicesAbsent: true,
-  runningTasksZero: true,
-  loadBalancersAbsent: true,
-  listenersAbsent: true,
-  targetGroupsAbsent: true,
-  endpointUnavailable: true,
-  imageRepositoryAbsent: true,
-  runtimeSecretAbsent: true,
-  activeGenerationTaskDefinitionsAbsent: true,
-  normalResourcesAbsent: true,
-  terraformStateVersionsAbsent: true,
-  projectOwnedAwsResourcesAbsent: true,
-  allProjectTerraformArtifactsAbsent: true,
-  retainedResourcesVerified: true,
-  retainedTerraformAddresses: [],
-  verifiedAt: "2026-08-10T12:00:00.000Z",
+  projectId,
+  environmentName: "dev",
+  generationIds: generations,
+  status: "project_delete_ready" as const,
+  generationResourcesRemoved: true as const,
+  projectResourcesRemoved: true as const,
+  terraformStateArtifactsRemoved: true as const,
+  sharedPlatformUntouched: true as const,
+  verifiedAt: "2026-08-12T12:00:00.000Z",
 };
 
-assert.deepEqual(extractGithubActionsDestroyEvidence(`DEPLOYGUARD_DESTROY_RESULT=${JSON.stringify(evidence)}`), evidence);
-assert.equal(extractGithubActionsDestroyEvidence(`DEPLOYGUARD_DESTROY_RESULT=${JSON.stringify({ ...evidence, normalResourcesAbsent: false })}`), null);
-for (const requiredAbsence of ["imageRepositoryAbsent", "runtimeSecretAbsent", "activeGenerationTaskDefinitionsAbsent", "terraformStateVersionsAbsent", "projectOwnedAwsResourcesAbsent", "allProjectTerraformArtifactsAbsent"] as const) {
-  const incomplete: Record<string, unknown> = { ...evidence };
-  delete incomplete[requiredAbsence];
-  assert.equal(extractGithubActionsDestroyEvidence(`DEPLOYGUARD_DESTROY_RESULT=${JSON.stringify(incomplete)}`), null, `${requiredAbsence} is required before retirement`);
-}
-assert.equal(extractGithubActionsDestroyEvidence(`DEPLOYGUARD_DESTROY_RESULT=${JSON.stringify({ ...evidence, retainedTerraformAddresses: ["aws_efs_file_system.database[0]"] })}`), null, "a completed generation destroy retains no Terraform resource");
-const incompleteEvidence = { deploymentOperationId: operationId, status: "DESTROY_INCOMPLETE", phase: "DESTROY_VERIFYING", remaining: [{ resourceType: "aws_resource", resourceId: "arn:aws:ecs:us-east-1:123456789012:service/cluster/service", ownershipScope: "generation", reason: "dependency", errorCode: "DependencyViolation", errorMessage: "pending", retryable: true, attemptCount: 1, firstSeenAt: "2026-08-10T12:00:00.000Z", lastSeenAt: "2026-08-10T12:00:00.000Z" }], terraform: { status: "apply_failed", importAttempted: false }, verifiedAt: "2026-08-10T12:00:00.000Z" };
-assert.deepEqual(extractGithubActionsDestroyProgress(`DEPLOYGUARD_DESTROY_PROGRESS=${JSON.stringify(incompleteEvidence)}`), incompleteEvidence);
-
-const workflow = readFileSync(resolve(__dirname, "../../.github/workflows/deployguard-reusable.yml"), "utf8");
-const service = readFileSync(resolve(__dirname, "../src/projects/github-actions-deployment.service.ts"), "utf8");
-assert.match(workflow, /terraform plan -destroy/);
-assert.match(workflow, /A verified destroy removes the complete generation/);
-assert.doesNotMatch(workflow, /terraform state rm "\$address"/, "destroy must never orphan persistence by removing it from state");
-assert.doesNotMatch(workflow, /normal_state_resources_absent/, "stale state addresses are artifacts to purge after exact AWS absence, not proof of live infrastructure");
-assert.match(workflow, /project_owned_resources_absent; then[\s\S]*?purge_project_state_versions[\s\S]*?project_state_versions_absent/, "exact AWS absence precedes exact state-version extinction");
-assert.match(workflow, /delete_runtime_secret_if_owned/);
-assert.match(workflow, /describe-secret --secret-id "\$RUNTIME_SECRET"/);
-assert.match(workflow, /delete-secret --secret-id "\$RUNTIME_SECRET" --force-delete-without-recovery/);
-assert.match(workflow, /runtime_secret_owned/);
-assert.match(workflow, /\$tags\.DeployGuardGenerationId == \$generation/);
-assert.match(workflow, /delete_generation_image_repository/);
-assert.doesNotMatch(
-  workflow.match(/delete_generation_image_repository\(\)[\s\S]*?^            \}/m)?.[0] || "",
-  /tag-resource/,
-  "Destroy must not convert an unscoped or historical ECR repository into current-generation ownership",
+assert.deepEqual(
+  extractGithubActionsDestroyEvidence(`DEPLOYGUARD_DESTROY_RESULT=${JSON.stringify(evidence)}`),
+  { ...evidence, generationIds: [...generations].sort() },
 );
-assert.match(workflow, /DeployGuardGenerationId == \$generation/);
-assert.match(workflow, /refused to remove an unscoped or differently owned image repository/);
-assert.doesNotMatch(workflow.match(/- name: Run generation-scoped AWS scavenger[\s\S]*?- name: Verify ALB health/)?.[0] || "", /RepositoryNotFoundException'[\s\S]{0,100}exit 0/, "already-absent ECR must not bypass remaining cleanup");
-assert.match(workflow, /runtime_secret_absent/);
-assert.match(workflow, /project_task_definitions_absent/);
-assert.match(workflow, /project_task_definitions_absent\(\)[\s\S]*\[ "\$status" = "DELETE_IN_PROGRESS" \] \|\| return 1/);
-assert.match(workflow, /project_owned_resources_absent\(\)[\s\S]*exact terminal[\s\S]*\.status == "INACTIVE"[\s\S]*select\(\.status == "ACTIVE"\)[\s\S]*DELETE_IN_PROGRESS[\s\S]*\*\) return 1/);
-assert.match(workflow, /RESOURCE_NAME="dg-\$PROJECT_PREFIX-\$GENERATION_PREFIX"/);
-assert.ok((workflow.match(/for family in "\$RESOURCE_NAME" "\$RESOURCE_NAME-database"/g) || []).length >= 2, "cleanup and absence verification use the same canonical task families");
-assert.doesNotMatch(workflow, /for family in "dg-\$\(printf[\s\S]{0,180}cut -c1-28/, "Destroy never derives a divergent task family");
-assert.match(workflow, /imageRepositoryAbsent:true/);
-assert.match(workflow, /runtimeSecretAbsent:true/);
-assert.match(workflow, /activeGenerationTaskDefinitionsAbsent:true/);
-assert.match(workflow, /terraformStateVersionsAbsent:true/);
-assert.match(workflow, /projectOwnedAwsResourcesAbsent:true/);
-assert.match(workflow, /allProjectTerraformArtifactsAbsent:true/);
-assert.match(workflow, /purge_tagged_project_resources/);
-assert.match(workflow, /purge_project_state_versions/);
-assert.match(workflow, /list-object-versions/);
-assert.match(workflow, /delete-objects/);
-assert.match(workflow, /retainedTerraformAddresses:\[\]/);
-assert.match(workflow, /\$action == "destroy" and \(deletes \| not\)/, "destroy plans contain deletion actions only");
-assert.doesNotMatch(service, /retireAfterVerifiedDestroy\(operation\.generationId, operation\.id\)/);
-assert.match(service, /extinction\.extinguish\(project, saved, credential\.token,/);
-assert.match(service, /destroyEvidenceMissing/);
-assert.match(service, /destroy_absence_verification/);
-assert.match(service, /destroyVerification: destroyEvidence/);
+for (const field of [
+  "generationResourcesRemoved",
+  "projectResourcesRemoved",
+  "terraformStateArtifactsRemoved",
+  "sharedPlatformUntouched",
+] as const) {
+  assert.equal(
+    extractGithubActionsDestroyEvidence(`DEPLOYGUARD_DESTROY_RESULT=${JSON.stringify({ ...evidence, [field]: false })}`),
+    null,
+    `${field} is mandatory`,
+  );
+}
+assert.equal(
+  extractGithubActionsDestroyEvidence(`DEPLOYGUARD_DESTROY_RESULT=${JSON.stringify({ ...evidence, generationIds: [generations[0], generations[0]] })}`),
+  null,
+  "generation identities must be unique",
+);
 
-console.log("Verified destroy workflow passed: complete project extinction is required before success.");
+const workflow = read(".github/workflows/deployguard-reusable.yml");
+const deployment = read("backend/src/projects/github-actions-deployment.service.ts");
+const currentState = read("backend/src/projects/current-state/project-current-state.service.ts");
+const policy = read("backend/src/projects/github-actions-aws-capability-contract.ts");
+
+assert.match(workflow, /contractVersion:"deployguard\.destroy-result\/v2"/);
+assert.match(workflow, /Destroy other recorded generations exactly/);
+assert.match(workflow, /projects\/\$PROJECT_ID\/\$ENVIRONMENT_NAME\/\$RECORDED_ID\/terraform\.tfstate/);
+assert.match(workflow, /Destroy project-scoped persistence/);
+assert.match(workflow, /Delete exact project-owned runtime artifacts/);
+assert.match(workflow, /Destroy consumes only the validated project-deletion context/);
+assert.match(workflow, /if \[ "\$DEPLOYMENT_ACTION" = "destroy" \]; then[\s\S]*?variable "aws_region"[\s\S]*?JSON\.stringify\(\{ aws_region: process\.env\.AWS_REGION \}\)[\s\S]*?exit 0/);
+assert.match(workflow, /projectDeletion\.projectResources\.stableListenerRuleArn/);
+assert.match(workflow, /Stable route ownership mismatch[\s\S]*?aws elbv2 delete-rule/, "Destroy removes only the exact persisted project route before Terraform destroys its target group");
+assert.match(workflow, /ListenerRuleNotFound\|RuleNotFound/, "an exact stable rule that was already removed is an idempotent Destroy success");
+assert.match(workflow, /Destroy other recorded generations exactly[\s\S]{0,2500}jq -n --arg aws_region "\$AWS_REGION" '\{aws_region:\$aws_region\}'/, "recorded generations receive only the Destroy-specific provider configuration");
+assert.match(workflow, /for status in ACTIVE INACTIVE/, "project deletion handles every exact-tagged task-definition revision");
+assert.match(workflow, /Delete exact project-owned runtime artifacts[\s\S]{0,700}PROJECT_PREFIX="\$\(printf '%s' "\$PROJECT_ID"/, "runtime-artifact cleanup defines its own project prefix instead of relying on shell-local state from an earlier step");
+assert.match(workflow, /DeployGuardGenerationId == \$generation[\s\S]*continue[\s\S]*delete-task-definitions/, "task definitions outside the exact generation ownership boundary are skipped");
+assert.match(workflow, /Verify exact project deletion and write result/);
+assert.match(workflow, /sharedPlatformUntouched:true/);
+assert.match(workflow, /\.projectDeletion\.generations\[\]\.terraformStateKey/);
+assert.match(workflow, /\.projectDeletion\.projectResources\.terraformStateKey/);
+assert.doesNotMatch(workflow, /terraform import|terraform state (?:rm|mv)/);
+assert.doesNotMatch(workflow, /resourcegroupstaggingapi|get-resources/);
+assert.doesNotMatch(workflow, /DEPLOYGUARD_DESTROY_PROGRESS|DESTROY_INCOMPLETE/);
+assert.doesNotMatch(workflow, /resource "aws_ecs_cluster"/);
+assert.doesNotMatch(workflow, /resource "aws_lb" "app"/);
+assert.doesNotMatch(workflow, /project-extinction|extinction\./i);
+assert.match(deployment, /projectDeletion\.finalize\(project, saved\)/);
+assert.match(deployment, /stableListenerRuleArn: stableListenerRuleArn \|\| null/);
+assert.doesNotMatch(deployment, /assertNoDestroyLifecycle|resumeDestroyLifecycle|destroyLifecycles|legacyDestroy/);
+assert.match(currentState, /deployguard\.destroy-result\/v2/);
+assert.doesNotMatch(currentState, /LegacyDestroy|legacyDestroy/);
+assert.doesNotMatch(policy, /DeleteVpc|DeleteSubnet|DeleteLoadBalancer|DeleteListener|DeleteCluster/);
+
+console.log("Exact-scope project deletion checks passed: all recorded generations and project resources are deleted without shared-platform discovery or a competing Destroy lifecycle.");

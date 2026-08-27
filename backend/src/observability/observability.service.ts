@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { User } from "../users/user.entity";
 import { CloudWatchLogsService, LogQueryOptions } from "./cloudwatch-logs.service";
@@ -33,7 +33,15 @@ export class ObservabilityService {
   }
 
   async getApplicationMetrics(user: User, projectId: string, range = "1h") {
-    const identity = await this.liveRuntime.resolveForUser(user, projectId);
+    let identity;
+    try {
+      identity = await this.liveRuntime.resolveForUser(user, projectId);
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) {
+        return { available: false, message: error.message, generationId: null };
+      }
+      throw error;
+    }
     if (!getObservabilityConfig(this.config).cloudWatchMetricsEnabled) {
       return { available: false, message: "CloudWatch runtime metrics are disabled.", generationId: identity.generationId };
     }

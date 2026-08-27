@@ -1,4 +1,5 @@
 const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
+  set_up_job: "Setting up GitHub Actions runner",
   configure_aws_credentials_through_oidc: "Connecting securely to AWS",
   workflow_dispatch: "Starting GitHub Actions",
   workflow_run_discovery: "GitHub Actions run was not created",
@@ -41,6 +42,16 @@ const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
 };
 
 export type GithubActionsPresentationAction = "deploy" | "destroy" | "rollback";
+const LEGACY_CANDIDATE_FAILURE = "Candidate provisioning or health verification failed.";
+const BUILD_PHASE_FAILURE_STAGES = new Set([
+  "set_up_job",
+  "checkout_application",
+  "configure_aws_credentials_through_oidc",
+  "derive_immutable_release_identity",
+  "ensure_ecr_repository",
+  "generate_dockerfile_when_absent",
+  "build_and_push_immutable_image",
+]);
 
 export function githubActionsStagePresentation(stage: unknown, action: GithubActionsPresentationAction = "deploy") {
   const key = String(stage || "github_actions").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
@@ -48,6 +59,20 @@ export function githubActionsStagePresentation(stage: unknown, action: GithubAct
     ? "Destroying infrastructure"
     : FRIENDLY_GITHUB_ACTIONS_STAGES[key] || "Running deployment automation";
   return { key: key || "github_actions", label };
+}
+
+export function githubActionsFailureMessage(errorMessage: unknown, failedStage: unknown, action: GithubActionsPresentationAction = "deploy") {
+  const persisted = typeof errorMessage === "string" ? errorMessage.trim() : "";
+  if (persisted && persisted !== LEGACY_CANDIDATE_FAILURE) return persisted;
+  if (failedStage) return `GitHub Actions failed during ${githubActionsStagePresentation(failedStage, action).label}.`;
+  return persisted || "The GitHub Actions deployment failed.";
+}
+
+export function githubActionsFailureLifecyclePhase(failedStage: unknown): "build" | "deploy" | "verify" {
+  const key = githubActionsStagePresentation(failedStage).key;
+  if (BUILD_PHASE_FAILURE_STAGES.has(key) || key.includes("build")) return "build";
+  if (key.includes("health") || key.includes("verify")) return "verify";
+  return "deploy";
 }
 
 /**

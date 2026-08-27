@@ -1,4 +1,4 @@
-import { canonicalSha256 } from "../orchestration-contracts/contracts/canonical-json";
+import { canonicalSha256 } from "./canonical-json";
 
 export type AutomaticInfrastructurePolicyState =
   | "auto_approved"

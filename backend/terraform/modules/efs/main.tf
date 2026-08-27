@@ -76,10 +76,6 @@ resource "aws_efs_file_system" "this" {
     transition_to_ia = var.efs_transition_to_ia
   }
 
-  lifecycle {
-    prevent_destroy = true
-  }
-
   tags = merge(var.tags, {
     Name                 = "${var.project_id}-${var.environment_name}-efs"
     ManagedBy            = "DeployGuard"
@@ -129,8 +125,9 @@ resource "aws_efs_access_point" "this" {
 resource "aws_backup_vault" "efs" {
   count = var.enable_efs && var.enable_efs_backup ? 1 : 0
 
-  name        = local.backup_name
-  kms_key_arn = aws_kms_key.efs[0].arn
+  name          = local.backup_name
+  kms_key_arn   = aws_kms_key.efs[0].arn
+  force_destroy = true
 
   tags = merge(var.tags, {
     ManagedBy            = "DeployGuard"

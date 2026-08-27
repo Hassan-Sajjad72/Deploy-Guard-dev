@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { DevOpsTemplateDefinition } from "./devops-templates";
-import { BuildPlan } from "../build-plan";
+import { BuildPlan, BuildPlanImageFamily } from "../build-plan";
 
 export type DeploymentContractDockerInput = BuildPlan;
 
@@ -20,6 +20,7 @@ export class DockerTemplateEngineService {
     const templatePath = join(process.cwd(), template.dockerfileTemplatePath);
     const content = readFileSync(templatePath, "utf8");
     const startCommand = contract.runCommand || "";
+    const runtimeCommand = this.runtimeCommand(contract, startCommand);
     const buildCommand = contract.buildCommand || "";
     const images = this.baseImages(contract);
     const values: Record<string, string> = {
@@ -27,9 +28,9 @@ export class DockerTemplateEngineService {
       INSTALL_COMMAND: contract.installCommand!,
       PRUNE_COMMAND: this.pruneCommand(contract),
       BUILD_COMMAND: buildCommand,
-      BUILD_STEP: buildCommand ? `RUN ${buildCommand}` : "",
-      START_COMMAND: startCommand,
-      START_COMMAND_JSON: JSON.stringify(["sh", "-c", startCommand]),
+      BUILD_STEP: this.buildStep(contract, buildCommand),
+      START_COMMAND: runtimeCommand,
+      START_COMMAND_JSON: JSON.stringify(["sh", "-c", runtimeCommand]),
       EXPECTED_PORT: String(contract.port),
       RUNTIME_VERSION: contract.runtimeVersion,
       BUILD_BASE_IMAGE: images.build,
@@ -40,7 +41,6 @@ export class DockerTemplateEngineService {
       COMMIT_SHA: contract.commitSha!,
       STATIC_OUTPUT: contract.runtimeType === "static" ? "true" : "false",
       OUTPUT_DIRECTORY: contract.outputDirectory || "",
-      BUILD_ENV_DECLARATIONS: this.buildEnvironmentDeclarations(contract),
       HEALTH_CHECK_PATH: contract.healthPath,
       REPOSITORY_INSTALL_ROOT: contract.repositoryInstallRoot,
       RUNTIME_FILES: contract.runtimeFiles.join(","),
@@ -48,16 +48,75 @@ export class DockerTemplateEngineService {
       RUNTIME_SYSTEM_DEPENDENCIES: this.systemDependencyCommand(contract, "runtime"),
     };
 
-    return content.replace(/\{\{([A-Z_]+)\}\}/g, (_match, key) => values[key] ?? "");
+    const dockerfile = content.replace(/\{\{([A-Z_]+)\}\}/g, (_match, key) => values[key] ?? "");
+    this.validateGeneratedDockerfile(dockerfile);
+    return dockerfile;
   }
 
-  private buildEnvironmentDeclarations(contract: DeploymentContractDockerInput) {
-    const secretKeys = new Set(contract.secretEnvVars);
-    return contract.buildTimeEnvVars
-      .filter((key) => /^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$/.test(key))
-      .filter((key) => !secretKeys.has(key))
-      .map((key) => `ARG ${key}\nENV ${key}=\$${key}`)
-      .join("\n");
+  /**
+   * A generated Django collectstatic command imports the Django settings module.
+   * That is application initialization, not a browser/public build.  Its
+   * runtime configuration therefore has to be supplied through BuildKit's
+   * ephemeral secret mount instead of being reclassified as public build
+   * configuration or persisted in an image layer.
+   */
+  private buildStep(contract: DeploymentContractDockerInput, buildCommand: string) {
+    if (!buildCommand) return "";
+    const initialization = this.buildInitialization(contract, buildCommand);
+    if (initialization === "external_service_required") {
+      throw new Error("The detected build command requires a live external service and must be deferred to the post-provision/release phase.");
+    }
+    if (initialization !== "runtime_placeholders") {
+      const publicBuildKeys = contract.buildTimeEnvVars
+        .filter((key) => /^(VITE_|NEXT_PUBLIC_|REACT_APP_)[A-Z0-9_]*$/.test(key))
+        .filter((key) => !contract.secretEnvVars.includes(key));
+      if (!publicBuildKeys.length) return `RUN ${buildCommand}`;
+      const encodedCommand = Buffer.from(buildCommand, "utf8").toString("base64");
+      const encodedKeys = Buffer.from(JSON.stringify(publicBuildKeys.sort()), "utf8").toString("base64");
+      return [
+        "RUN --mount=type=secret,id=deployguard_public_build_config,required=false \\",
+        `    DEPLOYGUARD_BUILD_COMMAND_BASE64=${encodedCommand} \\
+    DEPLOYGUARD_PUBLIC_BUILD_KEYS_BASE64=${encodedKeys} \\`,
+        "    node -e 'const fs=require(\"fs\"),cp=require(\"child_process\");const path=\"/run/secrets/deployguard_public_build_config\";const allowed=new Set(JSON.parse(Buffer.from(process.env.DEPLOYGUARD_PUBLIC_BUILD_KEYS_BASE64,\"base64\").toString(\"utf8\")));const config=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,\"utf8\")):{};if(Object.keys(config).some((key)=>!allowed.has(key)||typeof config[key]!==\"string\"))throw new Error(\"Invalid public build configuration.\");const command=Buffer.from(process.env.DEPLOYGUARD_BUILD_COMMAND_BASE64,\"base64\").toString(\"utf8\");const result=cp.spawnSync(command,{shell:true,stdio:\"inherit\",env:{...process.env,...config}});process.exit(result.status??1)'",
+      ].join("\n");
+    }
+    const encodedCommand = Buffer.from(buildCommand, "utf8").toString("base64");
+    return [
+      "RUN --mount=type=secret,id=deployguard_runtime_config,required=true \\",
+      `    DEPLOYGUARD_BUILD_COMMAND_BASE64=${encodedCommand} \\`,
+      "    python -c 'import base64, json, os, subprocess; env = os.environ.copy(); env.update(json.load(open(\"/run/secrets/deployguard_runtime_config\", encoding=\"utf-8\"))); command = base64.b64decode(os.environ[\"DEPLOYGUARD_BUILD_COMMAND_BASE64\"]).decode(\"utf-8\"); subprocess.run(command, shell=True, check=True, env=env)'",
+    ].join("\n");
+  }
+
+  private buildInitialization(contract: DeploymentContractDockerInput, buildCommand: string) {
+    if (contract.buildInitialization?.mode) return contract.buildInitialization.mode;
+    // A compatibility guard for existing immutable Django BuildPlans created
+    // before buildInitialization was added. New plans carry the explicit mode.
+    if (contract.dockerStrategy === "generated"
+      && contract.language === "python"
+      && contract.framework === "django") {
+      if (/(?:^|\s)manage\.py\s+collectstatic(?:\s|$)/.test(buildCommand)) return "runtime_placeholders";
+      if (/(?:^|\s)manage\.py\s+(?:migrate|makemigrations)(?:\s|$)/.test(buildCommand)) return "external_service_required";
+    }
+    return "none";
+  }
+
+  /**
+   * Detector-owned release initialization runs only after runtime-managed
+   * services and secrets exist. It remains part of the immutable generated
+   * runtime command, executes as the final non-root user, and must succeed
+   * before the long-running application process starts.
+   */
+  private runtimeCommand(contract: DeploymentContractDockerInput, startCommand: string) {
+    const releaseCommand = contract.releaseCommand?.trim();
+    if (!releaseCommand) return startCommand;
+    if (contract.dockerStrategy !== "generated" || contract.runtimeType !== "server") {
+      throw new Error("Release initialization is supported only for generated server runtimes.");
+    }
+    if (contract.framework !== "django" || releaseCommand !== "python manage.py migrate --noinput") {
+      throw new Error("BuildPlan contains an unsupported generated-runtime release command.");
+    }
+    return `${releaseCommand} && exec ${startCommand}`;
   }
 
   private pruneCommand(contract: DeploymentContractDockerInput) {
@@ -80,7 +139,9 @@ export class DockerTemplateEngineService {
     const dependencies = phase === "build" ? contract.buildSystemDependencies : contract.runtimeSystemDependencies;
     if (!dependencies.length) return "";
     if (dependencies.some((name) => !/^[a-z0-9][a-z0-9+.-]*$/i.test(name))) throw new Error("BuildPlan contains an invalid system dependency name.");
-    return contract.language === "javascript"
+    const family = this.imageFamily(phase === "build" ? contract.baseImage : contract.runtimeImage);
+    if (!family) throw new Error(`Docker generation cannot determine the ${phase} image distribution.`);
+    return family.packageManager === "apk"
       ? `RUN apk add --no-cache ${dependencies.join(" ")}`
       : `RUN apt-get update && apt-get install -y --no-install-recommends ${dependencies.join(" ")} && rm -rf /var/lib/apt/lists/*`;
   }
@@ -95,6 +156,24 @@ export class DockerTemplateEngineService {
     if ((!contract.packageManager || !contract.installCommand) && !staticWeb) throw new Error("Docker generation requires BuildPlan package-manager and install-command evidence.");
     if (!contract.lockfile && /\bnpm\s+ci\b/.test(contract.installCommand)) throw new Error("npm ci is forbidden when the BuildPlan has no npm lockfile.");
     if (!template.supportedPackageManagers.includes(contract.packageManager)) throw new Error("Detected package manager is not supported by the selected Docker template.");
+    if (!contract.baseImage || !contract.runtimeImage) throw new Error("Docker generation requires pinned BuildPlan images.");
+    this.validateImageFamily("build", contract.baseImage, contract.buildImageFamily);
+    this.validateImageFamily("runtime", contract.runtimeImage, contract.runtimeImageFamily);
+    if (contract.systemDependencyEvidence) {
+      const unexplainedBuild = contract.buildSystemDependencies.filter((dependency) => !contract.systemDependencyEvidence!.build.includes(dependency));
+      const unexplainedRuntime = contract.runtimeSystemDependencies.filter((dependency) => !contract.systemDependencyEvidence!.runtime.includes(dependency));
+      if (unexplainedBuild.length || unexplainedRuntime.length) throw new Error("A component system dependency lacks component-owned detector evidence.");
+    }
+    const databaseNative = [...contract.buildSystemDependencies, ...contract.runtimeSystemDependencies]
+      .filter((dependency) => /^(?:libpq|postgresql|default-libmysqlclient|libmariadb|mysql-client|mongodb)/i.test(dependency));
+    const dependencyEvidence = new Set([...(contract.systemDependencyEvidence?.build || []), ...(contract.systemDependencyEvidence?.runtime || [])]);
+    if (contract.runtimeType === "static" && databaseNative.some((dependency) => !dependencyEvidence.has(dependency))) {
+      throw new Error("A static frontend cannot receive database-native system packages without direct component evidence.");
+    }
+    const managedDatabaseEnvironment = contract.environmentOwnership.filter((item) => item.source === "managed_database");
+    if (managedDatabaseEnvironment.length && !contract.database?.required) {
+      throw new Error("Managed database configuration can only reach the component that owns USES_DATABASE.");
+    }
     if (!contract.port || contract.port < 1 || contract.port > 65535) throw new Error("Docker generation requires a validated runtime port.");
     if (!contract.healthPath?.startsWith("/")) throw new Error("Docker generation requires a validated health-check path.");
     if (template.requiredCommands.includes("build") && !contract.buildCommand) throw new Error("Docker generation requires the detected production build command.");
@@ -109,5 +188,33 @@ export class DockerTemplateEngineService {
   private baseImages(contract: DeploymentContractDockerInput) {
     if (!contract.baseImage || !contract.runtimeImage) throw new Error("Docker generation requires pinned BuildPlan images.");
     return { build: contract.baseImage, runtime: contract.runtimeImage };
+  }
+
+  validateGeneratedDockerfile(dockerfile: string) {
+    const userDirectives = [...dockerfile.matchAll(/^\s*USER\s+([^\s#]+)/gim)];
+    if (!userDirectives.length) throw new Error("Generated Dockerfile must declare a final non-root runtime user.");
+    const finalUser = userDirectives[userDirectives.length - 1];
+    if (/^(?:0|root)(?::|$)/i.test(finalUser[1])) throw new Error("Generated Dockerfile final runtime user must be non-root.");
+    const finalUserIndex = finalUser.index || 0;
+    const privilegedInstalls = [...dockerfile.matchAll(/^\s*RUN\s+(?:apk\s+add\b|apt-get\s+.*\binstall\b)/gim)];
+    if (privilegedInstalls.some((match) => (match.index || 0) > finalUserIndex)) {
+      throw new Error("Generated Dockerfile installs privileged system packages after the final non-root USER.");
+    }
+  }
+
+  private validateImageFamily(phase: "build" | "runtime", image: string, declared?: BuildPlanImageFamily) {
+    const actual = this.imageFamily(image);
+    if (!actual) throw new Error(`Docker generation cannot determine the ${phase} image distribution.`);
+    if (declared && (declared.distro !== actual.distro || declared.packageManager !== actual.packageManager)) {
+      throw new Error(`${phase} image-family contract does not match the pinned image.`);
+    }
+  }
+
+  private imageFamily(image: string): BuildPlanImageFamily | null {
+    const normalized = image.toLowerCase();
+    if (/(?:^|[-:.])alpine(?:\d|[-:.]|$)/.test(normalized)) return { distro: "alpine", packageManager: "apk" };
+    if (/(?:^|[-:.])(?:slim|bookworm|bullseye|buster)(?:[-:.]|$)/.test(normalized)
+      || /^(?:python|node):\d/.test(normalized)) return { distro: "debian", packageManager: "apt" };
+    return null;
   }
 }

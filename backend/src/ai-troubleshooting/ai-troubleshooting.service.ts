@@ -88,7 +88,10 @@ export class AiTroubleshootingService {
     await this.assertAccess(user, projectId, false);
     const take = Math.min(Math.max(limit, 1), 50);
     const [items, total] = await this.sessions.findAndCount({ where: { projectId }, order: { updatedAt: "DESC" }, skip: (Math.max(page, 1) - 1) * take, take });
-    return { items, total, page: Math.max(page, 1), limit: take, provider: await this.provider.availability(), suggestedQuestions: TROUBLESHOOTING_QUESTIONS };
+    // Session history is a persisted page read. A live Gemini availability
+    // probe belongs to an explicit troubleshooting action, never Pipeline's
+    // initial rendering path.
+    return { items, total, page: Math.max(page, 1), limit: take, provider: this.provider.status(), suggestedQuestions: TROUBLESHOOTING_QUESTIONS };
   }
 
   async get(user: User, projectId: string, sessionId: string) {

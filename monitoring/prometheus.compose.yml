@@ -10,4 +10,4 @@ scrape_configs:
       credentials: __DEPLOYGUARD_SCRAPE_TOKEN__
     static_configs:
       - targets:
-          - backend:5000
+          - __DEPLOYGUARD_SCRAPE_TARGET__

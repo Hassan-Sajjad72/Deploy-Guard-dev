@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
-  deployOrchestration,
   getOrchestrationEvents,
   getOrchestrationStatus,
   rollbackOrchestration,
@@ -32,7 +31,6 @@ export default function ProjectOrchestration() {
   const [events, setEvents] = useState([]);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
-  const [isDeploying, setIsDeploying] = useState(false);
 
   useEffect(() => {
     loadPage();
@@ -53,20 +51,6 @@ export default function ProjectOrchestration() {
       setError(caughtError.message);
     } finally {
       setIsLoading(false);
-    }
-  }
-
-  async function deploy() {
-    setError("");
-    setIsDeploying(true);
-
-    try {
-      await deployOrchestration(projectId);
-      await loadPage();
-    } catch (caughtError) {
-      setError(caughtError.message);
-    } finally {
-      setIsDeploying(false);
     }
   }
 
@@ -102,13 +86,7 @@ export default function ProjectOrchestration() {
         eyebrow="Orchestration"
         title="ECS Release Control"
         description="ECS Fargate Spot deployment, ALB health, stable release state, autoscaling, and rollback controls."
-        actions={
-          <>
-          <button className="button" disabled={isDeploying || !status?.canManage} onClick={deploy} type="button">
-            {isDeploying ? "Queued" : "Deploy to ECS"}
-          </button>
-          </>
-        }
+        actions={null}
       />
 
       <ProjectModuleStatusStrip moduleKey="orchestration" projectId={projectId} />

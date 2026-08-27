@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">DeployGuard mark</title>
+  <desc id="desc">A shield containing a connected deployment path</desc>
+  <path fill="#172033" d="M32 3 56 12v17c0 15.8-8.8 26.2-24 32C16.8 55.2 8 44.8 8 29V12L32 3Z"/>
+  <path fill="#B8F34A" d="M32 9.5 49.5 16v13c0 11.7-6 19.8-17.5 25-11.5-5.2-17.5-13.3-17.5-25V16L32 9.5Z"/>
+  <path fill="none" stroke="#172033" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.5" d="M22 23h10c5.5 0 10 4.5 10 10v1"/>
+  <path fill="none" stroke="#172033" stroke-linecap="round" stroke-width="3.5" d="M22 41h20"/>
+  <circle cx="21" cy="23" r="4.5" fill="#fff" stroke="#172033" stroke-width="3"/>
+  <circle cx="42" cy="41" r="4.5" fill="#fff" stroke="#172033" stroke-width="3"/>
+</svg>

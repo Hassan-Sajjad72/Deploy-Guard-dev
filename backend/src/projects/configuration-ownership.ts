@@ -113,7 +113,7 @@ export const SERVICE_ALIAS_GROUPS: readonly ServiceAliasDefinition[] = [
   { service: "mongodb", property: "username", aliases: ["DB_USER", "DATABASE_USER", "MONGO_USER", "MONGODB_USER"], secret: false },
   { service: "mongodb", property: "password", aliases: ["DB_PASSWORD", "DATABASE_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD"], secret: true },
   { service: "mongodb", property: "database", aliases: ["DB_NAME", "DATABASE_NAME", "MONGO_DB", "MONGODB_DATABASE"], secret: false },
-  { service: "mongodb", property: "url", aliases: ["DATABASE_URL", "MONGO_URL", "MONGODB_URI"], secret: true },
+  { service: "mongodb", property: "url", aliases: ["DATABASE_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], secret: true },
   { service: "storage", property: "path", aliases: ["UPLOAD_PATH", "UPLOAD_DIR", "STORAGE_PATH", "MEDIA_ROOT"], secret: false },
 ] as const;
 
@@ -143,7 +143,9 @@ export function isPlatformProjectProhibited(key: string) {
 }
 
 export function isSecretConfigurationKey(key: string) {
-  return /(SECRET|TOKEN|PASSWORD|PRIVATE|API_KEY|(?:DATABASE|POSTGRES(?:QL)?|MYSQL|REDIS|MONGO(?:DB)?)_(?:URL|URI)|CREDENTIAL|AUTH_KEY)/.test(normalizeConfigurationKey(key));
+  const normalized = normalizeConfigurationKey(key);
+  return /(SECRET|TOKEN|PASSWORD|PRIVATE|API_KEY|(?:DATABASE|POSTGRES(?:QL)?|MYSQL|REDIS|MONGO(?:DB)?)_(?:URL|URI)|CREDENTIAL|AUTH_KEY)/.test(normalized)
+    || /(?:^|_)PASS(?:_|$)/.test(normalized);
 }
 
 export function managedAliasError(key: string, service: ManagedServiceKind) {

@@ -82,9 +82,13 @@ export class ProjectDeletionService {
 
   private assertReady(project: Project, destroy: ProjectPipelineRun) {
     const evidence = destroy.metadata?.destroyVerification as Record<string, unknown> | undefined;
+    const finalizationEligible = destroy.status === PipelineRunStatus.COMPLETED
+      || (destroy.status === PipelineRunStatus.FAILED
+        && destroy.currentStage === "project_delete_cleanup"
+        && destroy.metadata?.failureCategory === "project_delete_incomplete");
     if (
       destroy.projectId !== project.id
-      || destroy.status !== PipelineRunStatus.COMPLETED
+      || !finalizationEligible
       || destroy.metadata?.deploymentAction !== "destroy"
       || evidence?.contractVersion !== "deployguard.destroy-result/v2"
       || evidence.deploymentOperationId !== destroy.id
@@ -95,6 +99,9 @@ export class ProjectDeletionService {
       || evidence.projectResourcesRemoved !== true
       || evidence.terraformStateArtifactsRemoved !== true
       || evidence.sharedPlatformUntouched !== true
+      || !destroy.generationId
+      || !Array.isArray(evidence.generationIds)
+      || !evidence.generationIds.includes(destroy.generationId)
     ) {
       throw new ProjectDeletionIncompleteError("exact project/generation cleanup evidence is incomplete");
     }

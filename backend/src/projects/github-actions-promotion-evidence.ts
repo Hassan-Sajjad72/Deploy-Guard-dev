@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { BuildPlan, buildPlanComponents } from "./build-plan";
 
-export const DEPLOYGUARD_CANDIDATE_RESULT_CONTRACT_VERSION = "deployguard.candidate-result/v1";
+export const DEPLOYGUARD_CANDIDATE_RESULT_CONTRACT_VERSION = "deployguard.candidate-result/v2";
 export const DEPLOYGUARD_COMPENSATION_RESULT_CONTRACT_VERSION = "deployguard.promotion-compensation/v1";
 
 export type GithubActionsCandidateEvidence = {
@@ -34,7 +35,12 @@ export type GithubActionsCandidateEvidence = {
     componentSetVerified?: true;
     frontendHttpVerified?: true;
     backendComponentHealthVerified?: true;
-    relationshipVerified?: true;
+    /**
+     * `verified` means the BuildPlan-proven relationship endpoint was called
+     * successfully. `not_required` means no such endpoint was proven; it does
+     * not claim that the routing prefix itself was called.
+     */
+    relationshipVerificationStatus: "verified" | "not_required";
     targetHealthVerified: true;
     candidateHttpVerified: true;
     healthyTargetCount: number;
@@ -125,13 +131,37 @@ export function isGithubActionsCandidateEvidence(value: unknown): value is Githu
     && health?.expectedImageRunning === true
     && health?.targetHealthVerified === true
     && health?.candidateHttpVerified === true
+    && (health?.relationshipVerificationStatus === "verified" || health?.relationshipVerificationStatus === "not_required")
+    && health?.relationshipVerified === undefined
     && (components.length < 2 || (health?.componentSetVerified === true
       && health?.frontendHttpVerified === true
-      && health?.backendComponentHealthVerified === true
-      && health?.relationshipVerified === true))
+      && health?.backendComponentHealthVerified === true))
     && Number.isInteger(health?.healthyTargetCount) && health.healthyTargetCount >= 1
     && Array.isArray(health?.targetStates) && health.targetStates.length >= 1
     && health.targetStates.every((state: unknown) => state === "healthy");
+}
+
+/**
+ * Promotion has both the candidate evidence and its immutable BuildPlan, so
+ * this is the point where a status is bound to the relationship it describes.
+ */
+export function relationshipVerificationMatchesBuildPlan(
+  candidate: GithubActionsCandidateEvidence,
+  plan: BuildPlan | null,
+) {
+  if (!plan) return false;
+  const components = buildPlanComponents(plan);
+  const fullStack = components.filter((component) => component.role === "frontend").length === 1
+    && components.filter((component) => component.role === "backend").length === 1;
+  const relationships = plan.relationships || [];
+  if (!fullStack) return candidate.health.relationshipVerificationStatus === "not_required";
+  // Route evidence is optional under the service-binding contract.  A
+  // full-stack candidate without a concrete request is truthfully
+  // `not_required`, rather than being rejected for missing reconstruction.
+  if (relationships.length === 0) return candidate.health.relationshipVerificationStatus === "not_required";
+  if (relationships.length !== 1) return false;
+  return candidate.health.relationshipVerificationStatus
+    === (relationships[0].verificationPath ? "verified" : "not_required");
 }
 
 export function extractGithubActionsCandidateEvidence(log: string): GithubActionsCandidateEvidence | null {

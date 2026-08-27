@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getProjectCurrentState } from "../../api/projectApi.js";
+import { getProjectDetailedCurrentState } from "../../api/projectApi.js";
 import { StatusBadge } from "../common/Premium.jsx";
 
 export default function ProjectModuleStatusStrip({ moduleKey, projectId }) {
@@ -7,7 +7,7 @@ export default function ProjectModuleStatusStrip({ moduleKey, projectId }) {
 
   useEffect(() => {
     let mounted = true;
-    getProjectCurrentState(projectId).then((response) => mounted && setState(response)).catch(() => mounted && setState(null));
+    getProjectDetailedCurrentState(projectId).then((response) => mounted && setState(response)).catch(() => mounted && setState(null));
     return () => { mounted = false; };
   }, [projectId]);
 

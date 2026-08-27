@@ -7,7 +7,20 @@ export class SnsNotificationAdapter {
   constructor(private readonly config: ConfigService) {}
   status() {
     const enabled = this.config.get<unknown>("NOTIFICATION_DELIVERY_ENABLED") === "true";
-    const configured = enabled;
+    const accessKeyId = this.config.get<string>("AWS_ACCESS_KEY_ID", "").trim();
+    const secretAccessKey = this.config.get<string>("AWS_SECRET_ACCESS_KEY", "").trim();
+    const webIdentityTokenFile = this.config.get<string>("AWS_WEB_IDENTITY_TOKEN_FILE", "").trim();
+    const roleArn = this.config.get<string>("AWS_ROLE_ARN", "").trim();
+    const containerCredentials = this.config.get<string>("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", this.config.get<string>("AWS_CONTAINER_CREDENTIALS_FULL_URI", "")).trim();
+    // DeployGuard's local/Compose contract supplies explicit AWS credentials;
+    // deployed workloads may instead use the AWS web-identity or container
+    // credential providers. Do not advertise a live provider if neither
+    // contract is complete.
+    const configured = enabled && Boolean(
+      (accessKeyId && secretAccessKey)
+      || (webIdentityTokenFile && roleArn)
+      || containerCredentials,
+    );
     return {
       enabled,
       configured,
@@ -27,7 +40,19 @@ export class SnsNotificationAdapter {
     if (topicArn) await this.deleteOwnedProjectTopic(projectId, topicArn);
     return this.subscribe(email, userId, projectId);
   }
-  async unsubscribe(arn: string | null) { if (arn && !this.pending(arn) && this.status().configured) await this.client().send(new UnsubscribeCommand({ SubscriptionArn: arn })); }
+  async unsubscribe(arn: string | null, options: { idempotent?: boolean } = {}) {
+    if (!arn || this.pending(arn) || !this.status().configured) return;
+    try {
+      await this.client().send(new UnsubscribeCommand({ SubscriptionArn: arn }));
+    } catch (error) {
+      // AWS can retain a PendingConfirmation subscription while the control
+      // plane still has the ARN returned by an earlier subscribe call. During
+      // project deletion neither form represents a deliverable subscription,
+      // so it is already clean. Keep ordinary user unsubscribe fail-closed.
+      if (options.idempotent && this.subscriptionAlreadyAbsentOrPending(error)) return;
+      throw error;
+    }
+  }
   async findSubscription(email: string, userId: number, projectId: string, topicArn: string | null, expectedArn?: string | null) {
     if (!this.status().configured) return null;
     if (!topicArn) return null;
@@ -63,7 +88,7 @@ export class SnsNotificationAdapter {
       if (subscription.providerSubscriptionArn && this.pending(subscription.providerSubscriptionArn) && !subscription.providerTopicArn) {
         throw new Error("A project notification confirmation is still pending without an owned topic identity.");
       }
-      await this.unsubscribe(subscription.providerSubscriptionArn);
+      await this.unsubscribe(subscription.providerSubscriptionArn, { idempotent: true });
     }
     const topics = [...new Set(subscriptions.map((item) => item.providerTopicArn).filter((value): value is string => Boolean(value)))];
     for (const topicArn of topics) await this.deleteOwnedProjectTopic(projectId, topicArn);
@@ -96,6 +121,13 @@ export class SnsNotificationAdapter {
   }
   private client() { return new SNSClient({ region: this.config.get<string>("SNS_REGION", this.config.get<string>("AWS_REGION", "us-east-1")) }); }
   private pending(arn: string | null | undefined) { return String(arn || "").replace(/[\s_]/g, "").toLowerCase() === "pendingconfirmation"; }
+  private subscriptionAlreadyAbsentOrPending(error: unknown) {
+    const value = error as { name?: unknown; message?: unknown };
+    const name = String(value?.name || "");
+    const message = String(value?.message || "");
+    return ["NotFoundException", "ResourceNotFoundException"].includes(name)
+      || (name === "InvalidParameterException" && /subscription.*pending confirmation|pending confirmation.*subscription/i.test(message));
+  }
   private matchesFilter(policy: Record<string, unknown>, key: string, value: string) {
     return Array.isArray(policy[key]) && (policy[key] as unknown[]).map(String).includes(value);
   }

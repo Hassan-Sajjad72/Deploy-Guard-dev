@@ -1,57 +1,48 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getObservabilityLogs, getProjectCurrentState } from "../api/projectApi.js";
+import { getApplicationLogs, getProjectCurrentState } from "../api/projectApi.js";
 import EmptyState from "../components/common/EmptyState.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { PageHeader } from "../components/common/Premium.jsx";
-import EcsLogsStream from "../components/observability/EcsLogsStream.jsx";
-import LogFilterBar from "../components/observability/LogFilterBar.jsx";
 
 export default function ProjectLogs() {
   const { projectId } = useParams();
-  const [filters, setFilters] = useState({ limit: 50, stream: "all" });
-  const [logs, setLogs] = useState([]);
+  const [limit, setLimit] = useState(50);
+  const [result, setResult] = useState(null);
+  const [stableRelease, setStableRelease] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [hasRuntime, setHasRuntime] = useState(null);
 
-  function refresh() {
+  const load = useCallback(async () => {
+    setLoading(true);
     setError("");
-    getObservabilityLogs(projectId, filters)
-      .then((data) => setLogs(data.events || []))
-      .catch((err) => setError(err.message));
-  }
+    try {
+      const state = await getProjectCurrentState(projectId);
+      setStableRelease(state.stableRelease || null);
+      setResult(state.stableRelease ? await getApplicationLogs(projectId, { limit }) : null);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [limit, projectId]);
 
-  useEffect(() => {
-    setHasRuntime(null);
-    getProjectCurrentState(projectId)
-      .then((state) => {
-        setHasRuntime(Boolean(state.hasRealDeployment));
-        if (state.hasRealDeployment) refresh();
-      })
-      .catch((err) => {
-        setHasRuntime(false);
-        setError(err.message);
-      });
-  }, [projectId]);
+  useEffect(() => { void load(); }, [load]);
 
-  return (
-    <div className="page-stack">
-      <PageHeader
-        eyebrow="Live Deployment Logs"
-        title="Sanitized Log Stream"
-        description="CloudWatch log events and live SSE stream with filtering. Secret values are not rendered."
-        actions={<Link className="secondary-button" to={`/projects/${projectId}/observability`}>Overview</Link>}
-      />
-      {error ? <ErrorState message={error} /> : null}
-      {hasRuntime === null ? <LoadingState message="Checking deployment status..." /> : null}
-      {hasRuntime === false && !error ? <EmptyState message="Runtime will be available after deployment." /> : null}
-      {hasRuntime ? <><LogFilterBar filters={filters} onChange={setFilters} onRefresh={refresh} />
-      <EcsLogsStream filters={filters} projectId={projectId} />
-      <section className="panel">
-        <h2>Recent Logs</h2>
-        <pre className="log-output">{logs.map((line) => `[${line.timestamp}] ${line.message}`).join("\n")}</pre>
-      </section></> : null}
-    </div>
-  );
+  return <div className="page-stack">
+    <PageHeader eyebrow="Application" title="Logs" description="Recent sanitized output from the verified stable application." actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} />
+    {error ? <ErrorState message={error} onRetry={load} /> : null}
+    {loading ? <LoadingState message="Loading application logs…" /> : null}
+    {!loading && !error && !stableRelease ? <EmptyState message="Application logs will be available after the first stable release." /> : null}
+    {!loading && stableRelease ? <>
+      <section className="panel-flat application-log-controls">
+        <label className="field"><span>Recent entries</span><select onChange={(event) => setLimit(Number(event.target.value))} value={limit}><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>
+        <button className="secondary-button" onClick={load} type="button">Refresh</button>
+      </section>
+      {result?.available === false ? <EmptyState message={result.message || "Application logs are not available yet."} /> : null}
+      {result?.available && !result.events?.length ? <EmptyState message="No application log entries were found." /> : null}
+      {result?.events?.length ? <section className="panel-flat"><h2>Recent output</h2><div className="application-log-list">{result.events.map((event, index) => <div className="application-log-line" key={`${event.timestamp}-${index}`}><time>{new Date(event.timestamp).toLocaleString()}</time><pre>{event.message}</pre></div>)}</div></section> : null}
+    </> : null}
+  </div>;
 }

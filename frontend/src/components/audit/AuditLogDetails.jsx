@@ -35,7 +35,7 @@ export default function AuditLogDetails({ metadata }) {
   }
 
   return (
-    <pre className="metadata">
+    <pre className="metadata admin-audit-evidence" tabIndex="0" title="Sanitized technical audit evidence">
       {JSON.stringify(maskMetadata(metadata), null, 2)}
     </pre>
   );

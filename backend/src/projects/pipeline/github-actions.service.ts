@@ -123,6 +123,8 @@ export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryByt
   return null;
 }
 
+export const DEPLOYGUARD_RESULT_ARTIFACT_ENTRY = "terraform/deployguard-result.json";
+
 @Injectable()
 export class GithubActionsService {
   constructor(private readonly config: ConfigService) {}
@@ -136,6 +138,7 @@ export class GithubActionsService {
     targetBranch: string;
     token?: string;
     inputs?: Record<string, string>;
+    excludedWorkflowRunIds?: string[];
   }): Promise<{ status: "dispatch_accepted"; workflowRunId: string; receipt: GithubActionsDispatchReceipt }> {
     const token = input.token?.trim();
     const workflowFile = this.config.get<string>(
@@ -192,7 +195,8 @@ export class GithubActionsService {
     }
 
     const dispatchResult = await response.json().catch(() => null) as { workflow_run_id?: number | string; html_url?: string } | null;
-    const workflowRunId = String(dispatchResult?.workflow_run_id || "").trim();
+    let workflowRunId = String(dispatchResult?.workflow_run_id || "").trim();
+    let correctedStaleRunIdentity = false;
     if (!/^\d+$/.test(workflowRunId)) {
       const detail = "GitHub accepted the workflow request without returning an immutable workflow run identity.";
       throw new GithubActionsDispatchError(
@@ -200,6 +204,31 @@ export class GithubActionsService {
         detail,
         this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId),
       );
+    }
+    const excludedRunIds = new Set(input.excludedWorkflowRunIds || []);
+    if (excludedRunIds.has(workflowRunId)) {
+      const dispatchedAt = new Date();
+      let discoveredRunId: string | null = null;
+      for (let attempt = 0; attempt < 10 && !discoveredRunId; attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
+        discoveredRunId = await this.findWorkflowRunAfter(
+          input.repositoryFullName,
+          input.targetBranch,
+          dispatchedAt,
+          token,
+          [...excludedRunIds],
+        );
+      }
+      if (!discoveredRunId) {
+        const detail = "GitHub returned a stale workflow run identity and did not expose the newly accepted run within the bounded discovery window.";
+        throw new GithubActionsDispatchError(
+          "workflow_run_identity_missing",
+          detail,
+          this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId),
+        );
+      }
+      workflowRunId = discoveredRunId;
+      correctedStaleRunIdentity = true;
     }
     return {
       status: "dispatch_accepted",
@@ -214,7 +243,9 @@ export class GithubActionsService {
         apiVersion: "2026-03-10",
         authentication: "Bearer installation token",
         workflowRunId,
-        workflowRunUrl: typeof dispatchResult?.html_url === "string" ? dispatchResult.html_url : null,
+        workflowRunUrl: correctedStaleRunIdentity
+          ? `https://github.com/${input.repositoryFullName}/actions/runs/${workflowRunId}`
+          : typeof dispatchResult?.html_url === "string" ? dispatchResult.html_url : null,
       },
     };
   }
@@ -314,7 +345,7 @@ export class GithubActionsService {
   }
 
   async getResultArtifact(repository: string, workflowRunId: string, operationId: string, token: string) {
-    return this.getArtifactEntry(repository, workflowRunId, operationId, token, "deployguard-result.json", 512 * 1024);
+    return this.getArtifactEntry(repository, workflowRunId, operationId, token, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, 512 * 1024);
   }
 
   async getArtifactEntry(repository: string, workflowRunId: string, operationId: string, token: string, entryName: string, maxEntryBytes: number) {

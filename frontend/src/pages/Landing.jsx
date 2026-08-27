@@ -2,30 +2,60 @@ import { Link } from "react-router-dom";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { useAuth } from "../hooks/useAuth.js";
 import AppIcon from "../components/common/AppIcon.jsx";
-
-const features = [
-  ["Automatic setup", "DeployGuard detects the application and prepares a deployment without repository boilerplate."],
-  ["Safe container build", "A deployment-ready container configuration is generated and checked before every build."],
-  ["Cost-aware deployment", "Cloud cost is estimated before resources are created, with one clear approval when needed."],
-  ["Deployment visibility", "Follow a simple release path from repository preparation to a healthy live application."],
-];
+import BrandLogo from "../components/common/BrandLogo.jsx";
+import PublicAdminLink from "../components/layout/PublicAdminLink.jsx";
+import PublicFooter from "../components/layout/PublicFooter.jsx";
+import DeployGuardArchitecture from "../components/marketing/DeployGuardArchitecture.jsx";
 
 export default function Landing() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, logout, user } = useAuth();
 
-  if (isLoading) return <div className="landing-loading"><LoadingState message="Checking your DeployGuard session..." /></div>;
+  if (isLoading) {
+    return <div className="landing-loading"><LoadingState message="Checking your DeployGuard session..." /></div>;
+  }
+
+  const initial = (user?.name || user?.email || "Account").trim().charAt(0).toUpperCase();
+
   return (
-    <div className="landing-page">
+    <div className="landing-page landing-page-simple">
       <div aria-hidden="true" className="landing-ambient"><span /><span /><span /></div>
-      <header className="landing-nav"><Link className="brand landing-brand" to="/"><span className="brand-mark"><span /></span><span>DeployGuard<small>Deployment platform</small></span></Link><nav>{isAuthenticated ? <Link className="button" to="/dashboard">Go to Dashboard</Link> : <Link className="button" to="/auth/github"><AppIcon name="github" size={17} />Continue with GitHub</Link>}</nav></header>
-      <main>
-        <section className="landing-hero">
-          <div className="landing-hero-copy"><p className="eyebrow">Repository-to-cloud automation</p><h1>Deploy a GitHub repository without building a delivery platform first.</h1><p className="landing-lead">Choose a repository. DeployGuard detects the app, prepares the container, estimates cost, and guides it to a healthy deployment.</p><div className="quick-actions">{isAuthenticated ? <Link className="button landing-primary-cta" to="/dashboard">Go to Dashboard <AppIcon name="arrow" size={18} /></Link> : <Link className="button landing-primary-cta" to="/auth/github"><AppIcon name="github" size={18} />Continue with GitHub</Link>}</div><div className="landing-proof"><span>GitHub identity</span><span>Automatic setup</span><span>Clear deployment progress</span></div></div>
-          <aside className="landing-flow"><div className="landing-flow-header"><div><p className="eyebrow">One deployment flow</p><strong>Repository to running app</strong></div></div><ol><li>Select repository</li><li>Review detected app</li><li>Deploy</li><li>Follow progress</li><li>Open the live app</li></ol><p>No GitHub Actions workflow, Dockerfile, or Terraform files are required in the application repository.</p></aside>
-        </section>
-        <section className="landing-features"><div className="landing-section-heading"><p className="eyebrow">One integrated product</p><h2>The deployment machinery lives in DeployGuard</h2><p>Every page has one job: understand the current run, inspect its details, or recover it.</p></div><div className="landing-feature-grid">{features.map(([title, description]) => <article key={title}><span className="feature-index">0{features.findIndex(([name]) => name === title) + 1}</span><h3>{title}</h3><p>{description}</p></article>)}</div></section>
+      <header className="landing-nav glass-nav">
+        <Link aria-label="DeployGuard home" className="brand landing-brand" to="/">
+          <BrandLogo />
+        </Link>
+        {isAuthenticated ? (
+          <nav aria-label="Account controls" className="landing-nav-actions">
+            <Link className="landing-about-link" to="/about">About us</Link>
+            <details className="landing-account-menu">
+              <summary aria-label="Open account menu" title="Open account menu"><span aria-hidden="true">{initial}</span></summary>
+              <div className="landing-account-popover glass-popover">
+                <Link to="/dashboard">Dashboard</Link>
+                <Link to="/projects">Projects</Link>
+                <button onClick={() => void logout()} type="button">Sign out</button>
+              </div>
+            </details>
+          </nav>
+        ) : (
+          <nav aria-label="Public navigation" className="landing-nav-actions">
+            <Link className="landing-about-link" to="/about">About us</Link>
+            <PublicAdminLink />
+          </nav>
+        )}
+      </header>
+      <main className="landing-home-main">
+        <section className="landing-simple-main"><div className="landing-simple-hero">
+          <p className="eyebrow">DeployGuard</p>
+          <h1>The future doesn’t wait for infrastructure. Neither do we.</h1>
+          <p className="landing-lead">Connect your repo. DeployGuard takes it from code to secure, running cloud infrastructure.</p>
+          {isAuthenticated ? (
+            <Link className="button landing-primary-cta" data-home-deploy="authenticated" to="/deploy">Deploy <AppIcon name="arrow" size={18} /></Link>
+          ) : (
+            <Link className="button landing-primary-cta" data-home-deploy="oauth" state={{ from: { pathname: "/deploy" } }} to="/auth/github"><AppIcon name="github" size={18} />Continue with GitHub</Link>
+          )}
+        </div></section>
+        <DeployGuardArchitecture />
       </main>
-      <footer className="landing-footer">Built for SMEs, students, and teams that need repeatable cloud deployments.</footer>
+      <PublicFooter />
     </div>
   );
 }

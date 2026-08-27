@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { DataSource } from "typeorm";
 import { workflowCapabilityRuntimeStatus } from "../projects/github-actions-aws-capability-contract";
+import { assertProductStartSchemaIntegrity } from "../projects/product-start-schema-integrity.service";
 
 type DependencyStatus = {
   status: "up" | "down";
@@ -27,6 +28,7 @@ export class HealthService {
         throw new Error("not_initialized");
       }
       await this.dataSource.query("SELECT 1");
+      await assertProductStartSchemaIntegrity(this.dataSource);
     });
 
     return {
