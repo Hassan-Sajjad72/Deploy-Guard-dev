@@ -80,8 +80,8 @@ export class EcsService {
     return { projectId, environmentName, status: "terraform_managed" };
   }
 
-  async registerTaskDefinition(projectId: string, imageUri: string, deploymentProfile: Record<string, unknown>) {
-    return { projectId, imageUri, deploymentProfile, status: "terraform_managed" };
+  async registerTaskDefinition(projectId: string, imageUri: string, runtimeConfiguration: Record<string, unknown>) {
+    return { projectId, imageUri, runtimeConfiguration, status: "terraform_managed" };
   }
 
   async createOrUpdateService(projectId: string, taskDefinitionArn: string, infrastructureOutputs: Record<string, unknown>) {
