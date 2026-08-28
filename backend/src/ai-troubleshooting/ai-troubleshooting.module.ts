@@ -5,7 +5,6 @@ import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { ProjectEnvironmentVariable } from "../projects/project-environment-variable.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
 import { Project } from "../projects/project.entity";
-import { ProjectDeploymentContract } from "../projects/project-deployment-contract.entity";
 import { ProjectDeploymentGeneration } from "../projects/project-deployment-generation.entity";
 import { ProjectStableRelease } from "../orchestration/project-stable-release.entity";
 import { ProjectPipelineEvent } from "../projects/project-pipeline-event.entity";
@@ -20,7 +19,7 @@ import { AiTroubleshootingController } from "./ai-troubleshooting.controller";
 import { AiTroubleshootingService } from "./ai-troubleshooting.service";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Project, ProjectPipelineRun, ProjectPipelineEvent, ProjectObservabilityEvent, ProjectEnvironmentVariable, ProjectDeploymentContract, ProjectDeploymentGeneration, ProjectStableRelease, AiAnalysisSession, AiAnalysisMessage, AiAnalysisResult]), AuditLogModule],
+  imports: [TypeOrmModule.forFeature([Project, ProjectPipelineRun, ProjectPipelineEvent, ProjectObservabilityEvent, ProjectEnvironmentVariable, ProjectDeploymentGeneration, ProjectStableRelease, AiAnalysisSession, AiAnalysisMessage, AiAnalysisResult]), AuditLogModule],
   controllers: [AiTroubleshootingController],
   providers: [AiTroubleshootingService, AiEvidenceService, AiEvidencePreprocessorService, AiProviderAdapter, LogSanitizerService],
   exports: [AiTroubleshootingService],

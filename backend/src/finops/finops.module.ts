@@ -1,10 +1,9 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { AuditLogModule } from "../audit-log/audit-log.module";
-import { ProjectDetectionProfile } from "../projects/project-detection-profile.entity";
 import { ProjectPipelineEvent } from "../projects/project-pipeline-event.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
-import { ProjectPreflightReport } from "../projects/project-preflight-report.entity";
+import { ProjectDatabaseTier } from "../projects/project-database-tier.entity";
 import { Project } from "../projects/project.entity";
 import { retiredMutationBoundaryProvider } from "../projects/pipeline/retired-mutation-boundary.provider";
 import { ProjectPersistentStorage } from "../storage/project-persistent-storage.entity";
@@ -21,8 +20,7 @@ import { TerraformCostPlanService } from "./terraform-cost-plan.service";
   imports: [
     TypeOrmModule.forFeature([
       Project,
-      ProjectDetectionProfile,
-      ProjectPreflightReport,
+      ProjectDatabaseTier,
       ProjectPipelineRun,
       ProjectPipelineEvent,
       ProjectCostEstimate,

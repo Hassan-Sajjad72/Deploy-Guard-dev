@@ -2,7 +2,6 @@ import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { AuditLogModule } from "../audit-log/audit-log.module";
 import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
-import { ProjectDetectionProfile } from "../projects/project-detection-profile.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
 import { retiredMutationBoundaryProvider } from "../projects/pipeline/retired-mutation-boundary.provider";
 import { Project } from "../projects/project.entity";
@@ -19,7 +18,6 @@ import { StorageService } from "./storage.service";
   imports: [
     TypeOrmModule.forFeature([
       Project,
-      ProjectDetectionProfile,
       ProjectPipelineRun,
       ProjectInfrastructureEnvironment,
       ProjectPersistentStorage,

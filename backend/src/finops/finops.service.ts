@@ -11,13 +11,12 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Request } from "express";
 import { Repository } from "typeorm";
 import { AuditLogService } from "../audit-log/audit-log.service";
-import { ProjectDetectionProfile } from "../projects/project-detection-profile.entity";
 import { ProjectPipelineEvent } from "../projects/project-pipeline-event.entity";
 import {
   PipelineRunStatus,
   ProjectPipelineRun,
 } from "../projects/project-pipeline-run.entity";
-import { ProjectPreflightReport } from "../projects/project-preflight-report.entity";
+import { DatabaseTierProvider, ProjectDatabaseTier } from "../projects/project-database-tier.entity";
 import { Project, ProjectStatus, ProjectVisibility } from "../projects/project.entity";
 import {
   PIPELINE_QUEUE,
@@ -83,10 +82,8 @@ export class FinopsService {
   constructor(
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
-    @InjectRepository(ProjectDetectionProfile)
-    private readonly profileRepository: Repository<ProjectDetectionProfile>,
-    @InjectRepository(ProjectPreflightReport)
-    private readonly preflightRepository: Repository<ProjectPreflightReport>,
+    @InjectRepository(ProjectDatabaseTier)
+    private readonly databaseTierRepository: Repository<ProjectDatabaseTier>,
     @InjectRepository(ProjectPipelineRun)
     private readonly runRepository: Repository<ProjectPipelineRun>,
     @InjectRepository(ProjectPipelineEvent)
@@ -525,29 +522,13 @@ export class FinopsService {
     req?: RequestInfo
   ) {
     const config = getFinopsConfig(this.config);
-    const profile = await this.profileRepository.findOne({
-      where: { projectId: project.id },
-    });
-
-    if (!profile) {
-      throw new BadRequestException("Run stack detection before generating a cost estimate.");
-    }
-
-    const preflight = await this.preflightRepository.findOne({
-      where: { projectId: project.id },
-    });
-
-    if (!preflight) {
-      throw new BadRequestException("Generate a pre-flight report before generating a cost estimate.");
-    }
-
-    const framework = (profile?.framework || profile?.ecosystem || "app").toLowerCase();
-    const computeCost = framework.includes("next") || framework.includes("django") ? 35 : 18;
+    const database = await this.databaseTierRepository.findOne({ where: { projectId: project.id } });
+    const computeCost = 18;
     const storage = await this.storageRepository.findOne({
       where: { projectId: project.id, environmentName: "dev" },
       order: { createdAt: "DESC" },
     });
-    const efsRequired = Boolean(profile?.requiresPersistentStorage || storage?.enabled || storage?.userEnabled);
+    const efsRequired = Boolean(storage?.enabled || storage?.userEnabled);
     const resources: NormalizedCostResource[] = [
       {
         resourceType: CostResourceType.ECS_FARGATE_COMPUTE,
@@ -592,13 +573,13 @@ export class FinopsService {
       },
     ];
 
-    if (profile?.requiresDatabase) {
+    if (database?.provider === DatabaseTierProvider.MANAGED) {
       resources.push({
         resourceType: CostResourceType.DATABASE,
-        resourceName: `${project.name}-${profile.databaseType || "database"}`,
-        serviceName: "Managed database",
+        resourceName: `${project.name}-${database.engine || "database"}`,
+        serviceName: "Container database runtime",
         monthlyCost: 25,
-        metadata: { source: "mock", databaseType: profile.databaseType || "unknown" },
+        metadata: { source: "mock", databaseType: database.engine || "unknown" },
       });
     }
 
@@ -613,7 +594,6 @@ export class FinopsService {
             source: "mock",
             assumption: "small persistent file share",
             storageEnabled: Boolean(storage?.enabled || storage?.userEnabled),
-            requiredByDetection: Boolean(profile?.requiresPersistentStorage),
           },
         },
         {
@@ -659,9 +639,8 @@ export class FinopsService {
         reason:
           "FINOPS_MOCK_MODE is enabled because real Terraform/Infracost integration is not configured yet.",
         currency: config.currency,
-        profileId: profile?.id || null,
-        framework: profile?.framework || null,
-        requiresDatabase: Boolean(profile?.requiresDatabase),
+        databaseEngine: database?.engine || null,
+        databaseEnabled: database?.provider === DatabaseTierProvider.MANAGED,
         requiresPersistentStorage: efsRequired,
       },
       rawInfracostResponse: null,

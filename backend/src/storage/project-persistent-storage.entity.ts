@@ -61,9 +61,6 @@ export class ProjectPersistentStorage {
   @Column({ default: false })
   enabled: boolean;
 
-  @Column({ default: false, name: "required_by_detection" })
-  requiredByDetection: boolean;
-
   @Column({ default: false, name: "user_enabled" })
   userEnabled: boolean;
 

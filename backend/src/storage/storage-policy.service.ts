@@ -2,50 +2,28 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
-import { ProjectDetectionProfile } from "../projects/project-detection-profile.entity";
 import { ProjectPersistentStorage } from "./project-persistent-storage.entity";
 import { getStorageConfig } from "./storage.config";
 
 @Injectable()
 export class StoragePolicyService {
   constructor(
-    @InjectRepository(ProjectDetectionProfile)
-    private readonly profileRepository: Repository<ProjectDetectionProfile>,
     @InjectRepository(ProjectPersistentStorage)
     private readonly storageRepository: Repository<ProjectPersistentStorage>,
     private readonly config: ConfigService
   ) {}
 
-  async detectPersistentStorageNeed(projectId: string) {
-    const profile = await this.profileRepository.findOne({ where: { projectId } });
-    const raw = JSON.stringify(profile?.rawProfile || {}).toLowerCase();
-    const reasons: string[] = [];
-
-    if (profile?.requiresPersistentStorage) reasons.push("Detection profile requires persistent storage.");
-    if (profile?.requiresDatabase && /sqlite|file.?database/.test(raw)) reasons.push("SQLite or file database indicator detected.");
-    if (/media_root|upload|uploads|media\//.test(raw)) reasons.push("Uploads/media storage indicator detected.");
-    if (/django/.test((profile?.framework || "").toLowerCase()) && /media/.test(raw)) reasons.push("Django media storage indicator detected.");
-    if (/flask/.test((profile?.framework || "").toLowerCase()) && /upload/.test(raw)) reasons.push("Flask upload folder indicator detected.");
-
-    return {
-      required: reasons.length > 0,
-      reasons,
-      profile,
-    };
-  }
-
   async getPersistentStorageRecommendation(projectId: string) {
-    const detection = await this.detectPersistentStorageNeed(projectId);
     const storage = await this.storageRepository.findOne({
       where: { projectId, environmentName: "dev" },
       order: { createdAt: "DESC" },
     });
 
     return {
-      required: detection.required,
-      recommended: detection.required || Boolean(storage?.userEnabled),
+      required: Boolean(storage?.enabled),
+      recommended: Boolean(storage?.userEnabled || storage?.enabled),
       enabled: Boolean(storage?.enabled),
-      reasons: detection.reasons.length > 0 ? detection.reasons : ["Persistent storage not required for the current detection profile."],
+      reasons: storage?.enabled ? ["Persistent storage is explicitly enabled for this project."] : ["Persistent storage is not enabled for this project."],
     };
   }
 
@@ -55,9 +33,7 @@ export class StoragePolicyService {
       where: { projectId, environmentName: "dev" },
       order: { createdAt: "DESC" },
     });
-    const detection = await this.detectPersistentStorageNeed(projectId);
-
-    return config.enableEfs && (config.defaultEnabled || detection.required || Boolean(storage?.enabled));
+    return config.enableEfs && (config.defaultEnabled || Boolean(storage?.enabled));
   }
 
   async buildEfsTerraformVariables(projectId: string, environmentName = "dev") {

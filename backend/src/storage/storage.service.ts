@@ -66,7 +66,6 @@ export class StorageService {
     req?: RequestInfo
   ) {
     const project = await this.findProjectForManage(user, projectId);
-    const detection = await this.policyService.detectPersistentStorageNeed(project.id);
     const storage = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, project.id, "production");
       const repository = manager.getRepository(ProjectPersistentStorage);
@@ -74,19 +73,16 @@ export class StorageService {
         enabled: dto.enabled,
         backupEnabled: dto.backupEnabled,
       });
-      current.requiredByDetection = detection.required;
       return repository.save(current);
     });
     await this.event(project.id, null, storage.id, "storage_settings_updated", "success", "Persistent storage settings updated.", user, {
       enabled: storage.enabled,
       backupEnabled: storage.backupEnabled,
-      requiredByDetection: storage.requiredByDetection,
     });
     await this.audit("STORAGE_SETTINGS_UPDATED", project.id, user, "success", {
       storageId: storage.id,
       enabled: storage.enabled,
       backupEnabled: storage.backupEnabled,
-      requiredByDetection: storage.requiredByDetection,
     }, req);
 
     return storage;
@@ -335,7 +331,6 @@ export class StorageService {
       "status",
       "enabled",
       "backupEnabled",
-      "requiredByDetection",
       "restoreRequestId",
       "efsFileSystemId",
       "efsAccessPointId",

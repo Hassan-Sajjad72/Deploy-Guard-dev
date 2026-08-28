@@ -49,7 +49,6 @@ export class DatabaseTierService {
       const managedDatabaseUser = `dg_${projectId.replace(/-/g, "").slice(0, 12)}`;
       const tier = tiers.create({
         ...(existing || {}), projectId,
-        requiredByDetection: false,
         provider: dto.provider,
         engine,
         status: dto.provider === DatabaseTierProvider.NONE ? DatabaseTierStatus.NOT_REQUIRED : DatabaseTierStatus.PENDING,
@@ -82,7 +81,7 @@ export class DatabaseTierService {
   private safe(tier: ProjectDatabaseTier | null) {
     if (!tier) return null;
     return {
-      id: tier.id, projectId: tier.projectId, requiredByDetection: tier.requiredByDetection,
+      id: tier.id, projectId: tier.projectId,
       provider: tier.provider, engine: tier.engine, status: tier.status,
       externalHost: tier.externalHost, externalPort: tier.externalPort,
       internalHost: tier.internalHost, databaseName: tier.databaseName, databaseUser: tier.databaseUser,

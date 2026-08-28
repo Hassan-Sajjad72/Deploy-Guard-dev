@@ -23,7 +23,6 @@ export class ProjectDatabaseTier {
   @Index({ unique: true }) @Column({ name: "project_id" }) projectId: string;
   @OneToOne(() => Project, { onDelete: "CASCADE" }) @JoinColumn({ name: "project_id" }) project: Project;
   @Index() @Column({ nullable: true, name: "active_generation_id", type: "uuid" }) activeGenerationId: string | null;
-  @Column({ default: false, name: "required_by_detection" }) requiredByDetection: boolean;
   @Column({ nullable: true }) engine: ManagedDatabaseEngine | null;
   @Column({ type: "enum", enum: DatabaseTierProvider, nullable: true }) provider: DatabaseTierProvider | null;
   @Column({ type: "enum", enum: DatabaseTierStatus, default: DatabaseTierStatus.SETUP_REQUIRED }) status: DatabaseTierStatus;
