@@ -4,7 +4,6 @@ import { AuditLogModule } from "../audit-log/audit-log.module";
 import { InfrastructureModule } from "../infrastructure/infrastructure.module";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { UsersModule } from "../users/users.module";
-import { DeploymentContractService } from "./deployment-contract.service";
 import { DatabaseTierService } from "./database-tier.service";
 import { RailpackDeploymentService } from "./railpack-deployment.service";
 import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
@@ -15,7 +14,6 @@ import { ProjectActivityService } from "./project-activity.service";
 import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.entity";
 import { ProjectDatabaseTier } from "./project-database-tier.entity";
 import { ProjectDeploymentContract } from "./project-deployment-contract.entity";
-import { ProjectDeploymentRequirements } from "./project-deployment-requirements.entity";
 import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
@@ -60,7 +58,6 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
       Project, User, GithubAppInstallation, ProjectEnvironmentVariable,
       ProjectDeploymentContract, ProjectDatabaseTier, ProjectDetectionProfile,
       ProjectPreflightReport, ProjectPipelineRun, ProjectPipelineEvent,
-      ProjectDeploymentRequirements,
       ProjectServiceBinding, ProjectConfigurationSnapshot, ProjectUserActivity,
       // Historical infrastructure/storage records are not part of ordinary
       // project state authority. Current routing uses generation records.
@@ -81,7 +78,7 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
   providers: [
     ProjectsService, GithubAppService, GithubActionsService, RailpackDeploymentService, GithubActionsRuntimeSecretService,
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
-    DeploymentContractService, DatabaseTierService,
+    DatabaseTierService,
     RepositorySourceService,
     PipelineStageResolverService,
     ProjectCurrentStateService,

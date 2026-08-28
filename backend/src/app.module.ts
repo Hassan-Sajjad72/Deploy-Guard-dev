@@ -34,7 +34,6 @@ import { GithubAppInstallation } from "./projects/github-app-installation.entity
 import { ProjectConfigurationSnapshot } from "./projects/project-configuration-snapshot.entity";
 import { ProjectDatabaseTier } from "./projects/project-database-tier.entity";
 import { ProjectDeploymentContract } from "./projects/project-deployment-contract.entity";
-import { ProjectDeploymentRequirements } from "./projects/project-deployment-requirements.entity";
 import { ProjectDetectionProfile } from "./projects/project-detection-profile.entity";
 import { ProjectEnvironmentVariable } from "./projects/project-environment-variable.entity";
 import { ProjectPipelineEvent } from "./projects/project-pipeline-event.entity";
@@ -84,7 +83,7 @@ import { ObservabilityModule } from "./observability/observability.module";
           User, AuditLog, Project, GithubAppInstallation, ProjectEnvironmentVariable,
           ProjectDetectionProfile, ProjectDeploymentContract, ProjectDatabaseTier,
           ProjectServiceBinding, ProjectConfigurationSnapshot,
-          ProjectDeploymentRequirements, ProjectPreflightReport, ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
+          ProjectPreflightReport, ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
           ProjectPipelineEvent, ProjectUserActivity,
           ProjectCostEstimate,
           ProjectCostResourceBreakdown, ProjectCostSettings,

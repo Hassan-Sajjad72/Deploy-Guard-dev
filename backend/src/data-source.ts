@@ -33,7 +33,6 @@ import { ProjectDetectionProfile } from "./projects/project-detection-profile.en
 import { ProjectDeploymentContract } from "./projects/project-deployment-contract.entity";
 import { ProjectDatabaseTier } from "./projects/project-database-tier.entity";
 import { ProjectEnvironmentVariable } from "./projects/project-environment-variable.entity";
-import { ProjectDeploymentRequirements } from "./projects/project-deployment-requirements.entity";
 import { ProjectPipelineEvent } from "./projects/project-pipeline-event.entity";
 import { ProjectUserActivity } from "./projects/project-user-activity.entity";
 import { ProjectPipelineRun } from "./projects/project-pipeline-run.entity";
@@ -133,7 +132,6 @@ export default new DataSource({
     ProjectDetectionProfile,
     ProjectDeploymentContract,
     ProjectDatabaseTier,
-    ProjectDeploymentRequirements,
     ProjectPreflightReport,
     ProjectPipelineRun,
     ProjectDeploymentGeneration,
