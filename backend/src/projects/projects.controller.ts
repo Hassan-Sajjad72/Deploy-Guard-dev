@@ -23,11 +23,7 @@ import { UpdateEnvVarDto } from "./dto/update-env-var.dto";
 import { UpdateProjectDto } from "./dto/update-project.dto";
 import { UpdateRepositoryDto } from "./dto/update-repository.dto";
 import { ProjectsService } from "./projects.service";
-import { DeploymentProfileService } from "./detection/deployment-profile.service";
-import { PreflightService } from "./templates/preflight.service";
 import { ProjectCurrentStateService } from "./current-state/project-current-state.service";
-import { DetectionStatus } from "./project-detection-profile.entity";
-import { PreflightValidationStatus } from "./project-preflight-report.entity";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { BulkEnvVarsDto } from "./dto/bulk-env-vars.dto";
 import { UpdateDatabaseTierDto } from "./dto/update-database-tier.dto";
@@ -38,7 +34,6 @@ import { ProjectActivityDto } from "./dto/project-activity.dto";
 import { ProjectActivityService } from "./project-activity.service";
 import { rankWorkspaceSummaries } from "./project-recency";
 import { GithubActionsDeploymentService } from "./github-actions-deployment.service";
-import { DeploymentContractService } from "./deployment-contract.service";
 import { RollbackGithubActionsDto } from "./dto/rollback-github-actions.dto";
 import { ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
 import { ManagedDatabaseResetService } from "./managed-database-reset.service";
@@ -49,15 +44,12 @@ import { DeploymentRecoveryDecisionService } from "./deployment-recovery-decisio
 export class ProjectsController {
   constructor(
     private readonly projectsService: ProjectsService,
-    private readonly deploymentProfileService: DeploymentProfileService,
-    private readonly preflightService: PreflightService,
     private readonly projectCurrentStateService: ProjectCurrentStateService,
     private readonly auditLogService: AuditLogService,
     private readonly databaseTiers: DatabaseTierService,
     private readonly deploymentRequirements: DeploymentRequirementsService,
     private readonly projectActivity: ProjectActivityService,
     private readonly githubActionsDeployment: GithubActionsDeploymentService,
-    private readonly deploymentContracts: DeploymentContractService,
     private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
     private readonly managedDatabaseReset: ManagedDatabaseResetService,
     private readonly deploymentRecovery: DeploymentRecoveryDecisionService,
@@ -209,45 +201,6 @@ export class ProjectsController {
     };
   }
 
-  @Post(":projectId/detect-stack")
-  @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER]))
-  async detectStack(@Req() req: Request, @Param("projectId") projectId: string) {
-    const profile = await this.deploymentProfileService.runDetection(
-        req.user!,
-        projectId,
-        req
-      );
-    // Source inspection and the durable contract must prove this repository is
-    // structurally deployable before DeployGuard mutates its GitHub workflow.
-    const contract = await this.deploymentContracts.getMatchingForProject(projectId, {
-      repositoryFullName: profile.repositoryFullName,
-      targetBranch: profile.targetBranch,
-      commitSha: profile.commitSha,
-    });
-    const workflow = contract?.deployable
-      ? await this.projectsService.ensureDeployguardWorkflow(req.user!, projectId)
-      : { verified: false, path: null };
-    await this.recordMeaningful(req, projectId, "stack_detection", "detection");
-    return {
-      profile,
-      workflow,
-      readiness: {
-        ready: profile.detectionStatus === DetectionStatus.SUCCESS && workflow.verified,
-        label: profile.detectionStatus === DetectionStatus.SUCCESS && workflow.verified ? "Ready to Deploy" : "Not Ready",
-      },
-    };
-  }
-
-  @Get(":projectId/detection-profile")
-  @UseGuards(requireRole([UserRole.ADMIN]))
-  async getDetectionProfile(
-    @Req() req: Request,
-    @Param("projectId") projectId: string
-  ) {
-    return {
-      profile: await this.deploymentProfileService.getProfile(req.user!, projectId),
-    };
-  }
 
   @Get(":projectId/current-state")
   @Header("Cache-Control", "private, no-store")
@@ -418,25 +371,6 @@ export class ProjectsController {
   }
 
 
-  @Post(":projectId/preflight")
-  @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER]))
-  async generatePreflight(
-    @Req() req: Request,
-    @Param("projectId") projectId: string
-  ) {
-    const report = await this.preflightService.generateReport(req.user!, projectId, req);
-    await this.recordMeaningful(req, projectId, "preflight_generated", "requirements");
-    return { report };
-  }
-
-  @Get(":projectId/preflight")
-  @UseGuards(requireRole([UserRole.ADMIN]))
-  async getPreflight(@Req() req: Request, @Param("projectId") projectId: string) {
-    return {
-      report: await this.preflightService.getReport(req.user!, projectId),
-    };
-  }
-
 
   @Get(":projectId")
   async getProject(@Req() req: Request, @Param("projectId") projectId: string) {
@@ -509,7 +443,7 @@ export class ProjectsController {
     @Body() dto: CreateEnvVarDto
   ) {
     const result = await this.attemptProjectAction(req, "PROJECT_ENV_CREATED", projectId, () => this.projectsService.createEnvVar(req.user!, projectId, dto, req));
-    return { ...result, preflight: await this.refreshPreflightAfterEnvironmentSave(req, projectId) };
+    return result;
   }
 
   @Post(":projectId/env/bulk")
@@ -521,7 +455,7 @@ export class ProjectsController {
     const result = await this.attemptProjectAction(req, "PROJECT_ENV_BULK_UPSERTED", projectId, () =>
       this.projectsService.bulkUpsertEnvVars(req.user!, projectId, dto, req)
     );
-    return { ...result, preflight: await this.refreshPreflightAfterEnvironmentSave(req, projectId) };
+    return result;
   }
 
   @Patch(":projectId/env/:envId")
@@ -538,7 +472,7 @@ export class ProjectsController {
         dto,
         req
       ));
-    return { ...result, preflight: await this.refreshPreflightAfterEnvironmentSave(req, projectId) };
+    return result;
   }
 
   @Delete(":projectId/env/:envId")
@@ -579,7 +513,4 @@ export class ProjectsController {
     await this.projectActivity.recordUserAction(req.user!.id, projectId, action, { route, section: fallbackSection });
   }
 
-  private async refreshPreflightAfterEnvironmentSave(req: Request, projectId: string) {
-    return this.preflightService.generateReport(req.user!, projectId, req);
-  }
 }
