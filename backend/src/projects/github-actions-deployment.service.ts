@@ -81,6 +81,41 @@ const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 const MAX_STABLE_RELEASE_RECONCILIATION_ATTEMPTS = 3;
 const RUNTIME_CONFIGURATION_EVIDENCE_FAILURE_MESSAGE = "The healthy workflow result did not satisfy the immutable runtime-configuration evidence contract.";
 
+/**
+ * The BuildPlan, rather than a component role, framework, or inventory order,
+ * is the authority for the managed database consumer.  An ambiguous plan is
+ * rejected instead of guessing a consumer.
+ */
+export function canonicalManagedDatabaseOwnerComponentId(plan: BuildPlan): string {
+  const owners = buildPlanComponents(plan)
+    .filter((component) => component.database.required && component.database.provider === "managed")
+    .map((component) => component.id);
+  if (owners.length !== 1) {
+    throw new BadRequestException("Managed database binding has no single canonical BuildPlan component owner.");
+  }
+  return owners[0];
+}
+
+/**
+ * A fresh managed database has no Secrets Manager ARN until Terraform has
+ * created it.  Its declared aliases are therefore satisfied only for the
+ * exact canonical owner; every other missing alias remains fail-closed.
+ */
+export function missingComponentRuntimeRequirements(input: {
+  componentId: string;
+  required: string[];
+  environment: Record<string, string>;
+  secretReferences: Record<string, string>;
+  managedDatabase: { ownerComponentId: string; secretAliases: Record<string, "password" | "url"> } | null;
+}): string[] {
+  const deferred = input.managedDatabase?.ownerComponentId === input.componentId
+    ? new Set(Object.keys(input.managedDatabase.secretAliases))
+    : new Set<string>();
+  return input.required.filter((key) => input.environment[key] === undefined
+    && input.secretReferences[key] === undefined
+    && !deferred.has(key));
+}
+
 function generationCleanupEvidence(log: string) {
   const line = log.split(/\r?\n/).filter((value) => value.includes("DEPLOYGUARD_GENERATION_CLEANUP_RESULT=")).pop();
   if (!line) return null;
@@ -1455,7 +1490,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     if (Object.keys(effective.projectSecretValues).some((key) => !secretReferences[key])) {
       throw new BadRequestException("A required application secret could not be converted to an ECS secret reference.");
     }
-    const databaseOwnerComponentId = plan.components?.find((component) => component.database.required)?.id || null;
+    const databaseOwnerComponentId = binding ? canonicalManagedDatabaseOwnerComponentId(plan) : null;
     const componentRuntime = Object.fromEntries(buildPlanComponents(plan).map((component) => {
       const owned = new Set(component.environmentOwnership
         .filter((item) => item.componentId === component.id)
@@ -1481,14 +1516,16 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       if (databaseOwnerComponentId === component.id && binding) {
         Object.assign(environment, runtimeAliases);
       }
-      // Fresh managed database credentials are deliberately deferred until
-      // Terraform creates their real Secrets Manager ARNs. They are satisfied
-      // only for the canonical database owner and only by the exact alias the
-      // managed binding declared; no placeholder may enter ECS references.
-      const deferredManagedDatabaseSecrets = component.id === databaseOwnerComponentId && binding
-        ? new Set(Object.keys(secretAliases))
-        : new Set<string>();
-      const missing = required.filter((key) => environment[key] === undefined && secrets[key] === undefined && !deferredManagedDatabaseSecrets.has(key));
+      const missing = missingComponentRuntimeRequirements({
+        componentId: component.id,
+        required,
+        environment,
+        secretReferences: secrets,
+        managedDatabase: binding && databaseOwnerComponentId ? {
+          ownerComponentId: databaseOwnerComponentId,
+          secretAliases: secretAliases as Record<string, "password" | "url">,
+        } : null,
+      });
       if (missing.length) throw new BadRequestException(`Required runtime configuration is missing for component ${component.id}: ${missing.sort().join(", ")}.`);
       return [component.id, { environment, secretReferences: secrets }];
     }));
@@ -1554,7 +1591,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
         bindingFingerprint: binding.configurationFingerprint,
         provider: "managed",
         engine: binding.engine,
-        ownerComponentId: databaseOwnerComponentId || (() => { throw new BadRequestException("Managed database binding has no canonical BuildPlan component owner."); })(),
+        ownerComponentId: databaseOwnerComponentId!,
         image: databaseProfile!.image,
         dataPath: databaseProfile!.dataPath,
         healthCheck: databaseProfile!.healthCheck,

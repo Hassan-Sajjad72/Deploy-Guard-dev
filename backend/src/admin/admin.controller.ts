@@ -92,17 +92,26 @@ export class AdminController {
     const grafana = await probeGrafanaAvailability(
       this.config.get<string>("GRAFANA_INTERNAL_URL") || this.config.get<string>("GRAFANA_BASE_URL"),
     );
-    let githubActions: ServiceAvailability & { releaseIdentity: "unconfigured" | "invalid" | "exact_immutable" };
+    let githubActions: ServiceAvailability & {
+      releaseIdentity: "unconfigured" | "invalid" | "exact_immutable";
+      remoteWorkflowCompatibility: "unconfigured" | "not_checked";
+    };
     if (!this.config.get<string>("DEPLOYGUARD_REUSABLE_WORKFLOW")?.trim()) {
-      githubActions = { status: "unavailable", source: "runtime_configuration", releaseIdentity: "unconfigured" };
+      githubActions = { status: "unavailable", source: "runtime_configuration", releaseIdentity: "unconfigured", remoteWorkflowCompatibility: "unconfigured" };
     } else {
       try {
         canonicalDeployguardReusableWorkflow(this.config);
-        githubActions = configured(["DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"])
-          ? { status: "available", source: "runtime_configuration", releaseIdentity: "exact_immutable" }
-          : { status: "degraded", source: "runtime_configuration", releaseIdentity: "exact_immutable" };
+        // This endpoint can prove the same canonical immutable SHA accepted by
+        // deployment, but deliberately does not imply that GitHub has remotely
+        // verified workflow compatibility. Dispatch performs that live check.
+        githubActions = {
+          status: "degraded",
+          source: "runtime_configuration",
+          releaseIdentity: "exact_immutable",
+          remoteWorkflowCompatibility: "not_checked",
+        };
       } catch {
-        githubActions = { status: "degraded", source: "runtime_configuration", releaseIdentity: "invalid" };
+        githubActions = { status: "degraded", source: "runtime_configuration", releaseIdentity: "invalid", remoteWorkflowCompatibility: "not_checked" };
       }
     }
     const result = {

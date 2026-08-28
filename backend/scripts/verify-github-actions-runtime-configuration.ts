@@ -17,6 +17,12 @@ import {
 } from "../src/projects/github-actions-runtime-secret.service";
 import { extractGithubActionsReleaseEvidence } from "../src/projects/github-actions-release-evidence";
 import { MANAGED_DATABASE_ENGINE_PROFILES } from "../src/projects/managed-database-engine";
+import {
+  canonicalManagedDatabaseOwnerComponentId,
+  GithubActionsDeploymentService,
+  missingComponentRuntimeRequirements,
+} from "../src/projects/github-actions-deployment.service";
+import { BuildPlan } from "../src/projects/build-plan";
 
 const projectId = "11111111-2222-4333-8444-555555555555";
 const generationId = "11111111-1111-4111-8111-111111111111";
@@ -119,7 +125,68 @@ class Port implements RuntimeSecretMaterializationPort {
   }
 }
 
+function freshManagedDatabasePlan(engine: "postgres" | "mysql" | "mongodb", ownerComponentId: "backend" | "application", aliases: string[]): BuildPlan {
+  const owner = {
+    id: ownerComponentId,
+    role: ownerComponentId === "backend" ? "backend" : "application",
+    root: "server", buildContext: "server", repositoryInstallRoot: "server", detectorId: `${engine}-fixture`, language: "javascript",
+    framework: "fixture", frameworkMode: "server", runtimeType: "server", packageManager: "npm", dependencyManifest: "package.json",
+    lockfile: "package-lock.json", runtimeVersion: "22", baseImage: "node:22-alpine", runtimeImage: "node:22-alpine",
+    installCommand: "npm ci", buildCommand: null, runCommand: "node server.js", runtimeFiles: [], outputDirectory: null,
+    port: 3000, healthPath: "/health", healthCheckMode: "http", bindHost: "0.0.0.0", bindsToPortEnv: true,
+    dockerStrategy: "generated", dockerTemplate: "node", database: { required: true, provider: "managed", engine },
+    environmentOwnership: aliases.map((key) => ({ key, owner: "infrastructure", componentId: ownerComponentId, source: "managed_database", exposure: "private", requirement: "required", required: true, phase: "runtime", secret: /(?:URL|PASSWORD)$/.test(key) })),
+  } as const;
+  const frontend = {
+    ...owner, id: "frontend" as const, role: "frontend" as const, root: "web", buildContext: "web", repositoryInstallRoot: "web",
+    database: { required: false, provider: "none", engine: null }, environmentOwnership: [],
+  } as const;
+  return {
+    planVersion: 2, detectorVersion: "fixture", repositoryFullName: "fixture/deferred-database", branch: "main", commitSha: "a".repeat(40),
+    detectorId: "fixture", language: "javascript", framework: "fixture", frameworkMode: "server", confidence: "high", platformBackendMount: "/__deployguard/backend",
+    evidence: [{ source: "detector", description: `${engine} required aliases` }], appRoot: "server", repositoryInstallRoot: "server", packageManager: "npm", dependencyManifest: "package.json", lockfile: "package-lock.json", runtimeVersion: "22", baseImage: "node:22-alpine", runtimeImage: "node:22-alpine", installCommand: "npm ci", buildCommand: null, buildCommands: [], releaseCommand: null, releaseCommands: [], runCommand: "node server.js", runtimeFiles: [], outputDirectory: null, buildSystemDependencies: [], runtimeSystemDependencies: [], port: 3000, portSource: "detector", healthPath: "/health", bindHost: "0.0.0.0", bindsToPortEnv: true, runtimeType: "server", database: owner.database, environmentOwnership: owner.environmentOwnership, requiredInputs: aliases, requiredUserInputs: [], optionalInputs: [], buildTimeEnvVars: [], runtimeEnvVars: aliases, secretEnvVars: aliases.filter((key) => /(?:URL|PASSWORD)$/.test(key)), dockerStrategy: "generated", dockerTemplate: "node", warnings: [], blockers: [], components: [frontend, owner] as any, serviceBindings: [], relationships: [],
+  } as BuildPlan;
+}
+
+function verifyFreshManagedDatabaseHandoff() {
+  const cases: Array<{ engine: "postgres" | "mysql" | "mongodb"; owner: "backend" | "application"; aliases: string[] }> = [
+    { engine: "postgres", owner: "backend", aliases: ["DATABASE_URL", "DB_PASSWORD", "POSTGRES_PASSWORD"] },
+    { engine: "mysql", owner: "application", aliases: ["DATABASE_URL", "DB_PASSWORD", "MYSQL_PASSWORD"] },
+    { engine: "mongodb", owner: "backend", aliases: ["MONGODB_URI", "DB_PASSWORD"] },
+  ];
+  for (const fixture of cases) {
+    const plan = freshManagedDatabasePlan(fixture.engine, fixture.owner, fixture.aliases);
+    const profile = MANAGED_DATABASE_ENGINE_PROFILES[fixture.engine];
+    const secretAliases = Object.fromEntries(fixture.aliases.map((alias) => [alias, /(?:URL|URI)$/.test(alias) ? "url" : "password" as const])) as Record<string, "password" | "url">;
+    const freshBindingIntent = Object.fromEntries(fixture.aliases.map((alias) => [alias, `terraform://database/${secretAliases[alias]}`]));
+    assert.equal(canonicalManagedDatabaseOwnerComponentId(plan), fixture.owner, `${fixture.engine} selects the BuildPlan database consumer, not the first component or role`);
+    assert.deepEqual(missingComponentRuntimeRequirements({ componentId: fixture.owner, required: fixture.aliases, environment: {}, secretReferences: {}, managedDatabase: { ownerComponentId: fixture.owner, secretAliases } }), [], `${fixture.engine} deferred aliases satisfy only their exact owner`);
+    assert.deepEqual(missingComponentRuntimeRequirements({ componentId: "frontend", required: fixture.aliases, environment: {}, secretReferences: {}, managedDatabase: { ownerComponentId: fixture.owner, secretAliases } }), fixture.aliases, `${fixture.engine} cannot defer aliases to a different component`);
+    const effective: any = {
+      binding: { id: bindingId, configurationFingerprint: bindingFingerprint, provider: "managed", engine: fixture.engine, hostReference: `db.${fixture.engine}.internal`, port: profile.port, databaseName: "app", usernameReference: "dg_user" },
+      projectSecretValues: {}, secretReferences: freshBindingIntent,
+      ownership: Object.fromEntries(fixture.aliases.map((alias) => [alias, { serviceBindingId: bindingId, secret: /(?:URL|URI|PASSWORD)$/.test(alias) }])),
+    };
+    const snapshot: any = { id: snapshotId, environment: "dev", configurationFingerprint: fingerprint, plainValues: {} };
+    const runtime = (GithubActionsDeploymentService.prototype as any).runtimeConfiguration.call({
+      platformFoundation: () => configuration.platformFoundation,
+      deploymentGenerations: { verificationPriority: () => configuration.routing.verificationPriority },
+      config: { get: (_key: string, fallback?: string) => fallback || "deployguard.example.com" },
+    }, plan, snapshot, effective, null, configuration.deploymentContext, { projectId, id: generationId, terraformStateKey: configuration.generationStateKey } as any, { listenerPriority: 1001 } as any, null, null, configuration.promotion.operationId, null) as GithubActionsRuntimeConfiguration;
+    const serialized = decodeEnvironmentReferencesBase64(environmentReferencesBase64(runtime));
+    assert.equal(serialized.managedDatabase?.ownerComponentId, fixture.owner);
+    assert.deepEqual(serialized.managedDatabase?.secretAliases, secretAliases);
+    assert.deepEqual(serialized.componentRuntime[fixture.owner].secretReferences, {}, `${fixture.engine} terraform placeholders must be deferred outside ECS runtime config`);
+    assert.doesNotMatch(JSON.stringify(serialized.componentRuntime), /terraform:\/\//, `${fixture.engine} never serializes terraform:// as ECS valueFrom`);
+    const terraformOutputs = { database_url_secret_arn: `${secretArn}:DATABASE_URL::`, database_password_secret_arn: `${secretArn}:DB_PASSWORD::` };
+    const ecsValueFrom = Object.fromEntries(Object.entries(secretAliases).map(([alias, kind]) => [alias, kind === "url" ? terraformOutputs.database_url_secret_arn : terraformOutputs.database_password_secret_arn]));
+    assert(Object.values(ecsValueFrom).every((value) => value.startsWith("arn:aws:secretsmanager:")), `${fixture.engine} ECS valueFrom comes only from Terraform output ARNs`);
+    assert.doesNotMatch(JSON.stringify(ecsValueFrom), /terraform:\/\//);
+  }
+}
+
 async function main() {
+  verifyFreshManagedDatabaseHandoff();
   const encoded = environmentReferencesBase64(configuration);
   const decoded = decodeEnvironmentReferencesBase64(encoded);
   assert.deepEqual(decoded, decodeEnvironmentReferencesBase64(environmentReferencesBase64({ ...configuration, environment: Object.fromEntries(Object.entries(configuration.environment).reverse()) })));

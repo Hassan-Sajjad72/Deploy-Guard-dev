@@ -130,9 +130,12 @@ export class DeploymentContractService {
     const topologyDatabaseOwner = topology?.managedDatabase
       ? topology.components.find((component) => component.id === topology.managedDatabase!.ownerComponentId) || null
       : null;
-    const canonicalComponent = topologyDatabaseOwner || (topology?.components.length === 1 ? topology.components[0] : null);
     const unresolvedMultiComponentRuntimeOwner = Boolean(topology && topology.managedDatabase && !topologyDatabaseOwner);
-    const contractProfile = canonicalComponent?.profile || profile;
+    // The persisted aggregate profile remains the non-database contract
+    // source. Database facts may refine it only through the topology's exact
+    // ownerComponentId; a component-count fallback would reintroduce owner
+    // inference after topology has already made that authority explicit.
+    const contractProfile = topologyDatabaseOwner?.profile || profile;
     const raw = (contractProfile.rawProfile || {}) as Record<string, unknown>;
     const databaseRequired = topology
       ? Boolean(topologyDatabaseOwner && (topologyDatabaseOwner.profile.requiresDatabase || topology.managedDatabase))
@@ -181,7 +184,7 @@ export class DeploymentContractService {
       : this.environmentEvidence(raw);
     const userEvidence = evidence.filter((item) => item.ownership === "user");
     const platformVariableNames = new Set([
-      ...(topology && !canonicalComponent ? [] : platformRuntimeVariableNames(this.language(contractProfile), this.runtimeType(raw, contractProfile))),
+      ...platformRuntimeVariableNames(this.language(contractProfile), this.runtimeType(raw, contractProfile)),
       ...(topology?.serviceBindings || []).map((binding) => binding.envAlias),
     ]);
     const repositoryRequired = userEvidence.filter((item) => item.required).map((item) => item.key).filter((key) => !platformVariableNames.has(key));

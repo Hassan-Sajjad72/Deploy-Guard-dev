@@ -134,7 +134,15 @@ function preflight(root: string, plan: any, image: string, expectedPass: boolean
   mkdirSync(join(root, ".deployguard"), { recursive: true });
   writeFileSync(join(root, ".deployguard/build-plan.json"), JSON.stringify(plan));
   writeFileSync(join(root, ".deployguard/component-images.json"), JSON.stringify((plan.components || []).map((component: any) => ({ ...component, imageUri: image }))));
-  writeFileSync(join(root, ".deployguard/runtime-config.json"), JSON.stringify({ environment: { PORT: String(plan.port), HOST: "0.0.0.0", NODE_ENV: "production", AWS_REGION: "us-east-1", AWS_DEFAULT_REGION: "us-east-1", DEPLOYGUARD_PROJECT_ID: "61616161-6161-4161-8161-616161616161", DEPLOYGUARD_OPERATION_ID: "64646464-6464-4464-8464-646464646464", DEPLOYGUARD_ENVIRONMENT: "dev", DEPLOYGUARD_APP_LOG_GROUP: "/deployguard/part3/app", DEPLOYGUARD_DATABASE_LOG_GROUP: "/deployguard/part3/database", DEPLOYGUARD_DEPLOYMENT_LOG_GROUP: "/deployguard/part3/deployment" }, secretReferences: {}, managedDatabase: null }));
+  const runtimeEnvironment = { HOST: "0.0.0.0", NODE_ENV: "production", AWS_REGION: "us-east-1", AWS_DEFAULT_REGION: "us-east-1", DEPLOYGUARD_PROJECT_ID: "61616161-6161-4161-8161-616161616161", DEPLOYGUARD_OPERATION_ID: "64646464-6464-4464-8464-646464646464", DEPLOYGUARD_ENVIRONMENT: "dev", DEPLOYGUARD_APP_LOG_GROUP: "/deployguard/part3/app", DEPLOYGUARD_DATABASE_LOG_GROUP: "/deployguard/part3/database", DEPLOYGUARD_DEPLOYMENT_LOG_GROUP: "/deployguard/part3/deployment" };
+  writeFileSync(join(root, ".deployguard/runtime-config.json"), JSON.stringify({
+    environment: { PORT: String(plan.port), ...runtimeEnvironment },
+    secretReferences: {},
+    componentRuntime: Object.fromEntries((plan.components || []).map((component: any) => [component.id, {
+      environment: { PORT: String(component.port), ...runtimeEnvironment }, secretReferences: {},
+    }])),
+    managedDatabase: null,
+  }));
   runSequence += 1;
   const result = spawnSync("bash", [preflightScript], { cwd: root, encoding: "utf8", timeout: 120_000, env: { ...process.env, OPERATION_ID: `64646464-6464-4464-8464-${String(runSequence).padStart(12, "0")}`, GITHUB_RUN_ID: `${process.pid}${runSequence}`, RUNNER_TEMP: root, DEPLOYGUARD_PREFLIGHT_ATTEMPTS: expectedPass ? "20" : "3" } });
   const output = `${result.stdout || ""}\n${result.stderr || ""}`;

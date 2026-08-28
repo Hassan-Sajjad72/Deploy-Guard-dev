@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,11 @@ const backendImage = `deployguard-web-binding-backend:${process.pid}`;
 const frontendImage = `deployguard-web-binding-next:${process.pid}`;
 const backend = `dg-web-binding-backend-${process.pid}`;
 const frontend = `dg-web-binding-next-${process.pid}`;
+
+const deploymentSource = readFileSync(join(__dirname, "../src/projects/github-actions-deployment.service.ts"), "utf8");
+const bindingProjection = deploymentSource.match(/private async buildTimePublicConfig\([\s\S]*?\n  }\n\n  private /)?.[0] || "";
+assert.match(bindingProjection, /binding\.platformPathPrefix\}\$\{binding\.preservedPathname/, "serviceBindings.platformPathPrefix is the only build-time routing authority");
+assert.doesNotMatch(bindingProjection, /relationships|pathPrefix|stripPathPrefix/, "legacy relationship route evidence cannot redefine the platform binding");
 
 function docker(args: string[], options: { stdio?: "ignore" | "pipe" | "inherit" } = {}) {
   return execFileSync("docker", args, { stdio: options.stdio || "pipe", encoding: "utf8" });
