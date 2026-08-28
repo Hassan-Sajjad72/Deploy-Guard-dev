@@ -137,15 +137,101 @@ async function verifyTerminalGithubFailure() {
   return failedRun;
 }
 
+async function verifyCurrentStateReconcilesWithoutPipeline() {
+  const startedAt = new Date("2026-08-29T10:00:00.000Z");
+  const failedAt = new Date("2026-08-29T10:02:00.000Z");
+  const operation: any = {
+    id: "33333333-3333-4333-8333-333333333333", projectId: project.id, status: PipelineRunStatus.RUNNING,
+    githubWorkflowRunId: "33215481954", commitSha: "b".repeat(40), generationId: null, createdAt: startedAt, startedAt,
+    updatedAt: startedAt, completedAt: null, failedAt: null,
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy", attempt: 4 },
+  };
+  let reconciliationCalls = 0;
+  const service = Object.create(ProjectCurrentStateService.prototype) as any;
+  service.projectsService = { getProjectEntityForView: async () => ({ ...project, environment: "dev" }) };
+  service.deploymentReconciliation = {
+    reconcileActive: async (actor: any, projectId: string) => {
+      assert.equal(actor, user);
+      assert.equal(projectId, project.id);
+      reconciliationCalls += 1;
+      operation.status = PipelineRunStatus.FAILED;
+      operation.currentStage = "build_immutable_railpack_image";
+      operation.failedAt = failedAt;
+      operation.completedAt = failedAt;
+      operation.updatedAt = failedAt;
+      operation.errorMessage = "ERRO BUILDKIT_HOST environment variable is not set.";
+      operation.metadata = {
+        ...operation.metadata,
+        failedStage: operation.currentStage,
+        safeLog: operation.errorMessage,
+        workflowStages: [
+          { key: "checkout_exact_application_source", status: "passed" },
+          { key: "build_immutable_railpack_image", status: "failed" },
+          { key: "publish_immutable_image_to_ecr", status: "skipped" },
+        ],
+      };
+    },
+  };
+  service.dataSource = { getRepository: () => ({ findOne: async () => null }) };
+  service.releaseRepository = { findOne: async () => null };
+  service.estimateRepository = { findOne: async () => null };
+  service.generationRepository = { find: async () => [] };
+  service.githubActionsReadinessState = () => ({
+    repository: project.repositoryFullName, branch: project.targetBranch, commit: null, latestAttempt: null,
+    stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null,
+    canRetry: false, stateAuthority: null, developerState: "ready", developerAction: "deploy", developerMessage: "ready", progress: { percentage: 0, phase: null, label: "Ready" },
+  });
+  service.withGithubActionsState = async () => {
+    assert.equal(operation.status, PipelineRunStatus.FAILED, "Overview current-state refresh must reconcile terminal GitHub failure before projection");
+    return {
+      developerState: "failed_application", developerAction: "deploy_again", developerMessage: operation.errorMessage,
+      progress: { percentage: 40, phase: "build", label: "Railpack Build failed" }, repository: project.repositoryFullName, branch: project.targetBranch,
+      latestAttempt: {
+        operationId: operation.id, workflowRunId: operation.githubWorkflowRunId, operationType: "deploy", status: "failed_application", outcome: "blocked", attempt: "4",
+        generationId: null, releaseRevision: null, commit: operation.commitSha, message: operation.errorMessage,
+        occurredAt: failedAt.toISOString(), startedAt: startedAt.toISOString(), completedAt: failedAt.toISOString(),
+        workflowStages: operation.metadata.workflowStages,
+      }, stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null, canRetry: true, stateAuthority: null,
+    };
+  };
+  service.withStateAuthority = (_projectId: string, _environment: string, state: any) => state;
+  const overviewState = await service.getCurrentState(user, project.id);
+  assert.equal(reconciliationCalls, 1, "Overview current-state reads reconcile active GitHub operations without opening Pipeline");
+  assert.equal(overviewState.developerState, "failed_application");
+  assert.equal(overviewState.latestAttempt.operationId, operation.id);
+  assert.equal(overviewState.latestAttempt.workflowRunId, operation.githubWorkflowRunId);
+  assert.equal(overviewState.latestAttempt.generationId, null);
+  assert.equal(overviewState.latestAttempt.startedAt, startedAt.toISOString());
+  assert.equal(overviewState.latestAttempt.completedAt, failedAt.toISOString());
+  assert.deepEqual(overviewState.latestAttempt.workflowStages, operation.metadata.workflowStages);
+}
+
+async function verifyConcurrentStateReadsShareReconciliation() {
+  let reconciliationCalls = 0;
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.reconciliationInFlight = new Map();
+  service.projects = { findOne: async () => project };
+  service.runs = { find: async () => [{ id: "44444444-4444-4444-8444-444444444444", status: PipelineRunStatus.RUNNING }] };
+  service.reconcile = async () => { reconciliationCalls += 1; await Promise.resolve(); };
+  await Promise.all([service.reconcileActive(user, project.id), service.reconcileActive(user, project.id)]);
+  assert.equal(reconciliationCalls, 1, "concurrent current-state and history reads must share one GitHub reconciliation");
+}
+
 void (async () => {
   const failed = await verifyPreDispatchFailure();
   await verifyCurrentStateProjection(failed);
   const terminalFailure = await verifyTerminalGithubFailure();
   await verifyCurrentStateProjection(terminalFailure, true);
+  await verifyCurrentStateReconcilesWithoutPipeline();
+  await verifyConcurrentStateReadsShareReconciliation();
   const root = join(__dirname, "..", "..");
   const phases = readFileSync(join(root, "frontend", "src", "utils", "developerDeploymentPresentation.js"), "utf8");
   const routes = readFileSync(join(root, "frontend", "src", "routes", "AppRoutes.jsx"), "utf8");
   const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
+  const overviewPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectDetails.jsx"), "utf8");
+  const pipelinePage = readFileSync(join(root, "frontend", "src", "pages", "ProjectPipeline.jsx"), "utf8");
+  const infrastructurePage = readFileSync(join(root, "frontend", "src", "pages", "ProjectInfrastructure.jsx"), "utf8");
+  const troubleshootingPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectTroubleshooting.jsx"), "utf8");
   assert.doesNotMatch(phases, /key: "analyze"/);
   assert.match(phases, /Source \/ Dispatch/);
   assert.match(routes, /ProjectInfrastructure/);
@@ -160,5 +246,9 @@ void (async () => {
   assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build --name/);
   assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
   assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
+  assert.match(overviewPage, /getProjectCurrentState/);
+  assert.match(pipelinePage, /getProjectCurrentState/);
+  assert.match(infrastructurePage, /getProjectCurrentState/);
+  assert.match(troubleshootingPage, /getGithubActionsDeploymentHistory/);
   console.log("DISPATCH_STATE_PROJECTION=PASS");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

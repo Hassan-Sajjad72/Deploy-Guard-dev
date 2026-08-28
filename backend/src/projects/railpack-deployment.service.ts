@@ -25,6 +25,8 @@ const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 /** Single-service Railpack deployment admission; it does not inspect source. */
 @Injectable()
 export class RailpackDeploymentService {
+  private readonly reconciliationInFlight = new Map<string, Promise<void>>();
+
   constructor(
     @InjectRepository(Project) private readonly projects: Repository<Project>,
     @InjectRepository(User) private readonly users: Repository<User>,
@@ -72,16 +74,28 @@ export class RailpackDeploymentService {
     return this.dispatch(user, projectId, "rollback", digest, target.commitSha);
   }
   async latest(user: User, projectId: string) {
-    await this.project(user, projectId);
+    await this.reconcileActive(user, projectId);
     const operation = await this.runs.findOne({ where: { projectId }, order: { createdAt: "DESC" } });
-    if (operation) await this.reconcile(operation);
     return { deployment: operation };
   }
   async history(user: User, projectId: string) {
-    await this.project(user, projectId);
+    await this.reconcileActive(user, projectId);
     const deployments = await this.runs.find({ where: { projectId }, order: { createdAt: "DESC" }, take: 50 });
-    await Promise.all(deployments.filter((run) => ACTIVE.includes(run.status)).map((run) => this.reconcile(run)));
     return { operations: deployments.map((operation) => this.presentOperation(operation)) };
+  }
+
+  /** Reconcile terminal GitHub state before any authoritative project read. */
+  async reconcileActive(user: User, projectId: string) {
+    await this.project(user, projectId);
+    const existing = this.reconciliationInFlight.get(projectId);
+    if (existing) return existing;
+    const task = (async () => {
+      const active = await this.runs.find({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" }, take: 50 });
+      await Promise.all(active.map((operation) => this.reconcile(operation)));
+    })();
+    this.reconciliationInFlight.set(projectId, task);
+    try { await task; }
+    finally { if (this.reconciliationInFlight.get(projectId) === task) this.reconciliationInFlight.delete(projectId); }
   }
 
   private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackImageDigest = "", rollbackSourceSha = "", retryOfOperationId: string | null = null) {

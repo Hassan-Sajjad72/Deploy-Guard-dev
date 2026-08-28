@@ -46,4 +46,9 @@ assert.match(overviewComponent, /value=\{duration\(latest\?\.startedAt, latest\?
 assert.match(overviewComponent, /Runtime was not deployed\./);
 assert.match(troubleshooting, /Not created — deployment failed before runtime generation\./);
 assert.match(troubleshooting, /operationTimestamp\(operation\)/);
+assert.match(infrastructure, /subscribeProjectStateChanged/);
+assert.match(infrastructure, /window\.setInterval\(load, 5000\)/);
+assert.match(troubleshooting, /getProjectCurrentState/);
+assert.match(troubleshooting, /subscribeProjectStateChanged/);
+assert.match(troubleshooting, /window\.setInterval\(load, 5000\)/);
 console.log("RAILPACK_FAILURE_PRESENTATION=PASS");

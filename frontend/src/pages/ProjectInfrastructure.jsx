@@ -4,6 +4,8 @@ import { getProjectCurrentState } from "../api/projectApi.js";
 import { Card, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
+import { subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 
 export default function ProjectInfrastructure() {
   const { projectId } = useParams();
@@ -14,6 +16,12 @@ export default function ProjectInfrastructure() {
     catch (caught) { setError(caught.message); }
   }, [projectId]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
+  useEffect(() => {
+    if (!projectStatePresentation(state).active) return undefined;
+    const timer = window.setInterval(load, 5000);
+    return () => window.clearInterval(timer);
+  }, [state?.stateAuthority?.activeOperation?.id, state?.stateAuthority?.activeOperation?.status, load]);
   if (!state && !error) return <LoadingState message="Loading infrastructure state…" />;
   const infrastructure = state?.stateAuthority?.infrastructure;
   const attempt = state?.latestAttempt;

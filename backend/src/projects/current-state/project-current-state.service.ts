@@ -17,6 +17,7 @@ import { DeveloperProjectCurrentState, ProjectStateAuthority } from "./project-c
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "../project-deployment-generation.entity";
 import { canonicalEnvironmentName } from "../canonical-environment";
 import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from "../pipeline/github-actions-stage-presentation";
+import { RailpackDeploymentService } from "../railpack-deployment.service";
 
 function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" | "commitSha">) {
   return operation.metadata?.executionEngine === "railpack"
@@ -43,6 +44,7 @@ export class ProjectCurrentStateService {
     @InjectRepository(ProjectDeploymentGeneration)
     private readonly generationRepository: Repository<ProjectDeploymentGeneration>,
     private readonly projectsService: ProjectsService,
+    private readonly deploymentReconciliation: RailpackDeploymentService,
     private readonly config: ConfigService,
     private readonly dataSource: DataSource,
   ) {}
@@ -55,6 +57,7 @@ export class ProjectCurrentStateService {
     // GitHub Actions release records are the deployment authority.  Railpack
     // interprets source only inside the build, never in this read model.
     const project = await this.projectsService.getProjectEntityForView(user, projectId);
+    await this.deploymentReconciliation.reconcileActive(user, projectId);
     const environmentName = canonicalEnvironmentName(project);
     const route = await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } });
     const projected = await this.withGithubActionsState(

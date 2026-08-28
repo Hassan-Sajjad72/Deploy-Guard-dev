@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { followUpTroubleshooting, getTroubleshootingSession, getTroubleshootingSessions, regenerateTroubleshooting, startTroubleshooting } from "../api/platformApi.js";
-import { getGithubActionsDeploymentHistory } from "../api/projectApi.js";
+import { getGithubActionsDeploymentHistory, getProjectCurrentState } from "../api/projectApi.js";
 import { Card, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
+import { subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 
 const sourceLabels = { github_actions: "GitHub Actions", github_actions_status: "GitHub Actions", terraform: "Terraform", ecs_cloudwatch_runtime: "ECS / CloudWatch runtime logs", deployguard_lifecycle: "DeployGuard lifecycle evidence" };
 function label(value) { return String(value || "Unavailable").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
@@ -24,20 +26,27 @@ export default function ProjectTroubleshooting() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [currentState, setCurrentState] = useState(null);
 
-  async function load(preferredSession) {
+  const load = useCallback(async (preferredSession) => {
     setError("");
     try {
-      const [list, history] = await Promise.all([getTroubleshootingSessions(projectId), getGithubActionsDeploymentHistory(projectId)]);
+      const [list, history, state] = await Promise.all([getTroubleshootingSessions(projectId), getGithubActionsDeploymentHistory(projectId), getProjectCurrentState(projectId)]);
       const failures = (history.operations || []).filter((operation) => operation.status === "failed" && operation.aiAnalysisEligible === true);
-      setSessions(list.items || []); setProvider(list.provider || null); setFailedOperations(failures);
+      setSessions(list.items || []); setProvider(list.provider || null); setFailedOperations(failures); setCurrentState(state);
       setOperationId((current) => current || failures[0]?.id || "");
       const requested = preferredSession || query.get("session") || list.items?.[0]?.id;
       if (requested) setSelected(await getTroubleshootingSession(projectId, requested));
     } catch (caught) { setError(caught.message); }
     finally { setLoaded(true); }
-  }
-  useEffect(() => { void load(); }, [projectId]);
+  }, [projectId, query]);
+  useEffect(() => { void load(); }, [load, projectId]);
+  useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
+  useEffect(() => {
+    if (!projectStatePresentation(currentState).active) return undefined;
+    const timer = window.setInterval(load, 5000);
+    return () => window.clearInterval(timer);
+  }, [currentState?.stateAuthority?.activeOperation?.id, currentState?.stateAuthority?.activeOperation?.status, load]);
 
   async function analyze() {
     if (!operationId) return;
