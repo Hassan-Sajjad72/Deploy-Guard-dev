@@ -32,7 +32,6 @@ import {
   runtimeConfigurationWithPromotionCandidate,
 } from "./github-actions-operation-contract";
 import { extractGithubActionsTerraformPlanSummary } from "./github-actions-terraform-plan-evidence";
-import { DeploymentProfileService } from "./detection/deployment-profile.service";
 import {
   extractGithubActionsReleaseEvidence,
   GithubActionsReleaseEvidence,
@@ -50,7 +49,6 @@ import { GithubActionsRuntimeConfiguration } from "./github-actions-operation-co
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { BuildPlan, buildPlanComponents, requireBuildPlan } from "./build-plan";
 import { evaluateBuildPlanReadiness } from "./build-plan-readiness";
-import { refreshDeploymentAnalysisIfStale } from "./deployment-analysis-refresh";
 import { ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
 import { DeploymentRecoveryDecision } from "./deployment-recovery-decision";
 import { DeploymentRecoveryDecisionService } from "./deployment-recovery-decision.service";
@@ -154,7 +152,6 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     private readonly deploymentContracts: DeploymentContractService,
     private readonly repositorySource: RepositorySourceService,
     private readonly environmentCrypto: ProjectEnvironmentCryptoService,
-    private readonly deploymentProfiles: DeploymentProfileService,
     private readonly databaseBindings: DatabaseServiceBindingService,
     private readonly runtimeSecrets: GithubActionsRuntimeSecretService,
     private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
@@ -610,36 +607,14 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     });
     let workflow: Awaited<ReturnType<GithubAppService["ensureWorkflow"]>> | null = null;
     if (action === "deploy" && !options.expectedRetryInputs) {
-      // Validate and update the managed caller before binding analysis to the
-      // branch head, because a caller update itself advances that branch.
+      // The managed caller is updated before resolving the exact source SHA,
+      // because that update itself advances the selected branch.
       workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
       let remoteCommit = await this.repositorySource.resolveSourceSha({
         repositoryUrl: project.repositoryUrl,
         branch: project.targetBranch,
         accessToken: deployCredential!.token,
       });
-      const freshness = await refreshDeploymentAnalysisIfStale({
-        project,
-        profile: profile!,
-        contract,
-        remoteCommit,
-        runAuthoritativeDetection: () => this.deploymentProfiles.runDetection(user, projectId),
-        reload: async () => ({
-          project: await this.project(user, projectId),
-          profile: await this.profiles.findOne({ where: { projectId } }),
-          contract: await this.deploymentContracts.requireForProject(projectId),
-        }),
-        resolveRemoteCommit: (current) => this.repositorySource.resolveSourceSha({
-          repositoryUrl: current.repositoryUrl,
-          branch: current.targetBranch,
-          accessToken: deployCredential!.token,
-        }),
-      });
-      project = freshness.project;
-      profile = freshness.profile;
-      contract = freshness.contract;
-      remoteCommit = freshness.remoteCommit;
-      plan = requireBuildPlan(contract);
       try {
         assertInitialGithubActionsIdentity(project, profile!, contract, remoteCommit);
       } catch (error) {

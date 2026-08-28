@@ -30,14 +30,7 @@ import { ProjectsController } from "./projects.controller";
 import { ProjectsService } from "./projects.service";
 import { ProjectCurrentStateService } from "./current-state/project-current-state.service";
 import { PipelineStageResolverService } from "./current-state/pipeline-stage-resolver.service";
-import { DeploymentProfileService } from "./detection/deployment-profile.service";
-import { RepoDeployabilityScannerService } from "./detection/repo-deployability-scanner.service";
-import { RepositoryWorkspaceService } from "./detection/repository-workspace.service";
 import { RepositorySourceService } from "./repository-source.service";
-import { StackDetectionService } from "./detection/stack-detection.service";
-import { TemplateMatchingService } from "./detection/template-matching.service";
-import { MainstreamDetectorResolverService } from "./detection/mainstream-detector-resolver.service";
-import { DeployGuardBuildProvider } from "./detection/build-provider.service";
 import { DockerTemplateEngineService } from "./templates/docker-template-engine.service";
 import { TemplateRegistryService } from "./templates/template-registry.service";
 import { User } from "../users/user.entity";
@@ -93,9 +86,9 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
   providers: [
     ProjectsService, GithubAppService, GithubActionsService, GithubActionsDeploymentService, GithubActionsRuntimeSecretService,
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
-    DeploymentContractService, DatabaseTierService, DeploymentProfileService,
-    RepositoryWorkspaceService, RepositorySourceService, StackDetectionService, RepoDeployabilityScannerService, MainstreamDetectorResolverService, DeployGuardBuildProvider,
-    TemplateMatchingService, TemplateRegistryService, DockerTemplateEngineService,
+    DeploymentContractService, DatabaseTierService,
+    RepositorySourceService,
+    TemplateRegistryService, DockerTemplateEngineService,
     PipelineStageResolverService,
     ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,
