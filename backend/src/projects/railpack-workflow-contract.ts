@@ -25,6 +25,7 @@ export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "terraform_state_bucket", required: true, type: "string" },
   { name: "platform_port", required: true, type: "string" },
   { name: "rollback_image_digest", required: false, type: "string" },
+  { name: "control_plane_sha", required: true, type: "string" },
 ] as const;
 
 export type RailpackWorkflowInputName = typeof RAILPACK_WORKFLOW_INPUTS[number]["name"];

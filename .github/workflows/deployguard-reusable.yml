@@ -21,6 +21,7 @@ on:
       terraform_state_bucket: { required: true, type: string }
       platform_port: { required: true, type: string }
       rollback_image_digest: { required: false, type: string, default: "" }
+      control_plane_sha: { required: true, type: string }
 
 permissions:
   contents: read
@@ -43,6 +44,10 @@ jobs:
       IMAGE_TAG: ${{ inputs.image_tag }}
       PLATFORM_PORT: ${{ inputs.platform_port }}
       ENVIRONMENT_REFERENCES_BASE64: ${{ inputs.environment_references_base64 }}
+      CONTROL_PLANE_SHA: ${{ inputs.control_plane_sha }}
+      VPC_ID: ${{ inputs.vpc_id }}
+      PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
+      TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
     steps:
       - name: Checkout exact application source
         if: inputs.deployment_action == 'deploy'
@@ -94,3 +99,35 @@ jobs:
           immutable_image="${registry}/${repository}@${digest}"
           printf 'image=%s\n' "$immutable_image" >> "$GITHUB_OUTPUT"
           printf 'DEPLOYGUARD_RELEASE_ARTIFACT={"sourceSha":"%s","imageUri":"%s","imageDigest":"%s"}\n' "$SOURCE_SHA" "${registry}/${repository}" "$digest"
+      - name: Install Terraform
+        if: inputs.deployment_action == 'deploy'
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - name: Materialize immutable image on ECS and ALB
+        if: inputs.deployment_action == 'deploy'
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          [[ "$CONTROL_PLANE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid control-plane SHA.' >&2; exit 1; }
+          git init /tmp/deployguard-control-plane
+          git -C /tmp/deployguard-control-plane remote add origin https://github.com/Hassan-Sajjad72/Deploy-Guard-dev.git
+          git -C /tmp/deployguard-control-plane fetch --depth 1 origin "$CONTROL_PLANE_SHA"
+          git -C /tmp/deployguard-control-plane checkout --detach "$CONTROL_PLANE_SHA"
+          [ "$(git -C /tmp/deployguard-control-plane rev-parse HEAD)" = "$CONTROL_PLANE_SHA" ]
+          cp -R /tmp/deployguard-control-plane/infrastructure/railpack-runtime .deployguard/terraform
+          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime.json
+          jq -n \
+            --arg region "$AWS_REGION" --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" \
+            --arg vpc "$VPC_ID" --arg image "$IMAGE" --argjson port "$PLATFORM_PORT" \
+            --argjson subnets "$(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')" \
+            --slurpfile runtime .deployguard/runtime.json \
+            '{region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,image:$image,platform_port:$port,environment:($runtime[0].environment + {PORT:($port|tostring),HOST:"0.0.0.0"}),secret_references:$runtime[0].secretReferences}' > .deployguard/terraform/terraform.tfvars.json
+          terraform -chdir=.deployguard/terraform fmt -check
+          terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$OPERATION_ID/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true"
+          terraform -chdir=.deployguard/terraform validate
+          terraform -chdir=.deployguard/terraform apply -input=false -auto-approve
+          terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value = .value.value)' | tee .deployguard/release-runtime.json
