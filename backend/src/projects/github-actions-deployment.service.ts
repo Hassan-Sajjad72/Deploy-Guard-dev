@@ -1481,7 +1481,14 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       if (databaseOwnerComponentId === component.id && binding) {
         Object.assign(environment, runtimeAliases);
       }
-      const missing = required.filter((key) => environment[key] === undefined && secrets[key] === undefined);
+      // Fresh managed database credentials are deliberately deferred until
+      // Terraform creates their real Secrets Manager ARNs. They are satisfied
+      // only for the canonical database owner and only by the exact alias the
+      // managed binding declared; no placeholder may enter ECS references.
+      const deferredManagedDatabaseSecrets = component.id === databaseOwnerComponentId && binding
+        ? new Set(Object.keys(secretAliases))
+        : new Set<string>();
+      const missing = required.filter((key) => environment[key] === undefined && secrets[key] === undefined && !deferredManagedDatabaseSecrets.has(key));
       if (missing.length) throw new BadRequestException(`Required runtime configuration is missing for component ${component.id}: ${missing.sort().join(", ")}.`);
       return [component.id, { environment, secretReferences: secrets }];
     }));
