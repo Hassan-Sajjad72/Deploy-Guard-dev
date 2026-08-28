@@ -6,7 +6,6 @@ import GithubConnecting from "../pages/GithubConnecting.jsx";
 import Landing from "../pages/Landing.jsx";
 import NewProject from "../pages/NewProject.jsx";
 import ProjectDetails from "../pages/ProjectDetails.jsx";
-import ProjectInfrastructure from "../pages/ProjectInfrastructure.jsx";
 import ProjectMetrics from "../pages/ProjectMetrics.jsx";
 import ProjectPipeline from "../pages/ProjectPipeline.jsx";
 import ProjectSettings from "../pages/ProjectSettings.jsx";
@@ -37,7 +36,7 @@ export default function AppRoutes() {
           <Route element={<Projects />} path="/projects" />
           <Route element={<ProjectDetails />} path="/projects/:projectId" />
           <Route element={<ProjectPipeline />} path="/projects/:projectId/pipeline" />
-          <Route element={<ProjectInfrastructure />} path="/projects/:projectId/infrastructure" />
+          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/infrastructure" />
           <Route element={<ProjectMetrics />} path="/projects/:projectId/monitoring" />
           {/* Retired URLs resolve to the normal project page. */}
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/environment" />
@@ -46,7 +45,7 @@ export default function AppRoutes() {
           <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/costs" />
           <Route element={<ProjectTroubleshooting />} path="/projects/:projectId/troubleshooting" />
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/state-management" />
-          <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/storage" />
+          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/storage" />
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/orchestration" />
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/rollback" />
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/releases" />

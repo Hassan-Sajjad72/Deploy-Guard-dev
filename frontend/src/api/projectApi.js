@@ -444,14 +444,3 @@ export function getProjectDatabaseTier(projectId) {
 export function updateProjectDatabaseTier(projectId, data) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/database-tier`, { method: "PATCH", body: data });
 }
-
-export function getManagedDatabaseReconciliation(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/database-reconciliation`, { cache: "no-store" });
-}
-
-export function resetManagedDatabase(projectId, confirmationPhrase) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/database-reset`, {
-    method: "POST",
-    body: { confirmationPhrase },
-  });
-}
