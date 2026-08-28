@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 
   backend "s3" {}
@@ -75,6 +79,66 @@ resource "aws_security_group" "application" {
   tags = local.tags
 }
 
+resource "aws_security_group" "postgres" {
+  count       = var.managed_postgres_enabled ? 1 : 0
+  name_prefix = "${local.name}-postgres-"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.application.id]
+  }
+
+  tags = local.tags
+}
+
+resource "aws_db_subnet_group" "postgres" {
+  count      = var.managed_postgres_enabled ? 1 : 0
+  name       = "${local.name}-postgres"
+  subnet_ids = var.public_subnet_ids
+  tags       = local.tags
+}
+
+resource "random_password" "postgres" {
+  count   = var.managed_postgres_enabled ? 1 : 0
+  length  = 32
+  special = false
+}
+
+resource "aws_db_instance" "postgres" {
+  count                  = var.managed_postgres_enabled ? 1 : 0
+  identifier             = "${local.name}-postgres"
+  allocated_storage      = 20
+  engine                 = "postgres"
+  engine_version         = "16"
+  instance_class         = "db.t4g.micro"
+  db_name                = "application"
+  username               = "deployguard"
+  password               = random_password.postgres[0].result
+  db_subnet_group_name   = aws_db_subnet_group.postgres[0].name
+  vpc_security_group_ids = [aws_security_group.postgres[0].id]
+  skip_final_snapshot    = true
+  publicly_accessible    = false
+  tags                   = local.tags
+}
+
+resource "aws_secretsmanager_secret" "postgres" {
+  count = var.managed_postgres_enabled ? 1 : 0
+  name  = "deployguard/${var.project_id}/postgres"
+  tags  = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "postgres" {
+  count     = var.managed_postgres_enabled ? 1 : 0
+  secret_id = aws_secretsmanager_secret.postgres[0].id
+  secret_string = jsonencode({
+    password = random_password.postgres[0].result
+    url      = "postgresql://deployguard:${random_password.postgres[0].result}@${aws_db_instance.postgres[0].address}:5432/application"
+  })
+}
+
 resource "aws_lb" "application" {
   name               = local.name
   internal           = false
@@ -133,8 +197,11 @@ resource "aws_iam_role_policy_attachment" "execution" {
 
 data "aws_iam_policy_document" "runtime_secrets" {
   statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = distinct([for reference in values(var.secret_references) : split(":", reference)[0] == "arn" ? join(":", slice(split(":", reference), 0, 7)) : reference])
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = distinct(concat(
+      [for reference in values(var.secret_references) : split(":", reference)[0] == "arn" ? join(":", slice(split(":", reference), 0, 7)) : reference],
+      var.managed_postgres_enabled ? [aws_secretsmanager_secret.postgres[0].arn] : [],
+    ))
   }
 }
 
@@ -142,6 +209,19 @@ resource "aws_iam_role_policy" "runtime_secrets" {
   name   = "runtime-secrets"
   role   = aws_iam_role.execution.id
   policy = data.aws_iam_policy_document.runtime_secrets.json
+}
+
+locals {
+  postgres_environment = var.managed_postgres_enabled ? merge(
+    { for key in var.managed_postgres_aliases : key => aws_db_instance.postgres[0].address if contains(["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST"], key) },
+    { for key in var.managed_postgres_aliases : key => "5432" if contains(["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT"], key) },
+    { for key in var.managed_postgres_aliases : key => "deployguard" if contains(["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER"], key) },
+    { for key in var.managed_postgres_aliases : key => "application" if contains(["DB_NAME", "DATABASE_NAME", "POSTGRES_DB", "PGDATABASE"], key) },
+  ) : {}
+  postgres_secrets = var.managed_postgres_enabled ? {
+    for key in var.managed_postgres_aliases : key => "${aws_secretsmanager_secret.postgres[0].arn}:${contains(["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"], key) ? "url" : "password"}::"
+    if contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"], key)
+  } : {}
 }
 
 resource "aws_ecs_task_definition" "application" {
@@ -161,8 +241,8 @@ resource "aws_ecs_task_definition" "application" {
       hostPort      = var.platform_port
       protocol      = "tcp"
     }]
-    environment = [for key, value in var.environment : { name = key, value = value }]
-    secrets     = [for key, value in var.secret_references : { name = key, valueFrom = value }]
+    environment = [for key, value in merge(var.environment, local.postgres_environment) : { name = key, value = value }]
+    secrets     = [for key, value in merge(var.secret_references, local.postgres_secrets) : { name = key, valueFrom = value }]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
