@@ -33,9 +33,6 @@ import { ProjectActivityService } from "./project-activity.service";
 import { rankWorkspaceSummaries } from "./project-recency";
 import { RailpackDeploymentService } from "./railpack-deployment.service";
 import { RollbackGithubActionsDto } from "./dto/rollback-github-actions.dto";
-import { ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
-import { ManagedDatabaseResetService } from "./managed-database-reset.service";
-import { DeploymentRecoveryDecisionService } from "./deployment-recovery-decision.service";
 
 @Controller("api/projects")
 @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER, UserRole.READONLY]))
@@ -47,9 +44,6 @@ export class ProjectsController {
     private readonly databaseTiers: DatabaseTierService,
     private readonly projectActivity: ProjectActivityService,
     private readonly githubActionsDeployment: RailpackDeploymentService,
-    private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
-    private readonly managedDatabaseReset: ManagedDatabaseResetService,
-    private readonly deploymentRecovery: DeploymentRecoveryDecisionService,
   ) {}
 
   @Get(":projectId/database-tier")
@@ -62,26 +56,6 @@ export class ProjectsController {
     const database = await this.databaseTiers.update(req.user!, projectId, dto, req);
     await this.recordMeaningful(req, projectId, "database_settings_saved", "requirements");
     return { database };
-  }
-
-  @Get(":projectId/database-reconciliation")
-  async getManagedDatabaseReconciliation(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string) {
-    const project = await this.projectsService.getProjectEntityForView(req.user!, projectId);
-    const databaseReconciliation = await this.managedDatabaseReconciliation.reconcile(project);
-    const deploymentDecision = await this.deploymentRecovery.decide(projectId, databaseReconciliation, "DEPLOY");
-    return { databaseReconciliation: { ...databaseReconciliation, deploymentDecision } };
-  }
-
-  @Post(":projectId/database-reset")
-  @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER]))
-  async resetManagedDatabase(
-    @Req() req: Request,
-    @Param("projectId", ParseUUIDPipe) projectId: string,
-    @Body() body: { confirmationPhrase?: string },
-  ) {
-    const reset = await this.managedDatabaseReset.reset(req.user!, projectId, String(body.confirmationPhrase || ""), req);
-    await this.recordMeaningful(req, projectId, "managed_database_reset", "requirements");
-    return { reset };
   }
 
   @Get()

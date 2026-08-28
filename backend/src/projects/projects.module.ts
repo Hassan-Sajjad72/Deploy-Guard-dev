@@ -42,9 +42,6 @@ import { ProjectRuntimeMetricSnapshot } from "../observability/project-runtime-m
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
 import { AwsCliModule } from "../state-management/aws-cli.module";
 import { ProjectBackupRecord } from "../storage/project-backup-record.entity";
-import { ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
-import { ManagedDatabaseResetService } from "./managed-database-reset.service";
-import { DeploymentRecoveryDecisionService } from "./deployment-recovery-decision.service";
 import { ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
 import { DeploymentGenerationService } from "./deployment-generation.service";
@@ -89,9 +86,6 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
     PipelineStageResolverService,
     ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,
-    ManagedDatabaseReconciliationService,
-    ManagedDatabaseResetService,
-    DeploymentRecoveryDecisionService,
     DeploymentGenerationService,
     InfracostService,
     GithubActionsCostEvidenceService,
