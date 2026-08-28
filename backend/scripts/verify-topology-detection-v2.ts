@@ -56,6 +56,16 @@ async function analyze(fixture: TopologyFixture) {
     if (fixture.name === "plain-static-arbitrary-directory") {
       assert.equal(topology.components[0]?.root, "dashboard", "plain static identity comes from entrypoint/assets, not a preferred directory name");
     }
+    if (fixture.name === "flask-framework-owned-templates-and-static") {
+      assert.deepEqual(topology.components.map((component) => ({ framework: component.framework, root: component.root, role: component.role })), [{ framework: "flask", root: "src", role: "backend" }], "Flask templates/static remain inside their owning application boundary");
+      assert.equal(topology.components.some((component) => component.root === "src/templates"), false, "Flask templates cannot become a static frontend");
+    }
+    if (fixture.name === "flask-with-independent-static-frontend") {
+      assert.deepEqual(topology.components.map((component) => component.root).sort(), ["src", "web"], "a sibling static application remains independently deployable");
+    }
+    if (fixture.name === "flask-nested-application-roots-own-assets") {
+      assert.equal(topology.components.some((component) => /(?:templates|static)$/.test(component.root)), false, "each nested Flask root retains its own framework assets");
+    }
     if (fixture.name === "workspace-install-root-preserved") {
       assert.equal((topology.components[0]?.profile.rawProfile as Record<string, unknown>).repositoryInstallRoot, ".", "workspace repository install root remains distinct from component root");
       assert.equal(topology.components[0]?.buildContext, "apps/web");

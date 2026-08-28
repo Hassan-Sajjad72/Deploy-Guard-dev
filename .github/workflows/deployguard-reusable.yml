@@ -272,7 +272,17 @@ jobs:
                     and .managedDatabase.urlQuery == "?authSource=admin")
                 )
               ))
-              and (.environment.DEPLOYGUARD_OPERATION_ID == $operation)
+              # Runtime identity is component-owned.  The top-level environment
+              # is intentionally only a legacy-compatible collection of
+              # user/plain values and may be empty.
+              and (.componentRuntime | all(to_entries[];
+                .value.environment.DEPLOYGUARD_PROJECT_ID == $project
+                and .value.environment.DEPLOYGUARD_GENERATION_ID == $generation
+                and .value.environment.DEPLOYGUARD_ENVIRONMENT == $environment
+                and .value.environment.DEPLOYGUARD_OPERATION_ID == $operation
+                and .value.environment.HOST == "0.0.0.0"
+                and (.value.environment.PORT | test("^[1-9][0-9]{0,4}$"))
+              ))
             ' .deployguard/runtime-config.json >/dev/null || { echo "Invalid immutable runtime configuration references." >&2; exit 1; }
           elif [ "$DEPLOYMENT_ACTION" = "destroy" ]; then
             jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg generation "$GENERATION_ID" '

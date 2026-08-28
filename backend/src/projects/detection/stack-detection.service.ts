@@ -419,7 +419,7 @@ export class StackDetectionService {
       }
       if (ssrMatches[0]) shape = "SSR_APPLICATION";
     }
-    for (const root of this.findStaticWebRoots(repositoryRoot)) {
+    for (const root of this.findStaticWebRoots(repositoryRoot, components)) {
       if (components.some((component) => component.root === root)) continue;
       components.push(this.staticWebComponent(repositoryRoot, root, commitSha, overrides));
     }
@@ -668,7 +668,7 @@ export class StackDetectionService {
     return visit(repositoryRoot, 0);
   }
 
-  private findStaticWebRoots(repositoryRoot: string) {
+  private findStaticWebRoots(repositoryRoot: string, components: DetectedApplicationComponent[]) {
     const found: string[] = [];
     const visit = (directory: string, depth: number) => {
       if (depth > 5) return;
@@ -679,12 +679,26 @@ export class StackDetectionService {
         const html = this.readOptionalFile(directory, "index.html") || "";
         const assetEvidence = /<(?:script|link)\b[^>]*(?:src|href)=["'][^"']+/i.test(html)
           && (entries.some((entry) => entry.isDirectory() && /^(?:css|js|assets|images?)$/i.test(entry.name)) || /\.(?:css|js)(?:[?"'])/i.test(html));
-        if (assetEvidence) found.push(root);
+        if (assetEvidence && !this.isFlaskOwnedAssetRoot(root, components)) found.push(root);
       }
       for (const entry of entries) if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name)) visit(join(directory, entry.name), depth + 1);
     };
     visit(repositoryRoot, 0);
     return found;
+  }
+
+  /** Flask resolves templates and static files from these application-relative
+   * directories.  They are runtime assets of the Flask component, not an
+   * independently deployable browser application. */
+  private isFlaskOwnedAssetRoot(root: string, components: DetectedApplicationComponent[]) {
+    return components.some((component) => {
+      if (component.framework !== "flask") return false;
+      const boundary = component.root === "." ? "" : `${component.root}/`;
+      return root === `${boundary}templates`
+        || root.startsWith(`${boundary}templates/`)
+        || root === `${boundary}static`
+        || root.startsWith(`${boundary}static/`);
+    });
   }
 
   private staticWebComponent(repositoryRoot: string, root: string, commitSha: string | null, overrides: ProjectDeploymentOverrides): DetectedApplicationComponent {

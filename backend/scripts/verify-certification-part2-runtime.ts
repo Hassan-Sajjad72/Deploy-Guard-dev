@@ -65,7 +65,9 @@ const fixtures: Fixture[] = [
     files: {
       "requirements.txt": "Flask==3.1.0\ngunicorn==23.0.0\n",
       "Procfile": "web: gunicorn app:app --bind 0.0.0.0:5000\n",
-      "app.py": "from flask import Flask\napp=Flask(__name__)\n@app.get('/health')\ndef health():return {'status':'ok'},200\n@app.get('/fail')\ndef fail():return {'status':'failed'},500\n",
+      "app.py": "from flask import Flask,render_template\napp=Flask(__name__)\n@app.get('/')\ndef home():return render_template('index.html')\n@app.get('/health')\ndef health():return {'status':'ok'},200\n@app.get('/fail')\ndef fail():return {'status':'failed'},500\n",
+      "templates/index.html": "<html><head><link rel='stylesheet' href='../static/site.css'></head><body>deployguard-flask-template</body></html>",
+      "static/site.css": "body{color:green}",
     },
   },
   {
@@ -496,6 +498,9 @@ async function main() {
       console.log("PASS Vue bad-output mutation fails executable preflight before Terraform");
     }
     if (fixture.name === "flask-health") {
+      assert.deepEqual(contract.buildPlan.components!.map((item: any) => ({ framework: item.framework, root: item.root, role: item.role })), [{ framework: "flask", root: ".", role: "backend" }], "Flask templates/static remain in the canonical Flask component");
+      assert.equal(contract.buildPlan.components!.some((item: any) => /(?:templates|static)$/.test(item.root)), false, "Flask framework assets cannot become static frontend components");
+      assert.equal(execFileSync("docker", ["run", "--rm", image, "sh", "-c", "test -f /app/templates/index.html && test -f /app/static/site.css"], { encoding: "utf8", timeout: 30_000 }).trim(), "", "generated Flask image preserves framework-owned templates and static assets");
       const wrongPort = JSON.parse(JSON.stringify(imagesForMutation));
       wrongPort[0].port = component.port + 1;
       writePreflightArtifacts(root, fixture, contract.buildPlan, image, runtimeConfiguration(fixture), wrongPort);

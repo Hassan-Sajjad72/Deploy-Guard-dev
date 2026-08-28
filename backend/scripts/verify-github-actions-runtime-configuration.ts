@@ -64,7 +64,16 @@ const configuration: GithubActionsRuntimeConfiguration = {
   secretReferences: { JWT_SECRET: `${secretArn}:JWT_SECRET::` },
   componentRuntime: {
     application: {
-      environment: { PORT: "3000", JWT_EXPIRES_IN: "1h" },
+      environment: {
+        HOST: "0.0.0.0",
+        PORT: "3000",
+        NODE_ENV: "production",
+        DEPLOYGUARD_PROJECT_ID: projectId,
+        DEPLOYGUARD_GENERATION_ID: generationId,
+        DEPLOYGUARD_ENVIRONMENT: "dev",
+        DEPLOYGUARD_OPERATION_ID: "77777777-7777-4777-8777-777777777777",
+        JWT_EXPIRES_IN: "1h",
+      },
       secretReferences: { JWT_SECRET: `${secretArn}:JWT_SECRET::` },
     },
   },

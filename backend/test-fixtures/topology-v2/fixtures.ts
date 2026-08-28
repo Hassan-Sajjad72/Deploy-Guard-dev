@@ -84,6 +84,46 @@ export const topologyFixtures: TopologyFixture[] = [
 ];
 
 export const additionalFrameworkFixtures: TopologyFixture[] = [
+  {
+    name: "flask-framework-owned-templates-and-static",
+    files: {
+      "src/requirements.txt": "Flask==3.1.0\ngunicorn==23.0.0\n",
+      "src/server.py": "from flask import Flask,render_template\napp=Flask(__name__)\n@app.get('/health')\ndef health():return {'ok':True}\n@app.get('/')\ndef home():return render_template('index.html')\n",
+      "src/templates/index.html": "<html><head><link rel='stylesheet' href='../static/css/site.css'></head><body>flask</body></html>",
+      "src/static/css/site.css": "body{color:green}",
+    },
+    shape: "BACKEND_API",
+    state: "SUPPORTED",
+  },
+  {
+    name: "flask-with-independent-static-frontend",
+    files: {
+      "src/requirements.txt": "Flask==3.1.0\ngunicorn==23.0.0\n",
+      "src/server.py": "from flask import Flask,render_template\napp=Flask(__name__)\n@app.get('/health')\ndef health():return {'ok':True}\n@app.get('/')\ndef home():return render_template('index.html')\n",
+      "src/templates/index.html": "<html><head><link rel='stylesheet' href='../static/css/site.css'></head><body>flask</body></html>",
+      "src/static/css/site.css": "body{color:green}",
+      "web/index.html": "<html><head><link rel='stylesheet' href='app.css'></head><body><script src='app.js'></script></body></html>",
+      "web/app.css": "body{margin:0}",
+      "web/app.js": "document.body.dataset.ready='true'",
+    },
+    shape: "DECOUPLED_FRONTEND_BACKEND",
+    state: "SUPPORTED",
+  },
+  {
+    name: "flask-nested-application-roots-own-assets",
+    files: {
+      "services/alpha/requirements.txt": "Flask==3.1.0\ngunicorn==23.0.0\n",
+      "services/alpha/server.py": "from flask import Flask,render_template\napp=Flask(__name__)\n@app.get('/')\ndef home():return render_template('index.html')\n",
+      "services/alpha/templates/index.html": "<html><head><link rel='stylesheet' href='../static/site.css'></head><body>alpha</body></html>",
+      "services/alpha/static/site.css": "body{color:blue}",
+      "services/beta/requirements.txt": "Flask==3.1.0\ngunicorn==23.0.0\n",
+      "services/beta/server.py": "from flask import Flask,render_template\napp=Flask(__name__)\n@app.get('/')\ndef home():return render_template('index.html')\n",
+      "services/beta/templates/index.html": "<html><head><link rel='stylesheet' href='../static/site.css'></head><body>beta</body></html>",
+      "services/beta/static/site.css": "body{color:red}",
+    },
+    shape: "UNRESOLVED",
+    state: "INPUT_REQUIRED",
+  },
   { name: "vue-vite", files: { "package.json": pkg({ vue: "3", vite: "6" }, { build: "vite build" }), "package-lock.json": "{}" }, shape: "STATIC_FRONTEND", state: "SUPPORTED" },
   { name: "nuxt-ssr", files: { "package.json": pkg({ nuxt: "3" }, { build: "nuxt build" }), "package-lock.json": "{}", "nuxt.config.ts": "export default {}" }, shape: "SSR_APPLICATION", state: "SUPPORTED" },
   { name: "angular", files: { "package.json": pkg({ "@angular/core": "19" }, { build: "ng build" }), "package-lock.json": "{}", "angular.json": JSON.stringify({ defaultProject: "app", projects: { app: { architect: { build: { options: { outputPath: "dist/app" } } } } } }) }, shape: "STATIC_FRONTEND", state: "SUPPORTED" },
