@@ -111,6 +111,9 @@ export class RepoDeployabilityScannerService {
       if (profile.packageManager && lockfilePackageManagers.length === 1 && profile.packageManager !== lockfilePackageManagers[0]) {
         blockers.push(`Detected package manager ${profile.packageManager} does not match the ${lockfilePackageManagers[0]} lockfile.`);
       }
+      if (profile.packageManager === "bun" || declaredPackageManager === "bun" || lockfilePackageManagers.includes("bun")) {
+        blockers.push("Bun projects are outside the frozen DeployGuard runtime contract. Use npm, yarn, or pnpm before deployment.");
+      }
       if (lockfiles.includes("package-lock.json") && this.npmLockfileOutOfSync(packageJson, this.readJson(join(appPath, "package-lock.json")))) {
         blockers.push("package-lock.json is out of sync with package.json. Regenerate and commit the npm lockfile.");
       }
@@ -134,7 +137,7 @@ export class RepoDeployabilityScannerService {
       if (registry) {
         privateRegistryRequired = true;
         this.upsertEnv(env, "NPM_TOKEN", true, "build", registry, "required");
-        warnings.push("Private npm registry configuration detected; NPM_TOKEN must be configured as a build secret.");
+        blockers.push("Private npm registries are outside the frozen DeployGuard build contract. Use public dependencies before deployment.");
       }
     } else if (profile.ecosystem === "python") {
       dependencyFiles = PYTHON_MANIFESTS.filter((name) => rootFiles.has(name));
@@ -162,7 +165,7 @@ export class RepoDeployabilityScannerService {
       if (registry) {
         privateRegistryRequired = true;
         this.upsertEnv(env, "PYPI_TOKEN", true, "build", registry, "required");
-        warnings.push("Private Python package registry configuration detected; PYPI_TOKEN must be configured as a build secret.");
+        blockers.push("Private Python registries are outside the frozen DeployGuard build contract. Use public dependencies before deployment.");
       }
     } else {
       blockers.push("Only JavaScript and Python web applications are supported.");

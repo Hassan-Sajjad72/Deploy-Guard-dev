@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from "@n
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, EntityManager, Repository } from "typeorm";
+import { posix } from "path";
 import { acquireProjectConfigurationAdvisoryLock } from "../infrastructure/database-service-binding.service";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { getOrchestrationConfig } from "../orchestration/orchestration.config";
@@ -559,6 +560,11 @@ export class DeploymentContractService {
           if (!componentTemplate) throw new Error(`Docker template '${component.dockerTemplate}' is unavailable for component '${component.id}'.`);
           const componentPlan = this.componentAsBuildPlan(authoritativePlan, component);
           const rendered = this.dockerTemplateEngine.renderDockerfile(componentTemplate, componentPlan);
+          const componentSourceRoot = posix.relative(
+            component.repositoryInstallRoot === "." ? "" : component.repositoryInstallRoot,
+            component.root === "." ? "" : component.root,
+          ) || ".";
+          const componentSourcePrefix = componentSourceRoot === "." ? "" : `${componentSourceRoot}/`;
           const staticBindingProxy = fullStack && component.role === "frontend" && component.runtimeType === "static";
           const webBindingProxy = fullStack && component.role === "frontend" && component.runtimeType === "server" && component.language === "javascript";
           // Static services retain their nginx runtime. JavaScript web
@@ -566,9 +572,9 @@ export class DeploymentContractService {
           // non-root nginx wrapper, so the same platform-owned mount works
           // without turning SSR into a static application.
           const dockerfile = staticBindingProxy && rendered
-            ? rendered.replace(/\n(?:USER nginx\n)?EXPOSE /, "\nCOPY --chown=101:101 .deployguard-nginx.conf /etc/nginx/conf.d/default.conf\nUSER nginx\nEXPOSE ")
+            ? rendered.replace(/\n(?:USER nginx\n)?EXPOSE /, `\nCOPY --chown=101:101 ${componentSourcePrefix}.deployguard-nginx.conf /etc/nginx/conf.d/default.conf\nUSER nginx\nEXPOSE `)
             : webBindingProxy && rendered
-              ? `${rendered}\nUSER root\nRUN apk add --no-cache nginx && mkdir -p /var/lib/nginx/tmp /run/nginx && chown -R app:app /var/lib/nginx /run/nginx /var/log/nginx\nCOPY --chown=app:app .deployguard-web-frontend-nginx.conf /etc/nginx/http.d/default.conf\nCOPY --chown=app:app .deployguard-web-frontend-entrypoint.sh /usr/local/bin/deployguard-web-frontend\nRUN chmod 0755 /usr/local/bin/deployguard-web-frontend\nUSER app\nCMD [\"/usr/local/bin/deployguard-web-frontend\"]\n`
+              ? `${rendered}\nUSER root\nRUN apk add --no-cache nginx && mkdir -p /var/lib/nginx/tmp /run/nginx && chown -R app:app /var/lib/nginx /run/nginx /var/log/nginx\nCOPY --chown=app:app ${componentSourcePrefix}.deployguard-web-frontend-nginx.conf /etc/nginx/http.d/default.conf\nCOPY --chown=app:app ${componentSourcePrefix}.deployguard-web-frontend-entrypoint.sh /usr/local/bin/deployguard-web-frontend\nRUN chmod 0755 /usr/local/bin/deployguard-web-frontend\nUSER app\nCMD [\"/usr/local/bin/deployguard-web-frontend\"]\n`
               : rendered;
           return [component.id, dockerfile];
         }));

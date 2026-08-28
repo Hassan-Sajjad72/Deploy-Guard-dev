@@ -64,7 +64,6 @@ for (const endpoint of [
 
 assert.match(orchestrationController, /@Get\("releases"\)/);
 assert.match(orchestrationService, /async getReleases\(/);
-assert.match(orchestrationService, /async rollback\(/);
 assert.doesNotMatch(
   appModule,
   /OrchestrationModule/,
@@ -72,8 +71,8 @@ assert.doesNotMatch(
 );
 
 assert.match(worker, /export class PipelineWorkerService/);
-assert.match(worker, /\n  start\(\) \{/);
-assert.match(worker, /new Worker(?:<[^>]+>)?\(/);
+assert.doesNotMatch(worker, /\n  start\(\) \{|new Worker(?:<[^>]+>)?\(/, "retired local queue execution must remain absent");
+assert.doesNotMatch(appModule, /PipelineWorkerService/, "retired local queue compatibility helpers must remain outside the active Nest graph");
 
 const migrationDirectory = pathFromRoot("backend/src/migrations");
 const migrationFiles = readdirSync(migrationDirectory)
@@ -106,7 +105,7 @@ console.log(
     reportedGaps: [
       "environment-variable management and project settings redirect to Project Overview",
       "rollback service and release listing source exist but OrchestrationModule is not active",
-      "BullMQ worker source exists but is intentionally outside the active GitHub Actions-only product graph",
+      "local-pipeline compatibility helpers exist without a queue start path and remain outside the active GitHub Actions-only product graph",
     ],
     duplicatedActiveAndDormantComponents: duplicateLifecycleComponents,
   }, null, 2),

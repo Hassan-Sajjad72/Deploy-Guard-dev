@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { readFileSync } from "fs";
-import { join } from "path";
+import { join, posix } from "path";
 import { DevOpsTemplateDefinition } from "./devops-templates";
 import { BuildPlan, BuildPlanImageFamily } from "../build-plan";
 
@@ -23,6 +23,13 @@ export class DockerTemplateEngineService {
     const runtimeCommand = this.runtimeCommand(contract, startCommand);
     const buildCommand = contract.buildCommand || "";
     const images = this.baseImages(contract);
+    const appWithinInstallRoot = posix.relative(
+      contract.repositoryInstallRoot === "." ? "" : contract.repositoryInstallRoot,
+      contract.appRoot === "." ? "" : contract.appRoot,
+    ) || ".";
+    if (appWithinInstallRoot === ".." || appWithinInstallRoot.startsWith("../")) {
+      throw new Error("Docker generation requires the application root to be contained by the repository install root.");
+    }
     const values: Record<string, string> = {
       PACKAGE_MANAGER: contract.packageManager!,
       INSTALL_COMMAND: contract.installCommand!,
@@ -38,6 +45,10 @@ export class DockerTemplateEngineService {
       FRAMEWORK: contract.framework!,
       FRAMEWORK_MODE: contract.frameworkMode!,
       APP_ROOT: contract.appRoot,
+      APP_WORKDIR: appWithinInstallRoot === "." ? "/app" : `/app/${appWithinInstallRoot}`,
+      APP_OUTPUT_DIRECTORY: appWithinInstallRoot === "."
+        ? `/app/${contract.outputDirectory || ""}`
+        : `/app/${appWithinInstallRoot}/${contract.outputDirectory || ""}`,
       COMMIT_SHA: contract.commitSha!,
       STATIC_OUTPUT: contract.runtimeType === "static" ? "true" : "false",
       OUTPUT_DIRECTORY: contract.outputDirectory || "",

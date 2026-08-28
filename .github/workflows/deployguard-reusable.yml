@@ -135,11 +135,13 @@ jobs:
               and (.requiredInputs | type == "array")
               and ((.components // []) | type == "array")
               and ((.components // []) | length <= 2)
+              and ((.components // []) as $components | ([ $components[].port ] | unique | length) == ($components | length))
               and ((.components // []) | all(.[];
                 (.id | IN("application", "frontend", "backend"))
                 and (.role | IN("application", "frontend", "backend"))
                 and (.root | test("^(\\.|[A-Za-z0-9._/-]+)$"))
                 and (.buildContext | test("^(\\.|[A-Za-z0-9._/-]+)$"))
+                and (.repositoryInstallRoot | test("^(\\.|[A-Za-z0-9._/-]+)$"))
                 and (.port >= 1 and .port <= 65535)
                 and ((.healthCheckMode // "http") | IN("http", "tcp"))
                 and (if (.healthCheckMode // "http") == "tcp"
@@ -344,7 +346,7 @@ jobs:
         run: |
           set -euo pipefail
           COMPONENTS_FILE="$GITHUB_WORKSPACE/.deployguard/components.json"
-          jq -c 'if ((.components // []) | length) > 0 then .components else [{id:"app",role:"application",root:.appRoot,buildContext:.appRoot,port:.port,healthPath:.healthPath,dockerStrategy:.dockerStrategy}] end' "$GITHUB_WORKSPACE/.deployguard/build-plan.json" > "$COMPONENTS_FILE"
+          jq -c 'if ((.components // []) | length) > 0 then .components else [{id:"app",role:"application",root:.appRoot,buildContext:.appRoot,repositoryInstallRoot:.repositoryInstallRoot,port:.port,healthPath:.healthPath,dockerStrategy:.dockerStrategy}] end' "$GITHUB_WORKSPACE/.deployguard/build-plan.json" > "$COMPONENTS_FILE"
           GENERATED_FILE="$GITHUB_WORKSPACE/.deployguard/generated-dockerfiles"
           if [ -n "$GENERATED_DOCKERFILE_BASE64" ]; then
             printf '%s' "$GENERATED_DOCKERFILE_BASE64" | base64 --decode > "$GENERATED_FILE"
@@ -353,7 +355,9 @@ jobs:
           while IFS= read -r component; do
             COMPONENT_ID="$(printf '%s' "$component" | jq -r '.id')"
             BUILD_CONTEXT="$(printf '%s' "$component" | jq -r '.buildContext')"
+            REPOSITORY_INSTALL_ROOT="$(printf '%s' "$component" | jq -r '.repositoryInstallRoot')"
             case "$BUILD_CONTEXT" in ""|/*|*".."*) echo "Invalid component build context." >&2; exit 1;; esac
+            case "$REPOSITORY_INSTALL_ROOT" in ""|/*|*".."*) echo "Invalid component repository install root." >&2; exit 1;; esac
             APPLICATION_DIRECTORY="$GITHUB_WORKSPACE/$BUILD_CONTEXT"
             [ -d "$APPLICATION_DIRECTORY" ] || { echo "Component build context does not exist: $COMPONENT_ID." >&2; exit 1; }
             cd "$APPLICATION_DIRECTORY"
@@ -394,6 +398,7 @@ jobs:
               elif [ "$RUNTIME_TYPE" = "server" ] && [ "$(printf '%s' "$component" | jq -r '.language')" = "javascript" ]; then
                 FRONTEND_PORT="$(printf '%s' "$component" | jq -r '.port')"
                 INTERNAL_PORT="$((FRONTEND_PORT + 1))"
+                while jq -e --argjson port "$INTERNAL_PORT" 'any(.[]; .port == $port)' "$COMPONENTS_FILE" >/dev/null; do INTERNAL_PORT="$((INTERNAL_PORT + 1))"; done
                 [ "$INTERNAL_PORT" -le 65535 ] || { echo "Web frontend port cannot reserve an internal proxy port." >&2; exit 1; }
                 RUN_COMMAND_BASE64="$(printf '%s' "$component" | jq -er '.runCommand' | base64 | tr -d '\n')"
                 cat > .deployguard-web-frontend-nginx.conf <<NGINX
@@ -418,7 +423,7 @@ jobs:
           ENTRYPOINT
               fi
             fi
-            cat > .dockerignore <<'DOCKERIGNORE'
+            cat > "$GITHUB_WORKSPACE/$REPOSITORY_INSTALL_ROOT/.dockerignore" <<'DOCKERIGNORE'
           .git
           .github
           .env
@@ -457,9 +462,20 @@ jobs:
           while IFS= read -r component; do
             COMPONENT_ID="$(printf '%s' "$component" | jq -r '.id')"
             BUILD_CONTEXT="$(printf '%s' "$component" | jq -r '.buildContext')"
+            REPOSITORY_INSTALL_ROOT="$(printf '%s' "$component" | jq -r '.repositoryInstallRoot')"
             DOCKERFILE_PATH="$(printf '%s' "$component" | jq -r 'if .dockerStrategy == "custom" then (.dockerfilePath // "Dockerfile") else "Dockerfile" end')"
             COMPONENT_TAG="${{ steps.release.outputs.image_tag }}-$COMPONENT_ID"
             TAGGED_URI="$REGISTRY/${{ steps.release.outputs.repository_name }}:$COMPONENT_TAG"
+            case "$REPOSITORY_INSTALL_ROOT" in ""|/*|*".."*) echo "Invalid component repository install root." >&2; exit 1;; esac
+            GENERATED_DOCKERFILE="$GITHUB_WORKSPACE/$BUILD_CONTEXT/Dockerfile"
+            if [ "$(printf '%s' "$component" | jq -r '.dockerStrategy == "generated"')" = "true" ]; then
+              DOCKER_BUILD_CONTEXT="$GITHUB_WORKSPACE/$REPOSITORY_INSTALL_ROOT"
+              DOCKERFILE_PATH="$GENERATED_DOCKERFILE"
+            else
+              DOCKER_BUILD_CONTEXT="$GITHUB_WORKSPACE/$BUILD_CONTEXT"
+              DOCKERFILE_PATH="$DOCKER_BUILD_CONTEXT/$DOCKERFILE_PATH"
+            fi
+            [ -d "$DOCKER_BUILD_CONTEXT" ] || { echo "Component repository install root does not exist: $COMPONENT_ID." >&2; exit 1; }
             cd "$GITHUB_WORKSPACE/$BUILD_CONTEXT"
             BUILD_SECRET_ARGS=()
             BUILD_ARGS=()
@@ -559,16 +575,16 @@ jobs:
               BUILD_SECRET_ARGS+=(--secret "id=deployguard_runtime_config,src=$BUILD_RUNTIME_CONFIG")
             fi
             if docker buildx version >/dev/null 2>&1 && docker buildx build --help 2>&1 | grep -q -- '--check'; then
-              docker buildx build --check -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" .
+              docker buildx build --check -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" "$DOCKER_BUILD_CONTEXT"
             else
               echo "Docker Buildx --check is unavailable on this runner; the validated contract and real Docker build remain authoritative."
             fi
             if [ "${#BUILD_SECRET_ARGS[@]}" -gt 0 ]; then
-              docker buildx build --load --pull -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" -t "$TAGGED_URI" .
+              docker buildx build --load --pull -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" -t "$TAGGED_URI" "$DOCKER_BUILD_CONTEXT"
               rm -f "$BUILD_RUNTIME_CONFIG"
               BUILD_RUNTIME_CONFIG=""
             else
-              docker build --pull -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .
+              docker build --pull -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" -t "$TAGGED_URI" "$DOCKER_BUILD_CONTEXT"
             fi
             RUNTIME_USER="$(docker image inspect "$TAGGED_URI" --format '{{.Config.User}}')"
             case "$RUNTIME_USER" in ""|0|root|0:0|root:root) echo "The immutable runtime image must declare a non-root user." >&2; exit 1;; esac

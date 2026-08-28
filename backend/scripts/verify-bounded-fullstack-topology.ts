@@ -354,7 +354,9 @@ async function main() {
   assert.doesNotMatch(topologySource, /full-stack release supports a static frontend|server-rendered frontend plus backend is outside the current contract/i);
   const contractSource = readFileSync(resolve(__dirname, "../src/projects/deployment-contract.service.ts"), "utf8");
   assert.match(contractSource, /component\.role === "frontend" && component\.runtimeType === "static"/, "only static frontend images receive the existing nginx proxy configuration");
-  assert.match(workflow, /\["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"\]/, "static public components must retain immutable operation identity");
+  assert.match(workflow, /\.environment\.DEPLOYGUARD_OPERATION_ID == \$operation/, "workflow validation must retain immutable operation identity");
+  const runtimeConfigurationSource = readFileSync(resolve(__dirname, "../src/projects/github-actions-deployment.service.ts"), "utf8");
+  for (const key of ["DEPLOYGUARD_OPERATION_ID", "DEPLOYGUARD_PROJECT_ID", "DEPLOYGUARD_ENVIRONMENT"]) assert.match(runtimeConfigurationSource, new RegExp(`${key}:`), `runtime configuration must materialize ${key}`);
   assert.match(workflow, /PLATFORM_PREFIX="\$\(jq -er '\.platformBackendMount'/, "nginx must consume the BuildPlan-owned platform mount");
   assert.match(workflow, /location \$\{PLATFORM_PREFIX%\/\}\//, "nginx must route the platform-owned backend mount");
   assert.match(workflow, /\.relationships\[0\]\.verificationPath/, "relationship verification must use persisted route evidence");

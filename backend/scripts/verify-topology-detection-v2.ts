@@ -60,6 +60,10 @@ async function analyze(fixture: TopologyFixture) {
       assert.equal((topology.components[0]?.profile.rawProfile as Record<string, unknown>).repositoryInstallRoot, ".", "workspace repository install root remains distinct from component root");
       assert.equal(topology.components[0]?.buildContext, "apps/web");
     }
+    if (fixture.name === "same-port-next-express") {
+      assert.deepEqual(topology.components.map((component) => component.port), [3000, 3001], "same detected ports receive deterministic unique awsvpc task ports");
+      assert.equal(new Set(topology.components.map((component) => component.port)).size, topology.components.length, "every application container port is unique");
+    }
     if (fixture.name === "postgresql-plus-redis-cache") {
       assert.equal(topology.managedDatabase?.engine, "postgres", "Redis cache evidence cannot become a competing primary database engine");
       assert.doesNotMatch(topology.blockers.join(" "), /DATABASE_ENGINE_AMBIGUOUS/);

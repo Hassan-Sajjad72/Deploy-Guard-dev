@@ -278,15 +278,15 @@ async function main() {
     await writeFile(join(monorepo, "apps", "web", "package.json"), JSON.stringify({ scripts: { start: "node server.js" }, dependencies: { express: "latest" } }));
     await writeFile(join(monorepo, "apps", "web", "server.js"), "app.listen(process.env.PORT || 3000, '0.0.0.0')");
     await writeFile(join(monorepo, "apps", "api", "package.json"), JSON.stringify({ scripts: { start: "node server.js" }, dependencies: { express: "latest" } }));
-    await writeFile(join(monorepo, "apps", "api", "server.js"), "app.get('/health', handler)");
+    await writeFile(join(monorepo, "apps", "api", "server.js"), "app.get('/health', handler);app.listen(process.env.PORT || 3000, '0.0.0.0')");
     const selected = detector.detect(monorepo, "b".repeat(40), "apps/api");
     assert.equal(selected.framework, "express");
     assert.equal(selected.rawProfile.appDirectory, "apps/api");
     assert.equal(selected.rawProfile.preferredAppDirectory, "apps/api");
     const ambiguous = detector.detect(monorepo, "b".repeat(40));
-    assert.equal(ambiguous.rawProfile.appRootConfidence, "low");
+    assert.equal(ambiguous.rawProfile.appRootConfidence, "high", "canonical topology resolves both roots while preserving the explicit service choice");
     assert.equal(ambiguous.detectionStatus, "manual_input_required");
-    assert.match(ambiguous.errors.join(" "), /multiple (?:application roots|backends)/i);
+    assert.deepEqual((ambiguous.rawProfile.componentTopology as any).requiredUserInputs, ["Choose which of these backend service roots should be deployed."]);
     assert.throws(() => detector.detect(monorepo, null, "../outside"), /outside the repository workspace/);
   } finally {
     await rm(monorepo, { recursive: true, force: true });
@@ -309,9 +309,9 @@ async function main() {
     await writeFile(join(missingEnvironment, "package-lock.json"), "{}");
     await writeFile(join(missingEnvironment, "server.js"), "const apiKey = process.env.API_KEY; app.listen(process.env.PORT || 3000, '0.0.0.0')");
     const profile = detector.detect(missingEnvironment, "d".repeat(40));
-    assert.deepEqual(profile.rawProfile.requiredEnvironmentVariables, [], "a bare ENV reference is not proven required");
-    assert.deepEqual(profile.rawProfile.optionalEnvironmentVariables, ["API_KEY"], "unknown application ENV remains injectable but non-blocking");
-    assert.equal((profile.rawProfile.environmentVariables as Array<Record<string, unknown>>).find((item) => item.key === "API_KEY")?.requirement, "unknown");
+    assert.deepEqual(profile.rawProfile.requiredEnvironmentVariables, ["API_KEY"], "a direct production ENV read remains fail-closed");
+    assert.deepEqual(profile.rawProfile.optionalEnvironmentVariables, []);
+    assert.equal((profile.rawProfile.environmentVariables as Array<Record<string, unknown>>).find((item) => item.key === "API_KEY")?.requirement, "required");
   } finally {
     await rm(missingEnvironment, { recursive: true, force: true });
   }
@@ -485,6 +485,8 @@ async function main() {
     await writeFile(join(privateRegistry, ".npmrc"), "@company:registry=https://npm.company.example\n//npm.company.example/:_authToken=${NPM_TOKEN}");
     const profile = detector.detect(privateRegistry, "f".repeat(40));
     assert.equal(profile.rawProfile.privateRegistryRequired, true);
+    assert.equal(profile.detectionStatus, "manual_input_required");
+    assert.match(profile.errors.join(" "), /Private npm registries are outside the frozen DeployGuard build contract/);
     assert.ok((profile.rawProfile.requiredEnvironmentVariables as string[]).includes("NPM_TOKEN"));
     const evidence = profile.rawProfile.environmentVariables as Array<Record<string, unknown>>;
     assert.equal(evidence.find((item) => item.key === "NPM_TOKEN")?.secret, true);
@@ -499,10 +501,25 @@ async function main() {
     await writeFile(join(privatePythonRegistry, "main.py"), "from fastapi import FastAPI\napp = FastAPI()");
     const profile = detector.detect(privatePythonRegistry, "7".repeat(40));
     assert.equal(profile.rawProfile.privateRegistryRequired, true);
+    assert.equal(profile.detectionStatus, "manual_input_required");
+    assert.match(profile.errors.join(" "), /Private Python registries are outside the frozen DeployGuard build contract/);
     assert.ok((profile.rawProfile.requiredEnvironmentVariables as string[]).includes("PYPI_TOKEN"));
     assert.equal(JSON.stringify(profile.rawProfile).includes("packages.company.example"), false, "Python registry configuration must not be persisted");
   } finally {
     await rm(privatePythonRegistry, { recursive: true, force: true });
+  }
+
+  const bunRepository = await mkdtemp(join(tmpdir(), "deployguard-bun-test-"));
+  try {
+    await writeFile(join(bunRepository, "package.json"), JSON.stringify({ packageManager: "bun@1.2.0", scripts: { start: "node server.js" }, dependencies: { express: "latest" } }));
+    await writeFile(join(bunRepository, "bun.lock"), "");
+    await writeFile(join(bunRepository, "server.js"), "app.listen(process.env.PORT || 3000, '0.0.0.0')");
+    const profile = detector.detect(bunRepository, "b".repeat(40));
+    assert.equal(profile.packageManager, "bun");
+    assert.equal(profile.detectionStatus, "manual_input_required");
+    assert.match(profile.errors.join(" "), /Bun projects are outside the frozen DeployGuard runtime contract/);
+  } finally {
+    await rm(bunRepository, { recursive: true, force: true });
   }
 
   process.stdout.write(`Verified ${fixtures.length} framework fixtures plus deterministic profiles, app factories, app-root ambiguity, environment evidence, lockfile/package-manager consistency, conflicting overrides, and safety gates.\n`);

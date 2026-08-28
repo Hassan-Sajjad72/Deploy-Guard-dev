@@ -49,15 +49,19 @@ async function run() {
     throw new Error(`Unexpected GitHub request: ${method} ${url}`);
   }) as typeof fetch;
   try {
-    const connected = await service.connectInstallation({ id: 42 } as never, "9001");
+    const connected = await service.connectInstallation({ id: 42, githubLogin: "sample-owner" } as never, "9001");
     assert.equal(connected.ownerUserId, 42);
     const available = await service.availableInstallations({ id: 43, role: "admin", githubLogin: null } as never);
     assert.equal(available[0].installationId, "9001");
-    await service.connectInstallation({ id: 43 } as never, "9001");
-    assert.deepEqual(rows.map((row) => row.ownerUserId).sort(), [42, 43]);
+    await assert.rejects(
+      service.connectInstallation({ id: 43, githubLogin: "different-owner" } as never, "9001"),
+      /different GitHub account/,
+      "an installation cannot be attached to a different authenticated GitHub identity",
+    );
+    assert.deepEqual(rows.map((row) => row.ownerUserId), [42]);
     const listed = await service.listRepositories(42);
     assert.equal(listed[0].installationId, "9001");
-    assert.equal(await service.oidcTrustSubject(42, "sample-owner/sample-app", "9001"), "repo:sample-owner@77/*:*");
+    assert.equal(await service.oidcTrustSubject(42, "sample-owner/sample-app", "9001"), "repo:sample-owner@77/sample-app@10:*");
     const generated = await service.ensureWorkflow(42, "sample-owner/sample-app", "main", "9001");
     assert.deepEqual({ verified: generated.verified, generated: generated.generated, path: generated.path }, { verified: true, generated: true, path: DEPLOYGUARD_WORKFLOW_PATH });
     const put = calls.find((call) => call.method === "PUT");
@@ -80,8 +84,9 @@ async function run() {
     assert.equal(githubTrustAuthorizesRepository(trust, "Hassan-Sajjad72/react-pomodoro"), true);
     assert.equal(authorizeGithubRepositoryInTrust(trust, "Hassan-Sajjad72/react-pomodoro"), false, "trust onboarding is idempotent");
     const ownerTrust: any = JSON.parse(JSON.stringify(trust));
-    assert.equal(authorizeGithubRepositoryInTrust(ownerTrust, "another-owner/new-app", "repo:another-owner@88/*:*"), true);
-    assert.equal(authorizeGithubRepositoryInTrust(ownerTrust, "another-owner/new-app", "repo:another-owner@88/*:*"), false, "identity-aware owner trust is idempotent");
+    assert.equal(authorizeGithubRepositoryInTrust(ownerTrust, "another-owner/new-app", "repo:another-owner@88/new-app@99:*"), true);
+    assert.equal(authorizeGithubRepositoryInTrust(ownerTrust, "another-owner/new-app", "repo:another-owner@88/new-app@99:*"), false, "identity-aware exact-repository trust is idempotent");
+    assert.equal(githubTrustAuthorizesRepository(ownerTrust, "another-owner/other-app"), false, "exact repository trust cannot authorize a sibling repository");
     assert.deepEqual(githubActionsStagePresentation("configure_aws_credentials_through_oidc"), { key: "configure_aws_credentials_through_oidc", label: "Connecting securely to AWS" });
     const reusableWorkflow = readFileSync(join(__dirname, "../../.github/workflows/deployguard-reusable.yml"), "utf8");
     assert.match(reusableWorkflow, /container_profile: \{ required: true, type: string \}/);

@@ -63,6 +63,10 @@ export class GithubAppService {
     const body = await response.json() as { account?: { login?: string; id?: number } };
     const accountLogin = String(body.account?.login || "").trim();
     if (!accountLogin) throw new BadRequestException("GitHub App installation has no account identity.");
+    const authenticatedLogin = String(user.githubLogin || "").trim();
+    if (!authenticatedLogin || authenticatedLogin.toLowerCase() !== accountLogin.toLowerCase()) {
+      throw new BadRequestException("GitHub App installation belongs to a different GitHub account.");
+    }
     const existing = await this.installations.findOne({ where: { ownerUserId: user.id, installationId } });
     const row = this.installations.create({
       ...(existing || {}), ownerUserId: user.id, installationId, accountLogin,
@@ -128,13 +132,10 @@ export class GithubAppService {
     if (!account || !accountId || !credential.repositoryId || account.toLowerCase() !== owner.toLowerCase()) {
       throw new BadRequestException("GitHub App installation identity could not be verified for AWS authorization.");
     }
-    // This GitHub account uses OIDC's repository-identity customization, whose
-    // subject contains immutable account/repository IDs (owner@id/repo@id).
-    // An all-repositories App installation therefore maps safely to that one
-    // account, while a selected-repositories installation maps to one repo.
-    return installation.repository_selection === "all"
-      ? `repo:${account}@${accountId}/*:*`
-      : `repo:${account}@${accountId}/${repositoryName}@${credential.repositoryId}:*`;
+    // OIDC authorization is always scoped to the exact repository being
+    // deployed, even when the App installation itself can access every
+    // repository owned by the account.
+    return `repo:${account}@${accountId}/${repositoryName}@${credential.repositoryId}:*`;
   }
 
   async ensureWorkflow(userId: number, repositoryFullName: string, branch: string, installationId?: string | null) {

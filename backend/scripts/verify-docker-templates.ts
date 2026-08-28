@@ -1,5 +1,5 @@
 import { strict as assert } from "assert";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
@@ -190,6 +190,38 @@ const staticWebDockerfile = render("static-web", {
 });
 assert.match(staticWebDockerfile, /COPY --chown=101:101 \. \/usr\/share\/nginx\/html/);
 
+const workspaceDirectory = mkdtempSync(join(tmpdir(), "deployguard-workspace-build-"));
+const workspaceImage = `deployguard-workspace-build:${process.pid}`;
+try {
+  mkdirSync(join(workspaceDirectory, "apps", "web"), { recursive: true });
+  mkdirSync(join(workspaceDirectory, "packages", "shared"), { recursive: true });
+  writeFileSync(join(workspaceDirectory, "package.json"), JSON.stringify({ name: "workspace-root", private: true, workspaces: ["apps/*", "packages/*"] }));
+  writeFileSync(join(workspaceDirectory, "apps", "web", "package.json"), JSON.stringify({ name: "web", private: true, scripts: { build: "node build.js" }, dependencies: { "@fixture/shared": "*" } }));
+  writeFileSync(join(workspaceDirectory, "apps", "web", "build.js"), "const fs=require('fs');const shared=require('@fixture/shared');fs.mkdirSync('dist',{recursive:true});fs.writeFileSync('dist/index.html',shared);\n");
+  writeFileSync(join(workspaceDirectory, "packages", "shared", "package.json"), JSON.stringify({ name: "@fixture/shared", version: "1.0.0", main: "index.js" }));
+  writeFileSync(join(workspaceDirectory, "packages", "shared", "index.js"), "module.exports='workspace-install-root-certified';\n");
+  const dockerfile = render("vite-static", {
+    framework: "vite-react", frameworkMode: "vite-static", runtimeType: "static", port: 8080,
+    appRoot: "apps/web", repositoryInstallRoot: ".", dependencyManifest: "apps/web/package.json",
+    lockfile: null, installCommand: "npm install", buildCommand: "npm run build", runCommand: null,
+    outputDirectory: "dist", runtimeImage: "nginxinc/nginx-unprivileged:1.27-alpine",
+  });
+  assert.match(dockerfile, /WORKDIR \/app\/apps\/web[\s\S]*RUN npm run build/);
+  assert.match(dockerfile, /COPY --from=builder \/app\/apps\/web\/dist \/usr\/share\/nginx\/html/);
+  writeFileSync(join(workspaceDirectory, "Dockerfile"), dockerfile);
+  execFileSync("docker", ["build", "-t", workspaceImage, "-f", "Dockerfile", "."], { cwd: workspaceDirectory, stdio: "pipe", timeout: 360_000 });
+  assert.equal(execFileSync("docker", ["run", "--rm", "--entrypoint", "cat", workspaceImage, "/usr/share/nginx/html/index.html"], { encoding: "utf8" }), "workspace-install-root-certified");
+} finally {
+  try { execFileSync("docker", ["image", "rm", "-f", workspaceImage], { stdio: "ignore" }); } catch {}
+  rmSync(workspaceDirectory, { recursive: true, force: true });
+}
+
+const reusableWorkflow = readFileSync(join(__dirname, "../../.github/workflows/deployguard-reusable.yml"), "utf8");
+assert.match(reusableWorkflow, /DOCKER_BUILD_CONTEXT="\$GITHUB_WORKSPACE\/\$REPOSITORY_INSTALL_ROOT"/);
+assert.match(reusableWorkflow, /docker build --pull -f "\$DOCKERFILE_PATH"[\s\S]*"\$DOCKER_BUILD_CONTEXT"/);
+assert.match(reusableWorkflow, /while jq -e --argjson port "\$INTERNAL_PORT" 'any\(\.\[\]; \.port == \$port\)'/);
+assert.match(reusableWorkflow, /\[ \$components\[\]\.port \] \| unique \| length/, "immutable workflow rejects duplicate awsvpc application ports");
+
 for (const [templateKey, framework, mode, command, port] of [
   ["flask-wsgi", "flask", "flask-wsgi", "gunicorn app:app --bind 0.0.0.0:${PORT:-5000}", 5000],
   ["fastapi-asgi", "fastapi", "fastapi-asgi", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}", 8000],
@@ -268,9 +300,9 @@ assert.match(workflow, /BUILD_TIME_PUBLIC_CONFIG_BASE64/);
 assert.match(workflow, /deployguard_runtime_config/, "generated application initialization must use an ephemeral BuildKit secret only when the generated Dockerfile asks for it");
 assert.match(workflow, /deployguard_public_build_config/, "generated public build configuration must use an ephemeral BuildKit file rather than Docker ARG or ENV");
 assert.match(workflow, /BUILD_SECRET_ARGS\+=\(--secret "id=deployguard_public_build_config,src=\$CONFIG_FILE"\)/);
-assert.match(workflow, /docker buildx build --check -f "\$DOCKERFILE_PATH" "\$\{BUILD_ARGS\[@\]\}" "\$\{BUILD_SECRET_ARGS\[@\]\}" \./, "supported runners must validate each materialized component and its immutable Dockerfile path before its real build");
-const buildxCheckIndex = workflow.indexOf('docker buildx build --check -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" .');
-const realBuildIndex = workflow.indexOf('docker build --pull -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" -t "$TAGGED_URI" .');
+assert.match(workflow, /docker buildx build --check -f "\$DOCKERFILE_PATH" "\$\{BUILD_ARGS\[@\]\}" "\$\{BUILD_SECRET_ARGS\[@\]\}" "\$DOCKER_BUILD_CONTEXT"/, "supported runners must validate each materialized component and its canonical install-root context before its real build");
+const buildxCheckIndex = workflow.indexOf('docker buildx build --check -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" "${BUILD_SECRET_ARGS[@]}" "$DOCKER_BUILD_CONTEXT"');
+const realBuildIndex = workflow.indexOf('docker build --pull -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" -t "$TAGGED_URI" "$DOCKER_BUILD_CONTEXT"');
 const terraformIndex = workflow.indexOf("- name: Install Terraform");
 assert.ok(buildxCheckIndex >= 0 && buildxCheckIndex < realBuildIndex && realBuildIndex < terraformIndex, "validate/check → build/push every required image → Terraform ordering must remain intact");
 assert.match(workflow, /cd "\$APPLICATION_DIRECTORY"/);

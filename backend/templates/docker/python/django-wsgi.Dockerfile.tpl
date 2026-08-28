@@ -8,6 +8,7 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY . .
 RUN {{INSTALL_COMMAND}}
+WORKDIR {{APP_WORKDIR}}
 {{BUILD_STEP}}
 
 FROM {{RUNTIME_BASE_IMAGE}} AS runner
@@ -19,7 +20,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PATH="/opt/venv/bin:$PATH"
 RUN useradd --create-home --shell /usr/sbin/nologin appuser
 COPY --from=builder /opt/venv /opt/venv
-COPY --chown=appuser:appuser . .
+COPY --chown=appuser:appuser . /app
+WORKDIR {{APP_WORKDIR}}
 USER appuser
 EXPOSE {{EXPECTED_PORT}}
 CMD {{START_COMMAND_JSON}}

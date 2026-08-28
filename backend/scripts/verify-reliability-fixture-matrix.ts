@@ -129,7 +129,7 @@ async function main() {
   const ambiguous = await analyze("23-two-backends-ambiguous");
   const ambiguousReadiness = evaluateBuildPlanReadiness(ambiguous.contract.buildPlan);
   assert.equal((ambiguous.draft.rawProfile.componentTopology as any).analysisState, "INPUT_REQUIRED");
-  assert.equal(ambiguousReadiness.status, "INPUT_REQUIRED");
+  assert.equal(ambiguousReadiness.status, "INPUT_REQUIRED", `two-backend blockers: ${ambiguousReadiness.blockers.join(" | ")}`);
   assert.deepEqual(ambiguousReadiness.requiredInputs, ["Choose which of these backend service roots should be deployed."]);
   console.log("PASS two viable backends: INPUT_REQUIRED with an actionable service choice");
 
@@ -150,6 +150,11 @@ async function main() {
     "workspace install root must remain canonical through the component BuildPlan",
   );
   console.log("PASS workspace install-root invariant: detector -> DeploymentContract -> component BuildPlan");
+
+  const samePort = await analyze("same-port-next-express");
+  assert.deepEqual(samePort.contract.buildPlan.components!.map((component: any) => component.port), [3000, 3001], "BuildPlan persists deterministic unique awsvpc ports");
+  assert.equal(samePort.contract.deployable, true);
+  console.log("PASS same-port multi-container invariant: detector ports -> unique BuildPlan task ports");
 
   console.log("Reliability fixture matrix passed: deployable paths, unknown-readiness gates, and complete-repository negative gates use real detection and BuildPlan generation.");
 }

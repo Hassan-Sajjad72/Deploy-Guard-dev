@@ -279,6 +279,7 @@ export class StackDetectionService {
         profile.errors = [...topology.blockers];
         profile.detectionStatus = "manual_input_required";
       }
+      else if (topology.analysisState === "INPUT_REQUIRED") profile.detectionStatus = "manual_input_required";
       else if (topology.components.length > 1 && profile.errors.length === 0) profile.detectionStatus = "success";
     }
 
@@ -480,6 +481,21 @@ export class StackDetectionService {
     const requiredTopologyInputs = components.some((component) => Array.isArray(component.profile.rawProfile.detectorRequiredInputs) && component.profile.rawProfile.detectorRequiredInputs.length > 0);
     if (!shape && manifestCandidates.length > 0 && components.length === 0 && blockers.length === 1) shape = "UNSUPPORTED";
     const analysisState = shape === "UNSUPPORTED" ? "UNSUPPORTED" : blockers.length ? "UNRESOLVED" : requiredTopologyInputs || requiredUserInputs.length ? "INPUT_REQUIRED" : "SUPPORTED";
+    const orderedComponents = components
+      .sort((left, right) => (left.role === "frontend" ? -1 : 1) - (right.role === "frontend" ? -1 : 1));
+    const reservedPorts = new Set<number>(managedDatabase
+      ? [managedDatabase.engine === "postgres" ? 5432 : managedDatabase.engine === "mysql" ? 3306 : 27017]
+      : []);
+    const effectiveComponents = orderedComponents.map((component) => {
+      let port = component.port;
+      while (reservedPorts.has(port) && port < 65535) port += 1;
+      if (reservedPorts.has(port)) {
+        port = 1024;
+        while (reservedPorts.has(port) && port < component.port) port += 1;
+      }
+      reservedPorts.add(port);
+      return { ...component, port };
+    });
     return {
       schemaVersion: TOPOLOGY_SCHEMA_VERSION,
       analyzerVersion: TOPOLOGY_ANALYZER_VERSION,
@@ -489,7 +505,7 @@ export class StackDetectionService {
       confidence: blockers.length ? "unresolved" : relationships.some((item) => item.kind === "SERVES" || item.kind === "CALLS") ? "proven" : "bounded",
       evidence,
       applicationUnits: units.map((unit) => ({ id: unit.id, root: unit.root, manifests: unit.manifests, deployable: unit.deployable, detectorIds: unit.matches.map((item) => item.detectorId) })),
-      components: components.sort((left, right) => (left.role === "frontend" ? -1 : 1) - (right.role === "frontend" ? -1 : 1)),
+      components: effectiveComponents,
       managedDatabase,
       databases: managedDatabase ? [{ id: `database:${managedDatabase.engine}`, engine: managedDatabase.engine, ownerComponentId: managedDatabase.ownerComponentId }] : [],
       relationships,
