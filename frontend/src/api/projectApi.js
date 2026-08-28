@@ -121,17 +121,6 @@ export function destroyGithubActionsDeployment(projectId, confirmationPhrase) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deploy/destroy`, { method: "POST", body: { confirmationPhrase } });
 }
 
-export function getDeploymentRequirements(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deployment-requirements`);
-}
-
-export function resolveDeploymentRequirements(projectId, data) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/deployment-requirements/resolve`, {
-    method: "POST",
-    body: data,
-  });
-}
-
 export function updateProject(projectId, data) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "PATCH",
@@ -198,28 +187,6 @@ export function deleteProjectEnvVar(projectId, envId) {
       method: "DELETE",
     }
   );
-}
-
-export function runStackDetection(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/detect-stack`, {
-    method: "POST",
-  });
-}
-
-export function getDetectionProfile(projectId) {
-  return apiRequest(
-    `/api/projects/${encodeURIComponent(projectId)}/detection-profile`
-  );
-}
-
-export function generatePreflightReport(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/preflight`, {
-    method: "POST",
-  });
-}
-
-export function getPreflightReport(projectId) {
-  return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/preflight`);
 }
 
 export function createCostEstimate(projectId) {
