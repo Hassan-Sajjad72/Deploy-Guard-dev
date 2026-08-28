@@ -12,8 +12,9 @@
     "start:debug": "nest start --debug --watch",
     "test:no-legacy-architecture": "ts-node scripts/verify-no-legacy-architecture.ts",
     "test:railpack-runtime-contract": "ts-node scripts/verify-railpack-runtime-contract.ts",
-    "test:local-repository-certification": "npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract",
-    "test:full-local-certification": "npm run build && npm --prefix ../frontend run build && npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract",
+    "test:product-start-schema-integrity": "ts-node scripts/verify-product-start-schema-integrity.ts",
+    "test:local-repository-certification": "npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract && npm run test:product-start-schema-integrity",
+    "test:full-local-certification": "npm run build && npm --prefix ../frontend run build && npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract && npm run test:product-start-schema-integrity",
     "test:reliability-certification": "npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts"
   },

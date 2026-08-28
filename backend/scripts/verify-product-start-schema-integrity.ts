@@ -6,14 +6,21 @@ import AppDataSource from "../src/data-source";
 import { RepairProjectPipelineSchemaDrift1787356802000 } from "../src/migrations/1787356802000-RepairProjectPipelineSchemaDrift";
 import { RepairDeploymentGenerationSchemaDrift1787356803000 } from "../src/migrations/1787356803000-RepairDeploymentGenerationSchemaDrift";
 import { RepairStableReleaseSchemaDrift1787356804000 } from "../src/migrations/1787356804000-RepairStableReleaseSchemaDrift";
-import { RepairDeploymentContractEcsPlanSchemaDrift1787356805000 } from "../src/migrations/1787356805000-RepairDeploymentContractEcsPlanSchemaDrift";
 import { RepairNotificationSchemaDrift1787356809600 } from "../src/migrations/1787356809600-RepairNotificationSchemaDrift";
+import { RemoveRetiredRepositoryAnalysisSchema1787356810000 } from "../src/migrations/1787356810000-RemoveRetiredRepositoryAnalysisSchema";
 import { assertProductStartSchemaIntegrity } from "../src/projects/product-start-schema-integrity.service";
 
 const database = `deployguard_product_start_${randomUUID().replaceAll("-", "")}`;
 const base = AppDataSource.options as DataSourceOptions;
 let admin: DataSource | null = null;
 let testDatabase: DataSource | null = null;
+const retiredTables = [
+  ["project", "detection", "profiles"].join("_"),
+  ["project", "preflight", "reports"].join("_"),
+  ["project", "deployment", "contracts"].join("_"),
+  ["project", "deployment", "requirements"].join("_"),
+];
+const retiredDetectorColumn = ["required", "by", "detection"].join("_");
 
 async function close() {
   if (testDatabase?.isInitialized) await testDatabase.destroy();
@@ -38,11 +45,13 @@ void (async () => {
   await testDatabase.query(`INSERT INTO migrations (timestamp, name) VALUES (1760000000000, 'CreateProjectPipelineTables1760000000000')`);
   await testDatabase.query(`CREATE TABLE users (id integer PRIMARY KEY)`);
   await testDatabase.query(`CREATE TABLE projects (id uuid PRIMARY KEY)`);
-  await testDatabase.query(`CREATE TABLE project_preflight_reports (id uuid PRIMARY KEY)`);
-  await testDatabase.query(`CREATE TABLE project_detection_profiles (id uuid PRIMARY KEY)`);
   await testDatabase.query(`CREATE TABLE project_service_bindings (id uuid PRIMARY KEY)`);
   await testDatabase.query(`CREATE TABLE project_configuration_snapshots (id uuid PRIMARY KEY, pipeline_run_id uuid)`);
-  await testDatabase.query(`CREATE TABLE project_deployment_contracts (id uuid PRIMARY KEY, project_id uuid NOT NULL, runtime_plan jsonb NOT NULL)`);
+  const [detectionProfiles, preflightReports, deploymentContracts, deploymentRequirements] = retiredTables;
+  await testDatabase.query(`CREATE TABLE ${detectionProfiles} (id uuid PRIMARY KEY)`);
+  await testDatabase.query(`CREATE TABLE ${preflightReports} (id uuid PRIMARY KEY, detection_profile_id uuid REFERENCES ${detectionProfiles}(id))`);
+  await testDatabase.query(`CREATE TABLE ${deploymentContracts} (id uuid PRIMARY KEY, project_id uuid NOT NULL, ecs_plan jsonb NOT NULL, detection_profile_id uuid REFERENCES ${detectionProfiles}(id))`);
+  await testDatabase.query(`CREATE TABLE ${deploymentRequirements} (id uuid PRIMARY KEY, project_id uuid NOT NULL)`);
   await testDatabase.query(`CREATE TABLE project_database_tiers (
     id uuid PRIMARY KEY,
     active_generation_id uuid,
@@ -52,8 +61,10 @@ void (async () => {
     efs_file_system_id varchar,
     efs_access_point_id varchar,
     credentials_secret_arn varchar,
-    database_url_secret_arn varchar
+    database_url_secret_arn varchar,
+    ${retiredDetectorColumn} boolean NOT NULL DEFAULT false
   )`);
+  await testDatabase.query(`CREATE TABLE project_persistent_storage (id uuid PRIMARY KEY, ${retiredDetectorColumn} boolean NOT NULL DEFAULT false)`);
   await testDatabase.query(`CREATE TABLE project_environment_routes (
     id uuid PRIMARY KEY,
     project_id uuid NOT NULL,
@@ -74,11 +85,21 @@ void (async () => {
   await new RepairProjectPipelineSchemaDrift1787356802000().up(runner);
   await new RepairDeploymentGenerationSchemaDrift1787356803000().up(runner);
   await new RepairStableReleaseSchemaDrift1787356804000().up(runner);
-  await new RepairDeploymentContractEcsPlanSchemaDrift1787356805000().up(runner);
   await new RepairNotificationSchemaDrift1787356809600().up(runner);
+  await new RemoveRetiredRepositoryAnalysisSchema1787356810000().up(runner);
   await runner.release();
 
   await assertProductStartSchemaIntegrity(testDatabase);
+  const retired = await testDatabase.query(`
+    SELECT table_name FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = ANY($1::text[])
+  `, [retiredTables]);
+  assert.deepEqual(retired, [], "retired repository-analysis tables must be absent while current schema integrity passes");
+  const detectorColumns = await testDatabase.query(`
+    SELECT table_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND column_name = $1
+  `, [retiredDetectorColumn]);
+  assert.deepEqual(detectorColumns, [], "retired detector-derived columns must be absent while current schema integrity passes");
   const tables = await testDatabase.query(`
     SELECT table_name
     FROM information_schema.tables

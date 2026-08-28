@@ -20,7 +20,6 @@ const requiredColumns = [
   ["project_stable_releases", "project_id"],
   ["project_stable_releases", "generation_id"],
   ["project_stable_releases", "status"],
-  ["project_deployment_contracts", "ecs_plan"],
   ["project_database_tiers", "active_generation_id"],
   ["project_database_tiers", "external_host"],
   ["project_database_tiers", "external_port"],
