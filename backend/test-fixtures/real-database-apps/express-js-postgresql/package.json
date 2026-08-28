@@ -1,6 +1,0 @@
-{
-  "name": "deployguard-express-postgresql-fixture",
-  "private": true,
-  "scripts": { "start": "node index.js" },
-  "dependencies": { "express": "^4.21.2", "pg": "^8.13.1" }
-}
