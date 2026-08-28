@@ -1,0 +1,9 @@
+variable "region" { type = string }
+variable "project_id" { type = string }
+variable "operation_id" { type = string }
+variable "vpc_id" { type = string }
+variable "public_subnet_ids" { type = list(string) }
+variable "image" { type = string }
+variable "platform_port" { type = number }
+variable "environment" { type = map(string) }
+variable "secret_references" { type = map(string) }
