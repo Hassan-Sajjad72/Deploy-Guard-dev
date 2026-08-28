@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { bulkUpsertProjectEnvVars, connectGithubAppInstallation, createProject, deployGithubActionsDeployment, getGithubConnectionStatus, getGithubRepositories, inspectGithubRepository, updateProjectBranch } from "../api/projectApi.js";
-import { ActionBar, Card, DataRow, IssueCard, ReadinessSummary, StatusChip } from "../components/common/DesignSystem.jsx";
+import { ActionBar, Card, IssueCard, ReadinessSummary, StatusChip } from "../components/common/DesignSystem.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { parseEnvPaste } from "../utils/envPaste.js";
 import { createDeploymentSelectionGate, deploymentSelectionKey } from "../utils/deploymentSelection.js";
@@ -11,51 +11,6 @@ function safeMessage(error) {
   return /secret|token|password|authorization|cookie|private key/i.test(message)
     ? "DeployGuard could not complete this step safely. No application value was shown."
     : message;
-}
-
-function readinessFrom(profile, report) {
-  const decision = report?.readinessStatus || report?.report?.readiness?.decision;
-  const requiredInputs = report?.requiredInputs || report?.report?.readiness?.requiredInputs || [];
-  if (decision === "BLOCKED") {
-    const errors = Array.isArray(report?.errors) ? report.errors : [];
-    return { level: "blocked", deployAllowed: false, requiredInputs, message: errors[0] || "This repository needs a deployment configuration correction before it can deploy." };
-  }
-  if (decision === "INPUT_REQUIRED") {
-    const bindingChoice = requiredInputs.find((item) => /^Choose the backend service for /.test(String(item)));
-    return { level: "input_required", deployAllowed: false, requiredInputs, message: bindingChoice || (requiredInputs.length ? `Required application configuration is missing: ${requiredInputs.join(", ")}.` : "Required application configuration must be completed before deployment.") };
-  }
-  if (decision === "READY_WITH_WARNINGS") {
-    const warnings = Array.isArray(report?.warnings) ? report.warnings : [];
-    return { level: "warning", deployAllowed: true, requiredInputs: [], message: warnings[0] || "Deployment readiness has a non-blocking warning." };
-  }
-  if (decision === "READY") return { level: "ready", deployAllowed: true, requiredInputs: [], message: "This repository and branch passed DeployGuard’s deployment readiness checks." };
-  const topologyBlockers = Array.isArray(profile?.topologyBlockers) ? profile.topologyBlockers : [];
-  if (profile?.topologyAnalysisState && profile.topologyAnalysisState !== "SUPPORTED") {
-    return { level: profile.topologyAnalysisState === "INPUT_REQUIRED" ? "input_required" : "blocked", deployAllowed: false, requiredInputs: [], message: topologyBlockers[0] || "DeployGuard could not prove a safe application topology for this branch." };
-  }
-  const detectionErrors = Array.isArray(profile?.errors) ? profile.errors : [];
-  if (profile?.detectionStatus !== "success") {
-    return { level: "blocked", deployAllowed: false, requiredInputs: [], message: detectionErrors[0] || "DeployGuard could not verify a supported application stack for this branch." };
-  }
-  const errors = Array.isArray(report?.errors) ? report.errors : [];
-  if (["failed", "manual_dockerfile_required"].includes(report?.validationStatus)) {
-    return { level: "blocked", deployAllowed: false, requiredInputs: [], message: errors[0] || "This repository needs a deployment configuration correction before it can deploy." };
-  }
-  const warnings = Array.isArray(report?.warnings) ? report.warnings : [];
-  if (report?.validationStatus === "passed_with_warnings" || warnings.length) {
-    return { level: "warning", deployAllowed: true, requiredInputs: [], message: warnings[0] || "Deployment readiness has a non-blocking warning." };
-  }
-  return { level: "ready", deployAllowed: true, requiredInputs: [], message: "This repository and branch passed DeployGuard’s deployment readiness checks." };
-}
-
-function databaseLabel(engine) {
-  return engine === "mysql" ? "MySQL" : engine === "mongodb" ? "MongoDB" : "PostgreSQL";
-}
-
-function ReadinessWarningDetails({ readiness }) {
-  const details = readiness?.report?.report?.warningDetails || readiness?.profile?.warningDetails || [];
-  if (!details.length) return null;
-  return <div aria-label="Readiness warnings" className="readiness-warning-list">{details.map((warning) => <IssueCard key={warning.code} severity="warning" title={warning.code}><p>{warning.message}</p><small>Scope: {warning.scope} · Deployment allowed: {warning.deploymentAllowed ? "yes" : "no"}</small></IssueCard>)}</div>;
 }
 
 function deploymentJourney(repository, branch, readiness, working, deployable) {
