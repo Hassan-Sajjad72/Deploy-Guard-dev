@@ -83,7 +83,7 @@ export class AiProviderAdapter {
             "x-goog-api-key": this.apiKey(),
           },
           body: JSON.stringify({
-            systemInstruction: { parts: [{ text: "You are DeployGuard's evidence-bound incident assistant. Diagnose only from supplied immutable BuildPlan, generation, operation, Terraform plan/result, release, current-state, and sanitized log evidence. Never invent AWS state, logs, resources, values, commands, or successful checks. When evidence is insufficient, say exactly what is missing. Return only the requested JSON schema." }] },
+            systemInstruction: { parts: [{ text: "You are DeployGuard's evidence-bound incident assistant. Diagnose only from supplied immutable release artifact, generation, operation, Terraform plan/result, current-state, and sanitized log evidence. Never invent AWS state, logs, resources, values, commands, or successful checks. When evidence is insufficient, say exactly what is missing. Return only the requested JSON schema." }] },
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
               temperature: Number(this.config.get<string>("AI_PROVIDER_TEMPERATURE", "0.1")),
