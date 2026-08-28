@@ -27,11 +27,14 @@ import { DockerTemplateEngineService } from "./templates/docker-template-engine.
 import { TemplateRegistryService } from "./templates/template-registry.service";
 import { isPublicFrontendConfigurationKey, isSecretConfigurationKey, platformRuntimeVariableNames, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
 import { BUILD_PLAN_DETECTOR_VERSION, BUILD_PLAN_VERSION, BuildInitialization, BuildPlan, BuildPlanComponent, BuildPlanEnvironmentOwnership, BuildPlanImageFamily, buildPlanComponents, requireBuildPlan } from "./build-plan";
-import type { DeploymentProfileDraft, DetectedApplicationTopology } from "./detection/stack-detection.service";
+import type { CanonicalTopology } from "./detection/topology.types";
 import { evaluateBuildPlanReadiness } from "./build-plan-readiness";
 import { deploymentContractMatchesIdentity, RepositoryAnalysisIdentity } from "./deployment-contract-identity";
 import { ManagedDatabaseEngine, managedDatabaseEngine, managedDatabaseProfile } from "./managed-database-engine";
 import { hasCurrentCanonicalTopology } from "./detection/topology.types";
+
+type DeploymentProfileDraft = Record<string, any>;
+type DetectedApplicationTopology = CanonicalTopology;
 import { readinessWarningDetails, type ReadinessWarningDetail } from "./readiness-warning";
 import { PLATFORM_BACKEND_MOUNT } from "./service-binding";
 
@@ -910,11 +913,11 @@ export class DeploymentContractService {
     })).filter((item) => /^[A-Z][A-Z0-9_]*$/.test(item.key));
   }
 
-  private runtimeType(raw: Record<string, unknown>, profile: { staticOutput: boolean }): DeploymentRuntimeType {
+  private runtimeType(raw: Record<string, unknown>, profile: { staticOutput?: boolean }): DeploymentRuntimeType {
     return raw.runtimeType === "static" || profile.staticOutput ? "static" : "server";
   }
 
-  private language(profile: { language: string | null; ecosystem: string }): DeploymentContractLanguage | null {
+  private language(profile: { language?: string | null; ecosystem?: string }): DeploymentContractLanguage | null {
     if (profile.language === "javascript" || profile.ecosystem === "node") return "javascript";
     if (profile.language === "python" || profile.ecosystem === "python") return "python";
     return null;

@@ -1,4 +1,3 @@
-import type { DeploymentProfileDraft } from "./stack-detection.service";
 import type { RepositoryEvidence } from "./repository-evidence.types";
 
 export const TOPOLOGY_ANALYZER_VERSION = "topology-detection-v5" as const;
@@ -81,7 +80,7 @@ export type TopologyComponent = {
   capabilities: string[];
   evidence: RepositoryEvidence[];
   environment: TopologyEnvironmentVariable[];
-  profile: DeploymentProfileDraft;
+  profile: Record<string, any>;
 };
 
 export type CanonicalTopology = {
