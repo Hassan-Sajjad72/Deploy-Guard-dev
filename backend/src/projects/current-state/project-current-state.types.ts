@@ -99,7 +99,7 @@ export type DeveloperAction =
   | "none";
 
 export type DeveloperProgressPhase =
-  | "analyze"
+  | "source"
   | "build"
   | "prepare"
   | "deploy"

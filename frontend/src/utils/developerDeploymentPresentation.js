@@ -1,8 +1,8 @@
 export const DEVELOPER_DEPLOYMENT_PHASES = Object.freeze([
-  { key: "analyze", label: "Analyze" },
-  { key: "prepare", label: "Prepare" },
-  { key: "build", label: "Build" },
-  { key: "deploy", label: "Deploy" },
+  { key: "source", label: "Source / Dispatch" },
+  { key: "build", label: "Railpack Build" },
+  { key: "publish", label: "Publish Image" },
+  { key: "deploy", label: "Deploy Runtime" },
   { key: "verify", label: "Verify" },
 ]);
 
@@ -20,7 +20,7 @@ export function deploymentPhasePresentation(currentState) {
     || currentState?.developerState === "destroyed"
     || currentState?.stateAuthority?.activeOperation?.type === "destroy";
   const phases = destroy ? DEVELOPER_DESTROY_PHASES : DEVELOPER_DEPLOYMENT_PHASES;
-  const reportedKey = currentState?.progress?.phase || null;
+  const reportedKey = currentState?.progress?.phase === "prepare" ? "source" : currentState?.progress?.phase || null;
   const currentKey = destroy && ["build", "deploy"].includes(reportedKey) ? "destroy" : reportedKey;
   const currentIndex = phases.findIndex((phase) => phase.key === currentKey);
   const completed = currentState?.developerState === "live"
@@ -35,9 +35,8 @@ export function deploymentPhasePresentation(currentState) {
     if (currentState?.developerState === "destroyed") {
       status = destroy ? "passed" : index < 2 ? "passed" : "waiting";
     } else if (currentState?.developerState === "ready") {
-      status = index < 2 ? "passed" : "waiting";
+      status = "waiting";
     } else if (completed) status = "passed";
-    else if (currentIndex >= 0 && index < currentIndex) status = "passed";
     else if (currentIndex >= 0 && index === currentIndex && failed) status = "failed";
     else if (currentIndex >= 0 && index === currentIndex && attention) status = "attention";
     else if (currentIndex >= 0 && index === currentIndex && active) status = "running";

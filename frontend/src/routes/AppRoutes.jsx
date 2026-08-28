@@ -8,6 +8,7 @@ import NewProject from "../pages/NewProject.jsx";
 import ProjectDetails from "../pages/ProjectDetails.jsx";
 import ProjectMetrics from "../pages/ProjectMetrics.jsx";
 import ProjectPipeline from "../pages/ProjectPipeline.jsx";
+import ProjectInfrastructure from "../pages/ProjectInfrastructure.jsx";
 import ProjectSettings from "../pages/ProjectSettings.jsx";
 import ProjectTroubleshooting from "../pages/ProjectTroubleshooting.jsx";
 import Projects from "../pages/Projects.jsx";
@@ -36,7 +37,7 @@ export default function AppRoutes() {
           <Route element={<Projects />} path="/projects" />
           <Route element={<ProjectDetails />} path="/projects/:projectId" />
           <Route element={<ProjectPipeline />} path="/projects/:projectId/pipeline" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/infrastructure" />
+          <Route element={<ProjectInfrastructure />} path="/projects/:projectId/infrastructure" />
           <Route element={<ProjectMetrics />} path="/projects/:projectId/monitoring" />
           {/* Retired URLs resolve to the normal project page. */}
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/environment" />

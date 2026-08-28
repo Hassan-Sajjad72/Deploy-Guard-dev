@@ -19,8 +19,8 @@ import { canonicalEnvironmentName } from "../canonical-environment";
 import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from "../pipeline/github-actions-stage-presentation";
 
 function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" | "commitSha">) {
-  const inputs = operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined;
-  return Boolean(inputs && /^[0-9a-f]{40}$/i.test(String(operation.commitSha || "")) && typeof inputs.deployment_operation_id === "string");
+  return operation.metadata?.executionEngine === "railpack"
+    && ["deploy", "rollback", "destroy"].includes(String(operation.metadata?.deploymentAction || "deploy"));
 }
 
 
@@ -186,7 +186,7 @@ export class ProjectCurrentStateService {
   ): Promise<DeveloperProjectCurrentState> {
     const githubRuns = this.runRepository.createQueryBuilder("run")
       .where("run.projectId = :projectId", { projectId })
-      .andWhere("run.metadata ->> 'executionEngine' = 'github_actions'")
+      .andWhere("run.metadata ->> 'executionEngine' = 'railpack'")
       // Maintenance is evidence about a retired generation, never the latest
       // developer operation or authoritative runtime state.
       .andWhere("COALESCE(run.metadata ->> 'internalMaintenance', 'false') != 'true'");
@@ -325,6 +325,22 @@ export class ProjectCurrentStateService {
     }
 
     if (latest.status === PipelineRunStatus.FAILED) {
+      const dispatchFailed = latestMetadata.dispatchState === "failed" && !latest.githubWorkflowRunId;
+      if (dispatchFailed) {
+        const message = latest.errorMessage || "DeployGuard failed before a GitHub Actions run was created.";
+        return {
+          ...projected,
+          developerState: "failed_application",
+          developerAction: "deploy",
+          developerMessage: `Deployment could not start. ${message}`,
+          progress: { percentage: 0, phase: "source", label: "Dispatch failed" },
+          latestAttempt: { ...latestAttempt, status: "failed_application", outcome: "blocked", message },
+          stableRelease,
+          stableUrl,
+          applicationError: { category: "configuration", message },
+          canRetry: retryOperationEligible(latest),
+        };
+      }
       const failedStage = String(latestMetadata.failedStage || latest.currentStage || "github_actions");
       const failureMessage = githubActionsFailureMessage(latest.errorMessage, failedStage, action);
       const failurePhase = githubActionsFailureLifecyclePhase(failedStage);
@@ -410,9 +426,8 @@ export class ProjectCurrentStateService {
       developerState: state,
       developerAction: "none",
       developerMessage: "GitHub Actions deployment is in progress.",
-      // Percentages represent completed lifecycle milestones, never elapsed
-      // time or an animation. Detection/pre-flight already completed Analyze
-      // and Prepare before GitHub Actions was dispatched.
+      // Percentages represent evidence-backed Railpack lifecycle milestones,
+      // never elapsed time or retired repository analysis.
       progress: { percentage: this.githubLifecycleProgress(phase), phase, label: "Deploying" },
       latestAttempt: { ...latestAttempt, status: state },
       stableRelease,
@@ -423,7 +438,7 @@ export class ProjectCurrentStateService {
   }
 
   private githubLifecycleProgress(phase: "prepare" | "build" | "deploy" | "verify") {
-    return { prepare: 40, build: 40, deploy: 60, verify: 80 }[phase];
+    return { prepare: 20, build: 40, deploy: 60, verify: 80 }[phase];
   }
 
   /**
@@ -532,11 +547,16 @@ export class ProjectCurrentStateService {
     const destroyCleanupIncomplete = projected.destroyCleanupIncomplete === true;
     const runtimeDeleted = destroyed || destroyCleanupIncomplete;
     const authoritativeLiveRelease = Boolean(projected.stableRelease && projected.stableUrl) && !runtimeDeleted;
+    const stoppedBeforeProvisioning = projected.developerState === "failed_application"
+      && projected.applicationError?.category === "configuration"
+      && !authoritativeLiveRelease;
     const liveReleaseObservedAt = projected.stableRelease?.promotedAt || observedAt;
     const infrastructureStatus = runtimeDeleted
       ? { exists: false, status: "destroyed" as const, source: "github_actions" as const }
       : authoritativeLiveRelease
         ? { exists: true, status: "active" as const, source: "github_actions" as const }
+        : stoppedBeforeProvisioning
+          ? { exists: false, status: "not_provisioned" as const, source: "unavailable" as const }
         : { exists: null, status: "unknown" as const, source: "unavailable" as const };
     const canonical = projected.developerState === "ready"
       ? "READY" as const

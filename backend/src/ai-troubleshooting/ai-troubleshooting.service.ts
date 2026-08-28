@@ -23,10 +23,10 @@ export const TROUBLESHOOTING_QUESTIONS = [
 ];
 
 export function isAiTroubleshootingEligible(run: Pick<ProjectPipelineRun, "status" | "githubWorkflowRunId" | "metadata">) {
-  return run.status === PipelineRunStatus.FAILED
-    && Boolean(run.githubWorkflowRunId)
-    && typeof run.metadata?.safeLog === "string"
-    && run.metadata.safeLog.trim().length > 0;
+  if (run.status !== PipelineRunStatus.FAILED || typeof run.metadata?.safeLog !== "string" || !run.metadata.safeLog.trim()) return false;
+  // A platform dispatch failure is authoritative evidence even though GitHub
+  // never created a run. Do not mislabel it as a GitHub Actions failure.
+  return Boolean(run.githubWorkflowRunId) || run.metadata?.dispatchState === "failed";
 }
 
 @Injectable()
@@ -172,7 +172,7 @@ export class AiTroubleshootingService {
 
   private assertFailedGithubActionsRun(run: ProjectPipelineRun) {
     if (!isAiTroubleshootingEligible(run)) {
-      throw new BadRequestException("Troubleshooting is available only for a failed GitHub Actions operation with sanitized persisted evidence.");
+      throw new BadRequestException("Troubleshooting requires a failed deployment attempt with sanitized persisted evidence.");
     }
   }
 

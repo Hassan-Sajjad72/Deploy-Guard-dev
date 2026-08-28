@@ -45,7 +45,9 @@ export function overviewLifecycleCopy(currentState) {
       ? ["Destroy failed", "Review the failed pipeline evidence before retrying this destroy operation."]
       : operationType === "rollback"
         ? ["Rollback failed", "Review the failed pipeline evidence before retrying this rollback."]
-        : ["Deployment failed", "Review the failed pipeline evidence before retrying this deployment."],
+        : currentState?.latestAttempt?.workflowRunId
+          ? ["Deployment failed", "GitHub Actions reported a failed deployment. Review the persisted pipeline evidence before retrying."]
+          : ["Deployment could not start", "DeployGuard failed while starting the GitHub Actions deployment. No GitHub Actions run was created."],
     LIVE: ["Application is live", "The latest release passed its verified health check."],
     DESTROYING: ["Infrastructure is being destroyed", "Destroy is in progress. Application infrastructure is being removed and may become unavailable during cleanup."],
     DESTROYED: ["Infrastructure destroyed", "The previous deployment history is retained and this project can deploy again."],
