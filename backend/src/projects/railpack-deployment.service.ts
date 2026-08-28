@@ -18,6 +18,7 @@ import { DEPLOYGUARD_PLATFORM_PORT } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
 import { aliasesFor } from "./configuration-ownership";
 import { immutableRailpackDispatchFingerprint, immutableRailpackImageTag, RailpackRuntimeConfiguration, RailpackWorkflowInputs, runtimeReferencesBase64 } from "./railpack-workflow-contract";
+import { LogSanitizerService } from "../observability/log-sanitizer.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 
@@ -37,6 +38,7 @@ export class RailpackDeploymentService {
     private readonly crypto: ProjectEnvironmentCryptoService,
     private readonly runtimeSecrets: GithubActionsRuntimeSecretService,
     private readonly config: ConfigService,
+    private readonly sanitizer: LogSanitizerService,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy"); }
@@ -225,10 +227,14 @@ export class RailpackDeploymentService {
           operation.errorMessage = null;
           operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(), ...evidence };
         } else {
+          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
           operation.status = PipelineRunStatus.FAILED;
-          operation.currentStage = "release_failed";
-          operation.errorMessage = `GitHub Actions concluded: ${conclusion || "failure"}.`;
-          operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString() };
+          operation.currentStage = failureEvidence?.failedStage || "release_failed";
+          operation.errorMessage = failureEvidence?.safeLog || `GitHub Actions concluded: ${conclusion || "failure"}.`;
+          operation.metadata = {
+            ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
+            ...(failureEvidence ? { failedStage: failureEvidence.failedStage, safeLog: failureEvidence.safeLog, workflowStages: failureEvidence.workflowStages, failureSource: "github_actions" } : {}),
+          };
         }
       }
       await this.runs.save(operation);
@@ -237,6 +243,20 @@ export class RailpackDeploymentService {
       // solely because GitHub status was temporarily unavailable.
     }
     return operation;
+  }
+
+  private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, token: string) {
+    try {
+      const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, token);
+      if (!evidence) return null;
+      const safeLog = this.sanitizer.sanitize(evidence.rawEvidence).replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 12_000);
+      if (!safeLog) return null;
+      return { ...evidence, safeLog };
+    } catch {
+      // A terminal GitHub conclusion remains persisted, but troubleshooting is
+      // intentionally unavailable unless bounded job/log evidence was read.
+      return null;
+    }
   }
 
   private async releaseEvidence(repositoryFullName: string, operation: ProjectPipelineRun, token: string): Promise<Record<string, unknown> | null> {

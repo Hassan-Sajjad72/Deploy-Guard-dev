@@ -2,6 +2,7 @@ const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
   set_up_job: "Setting up GitHub Actions runner",
   configure_aws_credentials_through_oidc: "Connecting securely to AWS",
   workflow_dispatch: "Starting GitHub Actions",
+  workflow_bootstrap: "Starting GitHub Actions workflow",
   workflow_run_discovery: "GitHub Actions run was not created",
   github_actions: "Running GitHub Actions",
   checkout_application: "Checking out application source",
@@ -68,8 +69,9 @@ export function githubActionsFailureMessage(errorMessage: unknown, failedStage: 
   return persisted || "The GitHub Actions deployment failed.";
 }
 
-export function githubActionsFailureLifecyclePhase(failedStage: unknown): "build" | "deploy" | "verify" {
+export function githubActionsFailureLifecyclePhase(failedStage: unknown): "source" | "build" | "deploy" | "verify" {
   const key = githubActionsStagePresentation(failedStage).key;
+  if (["workflow_bootstrap", "set_up_job", "workflow_dispatch", "configure_aws_credentials_through_oidc"].includes(key)) return "source";
   if (BUILD_PHASE_FAILURE_STAGES.has(key) || key.includes("build")) return "build";
   if (key.includes("health") || key.includes("verify")) return "verify";
   return "deploy";

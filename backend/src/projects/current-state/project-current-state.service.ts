@@ -344,7 +344,8 @@ export class ProjectCurrentStateService {
       const failedStage = String(latestMetadata.failedStage || latest.currentStage || "github_actions");
       const failureMessage = githubActionsFailureMessage(latest.errorMessage, failedStage, action);
       const failurePhase = githubActionsFailureLifecyclePhase(failedStage);
-      const category = failurePhase === "build" ? "build"
+      const category = failurePhase === "source" ? "configuration"
+        : failurePhase === "build" ? "build"
         : failurePhase === "verify" ? "health"
           : "runtime";
       const failedLatestAttempt = {
@@ -437,8 +438,8 @@ export class ProjectCurrentStateService {
     };
   }
 
-  private githubLifecycleProgress(phase: "prepare" | "build" | "deploy" | "verify") {
-    return { prepare: 20, build: 40, deploy: 60, verify: 80 }[phase];
+  private githubLifecycleProgress(phase: "source" | "prepare" | "build" | "deploy" | "verify") {
+    return { source: 0, prepare: 20, build: 40, deploy: 60, verify: 80 }[phase];
   }
 
   /**
