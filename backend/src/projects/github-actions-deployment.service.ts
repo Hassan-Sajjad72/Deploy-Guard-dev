@@ -15,7 +15,7 @@ import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.servi
 import { GithubActionsAwsCapabilityService, WorkflowAwsCapabilityError } from "./github-actions-aws-capability.service";
 import { githubActionsExecutionStageFromLog, githubActionsFailureMessage, githubActionsPlatformCapabilityFailure, githubActionsStagePresentation, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
 import { DeploymentContractService } from "./deployment-contract.service";
-import { RepositoryWorkspaceService } from "./detection/repository-workspace.service";
+import { RepositorySourceService } from "./repository-source.service";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
 import {
@@ -152,7 +152,7 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
     private readonly sanitizer: LogSanitizerService,
     private readonly config: ConfigService,
     private readonly deploymentContracts: DeploymentContractService,
-    private readonly repositoryWorkspace: RepositoryWorkspaceService,
+    private readonly repositorySource: RepositorySourceService,
     private readonly environmentCrypto: ProjectEnvironmentCryptoService,
     private readonly deploymentProfiles: DeploymentProfileService,
     private readonly databaseBindings: DatabaseServiceBindingService,
@@ -613,9 +613,9 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
       // Validate and update the managed caller before binding analysis to the
       // branch head, because a caller update itself advances that branch.
       workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
-      let remoteCommit = await this.repositoryWorkspace.resolveRemoteCommit({
+      let remoteCommit = await this.repositorySource.resolveSourceSha({
         repositoryUrl: project.repositoryUrl,
-        targetBranch: project.targetBranch,
+        branch: project.targetBranch,
         accessToken: deployCredential!.token,
       });
       const freshness = await refreshDeploymentAnalysisIfStale({
@@ -629,9 +629,9 @@ export class GithubActionsDeploymentService implements OnModuleInit, OnModuleDes
           profile: await this.profiles.findOne({ where: { projectId } }),
           contract: await this.deploymentContracts.requireForProject(projectId),
         }),
-        resolveRemoteCommit: (current) => this.repositoryWorkspace.resolveRemoteCommit({
+        resolveRemoteCommit: (current) => this.repositorySource.resolveSourceSha({
           repositoryUrl: current.repositoryUrl,
-          targetBranch: current.targetBranch,
+          branch: current.targetBranch,
           accessToken: deployCredential!.token,
         }),
       });

@@ -33,6 +33,7 @@ import { PipelineStageResolverService } from "./current-state/pipeline-stage-res
 import { DeploymentProfileService } from "./detection/deployment-profile.service";
 import { RepoDeployabilityScannerService } from "./detection/repo-deployability-scanner.service";
 import { RepositoryWorkspaceService } from "./detection/repository-workspace.service";
+import { RepositorySourceService } from "./repository-source.service";
 import { StackDetectionService } from "./detection/stack-detection.service";
 import { TemplateMatchingService } from "./detection/template-matching.service";
 import { MainstreamDetectorResolverService } from "./detection/mainstream-detector-resolver.service";
@@ -93,7 +94,7 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
     ProjectsService, GithubAppService, GithubActionsService, GithubActionsDeploymentService, GithubActionsRuntimeSecretService,
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
     DeploymentContractService, DatabaseTierService, DeploymentProfileService,
-    RepositoryWorkspaceService, StackDetectionService, RepoDeployabilityScannerService, MainstreamDetectorResolverService, DeployGuardBuildProvider,
+    RepositoryWorkspaceService, RepositorySourceService, StackDetectionService, RepoDeployabilityScannerService, MainstreamDetectorResolverService, DeployGuardBuildProvider,
     TemplateMatchingService, TemplateRegistryService, DockerTemplateEngineService,
     PipelineStageResolverService,
     ProjectCurrentStateService,
