@@ -11,6 +11,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "test:detection": "ts-node scripts/verify-stack-detection.ts",
+    "test:no-legacy-architecture": "ts-node scripts/verify-no-legacy-architecture.ts",
     "test:migration-iteration1": "ts-node scripts/verify-github-actions-migration-iteration1.ts",
     "test:auth": "ts-node scripts/verify-authentication.ts",
     "test:automation": "ts-node scripts/verify-automation-controls.ts",
