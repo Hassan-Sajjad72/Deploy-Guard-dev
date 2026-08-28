@@ -11,8 +11,6 @@ import {
   UpdateDateColumn,
 } from "typeorm";
 import { User } from "../users/user.entity";
-import { ProjectDetectionProfile } from "./project-detection-profile.entity";
-import { ProjectPreflightReport } from "./project-preflight-report.entity";
 import { Project } from "./project.entity";
 import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
 import { ProjectServiceBinding } from "./project-service-binding.entity";
@@ -95,20 +93,6 @@ export class ProjectPipelineRun {
   @ManyToOne(() => User, { nullable: false, onDelete: "CASCADE" })
   @JoinColumn({ name: "triggered_by_user_id" })
   triggeredByUser: User;
-
-  @Column({ nullable: true, name: "preflight_report_id" })
-  preflightReportId: string;
-
-  @ManyToOne(() => ProjectPreflightReport, { nullable: true, onDelete: "SET NULL" })
-  @JoinColumn({ name: "preflight_report_id" })
-  preflightReport: ProjectPreflightReport;
-
-  @Column({ nullable: true, name: "detection_profile_id" })
-  detectionProfileId: string | null;
-
-  @ManyToOne(() => ProjectDetectionProfile, { nullable: true, onDelete: "SET NULL" })
-  @JoinColumn({ name: "detection_profile_id" })
-  detectionProfile: ProjectDetectionProfile | null;
 
   @Column({ name: "repository_url" })
   repositoryUrl: string;
