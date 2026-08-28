@@ -2,8 +2,6 @@ import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { ProjectConfigurationSnapshot } from "../projects/project-configuration-snapshot.entity";
 import { ProjectDatabaseTier } from "../projects/project-database-tier.entity";
-import { ProjectDeploymentContract } from "../projects/project-deployment-contract.entity";
-import { ProjectDetectionProfile } from "../projects/project-detection-profile.entity";
 import { ProjectEnvironmentCryptoService } from "../projects/project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "../projects/project-environment-variable.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
@@ -15,19 +13,15 @@ import { ProjectDeploymentGeneration } from "../projects/project-deployment-gene
 
 /**
  * Product infrastructure boundary. GitHub Actions owns all mutation; this
- * module only resolves encrypted application configuration for detection and
- * pre-flight. Retired REST, queue and Terraform-runner providers are not
- * registered here.
+ * module only resolves encrypted runtime application configuration.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([
     ProjectServiceBinding,
     ProjectPipelineRun,
-    ProjectDeploymentContract,
     ProjectDatabaseTier,
     ProjectEnvironmentVariable,
     ProjectConfigurationSnapshot,
-    ProjectDetectionProfile,
     ProjectPersistentStorage,
     Project,
     ProjectDeploymentGeneration,

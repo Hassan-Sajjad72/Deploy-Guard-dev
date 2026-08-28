@@ -4,7 +4,6 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Request } from "express";
 import { Repository } from "typeorm";
 import { AuditLogService } from "../audit-log/audit-log.service";
-import { InfrastructureService } from "../infrastructure/infrastructure.service";
 import { NotificationDispatcherService } from "../notifications/notification-dispatcher.service";
 import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infrastructure-environment.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
@@ -36,7 +35,6 @@ export class OrchestrationService {
     private readonly releaseRepository: Repository<ProjectStableRelease>,
     @InjectRepository(ProjectOrchestrationEvent)
     private readonly eventRepository: Repository<ProjectOrchestrationEvent>,
-    private readonly infrastructureService: InfrastructureService,
     private readonly config: ConfigService,
     private readonly auditLogService: AuditLogService,
     private readonly ecsService: EcsService,
@@ -45,10 +43,6 @@ export class OrchestrationService {
     private readonly spotInterruptionService: SpotInterruptionService,
     private readonly notifications: NotificationDispatcherService
   ) {}
-
-  async deploy(user: User, projectId: string, req?: RequestInfo) {
-    return this.infrastructureService.deploy(user, projectId, req);
-  }
 
   async getStatus(user: User, projectId: string) {
     const project = await this.findProjectForView(user, projectId);
