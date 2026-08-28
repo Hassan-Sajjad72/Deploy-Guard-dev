@@ -41,7 +41,7 @@ export type RailpackRuntimeConfiguration = {
   sourceSha: string;
   environment: Record<string, string>;
   secretReferences: Record<string, string>;
-  managedPostgres: { enabled: boolean; aliases: string[] };
+  managedPostgres: { enabled: boolean; engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[] };
 };
 
 const SHA = /^[0-9a-f]{40}$/i;

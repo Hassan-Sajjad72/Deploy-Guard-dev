@@ -31,11 +31,11 @@ export class DatabaseTierService {
   async update(user: User, projectId: string, dto: UpdateDatabaseTierDto, req?: any) {
     const project = await this.projects.getProjectEntityForManage(user, projectId);
     if (dto.provider === DatabaseTierProvider.EXTERNAL) {
-      throw new BadRequestException("External databases are not part of the DeployGuard managed PostgreSQL runtime.");
+      throw new BadRequestException("External databases are not part of the DeployGuard managed container database runtime.");
     }
     const saved = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
-      const engine: ManagedDatabaseEngine | null = dto.provider === DatabaseTierProvider.MANAGED ? "postgres" : null;
+      const engine: ManagedDatabaseEngine | null = dto.provider === DatabaseTierProvider.MANAGED ? (dto.engine || "postgres") : null;
       const tiers = manager.getRepository(ProjectDatabaseTier);
       const environmentVariables = manager.getRepository(ProjectEnvironmentVariable);
       const existing = await tiers.findOne({ where: { projectId } });

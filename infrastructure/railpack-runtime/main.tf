@@ -79,14 +79,14 @@ resource "aws_security_group" "application" {
   tags = local.tags
 }
 
-resource "aws_security_group" "postgres" {
+resource "aws_security_group" "database" {
   count       = var.managed_postgres_enabled ? 1 : 0
-  name_prefix = "${local.name}-postgres-"
+  name_prefix = "${local.name}-database-"
   vpc_id      = var.vpc_id
 
   ingress {
-    from_port       = 5432
-    to_port         = 5432
+    from_port       = 0
+    to_port         = 65535
     protocol        = "tcp"
     security_groups = [aws_security_group.application.id]
   }
@@ -94,49 +94,32 @@ resource "aws_security_group" "postgres" {
   tags = local.tags
 }
 
-resource "aws_db_subnet_group" "postgres" {
-  count      = var.managed_postgres_enabled ? 1 : 0
-  name       = "${local.name}-postgres"
-  subnet_ids = var.public_subnet_ids
-  tags       = local.tags
+resource "aws_efs_file_system" "database" {
+  count           = var.managed_postgres_enabled ? 1 : 0
+  encrypted       = true
+  throughput_mode = "bursting"
+  tags            = local.tags
 }
 
-resource "random_password" "postgres" {
-  count   = var.managed_postgres_enabled ? 1 : 0
-  length  = 32
-  special = false
+resource "aws_efs_access_point" "database" {
+  count          = var.managed_postgres_enabled ? 1 : 0
+  file_system_id = aws_efs_file_system.database[0].id
+  root_directory {
+    path = "/database"
+    creation_info {
+      owner_gid   = 1000
+      owner_uid   = 1000
+      permissions = "0750"
+    }
+  }
+  tags = local.tags
 }
 
-resource "aws_db_instance" "postgres" {
-  count                  = var.managed_postgres_enabled ? 1 : 0
-  identifier             = "${local.name}-postgres"
-  allocated_storage      = 20
-  engine                 = "postgres"
-  engine_version         = "16"
-  instance_class         = "db.t4g.micro"
-  db_name                = "application"
-  username               = "deployguard"
-  password               = random_password.postgres[0].result
-  db_subnet_group_name   = aws_db_subnet_group.postgres[0].name
-  vpc_security_group_ids = [aws_security_group.postgres[0].id]
-  skip_final_snapshot    = true
-  publicly_accessible    = false
-  tags                   = local.tags
-}
-
-resource "aws_secretsmanager_secret" "postgres" {
-  count = var.managed_postgres_enabled ? 1 : 0
-  name  = "deployguard/${var.project_id}/postgres"
-  tags  = local.tags
-}
-
-resource "aws_secretsmanager_secret_version" "postgres" {
-  count     = var.managed_postgres_enabled ? 1 : 0
-  secret_id = aws_secretsmanager_secret.postgres[0].id
-  secret_string = jsonencode({
-    password = random_password.postgres[0].result
-    url      = "postgresql://deployguard:${random_password.postgres[0].result}@${aws_db_instance.postgres[0].address}:5432/application"
-  })
+resource "aws_efs_mount_target" "database" {
+  for_each        = var.managed_postgres_enabled ? toset(var.public_subnet_ids) : toset([])
+  file_system_id  = aws_efs_file_system.database[0].id
+  subnet_id       = each.value
+  security_groups = [aws_security_group.database[0].id]
 }
 
 resource "aws_lb" "application" {
@@ -200,7 +183,7 @@ data "aws_iam_policy_document" "runtime_secrets" {
     actions = ["secretsmanager:GetSecretValue"]
     resources = distinct(concat(
       [for reference in values(var.secret_references) : split(":", reference)[0] == "arn" ? join(":", slice(split(":", reference), 0, 7)) : reference],
-      var.managed_postgres_enabled ? [aws_secretsmanager_secret.postgres[0].arn] : [],
+      [],
     ))
   }
 }
@@ -212,16 +195,9 @@ resource "aws_iam_role_policy" "runtime_secrets" {
 }
 
 locals {
-  postgres_environment = var.managed_postgres_enabled ? merge(
-    { for key in var.managed_postgres_aliases : key => aws_db_instance.postgres[0].address if contains(["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST"], key) },
-    { for key in var.managed_postgres_aliases : key => "5432" if contains(["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT"], key) },
-    { for key in var.managed_postgres_aliases : key => "deployguard" if contains(["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER"], key) },
-    { for key in var.managed_postgres_aliases : key => "application" if contains(["DB_NAME", "DATABASE_NAME", "POSTGRES_DB", "PGDATABASE"], key) },
-  ) : {}
-  postgres_secrets = var.managed_postgres_enabled ? {
-    for key in var.managed_postgres_aliases : key => "${aws_secretsmanager_secret.postgres[0].arn}:${contains(["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"], key) ? "url" : "password"}::"
-    if contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"], key)
-  } : {}
+  database_port  = var.managed_database_engine == "mysql" ? 3306 : var.managed_database_engine == "mongodb" ? 27017 : 5432
+  database_image = var.managed_database_engine == "mysql" ? "mysql:8" : var.managed_database_engine == "mongodb" ? "mongo:8" : "postgres:16"
+  database_path  = var.managed_database_engine == "mysql" ? "/var/lib/mysql" : var.managed_database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
 }
 
 resource "aws_ecs_task_definition" "application" {
@@ -232,7 +208,7 @@ resource "aws_ecs_task_definition" "application" {
   memory                   = "1024"
   execution_role_arn       = aws_iam_role.execution.arn
 
-  container_definitions = jsonencode([{
+  container_definitions = jsonencode(concat([{
     name      = "application"
     image     = var.image
     essential = true
@@ -241,8 +217,8 @@ resource "aws_ecs_task_definition" "application" {
       hostPort      = var.platform_port
       protocol      = "tcp"
     }]
-    environment = [for key, value in merge(var.environment, local.postgres_environment) : { name = key, value = value }]
-    secrets     = [for key, value in merge(var.secret_references, local.postgres_secrets) : { name = key, valueFrom = value }]
+    environment = [for key, value in var.environment : { name = key, value = value }]
+    secrets     = [for key, value in var.secret_references : { name = key, valueFrom = value }]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -251,7 +227,27 @@ resource "aws_ecs_task_definition" "application" {
         awslogs-stream-prefix = "application"
       }
     }
-  }])
+    }], var.managed_postgres_enabled ? [{
+    name         = "database"
+    image        = local.database_image
+    essential    = true
+    portMappings = [{ containerPort = local.database_port, hostPort = local.database_port, protocol = "tcp" }]
+    mountPoints  = [{ sourceVolume = "database", containerPath = local.database_path, readOnly = false }]
+    environment  = var.managed_database_engine == "mysql" ? [{ name = "MYSQL_DATABASE", value = "application" }, { name = "MYSQL_USER", value = "deployguard" }] : var.managed_database_engine == "mongodb" ? [{ name = "MONGO_INITDB_DATABASE", value = "application" }, { name = "MONGO_INITDB_ROOT_USERNAME", value = "deployguard" }] : [{ name = "POSTGRES_DB", value = "application" }, { name = "POSTGRES_USER", value = "deployguard" }]
+    secrets      = [for key, value in var.secret_references : { name = key, valueFrom = value } if contains(["DB_PASSWORD", "POSTGRES_PASSWORD", "MYSQL_PASSWORD", "MONGO_INITDB_ROOT_PASSWORD"], key)]
+  }] : []))
+
+  dynamic "volume" {
+    for_each = var.managed_postgres_enabled ? [1] : []
+    content {
+      name = "database"
+      efs_volume_configuration {
+        file_system_id     = aws_efs_file_system.database[0].id
+        transit_encryption = "ENABLED"
+        authorization_config { access_point_id = aws_efs_access_point.database[0].id }
+      }
+    }
+  }
 
   tags = local.tags
 }

@@ -129,12 +129,13 @@ export class RailpackDeploymentService {
     const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, environmentName, operationId, environment, secretNames: Object.keys(secretValues).sort() })).digest("hex");
     const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues });
     const tier = await this.databaseTiers.findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } });
+    const engine = tier?.engine || "postgres";
     const managedAliases = tier ? [
-      ...aliasesFor("postgres", "host"), ...aliasesFor("postgres", "port"),
-      ...aliasesFor("postgres", "username"), ...aliasesFor("postgres", "password"),
-      ...aliasesFor("postgres", "database"), ...aliasesFor("postgres", "url"),
+      ...aliasesFor(engine, "host"), ...aliasesFor(engine, "port"),
+      ...aliasesFor(engine, "username"), ...aliasesFor(engine, "password"),
+      ...aliasesFor(engine, "database"), ...aliasesFor(engine, "url"),
     ] : [];
-    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedPostgres: { enabled: Boolean(tier), aliases: [...new Set(managedAliases)].sort() } };
+    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedPostgres: { enabled: Boolean(tier), engine: tier?.engine || null, aliases: [...new Set(managedAliases)].sort() } };
   }
 
   private async reconcile(operation: ProjectPipelineRun) {

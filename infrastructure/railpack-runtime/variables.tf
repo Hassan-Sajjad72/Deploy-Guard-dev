@@ -9,3 +9,4 @@ variable "environment" { type = map(string) }
 variable "secret_references" { type = map(string) }
 variable "managed_postgres_enabled" { type = bool }
 variable "managed_postgres_aliases" { type = list(string) }
+variable "managed_database_engine" { type = string }
