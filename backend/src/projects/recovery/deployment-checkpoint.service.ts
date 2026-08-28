@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { Injectable } from "@nestjs/common";
-import { ProjectDeploymentContract } from "../project-deployment-contract.entity";
 import { ProjectPipelineRun } from "../project-pipeline-run.entity";
 
 export type RecoveryResumePlan = Pick<
@@ -10,22 +9,15 @@ export type RecoveryResumePlan = Pick<
 
 @Injectable()
 export class DeploymentCheckpointService {
-  fingerprints(contract: ProjectDeploymentContract | null, run: ProjectPipelineRun | null) {
-    if (!contract) return {};
-    const source = this.hash([contract.detectionSourceCommit, contract.appRoot]);
-    const build = this.hash([
-      source, contract.dependencyManifest, contract.lockfile, contract.dockerStrategy,
-      contract.dockerTemplate, contract.buildCommand, contract.buildTimeEnvVars,
-    ]);
-    const image = this.hash([build, run?.imageTag, run?.ecrImageUri]);
-    const runtime = this.hash([
-      image, contract.startCommand, contract.port, contract.bindHost,
-      contract.runtimeEnvVars, contract.ecsPlan?.environmentMappings, contract.ecsPlan?.secretMappings,
-    ]);
-    const database = this.hash([contract.ecsPlan?.database]);
-    const storage = this.hash([contract.persistentStorageRequired, contract.ecsPlan?.database?.persistenceEnabled]);
-    const health = this.hash([runtime, contract.healthPath, contract.ecsPlan?.healthCheckPath]);
-    const infrastructure = this.hash([database, storage, health, contract.ecsPlan?.cpu, contract.ecsPlan?.memory]);
+  fingerprints(run: ProjectPipelineRun | null) {
+    if (!run) return {};
+    const source = this.hash([run.repositoryFullName, run.targetBranch, run.commitSha]);
+    const image = this.hash([source, run.imageTag, run.ecrImageUri]);
+    const runtime = this.hash([image, run.generationId, run.taskDefinitionArn, run.githubWorkflowStatus]);
+    const database = this.hash([run.metadata?.databaseEngine || null]);
+    const storage = this.hash([run.metadata?.databaseEfsAccessPointId || null]);
+    const health = this.hash([runtime, run.metadata?.albUrl || null]);
+    const infrastructure = this.hash([run.metadata?.ecsServiceArn || null, run.taskDefinitionArn, health]);
     return { source, build, image, runtime, database, storage, health, infrastructure };
   }
 

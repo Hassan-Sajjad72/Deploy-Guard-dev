@@ -72,7 +72,7 @@ export class DeploymentRecoveryPlanner {
         latestRunStatus: input.run?.status || null,
         isDeploymentJobActive: input.isDeploymentJobActive,
         deploymentId: input.deployment?.id || null,
-        checkpointFingerprints: this.checkpoints.fingerprints(input.contract, input.run),
+        checkpointFingerprints: this.checkpoints.fingerprints(input.run),
         ...developerDetails,
       },
     };
