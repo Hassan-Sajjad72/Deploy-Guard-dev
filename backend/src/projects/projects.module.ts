@@ -13,14 +13,11 @@ import { GithubAppService } from "./github-app.service";
 import { ProjectActivityService } from "./project-activity.service";
 import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.entity";
 import { ProjectDatabaseTier } from "./project-database-tier.entity";
-import { ProjectDeploymentContract } from "./project-deployment-contract.entity";
-import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
 import { ProjectPipelineRun } from "./project-pipeline-run.entity";
 import { GithubActionsService } from "./pipeline/github-actions.service";
-import { ProjectPreflightReport } from "./project-preflight-report.entity";
 import { ProjectServiceBinding } from "./project-service-binding.entity";
 import { ProjectUserActivity } from "./project-user-activity.entity";
 import { Project } from "./project.entity";
@@ -56,8 +53,7 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
   imports: [
     TypeOrmModule.forFeature([
       Project, User, GithubAppInstallation, ProjectEnvironmentVariable,
-      ProjectDeploymentContract, ProjectDatabaseTier, ProjectDetectionProfile,
-      ProjectPreflightReport, ProjectPipelineRun, ProjectPipelineEvent,
+      ProjectDatabaseTier, ProjectPipelineRun, ProjectPipelineEvent,
       ProjectServiceBinding, ProjectConfigurationSnapshot, ProjectUserActivity,
       // Historical infrastructure/storage records are not part of ordinary
       // project state authority. Current routing uses generation records.

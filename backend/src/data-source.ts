@@ -29,8 +29,6 @@ import { ProjectBackupRecord } from "./storage/project-backup-record.entity";
 import { ProjectPersistentStorage } from "./storage/project-persistent-storage.entity";
 import { ProjectStorageEvent } from "./storage/project-storage-event.entity";
 import { ProjectStorageRestoreRequest } from "./storage/project-storage-restore-request.entity";
-import { ProjectDetectionProfile } from "./projects/project-detection-profile.entity";
-import { ProjectDeploymentContract } from "./projects/project-deployment-contract.entity";
 import { ProjectDatabaseTier } from "./projects/project-database-tier.entity";
 import { ProjectEnvironmentVariable } from "./projects/project-environment-variable.entity";
 import { ProjectPipelineEvent } from "./projects/project-pipeline-event.entity";
@@ -38,7 +36,6 @@ import { ProjectUserActivity } from "./projects/project-user-activity.entity";
 import { ProjectPipelineRun } from "./projects/project-pipeline-run.entity";
 import { ProjectDeploymentGeneration } from "./projects/project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./projects/project-environment-route.entity";
-import { ProjectPreflightReport } from "./projects/project-preflight-report.entity";
 import { Project } from "./projects/project.entity";
 import { User } from "./users/user.entity";
 import { AiAnalysisSession } from "./ai-troubleshooting/ai-analysis-session.entity";
@@ -129,10 +126,7 @@ export default new DataSource({
     AuditLog,
     Project,
     ProjectEnvironmentVariable,
-    ProjectDetectionProfile,
-    ProjectDeploymentContract,
     ProjectDatabaseTier,
-    ProjectPreflightReport,
     ProjectPipelineRun,
     ProjectDeploymentGeneration,
     ProjectEnvironmentRoute,

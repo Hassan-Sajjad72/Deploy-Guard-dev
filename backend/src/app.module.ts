@@ -33,14 +33,11 @@ import { ProjectStableRelease } from "./orchestration/project-stable-release.ent
 import { GithubAppInstallation } from "./projects/github-app-installation.entity";
 import { ProjectConfigurationSnapshot } from "./projects/project-configuration-snapshot.entity";
 import { ProjectDatabaseTier } from "./projects/project-database-tier.entity";
-import { ProjectDeploymentContract } from "./projects/project-deployment-contract.entity";
-import { ProjectDetectionProfile } from "./projects/project-detection-profile.entity";
 import { ProjectEnvironmentVariable } from "./projects/project-environment-variable.entity";
 import { ProjectPipelineEvent } from "./projects/project-pipeline-event.entity";
 import { ProjectPipelineRun } from "./projects/project-pipeline-run.entity";
 import { ProjectDeploymentGeneration } from "./projects/project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./projects/project-environment-route.entity";
-import { ProjectPreflightReport } from "./projects/project-preflight-report.entity";
 import { ProjectServiceBinding } from "./projects/project-service-binding.entity";
 import { ProjectUserActivity } from "./projects/project-user-activity.entity";
 import { Project } from "./projects/project.entity";
@@ -81,9 +78,9 @@ import { ObservabilityModule } from "./observability/observability.module";
         // entity does not activate its retired mutation provider.
         entities: [
           User, AuditLog, Project, GithubAppInstallation, ProjectEnvironmentVariable,
-          ProjectDetectionProfile, ProjectDeploymentContract, ProjectDatabaseTier,
+          ProjectDatabaseTier,
           ProjectServiceBinding, ProjectConfigurationSnapshot,
-          ProjectPreflightReport, ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
+          ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
           ProjectPipelineEvent, ProjectUserActivity,
           ProjectCostEstimate,
           ProjectCostResourceBreakdown, ProjectCostSettings,
