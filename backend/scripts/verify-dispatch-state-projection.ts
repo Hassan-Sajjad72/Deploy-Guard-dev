@@ -101,7 +101,7 @@ async function verifyTerminalGithubFailure() {
       { name: "Install Terraform", status: "completed", conclusion: "skipped" },
     ],
   }] });
-  githubActions.getJobLog = async () => "Railpack 0.38.0\nfailed to create cache directory:\nmkdir /tmp/railpack: not a directory\ntoken=ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+  githubActions.getJobLog = async () => "Railpack 0.38.0\nERRO BUILDKIT_HOST environment variable is not set.\ntoken=ghp_abcdefghijklmnopqrstuvwxyz1234567890";
   const githubEvidence = await githubActions.getTerminalFailureEvidence("example/application", "123", "ignored");
   assert.ok(githubEvidence);
   assert.equal(githubEvidence.failedStage, "build_and_push_immutable_railpack_image");
@@ -116,7 +116,7 @@ async function verifyTerminalGithubFailure() {
   service.sanitizer = new LogSanitizerService();
   const evidence = await service.terminalFailureEvidence("example/application", "123", "ignored");
   assert.equal(evidence.failedStage, "build_and_push_immutable_railpack_image");
-  assert.match(evidence.safeLog, /mkdir \/tmp\/railpack/);
+  assert.match(evidence.safeLog, /BUILDKIT_HOST environment variable is not set/);
   assert.doesNotMatch(evidence.safeLog, /ghp_/);
   const failedRun = {
     id: "22222222-2222-4222-8222-222222222222", projectId: project.id, githubWorkflowRunId: "123",
@@ -131,7 +131,7 @@ async function verifyTerminalGithubFailure() {
   assert.equal(persisted.status, PipelineRunStatus.FAILED);
   assert.equal(persisted.metadata.workflowConclusion, "failure");
   assert.equal(persisted.metadata.failedStage, "build_and_push_immutable_railpack_image");
-  assert.match(persisted.metadata.safeLog, /mkdir \/tmp\/railpack/);
+  assert.match(persisted.metadata.safeLog, /BUILDKIT_HOST environment variable is not set/);
   assert.doesNotMatch(persisted.metadata.safeLog, /ghp_/);
   assert.equal(isAiTroubleshootingEligible(persisted), true, "terminal GitHub failure with sanitized evidence must be eligible");
   return failedRun;
@@ -157,5 +157,8 @@ void (async () => {
   assert.match(workflow, /name: Install Terraform[\s\S]*?steps\.image\.outputs\.image != ''/);
   assert.match(workflow, /name: Materialize release runtime[\s\S]*?steps\.image\.outputs\.image != ''/);
   assert.match(workflow, /name: Publish verified release result[\s\S]*?if: success\(\) && hashFiles/);
+  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build --name/);
+  assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
+  assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
   console.log("DISPATCH_STATE_PROJECTION=PASS");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

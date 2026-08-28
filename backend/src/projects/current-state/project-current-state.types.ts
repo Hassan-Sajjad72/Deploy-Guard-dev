@@ -191,6 +191,8 @@ export type DeveloperProjectCurrentState = {
     releaseRevision: string | null;
     commit: string | null;
     occurredAt: string | null;
+    startedAt?: string | null;
+    completedAt?: string | null;
     workflowStages?: Array<{ key: string; status: "passed" | "failed" | "running" | "skipped" }>;
   } | null;
   stableRelease: {

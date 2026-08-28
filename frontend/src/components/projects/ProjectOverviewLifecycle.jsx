@@ -29,6 +29,14 @@ function shortCommit(value) {
   return value ? String(value).slice(0, 12) : "Unavailable";
 }
 
+function duration(startedAt, completedAt) {
+  if (!startedAt || !completedAt) return "Unavailable";
+  const milliseconds = Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
+  if (milliseconds < 1_000) return "Under 1 second";
+  const seconds = Math.round(milliseconds / 1_000);
+  return seconds < 60 ? `${seconds} seconds` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 function summaryTone(status) {
   if (["LIVE", "READY", "DESTROYED"].includes(status)) return "success";
   if (status === "FAILED") return "danger";
@@ -65,6 +73,11 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   });
   const latest = currentState.latestAttempt;
   const health = authority.applicationHealth || {};
+  const runtimeNotDeployed = currentState?.developerState === "failed_application" && currentState?.progress?.phase === "build";
+  const healthValue = runtimeNotDeployed ? "Not available" : health.status || "Unavailable";
+  const healthDetail = runtimeNotDeployed
+    ? "Runtime was not deployed."
+    : `${health.source?.replaceAll("_", " ") || "No health source"} · ${formatDate(health.observedAt)}`;
   const reconciliation = authority.reconciliation || {};
   const generationState = currentState.generationState || { generations: [] };
 
@@ -199,10 +212,10 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
     </Card>
 
     <section aria-label="Deployment summary" className="overview-summary-grid">
-      <MetricCard detail={authority.reason || currentState.developerMessage} label="Current state" tone={summaryTone(state)} value={state.replaceAll("_", " ")} />
+      <MetricCard detail={copy.message} label="Current state" tone={summaryTone(state)} value={state.replaceAll("_", " ")} />
       <MetricCard detail={`Commit ${shortCommit(latest?.commit || currentState.commit)}`} label="Latest operation" tone={latest?.status === "failed_application" ? "danger" : "neutral"} value={latest ? `Attempt ${latest.attempt || "—"}` : "No deployment yet"} />
-      <MetricCard detail={`${health.source?.replaceAll("_", " ") || "No health source"} · ${formatDate(health.observedAt)}`} label="Application health" tone={health.status === "healthy" ? "success" : health.status === "failed" ? "danger" : "warning"} value={health.status || "Unavailable"} />
-      <MetricCard detail="GitHub Actions duration is available when synchronized on Pipeline." label="Last deployment duration" value="Unavailable" />
+      <MetricCard detail={latest?.startedAt && latest?.completedAt ? `${formatDate(latest.startedAt)} to ${formatDate(latest.completedAt)}` : "A completed synchronized run is required."} label="Last deployment duration" value={duration(latest?.startedAt, latest?.completedAt)} />
+      <MetricCard detail={healthDetail} label="Application health" tone={runtimeNotDeployed ? "neutral" : health.status === "healthy" ? "success" : health.status === "failed" ? "danger" : "warning"} value={healthValue} />
     </section>
 
     <section className="overview-evidence-line"><span>Source: {reconciliation.source?.replaceAll("_", " ") || "unavailable"}</span><span>Last updated: {formatDate(reconciliation.lastReconciledAt)}</span><StatusChip status={reconciliation.freshness || "unavailable"}>{reconciliation.freshness || "Unavailable"}</StatusChip></section>

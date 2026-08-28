@@ -233,6 +233,8 @@ export class ProjectCurrentStateService {
       releaseRevision: null,
       commit: latestCommit,
       occurredAt: (latest.completedAt || latest.failedAt || latest.updatedAt).toISOString(),
+      startedAt: (latest.startedAt || latest.createdAt).toISOString(),
+      completedAt: latest.completedAt ? latest.completedAt.toISOString() : latest.failedAt ? latest.failedAt.toISOString() : null,
       workflowStages: Array.isArray(latestMetadata.workflowStages) ? latestMetadata.workflowStages
         .filter((stage): stage is Record<string, unknown> => Boolean(stage) && typeof stage === "object")
         .map((stage) => ({ key: String(stage.key || ""), status: ["passed", "failed", "running", "skipped"].includes(String(stage.status)) ? String(stage.status) as "passed" | "failed" | "running" | "skipped" : "skipped" })) : [],
@@ -447,7 +449,7 @@ export class ProjectCurrentStateService {
 
   private conciseFailureMessage(errorMessage: unknown) {
     const lines = String(errorMessage || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    const diagnosticIndex = lines.findIndex((line) => /mkdir\s+\/tmp\/railpack|failed to create cache|unable to resolve|\berror\b/i.test(line));
+    const diagnosticIndex = lines.findIndex((line) => /buildkit|mkdir\s+\/tmp\/railpack|failed to create cache|unable to resolve|\berror\b/i.test(line));
     if (diagnosticIndex >= 0) return lines.slice(diagnosticIndex, diagnosticIndex + 2).join(" ").slice(0, 320);
     const railpackIndex = lines.findIndex((line) => /railpack/i.test(line));
     return (railpackIndex >= 0 ? lines[railpackIndex] : lines[0] || "GitHub Actions concluded failure.").slice(0, 320);

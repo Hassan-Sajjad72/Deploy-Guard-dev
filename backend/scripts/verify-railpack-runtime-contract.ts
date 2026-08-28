@@ -22,6 +22,14 @@ assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f
 assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials@0a3a7f8c8f8b37f3c7d2b23fe4cdd20b3b8a2746/);
 assert.match(workflow, /control_plane_sha/);
 assert.match(workflow, /railpack build --name/);
+assert.match(workflow, /BUILDKIT_IMAGE: moby\/buildkit:v0\.16\.0@sha256:bc1fe18224dbcb92599139db0c745696c48ba9fd4ac24038d1fa81fdd7dcac27/);
+assert.match(workflow, /docker version --format/);
+assert.match(workflow, /docker run --rm --privileged --detach --name "\$BUILDKIT_CONTAINER" "\$BUILDKIT_IMAGE"/);
+assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
+assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build --name/);
+assert.match(workflow, /Railpack Build prerequisite failed: BuildKit worker did not become ready\./);
+assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*?docker rm --force "\$BUILDKIT_CONTAINER"/);
+assert.doesNotMatch(workflow, /moby\/buildkit:latest/);
 assert.match(workflow, /\^\(deploy\|rollback\|destroy\)\$/);
 assert.match(workflow, /key=projects\/\$PROJECT_ID\/\$ENVIRONMENT_NAME\/runtime\/terraform\.tfstate/);
 assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);

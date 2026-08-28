@@ -5,7 +5,7 @@ import { overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentatio
 
 const failure = {
   developerState: "failed_application",
-  developerMessage: "mkdir /tmp/railpack: not a directory",
+  developerMessage: "BuildKit was unavailable to the Railpack builder.",
   progress: { phase: "build" },
   latestAttempt: {
     workflowRunId: "33212514809",
@@ -31,12 +31,19 @@ assert.deepEqual(deploymentPhasePresentation(failure).map(({ key, status }) => [
 ]);
 const overview = overviewLifecycleCopy(failure);
 assert.equal(overview.title, "Railpack Build failed");
-assert.equal(overview.message, "mkdir /tmp/railpack: not a directory");
+assert.equal(overview.message, "BuildKit was unavailable to the Railpack builder.");
 assert.ok(overview.message.length < 320);
 const infrastructure = readFileSync(new URL("../src/pages/ProjectInfrastructure.jsx", import.meta.url), "utf8");
 const pipeline = readFileSync(new URL("../src/components/projects/PipelineExecution.jsx", import.meta.url), "utf8");
+const overviewComponent = readFileSync(new URL("../src/components/projects/ProjectOverviewLifecycle.jsx", import.meta.url), "utf8");
+const troubleshooting = readFileSync(new URL("../src/pages/ProjectTroubleshooting.jsx", import.meta.url), "utf8");
 assert.match(infrastructure, /Runtime infrastructure not provisioned/);
 assert.match(infrastructure, /Railpack Build/);
 assert.match(pipeline, /Not created — deployment failed before runtime generation\./);
 assert.match(pipeline, /details\.createdAt \|\| details\.startedAt \|\| details\.failedAt/);
+assert.match(overviewComponent, /detail=\{copy\.message\}/, "Overview must use the concise canonical message, never raw evidence.");
+assert.match(overviewComponent, /value=\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/);
+assert.match(overviewComponent, /Runtime was not deployed\./);
+assert.match(troubleshooting, /Not created — deployment failed before runtime generation\./);
+assert.match(troubleshooting, /operationTimestamp\(operation\)/);
 console.log("RAILPACK_FAILURE_PRESENTATION=PASS");

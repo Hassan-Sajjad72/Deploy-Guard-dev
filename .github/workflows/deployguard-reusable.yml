@@ -50,6 +50,8 @@ jobs:
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
       ROLLBACK_IMAGE_DIGEST: ${{ inputs.rollback_image_digest }}
+      BUILDKIT_CONTAINER: deployguard-buildkit-${{ inputs.deployment_operation_id }}
+      BUILDKIT_IMAGE: moby/buildkit:v0.16.0@sha256:bc1fe18224dbcb92599139db0c745696c48ba9fd4ac24038d1fa81fdd7dcac27
     steps:
       - name: Checkout exact application source
         if: inputs.deployment_action == 'deploy'
@@ -96,7 +98,19 @@ jobs:
           repository="deployguard-${PROJECT_ID}"
           registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           image="${registry}/${repository}:${IMAGE_TAG}"
-          railpack build --name "$image" .
+          docker version --format '{{.Server.Version}}' >/dev/null || { echo 'Railpack Build prerequisite failed: Docker is unavailable.' >&2; exit 1; }
+          docker run --rm --privileged --detach --name "$BUILDKIT_CONTAINER" "$BUILDKIT_IMAGE" >/dev/null || { echo 'Railpack Build prerequisite failed: BuildKit could not start.' >&2; exit 1; }
+          ready=false
+          for attempt in {1..30}; do
+            if docker exec "$BUILDKIT_CONTAINER" buildctl debug workers >/dev/null 2>&1; then ready=true; break; fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            echo 'Railpack Build prerequisite failed: BuildKit worker did not become ready.' >&2
+            docker logs "$BUILDKIT_CONTAINER" --tail 100 >&2 || true
+            exit 1
+          fi
+          BUILDKIT_HOST="docker-container://${BUILDKIT_CONTAINER}" railpack build --name "$image" .
           printf 'image=%s\nrepository=%s\nregistry=%s\n' "$image" "$repository" "$registry" >> "$GITHUB_OUTPUT"
       - name: Publish immutable image to ECR
         if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.image != ''
@@ -176,3 +190,9 @@ jobs:
           path: terraform/deployguard-result.json
           if-no-files-found: error
           retention-days: 30
+      - name: Clean up Railpack BuildKit daemon
+        if: always() && inputs.deployment_action == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker rm --force "$BUILDKIT_CONTAINER" >/dev/null 2>&1 || true
