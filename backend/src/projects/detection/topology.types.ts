@@ -1,4 +1,4 @@
-import type { RepositoryEvidence } from "./repository-evidence.types";
+type LegacyEvidence = Record<string, unknown>;
 
 export const TOPOLOGY_ANALYZER_VERSION = "topology-detection-v5" as const;
 export const TOPOLOGY_SCHEMA_VERSION = 3 as const;
@@ -27,15 +27,15 @@ export type TopologyArtifact = {
 };
 
 export type TopologyRelationship =
-  | { kind: "BUILDS_INTO"; from: string; to: string; evidence: RepositoryEvidence[] }
-  | { kind: "SERVES"; from: string; to: string; evidence: RepositoryEvidence[] }
-  | { kind: "USES_DATABASE"; from: string; to: string; evidence: RepositoryEvidence[] }
-  | { kind: "WORKSPACE_MEMBER" | "SHARES_ROOT"; from: string; to: string; evidence: RepositoryEvidence[] }
+  | { kind: "BUILDS_INTO"; from: string; to: string; evidence: LegacyEvidence[] }
+  | { kind: "SERVES"; from: string; to: string; evidence: LegacyEvidence[] }
+  | { kind: "USES_DATABASE"; from: string; to: string; evidence: LegacyEvidence[] }
+  | { kind: "WORKSPACE_MEMBER" | "SHARES_ROOT"; from: string; to: string; evidence: LegacyEvidence[] }
   | {
       kind: "CALLS";
       from: string;
       to: string;
-      evidence: RepositoryEvidence[];
+      evidence: LegacyEvidence[];
       mode: "same-origin" | "build-time-url";
       pathPrefix: string;
       stripPathPrefix: boolean;
@@ -78,7 +78,7 @@ export type TopologyComponent = {
   healthCheckMode: "http" | "tcp";
   databaseType: "postgres" | "mysql" | "mongodb" | null;
   capabilities: string[];
-  evidence: RepositoryEvidence[];
+  evidence: LegacyEvidence[];
   environment: TopologyEnvironmentVariable[];
   profile: Record<string, any>;
 };
@@ -90,7 +90,7 @@ export type CanonicalTopology = {
   analysisState: TopologyAnalysisState;
   status: "supported" | "blocked";
   confidence: "proven" | "bounded" | "unresolved";
-  evidence: RepositoryEvidence[];
+  evidence: LegacyEvidence[];
   applicationUnits: Array<{
     id: string;
     root: string;
@@ -105,7 +105,7 @@ export type CanonicalTopology = {
   artifacts: TopologyArtifact[];
   databases: Array<{ id: string; engine: "postgres" | "mysql" | "mongodb"; ownerComponentId: string }>;
   managedDatabase: null | { engine: "postgres" | "mysql" | "mongodb"; ownerComponentId: "frontend" | "backend" | "application" };
-  unresolvedEvidence: RepositoryEvidence[];
+  unresolvedEvidence: LegacyEvidence[];
   blockers: string[];
   warnings: string[];
 };
