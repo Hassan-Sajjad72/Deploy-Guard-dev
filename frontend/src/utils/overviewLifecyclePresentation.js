@@ -32,6 +32,15 @@ export function latestOverviewOperationType(currentState) {
   return ["deploy", "destroy", "rollback"].includes(type) ? type : "deploy";
 }
 
+function deploymentFailureCopy(phase, workflowRunId) {
+  if (!workflowRunId) return ["Deployment could not start", "DeployGuard could not create a GitHub Actions run."];
+  if (phase === "source") return ["Source / Dispatch failed", "Deployment stopped before the application build started."];
+  if (phase === "build") return ["Railpack Build failed", "Build stopped before image publication. View Pipeline for technical evidence."];
+  if (phase === "deploy") return ["Deploy Runtime failed", "Runtime deployment did not complete. View Pipeline for technical evidence."];
+  if (phase === "verify") return ["Verification failed", "Release verification did not complete. View Pipeline for technical evidence."];
+  return ["Deployment failed", "The deployment did not complete. View Pipeline for technical evidence."];
+}
+
 export function overviewLifecycleCopy(currentState) {
   const canonicalState = canonicalOverviewState(currentState);
   const state = latestOperationFailed(currentState) ? "FAILED" : canonicalState;
@@ -46,9 +55,7 @@ export function overviewLifecycleCopy(currentState) {
       ? ["Destroy failed", "Review the failed pipeline evidence before retrying this destroy operation."]
       : operationType === "rollback"
         ? ["Rollback failed", "Review the failed pipeline evidence before retrying this rollback."]
-        : currentState?.latestAttempt?.workflowRunId
-          ? [failedPhase === "build" ? "Railpack Build failed" : "Deployment failed", "GitHub Actions reported a failed deployment. Review the persisted pipeline evidence before retrying."]
-          : ["Deployment could not start", "DeployGuard failed while starting the GitHub Actions deployment. No GitHub Actions run was created."],
+        : deploymentFailureCopy(failedPhase, currentState?.latestAttempt?.workflowRunId),
     LIVE: ["Application is live", "The latest release passed its verified health check."],
     DESTROYING: ["Infrastructure is being destroyed", "Destroy is in progress. Application infrastructure is being removed and may become unavailable during cleanup."],
     DESTROYED: ["Infrastructure destroyed", "The previous deployment history is retained and this project can deploy again."],
@@ -56,12 +63,15 @@ export function overviewLifecycleCopy(currentState) {
   };
   const [title, fallbackMessage] = copy[state] || ["Deployment status", "Current deployment state is unavailable."];
   const runtimeStillLive = canonicalState === "LIVE" && state === "FAILED";
-  const message = state === "DESTROYING"
-    ? fallbackMessage
-    : runtimeStillLive
-      ? `${fallbackMessage} The previously verified application remains live.`
-      : currentState?.developerMessage || fallbackMessage;
+  const message = runtimeStillLive
+    ? `${fallbackMessage} The previously verified application remains live.`
+    : fallbackMessage;
   return { title, message };
+}
+
+/** Compact canonical copy for Dashboard and Overview; never renders run evidence. */
+export function conciseProjectSummary(currentState) {
+  return overviewLifecycleCopy(currentState).message;
 }
 
 export function overviewLifecycleActions(currentState, canManage = false) {
