@@ -146,7 +146,7 @@ export type ProjectStateAuthority = {
   reconciliation: {
     lastReconciledAt: string | null;
     freshness: "current" | "stale" | "unavailable";
-    source: "github_actions" | "detection_preflight" | "unavailable";
+    source: "github_actions" | "unavailable";
   };
 };
 

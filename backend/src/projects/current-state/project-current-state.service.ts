@@ -9,10 +9,7 @@ import { CostEstimateSource, CostEstimateStatus, ProjectCostEstimate } from "../
 import { getObservabilityConfig } from "../../observability/observability.config";
 import { ProjectStableRelease, StableReleaseStatus } from "../../orchestration/project-stable-release.entity";
 import { User } from "../../users/user.entity";
-import { DetectionStatus, ProjectDetectionProfile } from "../project-detection-profile.entity";
-import { ProjectDeploymentContract } from "../project-deployment-contract.entity";
 import { PipelineRunStatus, ProjectPipelineRun } from "../project-pipeline-run.entity";
-import { PreflightValidationStatus, ProjectPreflightReport } from "../project-preflight-report.entity";
 import { Project } from "../project.entity";
 import { ProjectEnvironmentRoute } from "../project-environment-route.entity";
 import { ProjectsService } from "../projects.service";
@@ -33,12 +30,6 @@ type LiveAwsEvidence = {
 @Injectable()
 export class ProjectCurrentStateService {
   constructor(
-    @InjectRepository(ProjectDetectionProfile)
-    private readonly profileRepository: Repository<ProjectDetectionProfile>,
-    @InjectRepository(ProjectDeploymentContract)
-    private readonly contractRepository: Repository<ProjectDeploymentContract>,
-    @InjectRepository(ProjectPreflightReport)
-    private readonly preflightRepository: Repository<ProjectPreflightReport>,
     @InjectRepository(ProjectPipelineRun)
     private readonly runRepository: Repository<ProjectPipelineRun>,
     @InjectRepository(ProjectCostEstimate)
@@ -57,19 +48,15 @@ export class ProjectCurrentStateService {
     projectId: string,
     options: { refreshCloudState?: boolean } = {},
   ): Promise<DeveloperProjectCurrentState> {
-    // GitHub Actions runs, repository detection and structural pre-flight are
-    // the only ordinary product authority.
+    // GitHub Actions release records are the deployment authority.  Railpack
+    // interprets source only inside the build, never in this read model.
     const project = await this.projectsService.getProjectEntityForView(user, projectId);
     const environmentName = canonicalEnvironmentName(project);
-    const [profile, preflight, route] = await Promise.all([
-      this.profileRepository.findOne({ where: { projectId } }),
-      this.preflightRepository.findOne({ where: { projectId } }),
-      this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } }),
-    ]);
+    const route = await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } });
     const projected = await this.withGithubActionsState(
       projectId,
       environmentName,
-      this.githubActionsReadinessState(project, profile, preflight),
+      this.githubActionsReadinessState(project),
       route?.liveGenerationId || null,
     );
     const authoritativeGenerationId = route?.liveGenerationId || null;
@@ -135,7 +122,7 @@ export class ProjectCurrentStateService {
       : null;
     const generations = await this.generationRepository.find({ where: { projectId, environmentName }, order: { ordinal: "ASC" } });
     return {
-      ...this.withStateAuthority(projectId, environmentName, projectedWithCost, profile, preflight, awsEvidence),
+      ...this.withStateAuthority(projectId, environmentName, projectedWithCost, awsEvidence),
       generationState: {
         liveGenerationId: route?.liveGenerationId || null,
         candidateGenerationId: route?.candidateGenerationId || null,
@@ -151,19 +138,17 @@ export class ProjectCurrentStateService {
 
   private githubActionsReadinessState(
     project: Project,
-    profile: ProjectDetectionProfile | null,
-    preflight: ProjectPreflightReport | null,
   ): DeveloperProjectCurrentState {
     const base = {
       repository: project.repositoryFullName || null,
       branch: project.targetBranch || null,
-      commit: profile?.commitSha || null,
+      commit: null,
       latestAttempt: null,
       stableRelease: null,
       stableUrl: null,
       estimatedCost: null,
       missingConfiguration: [],
-      advisories: preflight?.warnings || profile?.warnings || [],
+      advisories: [],
       applicationError: null,
       canRetry: false,
       // Replaced before this response is returned. Keeping the readiness
@@ -180,37 +165,12 @@ export class ProjectCurrentStateService {
         applicationError: { category: "repository", message: "Choose an accessible repository and branch to continue." },
       };
     }
-    if (!profile) {
-      return {
-        ...base,
-        developerState: "configuration_required",
-        developerAction: "none",
-        developerMessage: "Repository analysis has not completed yet.",
-        progress: { percentage: 0, phase: null, label: "Analyzing repository" },
-      };
-    }
-    if (profile.detectionStatus !== DetectionStatus.SUCCESS || !preflight
-      || ![PreflightValidationStatus.PASSED, PreflightValidationStatus.PASSED_WITH_WARNINGS].includes(preflight.validationStatus as PreflightValidationStatus)) {
-      const message = profile.detectionStatus !== DetectionStatus.SUCCESS
-        ? "Repository analysis found a structural deployment blocker."
-        : "Deployment pre-flight found a structural deployment blocker.";
-      return {
-        ...base,
-        developerState: "unsupported",
-        developerAction: "none",
-        developerMessage: message,
-        progress: { percentage: 20, phase: "analyze", label: "Repository needs attention" },
-        applicationError: { category: "repository", message },
-      };
-    }
     return {
       ...base,
       developerState: "ready",
       developerAction: "deploy",
-      developerMessage: "Repository analysis and deployment pre-flight are complete. No deployment has started yet.",
-      // Analyze and Prepare are the only two completed lifecycle phases. This
-      // is a five-phase product progress value, never a legacy stage count.
-      progress: { percentage: 40, phase: "prepare", label: "Ready to Deploy" },
+      developerMessage: "Repository and branch are ready to deploy.",
+      progress: { percentage: 0, phase: null, label: "Ready to Deploy" },
     };
   }
 
@@ -561,8 +521,6 @@ export class ProjectCurrentStateService {
     projectId: string,
     environmentName: string,
     projected: DeveloperProjectCurrentState,
-    profile: ProjectDetectionProfile | null,
-    preflight: ProjectPreflightReport | null,
     awsEvidence: LiveAwsEvidence | null,
   ): DeveloperProjectCurrentState {
     const latest = projected.latestAttempt;
@@ -571,8 +529,6 @@ export class ProjectCurrentStateService {
     const isActive = Boolean(latest && latest.outcome === null);
     const operationType = latest?.operationType || "deploy";
     const observedAt = latest?.occurredAt
-      || profile?.updatedAt?.toISOString()
-      || preflight?.updatedAt?.toISOString()
       || null;
     const observedMs = observedAt ? Date.parse(observedAt) : Number.NaN;
     const freshness = !observedAt
@@ -643,7 +599,7 @@ export class ProjectCurrentStateService {
       reconciliation: {
         lastReconciledAt: observedAt,
         freshness,
-        source: latest ? "github_actions" : profile || preflight ? "detection_preflight" : "unavailable",
+        source: latest ? "github_actions" : "unavailable",
       },
     };
     const resourceStatus = authority.infrastructure.status === "active"
@@ -773,15 +729,8 @@ export class ProjectCurrentStateService {
     user: User,
     projectId: string,
   ) {
-    const [currentState, deploymentContract] = await Promise.all([
-      // Detailed infrastructure inspection is an explicit, privileged surface.
-      // It may enrich the persisted projection with read-only AWS evidence.
-      this.getCurrentState(user, projectId, { refreshCloudState: true }),
-      this.contractRepository.findOne({ where: { projectId } }),
-    ]);
-    return {
-      ...currentState,
-      deploymentContract,
-    };
+    // Detailed infrastructure inspection is an explicit, privileged surface.
+    // It may enrich the persisted projection with read-only AWS evidence.
+    return this.getCurrentState(user, projectId, { refreshCloudState: true });
   }
 }
