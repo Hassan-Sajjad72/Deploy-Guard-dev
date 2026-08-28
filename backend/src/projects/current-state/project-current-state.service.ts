@@ -16,8 +16,12 @@ import { ProjectsService } from "../projects.service";
 import { DeveloperProjectCurrentState, ProjectStateAuthority } from "./project-current-state.types";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "../project-deployment-generation.entity";
 import { canonicalEnvironmentName } from "../canonical-environment";
-import { retryOperationEligibility } from "../github-actions-operation-contract";
 import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from "../pipeline/github-actions-stage-presentation";
+
+function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" | "commitSha">) {
+  const inputs = operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined;
+  return Boolean(inputs && /^[0-9a-f]{40}$/i.test(String(operation.commitSha || "")) && typeof inputs.deployment_operation_id === "string");
+}
 
 
 type LiveAwsEvidence = {
@@ -255,11 +259,7 @@ export class ProjectCurrentStateService {
         stableRelease: null,
         stableUrl: null,
         applicationError: { category: "runtime", message: "AWS runtime deletion was verified; remaining DeployGuard cleanup is retryable." },
-        canRetry: retryOperationEligibility(latest, {
-          id: projectId,
-          repositoryFullName: projected.repository || "",
-          targetBranch: projected.branch || "",
-        }) !== "ineligible",
+        canRetry: retryOperationEligible(latest),
       };
     }
     if (latest.status === PipelineRunStatus.COMPLETED) {
@@ -352,11 +352,7 @@ export class ProjectCurrentStateService {
           stableRelease,
           stableUrl,
           applicationError: null,
-          canRetry: latest.status === PipelineRunStatus.FAILED && retryOperationEligibility(latest, {
-            id: projectId,
-            repositoryFullName: projected.repository || "",
-            targetBranch: projected.branch || "",
-          }) !== "ineligible",
+          canRetry: latest.status === PipelineRunStatus.FAILED && retryOperationEligible(latest),
         };
       }
       return {
@@ -369,11 +365,7 @@ export class ProjectCurrentStateService {
         stableRelease,
         stableUrl,
         applicationError: { category, message: failureMessage },
-        canRetry: latest.status === PipelineRunStatus.FAILED && retryOperationEligibility(latest, {
-          id: projectId,
-          repositoryFullName: projected.repository || "",
-          targetBranch: projected.branch || "",
-        }) !== "ineligible",
+        canRetry: latest.status === PipelineRunStatus.FAILED && retryOperationEligible(latest),
       };
     }
 

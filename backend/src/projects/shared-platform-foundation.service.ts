@@ -1,9 +1,7 @@
 import { Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { DescribeClustersCommand, ECSClient } from "@aws-sdk/client-ecs";
-import { GithubActionsRuntimeConfiguration } from "./github-actions-operation-contract";
-
-type SharedFoundation = GithubActionsRuntimeConfiguration["platformFoundation"];
+type SharedFoundation = { ecsClusterArn: string; ecsClusterName: string };
 type EcsSender = { send(command: unknown, options?: { abortSignal?: AbortSignal }): Promise<any> };
 
 export type SharedEcsClusterRecord = {
