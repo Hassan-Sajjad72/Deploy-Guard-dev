@@ -16,6 +16,7 @@ import { Project } from "./project.entity";
 import { RepositorySourceService } from "./repository-source.service";
 import { DEPLOYGUARD_PLATFORM_PORT } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
+import { aliasesFor } from "./configuration-ownership";
 import { immutableRailpackDispatchFingerprint, immutableRailpackImageTag, RailpackRuntimeConfiguration, RailpackWorkflowInputs, runtimeReferencesBase64 } from "./railpack-workflow-contract";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
@@ -122,7 +123,12 @@ export class RailpackDeploymentService {
     const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, environmentName, operationId, environment, secretNames: Object.keys(secretValues).sort() })).digest("hex");
     const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues });
     const tier = await this.databaseTiers.findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } });
-    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedPostgres: { enabled: Boolean(tier), aliases: [] } };
+    const managedAliases = tier ? [
+      ...aliasesFor("postgres", "host"), ...aliasesFor("postgres", "port"),
+      ...aliasesFor("postgres", "username"), ...aliasesFor("postgres", "password"),
+      ...aliasesFor("postgres", "database"), ...aliasesFor("postgres", "url"),
+    ] : [];
+    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedPostgres: { enabled: Boolean(tier), aliases: [...new Set(managedAliases)].sort() } };
   }
 
   private required(key: string) { const value = this.config.get<string>(key, "").trim(); if (!value) throw new ServiceUnavailableException(`Platform configuration is missing: ${key}.`); return value; }
