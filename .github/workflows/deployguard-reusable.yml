@@ -77,6 +77,7 @@ jobs:
           railpack --version
       - name: Build and push immutable Railpack image
         if: inputs.deployment_action == 'deploy'
+        id: image
         shell: bash
         run: |
           set -euo pipefail
@@ -90,4 +91,6 @@ jobs:
           docker push "$image"
           digest="$(aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$IMAGE_TAG" --query 'imageDetails[0].imageDigest' --output text)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'ECR did not return an immutable image digest.' >&2; exit 1; }
+          immutable_image="${registry}/${repository}@${digest}"
+          printf 'image=%s\n' "$immutable_image" >> "$GITHUB_OUTPUT"
           printf 'DEPLOYGUARD_RELEASE_ARTIFACT={"sourceSha":"%s","imageUri":"%s","imageDigest":"%s"}\n' "$SOURCE_SHA" "${registry}/${repository}" "$digest"
