@@ -9,6 +9,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { EntityManager, Not, Repository } from "typeorm";
 import { DataSource } from "typeorm";
 import { ConfigService } from "@nestjs/config";
+import { createHash } from "crypto";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { User, UserRole } from "../users/user.entity";
 import { CreateEnvVarDto } from "./dto/create-env-var.dto";
@@ -20,14 +21,11 @@ import { UpdateRepositoryDto } from "./dto/update-repository.dto";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { Project, ProjectStatus, ProjectVisibility } from "./project.entity";
 import { UsersService } from "../users/users.service";
-import { DeploymentContractService } from "./deployment-contract.service";
 import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
 import { BulkEnvVarsDto } from "./dto/bulk-env-vars.dto";
-import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { ProjectActivityService } from "./project-activity.service";
 import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
-import { analysisFingerprint } from "./analysis-fingerprint";
-import { classifyConfigurationVariable, ignoredSubmittedVariableNames, isSecretConfigurationKey, managedAliasError, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, provenRepositoryOwnedVariableKeys, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS, serviceAlias } from "./configuration-ownership";
+import { classifyConfigurationVariable, isSecretConfigurationKey, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import {
   acquireProjectConfigurationAdvisoryLock,
@@ -44,18 +42,14 @@ export class ProjectsService {
     private readonly projectRepository: Repository<Project>,
     @InjectRepository(ProjectEnvironmentVariable)
     private readonly envVarRepository: Repository<ProjectEnvironmentVariable>,
-    @InjectRepository(ProjectDetectionProfile)
-    private readonly detectionProfileRepository: Repository<ProjectDetectionProfile>,
     @InjectRepository(ProjectDatabaseTier)
     private readonly databaseTierRepository: Repository<ProjectDatabaseTier>,
     private readonly auditLogService: AuditLogService,
     private readonly usersService: UsersService,
     private readonly dataSource: DataSource,
     private readonly config: ConfigService,
-    private readonly deploymentContractService: DeploymentContractService,
     private readonly environmentCrypto: ProjectEnvironmentCryptoService,
     private readonly projectActivity: ProjectActivityService,
-    private readonly effectiveConfiguration: DatabaseServiceBindingService,
     private readonly githubApp: GithubAppService
   ) {}
 
@@ -408,41 +402,14 @@ export class ProjectsService {
   async getEnvVarSetup(user: User, projectId: string) {
     const project = await this.findProject(projectId);
     this.assertCanView(user, project);
-    const [variables, contract, profile] = await Promise.all([
+    const [variables, tier] = await Promise.all([
       this.listEnvVars(user, projectId),
-      this.deploymentContractService.getForProject(projectId),
-      this.detectionProfileRepository.findOne({ where: { projectId } }),
+      this.databaseTierRepository.findOne({ where: { projectId } }),
     ]);
-    const evidence = Array.isArray((profile?.rawProfile as Record<string, unknown> | null)?.environmentVariables)
-      ? ((profile!.rawProfile as Record<string, unknown>).environmentVariables as Array<Record<string, unknown>>)
-      : [];
-    const sources = new Map(evidence.map((item) => [String(item.key), Array.isArray(item.sources) ? item.sources.map(String) : []]));
-    const configured = new Set(variables.map((variable) => variable.key));
-    const keys = new Set(contract?.optionalEnvVars || []);
-    const missingVariables = [...keys]
-      .filter((key) => !configured.has(key))
-      .sort()
-      .map((key) => this.environmentSuggestion(key, contract, sources.get(key)));
-    const configuration = contract
-      ? await this.effectiveConfiguration.getSanitizedConfiguration(projectId, null, canonicalEnvironmentName(project))
-      : null;
     const managedByKey = new Map<string, Record<string, unknown>>();
     for (const variable of variables.filter((item) => item.protected || ["platform", "managed_service", "external_service"].includes(item.owner))) {
       const definition = reservedVariable(variable.key);
       managedByKey.set(variable.key, { ...variable, category: definition?.category || "infrastructure_generated", managedBy: "DeployGuard", valueVisible: false });
-    }
-    const manifestKeys = Array.isArray((configuration?.manifest as { keys?: unknown[] } | undefined)?.keys)
-      ? (configuration!.manifest as { keys: Array<Record<string, unknown>> }).keys
-      : [];
-    for (const item of manifestKeys.filter((entry) => entry.protected === true || ["platform", "managed_service", "external_service"].includes(String(entry.owner)))) {
-      const key = String(item.key || "");
-      const definition = reservedVariable(key);
-      const { value: _managedValue, ...safeItem } = item;
-      if (key) managedByKey.set(key, {
-        ...safeItem, key, isSecret: item.secret === true, scope: "runtime",
-        category: definition?.category || (item.secret ? "runtime_secret" : "infrastructure_generated"), managedBy: "DeployGuard",
-        maskedValue: item.secret ? "••••••••" : "Managed by DeployGuard", valueVisible: false,
-      });
     }
     return {
       variables: variables.filter((item) => !managedByKey.has(item.key)),
@@ -451,8 +418,8 @@ export class ProjectsService {
         ...RESERVED_VARIABLE_REGISTRY,
         ...SERVICE_ALIAS_GROUPS.flatMap((group) => group.aliases.map((key) => reservedVariable(key, group.service)!)),
       ].filter((item, index, items) => items.findIndex((candidate) => candidate.key === item.key) === index),
-      missingVariables: missingVariables.filter((item) => !reservedVariable(item.key)),
-      configuration,
+      missingVariables: [],
+      configuration: { databaseProvider: tier?.provider || DatabaseTierProvider.NONE },
     };
   }
 
@@ -471,8 +438,7 @@ export class ProjectsService {
       const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [key], manager);
       if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
       await this.assertEnvKeyAvailable(project.id, key, undefined, manager);
-      const defaults = await this.environmentDefaults(project.id, key, manager);
-      if (defaults.isRequired) throw new BadRequestException(`${key} is required by the application. Configure it from Deployment Requirements.`);
+      const defaults = this.environmentDefaults(key);
       const repository = manager.getRepository(ProjectEnvironmentVariable);
       const encryptedValue = this.environmentCrypto.encrypt(dto.value);
       const variable = repository.create({
@@ -492,7 +458,7 @@ export class ProjectsService {
         detectedReference: dto.detectedSource || defaults.detectedSource || null,
         repositoryDefault: null,
         supersededBy: null,
-        configurationFingerprint: analysisFingerprint({ projectId: project.id, key, scope: dto.scope || defaults.scope, environment, encryptedValue }),
+        configurationFingerprint: this.configurationFingerprint({ projectId: project.id, key, scope: dto.scope || defaults.scope, environment, encryptedValue }),
         isActive: true,
         supersededAt: null,
         supersededReason: null,
@@ -500,7 +466,6 @@ export class ProjectsService {
         encryptionVersion: 1,
       });
       const saved = await repository.save(variable);
-      await this.deploymentContractService.refreshForProject(project.id, manager);
       return { variable: saved, ignoredVariableNames: [] as string[] };
     });
 
@@ -562,9 +527,8 @@ export class ProjectsService {
       variable.supersededAt = null;
       variable.supersededReason = null;
       variable.appliedAt = null;
-      variable.configurationFingerprint = analysisFingerprint({ projectId: project.id, key: variable.key, scope: variable.scope, environment: variable.environment, encryptedValue: variable.value });
+      variable.configurationFingerprint = this.configurationFingerprint({ projectId: project.id, key: variable.key, scope: variable.scope, environment: variable.environment, encryptedValue: variable.value });
       const saved = await manager.getRepository(ProjectEnvironmentVariable).save(variable);
-      await this.deploymentContractService.refreshForProject(project.id, manager);
       return { variable: saved, ignoredVariableNames: [] as string[] };
     });
 
@@ -606,7 +570,7 @@ export class ProjectsService {
       const byKey = new Map(existing.map((item) => [item.key, item]));
       const rows: ProjectEnvironmentVariable[] = [];
       for (const item of accepted) {
-        const defaults = await this.environmentDefaults(projectId, item.key, manager);
+        const defaults = this.environmentDefaults(item.key);
         const variable = byKey.get(item.key) || repository.create({ projectId, key: item.key });
         const encryptedValue = this.environmentCrypto.encrypt(item.value);
         variable.key = item.key;
@@ -614,11 +578,11 @@ export class ProjectsService {
         variable.value = encryptedValue;
         variable.isSecret = item.isSecret ?? defaults.isSecret;
         variable.scope = item.scope || defaults.scope;
-        variable.isRequired = defaults.isRequired;
+        variable.isRequired = false;
         variable.environment = environment;
         variable.detectedSource = item.detectedSource || defaults.detectedSource;
-        variable.owner = defaults.isRequired ? "user_required" : "user_optional";
-        variable.source = item.detectedSource || defaults.detectedSource || (defaults.isRequired ? "repository_requirement" : "developer_mode");
+        variable.owner = "user_optional";
+        variable.source = item.detectedSource || defaults.detectedSource || "developer_mode";
         variable.protected = false;
         variable.serviceBindingId = null;
         variable.detectedReference = item.detectedSource || defaults.detectedSource || null;
@@ -629,10 +593,9 @@ export class ProjectsService {
         variable.supersededReason = null;
         variable.appliedAt = null;
         variable.encryptionVersion = 1;
-        variable.configurationFingerprint = analysisFingerprint({ projectId, key: item.key, scope: variable.scope, environment: variable.environment, encryptedValue });
+        variable.configurationFingerprint = this.configurationFingerprint({ projectId, key: item.key, scope: variable.scope, environment: variable.environment, encryptedValue });
         rows.push(await repository.save(variable));
       }
-      await this.deploymentContractService.refreshForProject(projectId, manager);
       return { rows, ignoredVariableNames };
     });
     await this.auditLogService.record({
@@ -655,7 +618,6 @@ export class ProjectsService {
       const current = await this.findEnvVar(project.id, envId, manager);
       this.assertVariableMutable(current);
       await manager.getRepository(ProjectEnvironmentVariable).remove(current);
-      await this.deploymentContractService.refreshForProject(project.id, manager);
       return current;
     });
 
@@ -909,65 +871,35 @@ export class ProjectsService {
     };
   }
 
-  private async environmentDefaults(projectId: string, key: string, manager?: EntityManager) {
-    const contract = await this.deploymentContractService.getForProject(projectId, manager);
-    return this.environmentSuggestion(key, contract);
+  private environmentDefaults(key: string) {
+    return {
+      key,
+      isRequired: false,
+      scope: "runtime" as const,
+      isSecret: isSecretConfigurationKey(key),
+      detectedSource: "user configuration",
+    };
   }
 
   private async assertEnvironmentOwnership(projectId: string, key: string, manager?: EntityManager) {
     const normalized = normalizeConfigurationKey(key);
-    const contract = await this.deploymentContractService.getForProject(projectId, manager);
-    const tier = await (manager?.getRepository(ProjectDatabaseTier) || this.databaseTierRepository).findOne({ where: { projectId } });
-    const engine = tier?.engine || "postgres";
-    if (reservedVariable(normalized, engine)) throw new BadRequestException(reservedVariableError(normalized, engine));
-    const alias = serviceAlias(normalized, engine);
-    if (contract?.persistentStorageRequired && serviceAlias(normalized, "storage")) {
-      throw new BadRequestException(managedAliasError(normalized, "storage"));
-    }
-    if (!alias || !tier?.provider || tier.provider === DatabaseTierProvider.NONE) return;
-    if (tier.provider === DatabaseTierProvider.MANAGED) throw new BadRequestException(managedAliasError(normalized, engine));
-    throw new BadRequestException(`${normalized} is owned by the external ${engine} service binding. Update it from Deployment Requirements.`);
+    if (reservedVariable(normalized)) throw new BadRequestException(reservedVariableError(normalized));
   }
 
   private async ignoredEnvironmentVariableNames(projectId: string, keys: string[], manager?: EntityManager) {
-    const [profile, tier] = await Promise.all([
-      (manager?.getRepository(ProjectDetectionProfile) || this.detectionProfileRepository).findOne({ where: { projectId } }),
-      (manager?.getRepository(ProjectDatabaseTier) || this.databaseTierRepository).findOne({ where: { projectId } }),
-    ]);
-    const evidence = Array.isArray((profile?.rawProfile as Record<string, unknown> | null)?.environmentVariables)
-      ? (profile!.rawProfile as Record<string, unknown>).environmentVariables as Array<Record<string, unknown>>
-      : [];
-    return ignoredSubmittedVariableNames(keys, {
-      service: tier?.engine || "postgres",
-      managedService: tier?.provider === DatabaseTierProvider.MANAGED,
-      repositoryOwnedKeys: provenRepositoryOwnedVariableKeys(evidence),
-    });
+    void projectId;
+    void manager;
+    return keys.map(normalizeConfigurationKey).filter((key) => key === "PORT" || key === "HOST");
   }
 
   private assertVariableMutable(variable: ProjectEnvironmentVariable) {
-    if (variable.isRequired && !variable.protected) throw new BadRequestException(`${variable.key} is required by the application. Update it from Deployment Requirements.`);
     if (variable.protected || !["user_optional", "repository_default"].includes(variable.owner || "")) {
       throw new BadRequestException(reservedVariableError(variable.normalizedKey || variable.key));
     }
   }
 
-  private environmentSuggestion(key: string, contract: Awaited<ReturnType<DeploymentContractService["getForProject"]>>, sources: string[] = []) {
-    const build = Boolean(contract?.buildTimeEnvVars.includes(key));
-    const runtime = Boolean(contract?.runtimeEnvVars.includes(key));
-    const scope = build && runtime ? "both" : build ? "build" : "runtime";
-    const publicBuild = /^(VITE_|NEXT_PUBLIC_|REACT_APP_)/.test(key) && (scope === "build" || scope === "both");
-    const isSecret = !publicBuild && (Boolean(contract?.secretEnvVars.includes(key)) || isSecretConfigurationKey(key));
-    return {
-      key,
-      required: Boolean(contract?.requiredEnvVars.includes(key)),
-      isRequired: Boolean(contract?.requiredEnvVars.includes(key)),
-      scope: scope as "build" | "runtime" | "both",
-      isSecret,
-      public: /^(VITE_|NEXT_PUBLIC_|REACT_APP_)/.test(key),
-      detectedSource: sources.length ? sources.join(", ") : "Repository scan",
-      configured: false,
-      status: "missing",
-    };
+  private configurationFingerprint(value: Record<string, unknown>) {
+    return createHash("sha256").update(JSON.stringify(value)).digest("hex");
   }
 
   private async encryptLegacyEnvironmentValues(projectId: string) {
