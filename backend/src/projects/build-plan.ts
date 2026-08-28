@@ -1,8 +1,7 @@
-import { TOPOLOGY_ANALYZER_VERSION, TOPOLOGY_SCHEMA_VERSION } from "./detection/topology.types";
 import type { ReadinessWarningDetail } from "./readiness-warning";
 
 export const BUILD_PLAN_VERSION = 2 as const;
-export const BUILD_PLAN_DETECTOR_VERSION = TOPOLOGY_ANALYZER_VERSION;
+export const BUILD_PLAN_DETECTOR_VERSION = "retired-topology-v5";
 export const BUILD_PLAN_REANALYSIS_MESSAGE = "Repository analysis changed. Run Detect Stack again before deploying.";
 
 export type BuildPlanEnvironmentOwnership = {
@@ -190,7 +189,7 @@ export type BuildPlan = {
 };
 
 export function buildPlanComponents(plan: BuildPlan): BuildPlanComponent[] {
-  if (Array.isArray(plan.components) && (plan.components.length > 0 || plan.topology?.schemaVersion === TOPOLOGY_SCHEMA_VERSION)) return plan.components;
+  if (Array.isArray(plan.components) && plan.components.length > 0) return plan.components;
   return [{
     id: "application",
     role: "application",

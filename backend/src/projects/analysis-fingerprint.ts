@@ -1,7 +1,8 @@
 import { createHash } from "crypto";
 import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { Project } from "./project.entity";
-import { TOPOLOGY_ANALYZER_VERSION, TOPOLOGY_SCHEMA_VERSION } from "./detection/topology.types";
+const RETIRED_TOPOLOGY_ANALYZER_VERSION = "retired-topology-v5";
+const RETIRED_TOPOLOGY_SCHEMA_VERSION = 3;
 
 export const DETECTION_INPUT_FINGERPRINT_VERSION = 5 as const;
 
@@ -111,8 +112,8 @@ export function deploymentContractFingerprint(
 export function detectionFingerprint(project: Project, commitSha: string | null) {
   return analysisFingerprint({
     version: DETECTION_INPUT_FINGERPRINT_VERSION,
-    topologyAnalyzerVersion: TOPOLOGY_ANALYZER_VERSION,
-    topologySchemaVersion: TOPOLOGY_SCHEMA_VERSION,
+    topologyAnalyzerVersion: RETIRED_TOPOLOGY_ANALYZER_VERSION,
+    topologySchemaVersion: RETIRED_TOPOLOGY_SCHEMA_VERSION,
     repository: project.repositoryFullName || project.repositoryUrl,
     repositoryUrl: project.repositoryUrl,
     targetBranch: project.targetBranch,
