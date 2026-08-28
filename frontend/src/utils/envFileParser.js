@@ -15,13 +15,12 @@ export function classifyEnvironmentVariable(key) {
   };
 }
 
-export function parseEnvText(text, knownKeys = [], reservedKeys = [], repositoryOwnedKeys = []) {
+export function parseEnvText(text, _knownKeys = [], reservedKeys = [], repositoryOwnedKeys = []) {
   const entries = [];
   const errors = [];
   const warnings = [];
   const seen = new Set();
   const ignoredVariableNames = [];
-  const known = new Set(knownKeys.map((key) => String(key).toUpperCase()));
 
   String(text || "").split(/\r?\n/).forEach((line, index) => {
     const trimmed = line.trim();
@@ -55,7 +54,6 @@ export function parseEnvText(text, knownKeys = [], reservedKeys = [], repository
       return;
     }
     seen.add(key);
-    if (known.size && !known.has(key)) warnings.push(`${key} was not detected as missing.`);
     entries.push({ ...classifyEnvironmentVariable(key), value });
   });
 

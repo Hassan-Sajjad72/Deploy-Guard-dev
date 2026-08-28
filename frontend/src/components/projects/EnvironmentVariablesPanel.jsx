@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   bulkUpsertProjectEnvVars,
   createProjectEnvVar,
@@ -13,10 +13,9 @@ import EnvVarTable from "./EnvVarTable.jsx";
 const emptyForm = { id: "", key: "", value: "", isSecret: true, scope: "runtime", isRequired: false, environment: "production", detectedSource: "User supplied" };
 
 export default function EnvironmentVariablesPanel({ projectId, canManage, onSaved }) {
-  const [setup, setSetup] = useState({ variables: [], managedVariables: [], reservedVariables: [], missingVariables: [] });
-  const [values, setValues] = useState({});
+  const [setup, setSetup] = useState({ variables: [], managedVariables: [], reservedVariables: [] });
   const [form, setForm] = useState(emptyForm);
-  const [tab, setTab] = useState("single");
+  const [tab, setTab] = useState("paste");
   const [paste, setPaste] = useState("");
   const [pasteResult, setPasteResult] = useState({ entries: [], errors: [], warnings: [] });
   const [modalOpen, setModalOpen] = useState(false);
@@ -26,14 +25,12 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
   const [success, setSuccess] = useState("");
   const [ignoredEnvironmentNames, setIgnoredEnvironmentNames] = useState([]);
 
-  const missingKeys = useMemo(() => setup.missingVariables.map((item) => item.key), [setup.missingVariables]);
-
   async function load() {
     setLoading(true);
     setError("");
     try {
       const response = await getProjectEnvVars(projectId);
-      setSetup({ variables: response.variables || [], managedVariables: response.managedVariables || [], reservedVariables: response.reservedVariables || [], missingVariables: response.missingVariables || [] });
+      setSetup({ variables: response.variables || [], managedVariables: response.managedVariables || [], reservedVariables: response.reservedVariables || [] });
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -57,7 +54,7 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
       const savedCount = response.variables?.length || 0;
       setSuccess(`${savedCount} environment variable${savedCount === 1 ? "" : "s"} saved. Values are now masked.`);
       await load();
-      if (onSaved) await onSaved(response.preflight || null);
+      if (onSaved) await onSaved();
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -65,26 +62,9 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
     }
   }
 
-  function missingPayload() {
-    return setup.missingVariables.map((item) => ({
-      key: item.key,
-      value: values[item.key] || "",
-      scope: item.scope,
-      isSecret: item.isSecret,
-      isRequired: item.isRequired ?? item.required,
-      environment: "production",
-      detectedSource: item.detectedSource || "Repository scan",
-    }));
-  }
-
   function parsePaste(value) {
     setPaste(value);
-    const parsed = parseEnvText(value, missingKeys, setup.reservedVariables.map((item) => item.key));
-    const evidence = new Map(setup.missingVariables.map((item) => [item.key, item]));
-    parsed.entries = parsed.entries.map((entry) => {
-      const detected = evidence.get(entry.key);
-      return detected ? { ...entry, scope: detected.scope, isSecret: detected.isSecret, isRequired: detected.isRequired ?? detected.required, detectedSource: detected.detectedSource || "Repository scan" } : entry;
-    });
+    const parsed = parseEnvText(value, [], setup.reservedVariables.map((item) => item.key));
     setPasteResult(parsed);
   }
 
@@ -98,7 +78,7 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
       setForm(emptyForm);
       setSuccess("Environment variable saved. Its value is now masked.");
       await load();
-      if (onSaved) await onSaved(response.preflight || null);
+      if (onSaved) await onSaved();
     } catch (caught) {
       setError(caught.message);
     } finally { setBusy(false); }
@@ -123,12 +103,10 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
     {success ? <div className="state success">{success}</div> : null}
     {ignoredEnvironmentNames.map((key) => <div className="state warning" key={key}>{key} is managed by DeployGuard and was ignored.</div>)}
     <div className="environment-tabs" role="tablist">
-      <button className={tab === "missing" ? "active" : ""} onClick={() => setTab("missing")} type="button">Suggested optional <span>{setup.missingVariables.length}</span></button>
       <button className={tab === "paste" ? "active" : ""} onClick={() => setTab("paste")} type="button">Paste .env</button>
       <button className={tab === "single" ? "active" : ""} onClick={() => setTab("single")} type="button">Single variable</button>
     </div>
-    {loading ? <p className="muted">Loading environment requirements…</p> : null}
-    {!loading && tab === "missing" ? <div className="environment-table-wrap"><table className="missing-environment-table"><thead><tr><th>Variable</th><th>Requirement</th><th>Detected source</th><th>Scope</th><th>Visibility</th><th>Value</th><th>Status</th></tr></thead><tbody>{setup.missingVariables.map((item) => <tr key={item.key}><td><code>{item.key}</code></td><td>{item.required || item.isRequired ? "Required" : "Optional"}</td><td>{item.detectedSource || "Repository scan"}</td><td>{item.scope}</td><td>{item.isSecret ? "Secret" : "Public"}</td><td><input aria-label={`${item.key} value`} disabled={!canManage || busy} onChange={(event) => setValues((current) => ({ ...current, [item.key]: event.target.value }))} placeholder="Enter value" type={item.isSecret ? "password" : "text"} value={values[item.key] || ""} /></td><td><span className="environment-status missing">Missing</span></td></tr>)}{!setup.missingVariables.length ? <tr><td colSpan="7"><div className="environment-ready"><strong>Ready to deploy</strong><span>All detected required variables are configured.</span></div></td></tr> : null}</tbody></table>{canManage && setup.missingVariables.length ? <div className="environment-table-actions"><button className="button" disabled={busy} onClick={() => saveBulk(missingPayload())} type="button">{busy ? "Saving…" : "Save all missing"}</button></div> : null}</div> : null}
+    {loading ? <p className="muted">Loading environment variables…</p> : null}
     {!loading && tab === "paste" ? <div className="environment-paste-panel"><label className="field"><span>Paste KEY=VALUE lines</span><textarea onChange={(event) => parsePaste(event.target.value)} placeholder={'DB_HOST=example\nDB_NAME=mydb\nJWT_SECRET="replace-me"'} rows="9" value={paste} /></label>{pasteResult.errors.map((message) => <p className="inline-action-error" key={message}>{message}</p>)}{pasteResult.warnings.map((message) => <p className="environment-warning" key={message}>{message}</p>)}<div className="paste-preview"><strong>{pasteResult.entries.length} valid variable{pasteResult.entries.length === 1 ? "" : "s"}</strong><span>Comments and blank lines are ignored. Duplicate keys are rejected.</span></div>{canManage ? <button className="button" disabled={busy || !pasteResult.entries.length || Boolean(pasteResult.errors.length)} onClick={() => saveBulk(pasteResult.entries, pasteResult.ignoredVariableNames || [])} type="button">{busy ? "Saving…" : "Save pasted variables"}</button> : null}</div> : null}
     {!loading && tab === "single" && canManage ? <EnvVarForm form={form} isSubmitting={busy} onCancel={form.id ? () => setForm(emptyForm) : null} onChange={(event) => { const { checked, name, type, value } = event.target; setForm((current) => ({ ...current, [name]: type === "checkbox" ? checked : value })); }} onSubmit={submitSingle} submitLabel={form.id ? "Update variable" : "Add variable"} /> : null}
     {!loading && setup.managedVariables.length ? <div className="configured-environment-section managed-environment-section"><div><p className="eyebrow">Managed by DeployGuard</p><h3>{setup.managedVariables.length} platform and infrastructure variable{setup.managedVariables.length === 1 ? "" : "s"}</h3><p className="muted">Names and destinations are visible. Values and secret references cannot be edited or revealed.</p></div><EnvVarTable canManage={false} managed variables={setup.managedVariables} /></div> : null}

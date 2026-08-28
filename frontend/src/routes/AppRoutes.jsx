@@ -39,9 +39,7 @@ export default function AppRoutes() {
           <Route element={<ProjectPipeline />} path="/projects/:projectId/pipeline" />
           <Route element={<ProjectInfrastructure />} path="/projects/:projectId/infrastructure" />
           <Route element={<ProjectMetrics />} path="/projects/:projectId/monitoring" />
-          {/* Retired primary pages resolve to the canonical product sections. */}
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/detection" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/preflight" />
+          {/* Retired URLs resolve to the normal project page. */}
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/environment" />
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/env" />
           <Route element={<ProjectSettings />} path="/projects/:projectId/settings" />

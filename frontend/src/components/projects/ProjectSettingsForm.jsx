@@ -36,18 +36,6 @@ export default function ProjectSettingsForm({
           />
         </div>
         <div className="field">
-          <label htmlFor="appDirectory">Application directory</label>
-          <input
-            disabled={disabled}
-            id="appDirectory"
-            name="appDirectory"
-            onChange={onChange}
-            placeholder="apps/api"
-            value={form.appDirectory || ""}
-          />
-          <small>Optional repository-relative path. Changing it affects the next stack detection and deployment run.</small>
-        </div>
-        <div className="field">
           <label htmlFor="visibility">Visibility</label>
           <select
             disabled={disabled}

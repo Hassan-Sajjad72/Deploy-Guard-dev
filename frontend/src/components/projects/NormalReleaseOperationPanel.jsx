@@ -45,8 +45,7 @@ export default function NormalReleaseOperationPanel({
       </li>)}
     </ol>
     {operation.evidence ? <div className="normal-release-evidence" aria-label="Release gate evidence">
-      <span data-gate="preflight" data-status={operation.evidence.preflight.state}>Preflight <strong>{human(operation.evidence.preflight.state)}</strong></span>
-      <span data-gate="security" data-status={operation.evidence.security.state}>Image security <strong>{human(operation.evidence.security.state)}</strong></span>
+      <span data-gate="release" data-status={operation.evidence.security.state}>Release evidence <strong>{human(operation.evidence.security.state)}</strong></span>
     </div> : null}
     {signals ? <section className="normal-release-observability" aria-label="Normal release observability">
       <div className="normal-release-observability-header">

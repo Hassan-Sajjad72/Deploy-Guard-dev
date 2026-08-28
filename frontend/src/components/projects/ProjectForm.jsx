@@ -30,10 +30,8 @@ export default function ProjectForm({ form, isSubmitting, onChange, onSubmit, su
           <div><p className="eyebrow">Release Target</p><h2>{isDeveloperMode ? "Choose the initial branch and visibility" : "Choose the branch to deploy"}</h2></div>
           <div className="form-grid">
             <label className="field"><span>Target branch</span><input id="targetBranch" name="targetBranch" onChange={onChange} value={form.targetBranch} /><small>Defaults to main. You can fetch repository branches from Setup later.</small></label>
-            {isDeveloperMode ? <label className="field"><span>Application directory</span><input id="appDirectory" name="appDirectory" onChange={onChange} placeholder="apps/api" value={form.appDirectory || ""} /><small>Optional repository-relative path for a monorepo. Leave blank for automatic detection.</small></label> : null}
             {isDeveloperMode ? <label className="field"><span>Project visibility</span><select id="visibility" name="visibility" onChange={onChange} value={form.visibility}><option value="private">Private</option><option value="workspace">Workspace</option></select><small>Private restricts access to the owner and administrators.</small></label> : null}
           </div>
-          {isDeveloperMode ? <div className="state muted"><strong>Application directory:</strong> An explicit path limits detection and builds to that folder. If left blank, DeployGuard selects the strongest supported app manifest automatically.</div> : null}
           <div className="state muted"><strong>{isDeveloperMode ? "Deployment safety:" : "After you create it:"}</strong> {isDeveloperMode ? "DeployGuard records the selected source and dispatches the repository's GitHub Actions workflow. Railpack builds the image; DeployGuard runs it on AWS." : "Cloud resources are created only after you choose Deploy."}</div>
         </div>
       </section>
