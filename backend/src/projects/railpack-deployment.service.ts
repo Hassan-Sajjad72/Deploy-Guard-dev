@@ -26,6 +26,7 @@ const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 export class RailpackDeploymentService {
   constructor(
     @InjectRepository(Project) private readonly projects: Repository<Project>,
+    @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(ProjectPipelineRun) private readonly runs: Repository<ProjectPipelineRun>,
     @InjectRepository(ProjectEnvironmentVariable) private readonly variables: Repository<ProjectEnvironmentVariable>,
     @InjectRepository(ProjectDatabaseTier) private readonly databaseTiers: Repository<ProjectDatabaseTier>,
@@ -63,11 +64,15 @@ export class RailpackDeploymentService {
   }
   async latest(user: User, projectId: string) {
     await this.project(user, projectId);
-    return { deployment: await this.runs.findOne({ where: { projectId }, order: { createdAt: "DESC" } }) };
+    const operation = await this.runs.findOne({ where: { projectId }, order: { createdAt: "DESC" } });
+    if (operation) await this.reconcile(operation);
+    return { deployment: operation };
   }
   async history(user: User, projectId: string) {
     await this.project(user, projectId);
-    return { deployments: await this.runs.find({ where: { projectId }, order: { createdAt: "DESC" }, take: 50 }) };
+    const deployments = await this.runs.find({ where: { projectId }, order: { createdAt: "DESC" }, take: 50 });
+    await Promise.all(deployments.filter((run) => ACTIVE.includes(run.status)).map((run) => this.reconcile(run)));
+    return { deployments };
   }
 
   private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackImageDigest = "") {
@@ -130,6 +135,34 @@ export class RailpackDeploymentService {
       ...aliasesFor("postgres", "database"), ...aliasesFor("postgres", "url"),
     ] : [];
     return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedPostgres: { enabled: Boolean(tier), aliases: [...new Set(managedAliases)].sort() } };
+  }
+
+  private async reconcile(operation: ProjectPipelineRun) {
+    if (!ACTIVE.includes(operation.status) || !operation.githubWorkflowRunId) return operation;
+    const [project, user] = await Promise.all([
+      this.projects.findOne({ where: { id: operation.projectId } }),
+      this.users.findOne({ where: { id: operation.triggeredByUserId } }),
+    ]);
+    if (!project || !user || !project.repositoryFullName) return operation;
+    try {
+      const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
+      const workflow = await this.actions.getWorkflowRun(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
+      const status = String(workflow.status || "");
+      const conclusion = String(workflow.conclusion || "");
+      operation.githubWorkflowStatus = status || operation.githubWorkflowStatus;
+      if (status === "completed") {
+        operation.completedAt = new Date();
+        operation.status = conclusion === "success" ? PipelineRunStatus.COMPLETED : PipelineRunStatus.FAILED;
+        operation.currentStage = conclusion === "success" ? "release_complete" : "release_failed";
+        operation.errorMessage = conclusion === "success" ? null : `GitHub Actions concluded: ${conclusion || "failure"}.`;
+        operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString() };
+      }
+      await this.runs.save(operation);
+    } catch {
+      // Polling is best-effort; do not convert a running release into failure
+      // solely because GitHub status was temporarily unavailable.
+    }
+    return operation;
   }
 
   private required(key: string) { const value = this.config.get<string>(key, "").trim(); if (!value) throw new ServiceUnavailableException(`Platform configuration is missing: ${key}.`); return value; }
