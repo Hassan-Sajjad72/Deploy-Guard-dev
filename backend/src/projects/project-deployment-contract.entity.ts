@@ -11,7 +11,6 @@ import {
 } from "typeorm";
 import { ProjectDetectionProfile } from "./project-detection-profile.entity";
 import { Project } from "./project.entity";
-import { BuildPlan } from "./build-plan";
 import { ManagedDatabaseEngine } from "./managed-database-engine";
 
 export type DeploymentContractLanguage = "javascript" | "python";
@@ -211,7 +210,8 @@ export class ProjectDeploymentContract {
   contractHash: string;
 
   @Column({ type: "jsonb", name: "build_plan" })
-  buildPlan: BuildPlan;
+  /** Historical JSON retained only for migration compatibility; never executed. */
+  buildPlan: Record<string, unknown>;
 
   @Column({ nullable: true, type: "text", name: "generated_dockerfile" })
   generatedDockerfile: string | null;
