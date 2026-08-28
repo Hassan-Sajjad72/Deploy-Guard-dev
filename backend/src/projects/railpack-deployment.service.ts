@@ -60,7 +60,7 @@ export class RailpackDeploymentService {
     const target = await this.runs.findOne({ where: { id: targetOperationId, projectId } });
     const digest = typeof target?.metadata?.imageDigest === "string" ? target.metadata.imageDigest : "";
     if (!digest) throw new NotFoundException("The selected release does not have an immutable image digest.");
-    return this.dispatch(user, projectId, "rollback", digest);
+    return this.dispatch(user, projectId, "rollback", digest, target.commitSha);
   }
   async latest(user: User, projectId: string) {
     await this.project(user, projectId);
@@ -75,7 +75,7 @@ export class RailpackDeploymentService {
     return { deployments };
   }
 
-  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackImageDigest = "") {
+  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackImageDigest = "", rollbackSourceSha = "") {
     const project = await this.project(user, projectId);
     const active = await this.runs.findOne({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
     if (active) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: active } };
@@ -83,7 +83,7 @@ export class RailpackDeploymentService {
     const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
     await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
     await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
-    const sourceSha = action === "rollback" ? String((await this.runs.findOne({ where: { projectId }, order: { createdAt: "DESC" } }))?.commitSha || "") : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
+    const sourceSha = action === "rollback" ? rollbackSourceSha : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
     if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
     const operationId = randomUUID();
     const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha);
@@ -153,10 +153,24 @@ export class RailpackDeploymentService {
       operation.githubWorkflowStatus = status || operation.githubWorkflowStatus;
       if (status === "completed") {
         operation.completedAt = new Date();
-        operation.status = conclusion === "success" ? PipelineRunStatus.COMPLETED : PipelineRunStatus.FAILED;
-        operation.currentStage = conclusion === "success" ? "release_complete" : "release_failed";
-        operation.errorMessage = conclusion === "success" ? null : `GitHub Actions concluded: ${conclusion || "failure"}.`;
-        operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString() };
+        if (conclusion === "success") {
+          const evidence = await this.releaseEvidence(project.repositoryFullName, operation, credential.token);
+          if (!evidence) {
+            operation.currentStage = "release_evidence_pending";
+            operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString() };
+            await this.runs.save(operation);
+            return operation;
+          }
+          operation.status = PipelineRunStatus.COMPLETED;
+          operation.currentStage = "release_complete";
+          operation.errorMessage = null;
+          operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(), ...evidence };
+        } else {
+          operation.status = PipelineRunStatus.FAILED;
+          operation.currentStage = "release_failed";
+          operation.errorMessage = `GitHub Actions concluded: ${conclusion || "failure"}.`;
+          operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString() };
+        }
       }
       await this.runs.save(operation);
     } catch {
@@ -164,6 +178,30 @@ export class RailpackDeploymentService {
       // solely because GitHub status was temporarily unavailable.
     }
     return operation;
+  }
+
+  private async releaseEvidence(repositoryFullName: string, operation: ProjectPipelineRun, token: string): Promise<Record<string, unknown> | null> {
+    const raw = await this.actions.getResultArtifact(repositoryFullName, operation.githubWorkflowRunId, operation.id, token);
+    if (!raw) return null;
+    let artifact: Record<string, unknown>;
+    try { artifact = JSON.parse(raw) as Record<string, unknown>; } catch { throw new Error("The release result artifact is not valid JSON."); }
+    const action = String(artifact.action || "");
+    const sourceSha = String(artifact.sourceSha || "");
+    const operationId = String(artifact.operationId || "");
+    const expectedAction = String(operation.metadata?.deploymentAction || "");
+    if (action !== expectedAction || sourceSha !== operation.commitSha || operationId !== operation.id) throw new Error("The release result artifact does not match its immutable operation identity.");
+    if (action === "destroy") {
+      if (artifact.destroyed !== true) throw new Error("The destroy result artifact does not prove deletion.");
+      return { releaseArtifact: artifact, destroyed: true };
+    }
+    const image = String(artifact.image || "");
+    const match = image.match(/^(.*)@(sha256:[0-9a-f]{64})$/);
+    if (!match || !artifact.terraform || typeof artifact.terraform !== "object") throw new Error("The release result artifact does not prove an immutable runtime image.");
+    const terraform = artifact.terraform as Record<string, unknown>;
+    if (terraform.image !== image || typeof terraform.alb_url !== "string" || typeof terraform.task_definition_arn !== "string" || typeof terraform.ecs_service_arn !== "string") {
+      throw new Error("The release result artifact does not prove ECS and ALB materialization.");
+    }
+    return { releaseArtifact: artifact, imageUri: match[1], imageDigest: match[2], albUrl: terraform.alb_url, taskDefinitionArn: terraform.task_definition_arn, ecsServiceArn: terraform.ecs_service_arn };
   }
 
   private required(key: string) { const value = this.config.get<string>(key, "").trim(); if (!value) throw new ServiceUnavailableException(`Platform configuration is missing: ${key}.`); return value; }

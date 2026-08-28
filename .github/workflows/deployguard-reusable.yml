@@ -39,6 +39,7 @@ jobs:
       AWS_REGION: ${{ inputs.aws_region }}
       DEPLOYMENT_ACTION: ${{ inputs.deployment_action }}
       PROJECT_ID: ${{ inputs.project_id }}
+      ENVIRONMENT_NAME: ${{ inputs.environment_name }}
       OPERATION_ID: ${{ inputs.deployment_operation_id }}
       SOURCE_SHA: ${{ inputs.commit_sha }}
       IMAGE_TAG: ${{ inputs.image_tag }}
@@ -48,6 +49,7 @@ jobs:
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
+      ROLLBACK_IMAGE_DIGEST: ${{ inputs.rollback_image_digest }}
     steps:
       - name: Checkout exact application source
         if: inputs.deployment_action == 'deploy'
@@ -64,11 +66,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ "$DEPLOYMENT_ACTION" = deploy ] || { echo 'Rollback and destroy are not yet implemented by the Railpack runtime workflow.' >&2; exit 1; }
+          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'Invalid deployment action.' >&2; exit 1; }
           [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid project identity.' >&2; exit 1; }
           [[ "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid operation identity.' >&2; exit 1; }
           [[ "$PLATFORM_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PLATFORM_PORT" -le 65535 ] || { echo 'Invalid platform port.' >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = deploy ]; then [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo 'Exact source SHA mismatch.' >&2; exit 1; }; fi
+          if [ "$DEPLOYMENT_ACTION" = rollback ]; then [[ "$ROLLBACK_IMAGE_DIGEST" =~ @sha256:[0-9a-f]{64}$ ]] || { echo 'Rollback requires an immutable ECR image digest.' >&2; exit 1; }; fi
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" '.schemaVersion == 1 and .projectId == $project and .operationId == $operation and .sourceSha == $sha' >/dev/null
       - name: Install pinned Railpack
         if: inputs.deployment_action == 'deploy'
@@ -98,18 +101,25 @@ jobs:
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'ECR did not return an immutable image digest.' >&2; exit 1; }
           immutable_image="${registry}/${repository}@${digest}"
           printf 'image=%s\n' "$immutable_image" >> "$GITHUB_OUTPUT"
-          printf 'DEPLOYGUARD_RELEASE_ARTIFACT={"sourceSha":"%s","imageUri":"%s","imageDigest":"%s"}\n' "$SOURCE_SHA" "${registry}/${repository}" "$digest"
+          printf 'image_uri=%s\nimage_digest=%s\n' "${registry}/${repository}" "$digest" >> "$GITHUB_OUTPUT"
+      - name: Select immutable rollback image
+        if: inputs.deployment_action == 'rollback'
+        id: rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'image=%s\n' "$ROLLBACK_IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
       - name: Install Terraform
         if: inputs.deployment_action == 'deploy'
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
-      - name: Materialize immutable image on ECS and ALB
-        if: inputs.deployment_action == 'deploy'
+      - name: Materialize release runtime
+        id: runtime
         shell: bash
         env:
-          IMAGE: ${{ steps.image.outputs.image }}
+          IMAGE: ${{ steps.image.outputs.image || steps.rollback.outputs.image || 'public.ecr.aws/docker/library/alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1' }}
         run: |
           set -euo pipefail
           [[ "$CONTROL_PLANE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid control-plane SHA.' >&2; exit 1; }
@@ -127,7 +137,27 @@ jobs:
             --slurpfile runtime .deployguard/runtime.json \
             '{region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,image:$image,platform_port:$port,environment:($runtime[0].environment + {PORT:($port|tostring),HOST:"0.0.0.0"}),secret_references:$runtime[0].secretReferences,managed_database_enabled:$runtime[0].managedDatabase.enabled,managed_database_aliases:$runtime[0].managedDatabase.aliases,managed_database_engine:($runtime[0].managedDatabase.engine // "postgres")}' > .deployguard/terraform/terraform.tfvars.json
           terraform -chdir=.deployguard/terraform fmt -check
-          terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$OPERATION_ID/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true"
+          terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/runtime/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true"
           terraform -chdir=.deployguard/terraform validate
-          terraform -chdir=.deployguard/terraform apply -input=false -auto-approve
-          terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value = .value.value)' | tee .deployguard/release-runtime.json
+          if [ "$DEPLOYMENT_ACTION" = destroy ]; then
+            terraform -chdir=.deployguard/terraform destroy -input=false -auto-approve
+            jq -n --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" '{action:$action,sourceSha:$sourceSha,operationId:$operationId,destroyed:true}' > .deployguard/release-runtime.json
+          else
+            terraform -chdir=.deployguard/terraform apply -input=false -auto-approve
+            compact_project_id="${PROJECT_ID//-/}"
+            service="dg-${compact_project_id:0:12}"
+            aws ecs wait services-stable --cluster "$service" --services "$service"
+            terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value = .value.value)' > .deployguard/terraform-outputs.json
+            alb_url="$(jq -r '.alb_url' .deployguard/terraform-outputs.json)"
+            curl --fail --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused "$alb_url" >/dev/null
+            jq -n --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg image "$IMAGE" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" '{action:$action,sourceSha:$sourceSha,operationId:$operationId,image:$image,terraform:$terraform}' > .deployguard/release-runtime.json
+          fi
+          mkdir -p terraform
+          cp .deployguard/release-runtime.json terraform/deployguard-result.json
+      - name: Publish immutable release result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deployguard-result-${{ inputs.deployment_operation_id }}
+          path: terraform/deployguard-result.json
+          if-no-files-found: error
+          retention-days: 30
