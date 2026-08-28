@@ -31,8 +31,6 @@ import { ProjectsService } from "./projects.service";
 import { ProjectCurrentStateService } from "./current-state/project-current-state.service";
 import { PipelineStageResolverService } from "./current-state/pipeline-stage-resolver.service";
 import { RepositorySourceService } from "./repository-source.service";
-import { DockerTemplateEngineService } from "./templates/docker-template-engine.service";
-import { TemplateRegistryService } from "./templates/template-registry.service";
 import { User } from "../users/user.entity";
 import { ProjectInfrastructureEvent } from "../infrastructure/project-infrastructure-event.entity";
 import { ProjectCostEstimate } from "../finops/project-cost-estimate.entity";
@@ -88,7 +86,6 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
     DeploymentContractService, DatabaseTierService,
     RepositorySourceService,
-    TemplateRegistryService, DockerTemplateEngineService,
     PipelineStageResolverService,
     ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,
