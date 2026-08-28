@@ -437,10 +437,6 @@ export function clearStaleTerraformLockfile(projectId) {
   );
 }
 
-export function getDevOpsTemplates() {
-  return apiRequest("/api/templates");
-}
-
 export function getProjectDatabaseTier(projectId) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/database-tier`);
 }

@@ -38,9 +38,7 @@ import { TemplateMatchingService } from "./detection/template-matching.service";
 import { MainstreamDetectorResolverService } from "./detection/mainstream-detector-resolver.service";
 import { DeployGuardBuildProvider } from "./detection/build-provider.service";
 import { DockerTemplateEngineService } from "./templates/docker-template-engine.service";
-import { PreflightService } from "./templates/preflight.service";
 import { TemplateRegistryService } from "./templates/template-registry.service";
-import { TemplatesController } from "./templates/templates.controller";
 import { User } from "../users/user.entity";
 import { ProjectInfrastructureEvent } from "../infrastructure/project-infrastructure-event.entity";
 import { ProjectCostEstimate } from "../finops/project-cost-estimate.entity";
@@ -90,14 +88,14 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
     AwsCliModule,
     NotificationsModule,
   ],
-  controllers: [ProjectsController, TemplatesController],
+  controllers: [ProjectsController],
   providers: [
     ProjectsService, GithubAppService, GithubActionsService, GithubActionsDeploymentService, GithubActionsRuntimeSecretService,
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
     DeploymentContractService, DatabaseTierService, DeploymentProfileService,
     RepositoryWorkspaceService, StackDetectionService, RepoDeployabilityScannerService, MainstreamDetectorResolverService, DeployGuardBuildProvider,
     TemplateMatchingService, TemplateRegistryService, DockerTemplateEngineService,
-    PreflightService, PipelineStageResolverService,
+    PipelineStageResolverService,
     ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,
     ManagedDatabaseReconciliationService,
