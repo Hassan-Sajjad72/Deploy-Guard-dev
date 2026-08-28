@@ -122,6 +122,27 @@ resource "aws_efs_mount_target" "database" {
   security_groups = [aws_security_group.database[0].id]
 }
 
+resource "random_password" "database" {
+  count   = var.managed_postgres_enabled ? 1 : 0
+  length  = 32
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "database" {
+  count = var.managed_postgres_enabled ? 1 : 0
+  name  = "deployguard/${var.project_id}/database"
+  tags  = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "database" {
+  count     = var.managed_postgres_enabled ? 1 : 0
+  secret_id = aws_secretsmanager_secret.database[0].id
+  secret_string = jsonencode({
+    password = random_password.database[0].result
+    url      = "${var.managed_database_engine == "mysql" ? "mysql" : var.managed_database_engine == "mongodb" ? "mongodb" : "postgresql"}://deployguard:${random_password.database[0].result}@127.0.0.1:${local.database_port}/application"
+  })
+}
+
 resource "aws_lb" "application" {
   name               = local.name
   internal           = false
@@ -183,7 +204,7 @@ data "aws_iam_policy_document" "runtime_secrets" {
     actions = ["secretsmanager:GetSecretValue"]
     resources = distinct(concat(
       [for reference in values(var.secret_references) : split(":", reference)[0] == "arn" ? join(":", slice(split(":", reference), 0, 7)) : reference],
-      [],
+      var.managed_postgres_enabled ? [aws_secretsmanager_secret.database[0].arn] : [],
     ))
   }
 }
@@ -198,6 +219,14 @@ locals {
   database_port  = var.managed_database_engine == "mysql" ? 3306 : var.managed_database_engine == "mongodb" ? 27017 : 5432
   database_image = var.managed_database_engine == "mysql" ? "mysql:8" : var.managed_database_engine == "mongodb" ? "mongo:8" : "postgres:16"
   database_path  = var.managed_database_engine == "mysql" ? "/var/lib/mysql" : var.managed_database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
+  database_environment = var.managed_postgres_enabled ? {
+    for key in var.managed_postgres_aliases : key => contains(["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "MYSQL_PORT", "MONGO_PORT", "MONGODB_PORT"], key) ? tostring(local.database_port) : contains(["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MONGO_HOST", "MONGODB_HOST"], key) ? "127.0.0.1" : contains(["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "MYSQL_USER", "MONGO_USER", "MONGODB_USER"], key) ? "deployguard" : "application"
+    if !contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key)
+  } : {}
+  database_secrets = var.managed_postgres_enabled ? {
+    for key in var.managed_postgres_aliases : key => "${aws_secretsmanager_secret.database[0].arn}:${contains(["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key) ? "url" : "password"}::"
+    if contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key)
+  } : {}
 }
 
 resource "aws_ecs_task_definition" "application" {
@@ -217,8 +246,8 @@ resource "aws_ecs_task_definition" "application" {
       hostPort      = var.platform_port
       protocol      = "tcp"
     }]
-    environment = [for key, value in var.environment : { name = key, value = value }]
-    secrets     = [for key, value in var.secret_references : { name = key, valueFrom = value }]
+    environment = [for key, value in merge(var.environment, local.database_environment) : { name = key, value = value }]
+    secrets     = [for key, value in merge(var.secret_references, local.database_secrets) : { name = key, valueFrom = value }]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -234,7 +263,7 @@ resource "aws_ecs_task_definition" "application" {
     portMappings = [{ containerPort = local.database_port, hostPort = local.database_port, protocol = "tcp" }]
     mountPoints  = [{ sourceVolume = "database", containerPath = local.database_path, readOnly = false }]
     environment  = var.managed_database_engine == "mysql" ? [{ name = "MYSQL_DATABASE", value = "application" }, { name = "MYSQL_USER", value = "deployguard" }] : var.managed_database_engine == "mongodb" ? [{ name = "MONGO_INITDB_DATABASE", value = "application" }, { name = "MONGO_INITDB_ROOT_USERNAME", value = "deployguard" }] : [{ name = "POSTGRES_DB", value = "application" }, { name = "POSTGRES_USER", value = "deployguard" }]
-    secrets      = [for key, value in var.secret_references : { name = key, valueFrom = value } if contains(["DB_PASSWORD", "POSTGRES_PASSWORD", "MYSQL_PASSWORD", "MONGO_INITDB_ROOT_PASSWORD"], key)]
+    secrets      = var.managed_database_engine == "mysql" ? [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::" }] : var.managed_database_engine == "mongodb" ? [{ name = "MONGO_INITDB_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::" }] : [{ name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::" }]
   }] : []))
 
   dynamic "volume" {
