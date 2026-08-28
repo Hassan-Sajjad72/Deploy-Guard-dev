@@ -29,14 +29,33 @@ export function deploymentPhasePresentation(currentState) {
   const attention = currentState?.developerState === "platform_attention"
     && currentState?.latestAttempt?.outcome === "blocked";
   const active = ACTIVE_STATES.has(currentState?.developerState);
+  const evidence = Array.isArray(currentState?.latestAttempt?.workflowStages) ? currentState.latestAttempt.workflowStages : [];
+  const lifecycleKeys = {
+    source: ["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack"],
+    build: ["build_immutable_railpack_image", "build_and_push_immutable_railpack_image"],
+    publish: ["publish_immutable_image_to_ecr"],
+    deploy: ["install_terraform", "materialize_release_runtime"],
+    verify: ["verify_alb_health_and_write_result"],
+  };
+
+  function evidenceStatus(phase) {
+    const entries = evidence.filter((entry) => lifecycleKeys[phase]?.includes(entry?.key));
+    if (!entries.length) return null;
+    if (entries.some((entry) => entry.status === "failed")) return "failed";
+    if (entries.some((entry) => entry.status === "running")) return "running";
+    if (entries.some((entry) => entry.status === "passed")) return "passed";
+    return "waiting";
+  }
 
   return phases.map((phase, index) => {
     let status = "waiting";
+    const proven = destroy ? null : evidenceStatus(phase.key);
     if (currentState?.developerState === "destroyed") {
       status = destroy ? "passed" : index < 2 ? "passed" : "waiting";
     } else if (currentState?.developerState === "ready") {
       status = "waiting";
     } else if (completed) status = "passed";
+    else if (proven) status = proven;
     else if (currentIndex >= 0 && index === currentIndex && failed) status = "failed";
     else if (currentIndex >= 0 && index === currentIndex && attention) status = "attention";
     else if (currentIndex >= 0 && index === currentIndex && active) status = "running";

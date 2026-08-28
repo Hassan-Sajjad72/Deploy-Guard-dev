@@ -36,6 +36,7 @@ export function overviewLifecycleCopy(currentState) {
   const canonicalState = canonicalOverviewState(currentState);
   const state = latestOperationFailed(currentState) ? "FAILED" : canonicalState;
   const operationType = latestOverviewOperationType(currentState);
+  const failedPhase = currentState?.progress?.phase;
   const copy = {
     READY: ["Ready to Deploy", "Repository and branch are configured. No deployment has started yet."],
     DEPLOYING: operationType === "rollback"
@@ -46,7 +47,7 @@ export function overviewLifecycleCopy(currentState) {
       : operationType === "rollback"
         ? ["Rollback failed", "Review the failed pipeline evidence before retrying this rollback."]
         : currentState?.latestAttempt?.workflowRunId
-          ? ["Deployment failed", "GitHub Actions reported a failed deployment. Review the persisted pipeline evidence before retrying."]
+          ? [failedPhase === "build" ? "Railpack Build failed" : "Deployment failed", "GitHub Actions reported a failed deployment. Review the persisted pipeline evidence before retrying."]
           : ["Deployment could not start", "DeployGuard failed while starting the GitHub Actions deployment. No GitHub Actions run was created."],
     LIVE: ["Application is live", "The latest release passed its verified health check."],
     DESTROYING: ["Infrastructure is being destroyed", "Destroy is in progress. Application infrastructure is being removed and may become unavailable during cleanup."],

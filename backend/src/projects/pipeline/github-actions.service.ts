@@ -114,7 +114,7 @@ export const DEPLOYGUARD_RESULT_ARTIFACT_ENTRY = "terraform/deployguard-result.j
 export type GithubActionsTerminalFailureEvidence = {
   failedStage: string;
   rawEvidence: string;
-  workflowStages: Array<{ key: string; label: string; status: "failed" | "passed" | "running"; startedAt: string | null; completedAt: string | null; jobUrl: string | null; failureReason: string | null }>;
+  workflowStages: Array<{ key: string; label: string; status: "failed" | "passed" | "running" | "skipped"; startedAt: string | null; completedAt: string | null; jobUrl: string | null; failureReason: string | null }>;
 };
 
 @Injectable()
@@ -353,7 +353,8 @@ export class GithubActionsService {
       key: normalized(step.name) || "workflow_bootstrap",
       label: String(step.name || "GitHub Actions workflow bootstrap"),
       status: String(step.conclusion || step.status || "").toLowerCase() === "failure" ? "failed" as const
-        : String(step.status || "").toLowerCase() === "in_progress" ? "running" as const : "passed" as const,
+        : String(step.conclusion || step.status || "").toLowerCase() === "skipped" ? "skipped" as const
+          : String(step.status || "").toLowerCase() === "in_progress" ? "running" as const : "passed" as const,
       startedAt: step.started_at || null, completedAt: step.completed_at || null,
       jobUrl: failed.html_url || null,
       failureReason: String(step.conclusion || "").toLowerCase() === "failure" ? `GitHub Actions step failed: ${String(step.name || "workflow bootstrap")}` : null,

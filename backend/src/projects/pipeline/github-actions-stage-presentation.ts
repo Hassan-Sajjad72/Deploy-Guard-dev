@@ -1,6 +1,10 @@
 const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
   set_up_job: "Setting up GitHub Actions runner",
   configure_aws_credentials_through_oidc: "Connecting securely to AWS",
+  install_pinned_railpack: "Installing Railpack",
+  build_immutable_railpack_image: "Building Railpack image",
+  build_and_push_immutable_railpack_image: "Building Railpack image",
+  publish_immutable_image_to_ecr: "Publishing immutable image",
   workflow_dispatch: "Starting GitHub Actions",
   workflow_bootstrap: "Starting GitHub Actions workflow",
   workflow_run_discovery: "GitHub Actions run was not created",
@@ -26,6 +30,10 @@ const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
 const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
   checkout_application: { key: "checkout_application", label: "Repository checkout" },
   configure_aws_credentials_through_oidc: { key: "configure_aws_credentials_through_oidc", label: "Connecting securely to AWS" },
+  install_pinned_railpack: { key: "install_pinned_railpack", label: "Installing Railpack" },
+  build_immutable_railpack_image: { key: "build_immutable_railpack_image", label: "Building Railpack image" },
+  build_and_push_immutable_railpack_image: { key: "build_and_push_immutable_railpack_image", label: "Building Railpack image" },
+  publish_immutable_image_to_ecr: { key: "publish_immutable_image_to_ecr", label: "Publishing immutable image" },
   derive_immutable_release_identity: { key: "derive_immutable_release_identity", label: "Preparing immutable release" },
   ensure_ecr_repository: { key: "ensure_ecr_repository", label: "Preparing image repository" },
   generate_dockerfile_when_absent: { key: "generate_dockerfile_when_absent", label: "Dockerfile preparation" },
@@ -52,6 +60,8 @@ const BUILD_PHASE_FAILURE_STAGES = new Set([
   "ensure_ecr_repository",
   "generate_dockerfile_when_absent",
   "build_and_push_immutable_image",
+  "build_immutable_railpack_image",
+  "build_and_push_immutable_railpack_image",
 ]);
 
 export function githubActionsStagePresentation(stage: unknown, action: GithubActionsPresentationAction = "deploy") {

@@ -39,7 +39,7 @@ assert.deepEqual(actions("FAILED"), [
   { kind: "link", target: "pipeline", label: "View Pipeline" },
   { kind: "command", command: "retry", label: "Retry Failed Deployment" },
 ]);
-const failedDeploy = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy" } }, latestAttempt: { operationType: "deploy" }, canRetry: true };
+const failedDeploy = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy" } }, latestAttempt: { operationType: "deploy", workflowRunId: "123" }, canRetry: true };
 const failedDestroy = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "destroy" } }, latestAttempt: { operationType: "destroy" }, canRetry: true };
 const failedRollback = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "rollback" } }, latestAttempt: { operationType: "rollback" }, canRetry: true };
 assert.equal(overviewLifecycleCopy(failedDeploy).title, "Deployment failed");
@@ -48,12 +48,26 @@ assert.equal(overviewLifecycleCopy(failedDestroy).title, "Destroy failed");
 assert.equal(overviewLifecycleActions(failedDestroy, true)[1].label, "Retry Failed Destroy");
 assert.equal(overviewLifecycleCopy(failedRollback).title, "Rollback failed");
 assert.equal(overviewLifecycleActions(failedRollback, true)[1].label, "Retry Failed Rollback");
-const setupFailureRail = deploymentPhasePresentation({ developerState: "failed_application", progress: { phase: "build" } });
+const setupFailureRail = deploymentPhasePresentation({
+  developerState: "failed_application",
+  progress: { phase: "build" },
+  latestAttempt: { workflowStages: [
+    { key: "checkout_exact_application_source", status: "passed" },
+    { key: "install_pinned_railpack", status: "passed" },
+    { key: "build_and_push_immutable_railpack_image", status: "failed" },
+    { key: "publish_immutable_image_to_ecr", status: "skipped" },
+    { key: "install_terraform", status: "skipped" },
+  ] },
+});
 assert.deepEqual(
   setupFailureRail.map(({ key, status }) => [key, status]),
-  [["analyze", "passed"], ["prepare", "passed"], ["build", "failed"], ["deploy", "waiting"], ["verify", "waiting"]],
-  "Set Up Job failure must not present Build or later phases as completed",
+  [["source", "passed"], ["build", "failed"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"]],
+  "Railpack build failure must not present later deployment phases as completed",
 );
+assert.equal(overviewLifecycleCopy({
+  developerState: "failed_application", progress: { phase: "build" }, latestAttempt: { workflowRunId: "33212514809" },
+  stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } },
+}).title, "Railpack Build failed");
 const failedDestroyWithStableRuntime = {
   developerState: "live",
   developerMessage: "The latest destroy operation failed. The verified stable release remains live.",

@@ -233,6 +233,9 @@ export class ProjectCurrentStateService {
       releaseRevision: null,
       commit: latestCommit,
       occurredAt: (latest.completedAt || latest.failedAt || latest.updatedAt).toISOString(),
+      workflowStages: Array.isArray(latestMetadata.workflowStages) ? latestMetadata.workflowStages
+        .filter((stage): stage is Record<string, unknown> => Boolean(stage) && typeof stage === "object")
+        .map((stage) => ({ key: String(stage.key || ""), status: ["passed", "failed", "running", "skipped"].includes(String(stage.status)) ? String(stage.status) as "passed" | "failed" | "running" | "skipped" : "skipped" })) : [],
     };
     const verifiedDestroyAncestor = action === "destroy"
       ? await this.verifiedDestroyAncestor(latest, projectId, environmentName)
@@ -342,7 +345,7 @@ export class ProjectCurrentStateService {
         };
       }
       const failedStage = String(latestMetadata.failedStage || latest.currentStage || "github_actions");
-      const failureMessage = githubActionsFailureMessage(latest.errorMessage, failedStage, action);
+      const failureMessage = githubActionsFailureMessage(this.conciseFailureMessage(latest.errorMessage), failedStage, action);
       const failurePhase = githubActionsFailureLifecyclePhase(failedStage);
       const category = failurePhase === "source" ? "configuration"
         : failurePhase === "build" ? "build"
@@ -440,6 +443,14 @@ export class ProjectCurrentStateService {
 
   private githubLifecycleProgress(phase: "source" | "prepare" | "build" | "deploy" | "verify") {
     return { source: 0, prepare: 20, build: 40, deploy: 60, verify: 80 }[phase];
+  }
+
+  private conciseFailureMessage(errorMessage: unknown) {
+    const lines = String(errorMessage || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const diagnosticIndex = lines.findIndex((line) => /mkdir\s+\/tmp\/railpack|failed to create cache|unable to resolve|\berror\b/i.test(line));
+    if (diagnosticIndex >= 0) return lines.slice(diagnosticIndex, diagnosticIndex + 2).join(" ").slice(0, 320);
+    const railpackIndex = lines.findIndex((line) => /railpack/i.test(line));
+    return (railpackIndex >= 0 ? lines[railpackIndex] : lines[0] || "GitHub Actions concluded failure.").slice(0, 320);
   }
 
   /**
@@ -549,7 +560,7 @@ export class ProjectCurrentStateService {
     const runtimeDeleted = destroyed || destroyCleanupIncomplete;
     const authoritativeLiveRelease = Boolean(projected.stableRelease && projected.stableUrl) && !runtimeDeleted;
     const stoppedBeforeProvisioning = projected.developerState === "failed_application"
-      && projected.applicationError?.category === "configuration"
+      && ["configuration", "build"].includes(String(projected.applicationError?.category || ""))
       && !authoritativeLiveRelease;
     const liveReleaseObservedAt = projected.stableRelease?.promotedAt || observedAt;
     const infrastructureStatus = runtimeDeleted

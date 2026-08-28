@@ -74,28 +74,41 @@ jobs:
           if [ "$DEPLOYMENT_ACTION" = rollback ]; then [[ "$ROLLBACK_IMAGE_DIGEST" =~ @sha256:[0-9a-f]{64}$ ]] || { echo 'Rollback requires an immutable ECR image digest.' >&2; exit 1; }; fi
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" '.schemaVersion == 1 and .projectId == $project and .operationId == $operation and .sourceSha == $sha' >/dev/null
       - name: Install pinned Railpack
-        if: inputs.deployment_action == 'deploy'
+        if: success() && inputs.deployment_action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 'https://github.com/railwayapp/railpack/releases/download/v0.38.0/railpack-v0.38.0-x86_64-unknown-linux-musl.tar.gz' -o /tmp/railpack.tgz
-          echo '7c3f0e70ca8bf80bde87e8c30cb0171414c2b6bbd794d6f60a19cc3b71772950  /tmp/railpack.tgz' | sha256sum --check --status
-          tar -xzf /tmp/railpack.tgz -C /tmp
-          install -m 0755 /tmp/railpack /usr/local/bin/railpack
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 'https://github.com/railwayapp/railpack/releases/download/v0.38.0/railpack-v0.38.0-x86_64-unknown-linux-musl.tar.gz' -o "$tmpdir/railpack.tgz"
+          printf '%s  %s\n' '7c3f0e70ca8bf80bde87e8c30cb0171414c2b6bbd794d6f60a19cc3b71772950' "$tmpdir/railpack.tgz" | sha256sum --check --status
+          tar -xzf "$tmpdir/railpack.tgz" -C "$tmpdir"
+          install -m 0755 "$tmpdir/railpack" /usr/local/bin/railpack
+          test ! -f /tmp/railpack
           railpack --version
-      - name: Build and push immutable Railpack image
-        if: inputs.deployment_action == 'deploy'
-        id: image
+      - name: Build immutable Railpack image
+        if: success() && inputs.deployment_action == 'deploy'
+        id: build
         shell: bash
         run: |
           set -euo pipefail
           account="$(aws sts get-caller-identity --query Account --output text)"
           repository="deployguard-${PROJECT_ID}"
-          aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1 || aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE >/dev/null
           registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           image="${registry}/${repository}:${IMAGE_TAG}"
-          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
           railpack build --name "$image" .
+          printf 'image=%s\nrepository=%s\nregistry=%s\n' "$image" "$repository" "$registry" >> "$GITHUB_OUTPUT"
+      - name: Publish immutable image to ECR
+        if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.image != ''
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository="${{ steps.build.outputs.repository }}"
+          registry="${{ steps.build.outputs.registry }}"
+          aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1 || aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE >/dev/null
+          image="${{ steps.build.outputs.image }}"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
           docker push "$image"
           digest="$(aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$IMAGE_TAG" --query 'imageDetails[0].imageDigest' --output text)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'ECR did not return an immutable image digest.' >&2; exit 1; }
@@ -103,19 +116,20 @@ jobs:
           printf 'image=%s\n' "$immutable_image" >> "$GITHUB_OUTPUT"
           printf 'image_uri=%s\nimage_digest=%s\n' "${registry}/${repository}" "$digest" >> "$GITHUB_OUTPUT"
       - name: Select immutable rollback image
-        if: inputs.deployment_action == 'rollback'
+        if: success() && inputs.deployment_action == 'rollback'
         id: rollback
         shell: bash
         run: |
           set -euo pipefail
           printf 'image=%s\n' "$ROLLBACK_IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
       - name: Install Terraform
-        if: inputs.deployment_action == 'deploy'
+        if: success() && inputs.deployment_action == 'deploy' && steps.image.outputs.image != ''
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
       - name: Materialize release runtime
+        if: success() && (inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || (inputs.deployment_action == 'deploy' && steps.image.outputs.image != ''))
         id: runtime
         shell: bash
         env:
@@ -154,7 +168,8 @@ jobs:
           fi
           mkdir -p terraform
           cp .deployguard/release-runtime.json terraform/deployguard-result.json
-      - name: Publish immutable release result
+      - name: Publish verified release result
+        if: success() && hashFiles('terraform/deployguard-result.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: deployguard-result-${{ inputs.deployment_operation_id }}
