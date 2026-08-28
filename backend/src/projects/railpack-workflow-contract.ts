@@ -16,7 +16,7 @@ export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "commit_sha", required: true, type: "string" },
   { name: "image_tag", required: true, type: "string" },
   { name: "environment_references_base64", required: true, type: "string" },
-  { name: "managed_postgres_enabled", required: true, type: "string" },
+  { name: "managed_database_enabled", required: true, type: "string" },
   { name: "infrastructure_namespace", required: true, type: "string" },
   { name: "aws_region", required: true, type: "string" },
   { name: "aws_role_arn", required: true, type: "string" },
@@ -41,7 +41,7 @@ export type RailpackRuntimeConfiguration = {
   sourceSha: string;
   environment: Record<string, string>;
   secretReferences: Record<string, string>;
-  managedPostgres: { enabled: boolean; engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[] };
+  managedDatabase: { enabled: boolean; engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[] };
 };
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -72,5 +72,10 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
   }
   for (const [key, reference] of Object.entries(value.secretReferences)) {
     if (!KEY.test(key) || !SECRET_VALUE_FROM.test(reference)) throw new Error("Railpack runtime secret reference is invalid.");
+  }
+  if (typeof value.managedDatabase.enabled !== "boolean" || !Array.isArray(value.managedDatabase.aliases) ||
+    !value.managedDatabase.aliases.every((alias) => KEY.test(alias)) ||
+    ![null, "postgres", "mysql", "mongodb"].includes(value.managedDatabase.engine)) {
+    throw new Error("Railpack managed database configuration is invalid.");
   }
 }

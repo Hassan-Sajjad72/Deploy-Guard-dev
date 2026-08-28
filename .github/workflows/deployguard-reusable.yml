@@ -12,7 +12,7 @@ on:
       commit_sha: { required: true, type: string }
       image_tag: { required: true, type: string }
       environment_references_base64: { required: true, type: string }
-      managed_postgres_enabled: { required: true, type: string }
+      managed_database_enabled: { required: true, type: string }
       infrastructure_namespace: { required: true, type: string }
       aws_region: { required: true, type: string }
       aws_role_arn: { required: true, type: string }
@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'Invalid deployment action.' >&2; exit 1; }
+          [ "$DEPLOYMENT_ACTION" = deploy ] || { echo 'Rollback and destroy are not yet implemented by the Railpack runtime workflow.' >&2; exit 1; }
           [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid project identity.' >&2; exit 1; }
           [[ "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid operation identity.' >&2; exit 1; }
           [[ "$PLATFORM_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PLATFORM_PORT" -le 65535 ] || { echo 'Invalid platform port.' >&2; exit 1; }
@@ -125,7 +125,7 @@ jobs:
             --arg vpc "$VPC_ID" --arg image "$IMAGE" --argjson port "$PLATFORM_PORT" \
             --argjson subnets "$(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')" \
             --slurpfile runtime .deployguard/runtime.json \
-            '{region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,image:$image,platform_port:$port,environment:($runtime[0].environment + {PORT:($port|tostring),HOST:"0.0.0.0"}),secret_references:$runtime[0].secretReferences,managed_postgres_enabled:$runtime[0].managedPostgres.enabled,managed_postgres_aliases:$runtime[0].managedPostgres.aliases,managed_database_engine:($runtime[0].managedPostgres.engine // "postgres")}' > .deployguard/terraform/terraform.tfvars.json
+            '{region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,image:$image,platform_port:$port,environment:($runtime[0].environment + {PORT:($port|tostring),HOST:"0.0.0.0"}),secret_references:$runtime[0].secretReferences,managed_database_enabled:$runtime[0].managedDatabase.enabled,managed_database_aliases:$runtime[0].managedDatabase.aliases,managed_database_engine:($runtime[0].managedDatabase.engine // "postgres")}' > .deployguard/terraform/terraform.tfvars.json
           terraform -chdir=.deployguard/terraform fmt -check
           terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$OPERATION_ID/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true"
           terraform -chdir=.deployguard/terraform validate

@@ -91,7 +91,7 @@ export class RailpackDeploymentService {
       deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
       repository_full_name: project.repositoryFullName, repository_branch: project.targetBranch, commit_sha: sourceSha,
       image_tag: immutableRailpackImageTag(sourceSha, operationId), environment_references_base64: runtimeReferencesBase64(runtime),
-      managed_postgres_enabled: String(runtime.managedPostgres.enabled), infrastructure_namespace: `/deployguard/${project.id}/${environmentName}/${operationId}`,
+      managed_database_enabled: String(runtime.managedDatabase.enabled), infrastructure_namespace: `/deployguard/${project.id}/${environmentName}`,
       aws_region: this.config.get<string>("AWS_REGION", "us-east-1"), aws_role_arn: this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"),
       vpc_id: this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
       terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"), platform_port: String(DEPLOYGUARD_PLATFORM_PORT), rollback_image_digest: rollbackImageDigest,
@@ -135,7 +135,7 @@ export class RailpackDeploymentService {
       ...aliasesFor(engine, "username"), ...aliasesFor(engine, "password"),
       ...aliasesFor(engine, "database"), ...aliasesFor(engine, "url"),
     ] : [];
-    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedPostgres: { enabled: Boolean(tier), engine: tier?.engine || null, aliases: [...new Set(managedAliases)].sort() } };
+    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedDatabase: { enabled: Boolean(tier), engine: tier?.engine || null, aliases: [...new Set(managedAliases)].sort() } };
   }
 
   private async reconcile(operation: ProjectPipelineRun) {

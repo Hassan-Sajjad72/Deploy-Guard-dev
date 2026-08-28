@@ -80,13 +80,13 @@ resource "aws_security_group" "application" {
 }
 
 resource "aws_security_group" "database" {
-  count       = var.managed_postgres_enabled ? 1 : 0
+  count       = var.managed_database_enabled ? 1 : 0
   name_prefix = "${local.name}-database-"
   vpc_id      = var.vpc_id
 
   ingress {
-    from_port       = 0
-    to_port         = 65535
+    from_port       = 2049
+    to_port         = 2049
     protocol        = "tcp"
     security_groups = [aws_security_group.application.id]
   }
@@ -95,14 +95,14 @@ resource "aws_security_group" "database" {
 }
 
 resource "aws_efs_file_system" "database" {
-  count           = var.managed_postgres_enabled ? 1 : 0
+  count           = var.managed_database_enabled ? 1 : 0
   encrypted       = true
   throughput_mode = "bursting"
   tags            = local.tags
 }
 
 resource "aws_efs_access_point" "database" {
-  count          = var.managed_postgres_enabled ? 1 : 0
+  count          = var.managed_database_enabled ? 1 : 0
   file_system_id = aws_efs_file_system.database[0].id
   root_directory {
     path = "/database"
@@ -116,30 +116,30 @@ resource "aws_efs_access_point" "database" {
 }
 
 resource "aws_efs_mount_target" "database" {
-  for_each        = var.managed_postgres_enabled ? toset(var.public_subnet_ids) : toset([])
+  for_each        = var.managed_database_enabled ? toset(var.public_subnet_ids) : toset([])
   file_system_id  = aws_efs_file_system.database[0].id
   subnet_id       = each.value
   security_groups = [aws_security_group.database[0].id]
 }
 
 resource "random_password" "database" {
-  count   = var.managed_postgres_enabled ? 1 : 0
+  count   = var.managed_database_enabled ? 1 : 0
   length  = 32
   special = false
 }
 
 resource "aws_secretsmanager_secret" "database" {
-  count = var.managed_postgres_enabled ? 1 : 0
+  count = var.managed_database_enabled ? 1 : 0
   name  = "deployguard/${var.project_id}/database"
   tags  = local.tags
 }
 
 resource "aws_secretsmanager_secret_version" "database" {
-  count     = var.managed_postgres_enabled ? 1 : 0
+  count     = var.managed_database_enabled ? 1 : 0
   secret_id = aws_secretsmanager_secret.database[0].id
   secret_string = jsonencode({
     password = random_password.database[0].result
-    url      = "${var.managed_database_engine == "mysql" ? "mysql" : var.managed_database_engine == "mongodb" ? "mongodb" : "postgresql"}://deployguard:${random_password.database[0].result}@127.0.0.1:${local.database_port}/application"
+    url      = "${var.managed_database_engine == "mysql" ? "mysql" : var.managed_database_engine == "mongodb" ? "mongodb" : "postgresql"}://deployguard:${random_password.database[0].result}@127.0.0.1:${local.database_port}/application${var.managed_database_engine == "mongodb" ? "?authSource=admin" : ""}"
   })
 }
 
@@ -204,7 +204,7 @@ data "aws_iam_policy_document" "runtime_secrets" {
     actions = ["secretsmanager:GetSecretValue"]
     resources = distinct(concat(
       [for reference in values(var.secret_references) : split(":", reference)[0] == "arn" ? join(":", slice(split(":", reference), 0, 7)) : reference],
-      var.managed_postgres_enabled ? [aws_secretsmanager_secret.database[0].arn] : [],
+      var.managed_database_enabled ? [aws_secretsmanager_secret.database[0].arn] : [],
     ))
   }
 }
@@ -219,12 +219,12 @@ locals {
   database_port  = var.managed_database_engine == "mysql" ? 3306 : var.managed_database_engine == "mongodb" ? 27017 : 5432
   database_image = var.managed_database_engine == "mysql" ? "mysql:8" : var.managed_database_engine == "mongodb" ? "mongo:8" : "postgres:16"
   database_path  = var.managed_database_engine == "mysql" ? "/var/lib/mysql" : var.managed_database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
-  database_environment = var.managed_postgres_enabled ? {
-    for key in var.managed_postgres_aliases : key => contains(["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "MYSQL_PORT", "MONGO_PORT", "MONGODB_PORT"], key) ? tostring(local.database_port) : contains(["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MONGO_HOST", "MONGODB_HOST"], key) ? "127.0.0.1" : contains(["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "MYSQL_USER", "MONGO_USER", "MONGODB_USER"], key) ? "deployguard" : "application"
+  database_environment = var.managed_database_enabled ? {
+    for key in var.managed_database_aliases : key => contains(["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "MYSQL_PORT", "MONGO_PORT", "MONGODB_PORT"], key) ? tostring(local.database_port) : contains(["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MONGO_HOST", "MONGODB_HOST"], key) ? "127.0.0.1" : contains(["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "MYSQL_USER", "MONGO_USER", "MONGODB_USER"], key) ? "deployguard" : "application"
     if !contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key)
   } : {}
-  database_secrets = var.managed_postgres_enabled ? {
-    for key in var.managed_postgres_aliases : key => "${aws_secretsmanager_secret.database[0].arn}:${contains(["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key) ? "url" : "password"}::"
+  database_secrets = var.managed_database_enabled ? {
+    for key in var.managed_database_aliases : key => "${aws_secretsmanager_secret.database[0].arn}:${contains(["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key) ? "url" : "password"}::"
     if contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key)
   } : {}
 }
@@ -256,7 +256,7 @@ resource "aws_ecs_task_definition" "application" {
         awslogs-stream-prefix = "application"
       }
     }
-    }], var.managed_postgres_enabled ? [{
+    }], var.managed_database_enabled ? [{
     name         = "database"
     image        = local.database_image
     essential    = true
@@ -267,7 +267,7 @@ resource "aws_ecs_task_definition" "application" {
   }] : []))
 
   dynamic "volume" {
-    for_each = var.managed_postgres_enabled ? [1] : []
+    for_each = var.managed_database_enabled ? [1] : []
     content {
       name = "database"
       efs_volume_configuration {
