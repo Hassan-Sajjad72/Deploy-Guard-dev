@@ -5,7 +5,6 @@ import { InfrastructureModule } from "../infrastructure/infrastructure.module";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { UsersModule } from "../users/users.module";
 import { DeploymentContractService } from "./deployment-contract.service";
-import { DeploymentRequirementsService } from "./deployment-requirements.service";
 import { DatabaseTierService } from "./database-tier.service";
 import { GithubActionsDeploymentService } from "./github-actions-deployment.service";
 import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
@@ -99,7 +98,7 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
     RepositoryWorkspaceService, StackDetectionService, RepoDeployabilityScannerService, MainstreamDetectorResolverService, DeployGuardBuildProvider,
     TemplateMatchingService, TemplateRegistryService, DockerTemplateEngineService,
     PreflightService, PipelineStageResolverService,
-    DeploymentRequirementsService, ProjectCurrentStateService,
+    ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,
     ManagedDatabaseReconciliationService,
     ManagedDatabaseResetService,

@@ -28,8 +28,6 @@ import { AuditLogService } from "../audit-log/audit-log.service";
 import { BulkEnvVarsDto } from "./dto/bulk-env-vars.dto";
 import { UpdateDatabaseTierDto } from "./dto/update-database-tier.dto";
 import { DatabaseTierService } from "./database-tier.service";
-import { DeploymentRequirementsService } from "./deployment-requirements.service";
-import { ResolveDeploymentRequirementsDto } from "./dto/resolve-deployment-requirements.dto";
 import { ProjectActivityDto } from "./dto/project-activity.dto";
 import { ProjectActivityService } from "./project-activity.service";
 import { rankWorkspaceSummaries } from "./project-recency";
@@ -47,30 +45,12 @@ export class ProjectsController {
     private readonly projectCurrentStateService: ProjectCurrentStateService,
     private readonly auditLogService: AuditLogService,
     private readonly databaseTiers: DatabaseTierService,
-    private readonly deploymentRequirements: DeploymentRequirementsService,
     private readonly projectActivity: ProjectActivityService,
     private readonly githubActionsDeployment: GithubActionsDeploymentService,
     private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
     private readonly managedDatabaseReset: ManagedDatabaseResetService,
     private readonly deploymentRecovery: DeploymentRecoveryDecisionService,
   ) {}
-
-  @Get(":projectId/deployment-requirements")
-  async getDeploymentRequirements(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string) {
-    return { requirements: await this.deploymentRequirements.get(req.user!, projectId) };
-  }
-
-  @Post(":projectId/deployment-requirements/resolve")
-  @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER]))
-  async resolveDeploymentRequirements(
-    @Req() req: Request,
-    @Param("projectId", ParseUUIDPipe) projectId: string,
-    @Body() dto: ResolveDeploymentRequirementsDto
-  ) {
-    const response = await this.deploymentRequirements.resolve(req.user!, projectId, dto, req);
-    await this.recordMeaningful(req, projectId, "deployment_requirements_saved", "requirements");
-    return response;
-  }
 
   @Get(":projectId/database-tier")
   async getDatabaseTier(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string) {
