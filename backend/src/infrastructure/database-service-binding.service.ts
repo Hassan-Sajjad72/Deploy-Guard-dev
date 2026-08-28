@@ -9,18 +9,15 @@ import {
   DatabaseTierStatus,
   ProjectDatabaseTier,
 } from "../projects/project-database-tier.entity";
-import { ProjectDeploymentContract } from "../projects/project-deployment-contract.entity";
 import { ProjectEnvironmentCryptoService } from "../projects/project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "../projects/project-environment-variable.entity";
 import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
 import { ProjectServiceBinding, ServiceBindingStatus } from "../projects/project-service-binding.entity";
 import { ProjectConfigurationSnapshot } from "../projects/project-configuration-snapshot.entity";
-import { ProjectDetectionProfile } from "../projects/project-detection-profile.entity";
 import { ProjectPersistentStorage } from "../storage/project-persistent-storage.entity";
 import { Project } from "../projects/project.entity";
 import { canonicalEnvironmentName } from "../projects/canonical-environment";
 import { managedDatabaseProfile } from "../projects/managed-database-engine";
-import { requireBuildPlan } from "../projects/build-plan";
 import { RuntimeEvidenceContractError, RuntimeEvidenceContractIssue } from "../projects/github-actions-release-evidence";
 import {
   aliasesFor,
@@ -30,7 +27,6 @@ import {
   normalizeConfigurationKey,
   platformRuntimeVariableNames,
   RESERVED_VARIABLE_REGISTRY,
-  provenRepositoryOwnedVariableKeys,
   reservedVariable,
   serviceAlias,
 } from "../projects/configuration-ownership";
@@ -104,11 +100,9 @@ export class DatabaseServiceBindingService {
   constructor(
     @InjectRepository(ProjectServiceBinding) private readonly bindings: Repository<ProjectServiceBinding>,
     @InjectRepository(ProjectPipelineRun) private readonly runs: Repository<ProjectPipelineRun>,
-    @InjectRepository(ProjectDeploymentContract) private readonly contracts: Repository<ProjectDeploymentContract>,
     @InjectRepository(ProjectDatabaseTier) private readonly tiers: Repository<ProjectDatabaseTier>,
     @InjectRepository(ProjectEnvironmentVariable) private readonly variables: Repository<ProjectEnvironmentVariable>,
     @InjectRepository(ProjectConfigurationSnapshot) private readonly snapshots: Repository<ProjectConfigurationSnapshot>,
-    @InjectRepository(ProjectDetectionProfile) private readonly profiles: Repository<ProjectDetectionProfile>,
     @InjectRepository(ProjectPersistentStorage) private readonly storage: Repository<ProjectPersistentStorage>,
     private readonly crypto: ProjectEnvironmentCryptoService,
     private readonly config: ConfigService,
@@ -124,18 +118,16 @@ export class DatabaseServiceBindingService {
       });
     }
     const runs = manager?.getRepository(ProjectPipelineRun) || this.runs;
-    const contracts = manager?.getRepository(ProjectDeploymentContract) || this.contracts;
     const tiers = manager?.getRepository(ProjectDatabaseTier) || this.tiers;
     const bindings = manager?.getRepository(ProjectServiceBinding) || this.bindings;
-    const [run, contract, tier] = await Promise.all([
+    const [run, tier] = await Promise.all([
       runs.findOne({ where: { id: pipelineRunId, projectId } }),
-      contracts.findOne({ where: { projectId } }),
       tiers.findOne({ where: { projectId } }),
     ]);
-    if (!run || !contract) throw new BadRequestException("The pipeline run or deployment contract is unavailable.");
+    if (!run) throw new BadRequestException("The pipeline run is unavailable.");
     if (!run.generationId) throw new BadRequestException("The pipeline run has no immutable deployment generation.");
-    if (!contract.databaseRequired) return null;
-    if (!tier?.provider || tier.provider === DatabaseTierProvider.NONE || !tier.engine) {
+    if (!tier?.provider || tier.provider === DatabaseTierProvider.NONE) return null;
+    if (!tier?.provider || !tier.engine) {
       throw new BadRequestException("A DeployGuard-managed database binding is required before Terraform planning.");
     }
     const provider = tier.provider as "managed" | "external";
@@ -147,7 +139,7 @@ export class DatabaseServiceBindingService {
       throw new BadRequestException("Database binding intent is incomplete or points to localhost.");
     }
     const fingerprint = this.fingerprint({
-      requirements: contract.contractHash,
+      requirements: "managed-postgres-v1",
       provider,
       engine: tier.engine,
       host,
@@ -437,8 +429,6 @@ export class DatabaseServiceBindingService {
   }
 
   private async buildEffectiveConfiguration(projectId: string, pipelineRunId: string | null, environment: string, options: ResolveOptions): Promise<EffectiveDeploymentConfiguration> {
-    const contracts = options.manager?.getRepository(ProjectDeploymentContract) || this.contracts;
-    const profiles = options.manager?.getRepository(ProjectDetectionProfile) || this.profiles;
     const bindings = options.manager?.getRepository(ProjectServiceBinding) || this.bindings;
     const tiers = options.manager?.getRepository(ProjectDatabaseTier) || this.tiers;
     const variables = options.manager?.getRepository(ProjectEnvironmentVariable) || this.variables;
@@ -449,9 +439,7 @@ export class DatabaseServiceBindingService {
     const snapshot = pipelineRunId && options.useSnapshot !== false
       ? await snapshots.createQueryBuilder("snapshot").addSelect("snapshot.encryptedSecretPayload").where("snapshot.projectId = :projectId", { projectId }).andWhere("snapshot.pipelineRunId = :pipelineRunId", { pipelineRunId }).getOne()
       : null;
-    const [contract, profile, storedBinding, tier, rows, storage] = await Promise.all([
-      contracts.findOne({ where: { projectId } }),
-      profiles.findOne({ where: { projectId } }),
+    const [storedBinding, tier, rows, storage] = await Promise.all([
       pipelineRunId
         ? run?.databaseServiceBindingId
           ? bindings.findOne({ where: { id: run.databaseServiceBindingId, projectId, serviceType: "database" } })
@@ -461,9 +449,6 @@ export class DatabaseServiceBindingService {
       variables.createQueryBuilder("variable").addSelect("variable.value").where("variable.projectId = :projectId", { projectId }).andWhere("variable.environment = :environment", { environment }).andWhere("variable.isActive = true").orderBy("variable.key", "ASC").getMany(),
       storageRepository.findOne({ where: { projectId, environmentName: environment }, order: { updatedAt: "DESC" } }),
     ]);
-    if (!contract) throw new BadRequestException("A deployment contract is required.");
-    let buildPlan;
-    try { buildPlan = requireBuildPlan(contract); } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : "Authoritative BuildPlan is unavailable."); }
     const binding = pipelineRunId || !tier?.provider || tier.provider === DatabaseTierProvider.NONE
       ? storedBinding
       : ({
@@ -473,7 +458,7 @@ export class DatabaseServiceBindingService {
           pipelineRunId: "preflight",
           serviceType: "database",
           provider: tier.provider,
-          engine: tier.engine || contract.databaseEngine || "postgres",
+          engine: tier.engine || "postgres",
           status: ServiceBindingStatus.PENDING,
           databaseName: tier.databaseName,
           hostReference: tier.provider === DatabaseTierProvider.MANAGED ? tier.internalHost || `db.project-${projectId}.deployguard.local` : tier.externalHost,
@@ -502,7 +487,7 @@ export class DatabaseServiceBindingService {
         blockers.push(`Managed database binding is ${binding.status}; application deployment requires ready.`);
       }
       const secretReferences = { ...snapshot.secretReferences };
-      const snapshotService = (binding?.engine || contract.databaseEngine || "postgres") as ManagedServiceKind;
+      const snapshotService = (binding?.engine || tier?.engine || "postgres") as ManagedServiceKind;
       if (binding?.passwordSecretReference && !binding.passwordSecretReference.startsWith("terraform://")) {
         for (const key of aliasesFor(snapshotService, "password")) {
           if (snapshot.ownershipManifest[key]) secretReferences[key] = binding.passwordSecretReference;
@@ -540,24 +525,9 @@ export class DatabaseServiceBindingService {
     const prohibitedOverrides: string[] = [];
     const duplicateOwnershipConflicts: string[] = [];
     const blockers: string[] = [];
-    const evidence = buildPlan.environmentOwnership.map((item) => ({
-      key: item.key,
-      required: item.required,
-      phase: item.phase,
-      secret: item.secret,
-      detectedDefault: item.repositoryValue,
-      sources: [`BuildPlan detector ${buildPlan.detectorId}`],
-    }));
-    const repositoryOwnedKeys = provenRepositoryOwnedVariableKeys(evidence);
-    const service = (binding?.engine || contract.databaseEngine || "postgres") as ManagedServiceKind;
+    const service = (binding?.engine || tier?.engine || "postgres") as ManagedServiceKind;
     const managed = binding?.provider === "managed";
-    const expectedKeys = new Set([
-      ...buildPlan.requiredInputs,
-      ...buildPlan.optionalInputs,
-      ...buildPlan.runtimeEnvVars,
-      ...buildPlan.buildTimeEnvVars,
-      ...evidence.map((item) => normalizeConfigurationKey(String(item.key || ""))).filter(Boolean),
-    ]);
+    const expectedKeys = new Set(rows.map((row) => normalizeConfigurationKey(row.normalizedKey || row.key)));
     const fixedReservedKeys = new Set(RESERVED_VARIABLE_REGISTRY.map((item) => item.key));
     const putOwnership = (key: string, entry: EffectiveDeploymentConfiguration["ownership"][string]) => {
       if (ownership[key] && (ownership[key].owner !== entry.owner || ownership[key].sourceRevision !== entry.sourceRevision)) {
@@ -577,11 +547,7 @@ export class DatabaseServiceBindingService {
         prohibitedOverrides.push(key);
         continue;
       }
-      if (contract.persistentStorageRequired && storageAlias) {
-        prohibitedOverrides.push(key);
-        continue;
-      }
-      if (repositoryOwnedKeys.has(key)) {
+      if (storageAlias && storage?.status === "ready") {
         prohibitedOverrides.push(key);
         continue;
       }
@@ -608,21 +574,6 @@ export class DatabaseServiceBindingService {
       });
     }
 
-    for (const item of evidence) {
-      const key = normalizeConfigurationKey(String(item.key || ""));
-      const value = typeof item.detectedDefault === "string" ? item.detectedDefault.trim() : "";
-      if (!key || !value || item.secret === true || isSecretConfigurationKey(key) || runtimeVariables[key] || buildArguments[key] || projectSecretValues[key]) continue;
-      if (["HOST", "PORT"].includes(key) && contract.runtimeType === "server") continue;
-      if (managed && serviceAlias(key, service)) continue;
-      if (LOCAL_HOST.test(value) && serviceAlias(key)) continue;
-      if (item.phase === "build") buildArguments[key] = value;
-      else runtimeVariables[key] = value;
-      putOwnership(key, {
-        owner: "repository_default", source: "repository scan", sourceRevision: profile?.inputFingerprint || contract.contractHash,
-        required: item.required === true, secret: false, protected: true, serviceBindingId: null,
-        detectedReference: Array.isArray(item.sources) ? item.sources.map(String).join(", ") : null,
-      });
-    }
 
     const region = this.config.get<string>("AWS_REGION", "us-east-1");
     // Platform metadata is deliberately per component.  Selecting a consumer
@@ -639,8 +590,8 @@ export class DatabaseServiceBindingService {
     // Component-local platform values are added when the runtime payload is
     // materialized; they cannot be represented by a single global PORT.
 
-    if (contract.persistentStorageRequired) {
-      const storageRevision = storage?.updatedAt?.toISOString() || contract.contractHash;
+    if (storage?.status === "ready") {
+      const storageRevision = storage.updatedAt?.toISOString() || "managed-storage-v1";
       const selected = [...new Set([aliasesFor("storage", "path")[0], ...aliasesFor("storage", "path").filter((key) => expectedKeys.has(key))])].filter(Boolean);
       for (const key of selected) {
         runtimeVariables[key] = "/app/data";
@@ -652,12 +603,12 @@ export class DatabaseServiceBindingService {
           secret: false,
           protected: true,
           serviceBindingId: storage?.id || null,
-          detectedReference: contract.detectionProfileId,
+          detectedReference: null,
         });
       }
     }
 
-    if (contract.databaseRequired) {
+    if (tier?.provider === DatabaseTierProvider.MANAGED) {
       if (!binding) blockers.push(pipelineRunId ? "The pipeline run has no immutable database binding." : "A database service binding must be selected before deployment.");
       else {
         const owner: ConfigurationOwner = binding.provider === "managed" ? "managed_service" : "external_service";
@@ -711,12 +662,12 @@ export class DatabaseServiceBindingService {
     // Repository ENV names are an immutable application boundary. Semantic
     // aliases may share one managed value internally, but a sibling alias must
     // never make an evidenced required name appear resolved.
-    const unresolvedRequiredValues = unresolvedExactRequiredConfiguration(buildPlan.requiredInputs, resolvedKeys);
+    const unresolvedRequiredValues = unresolvedExactRequiredConfiguration(rows.filter((row) => row.isRequired).map((row) => row.key), resolvedKeys);
     if (unresolvedRequiredValues.length) blockers.push(`Required application configuration is unresolved: ${unresolvedRequiredValues.join(", ")}.`);
     blockers.push(...duplicateOwnershipConflicts);
     const sourceRevisions = Object.fromEntries(Object.entries(ownership).map(([key, value]) => [key, value.sourceRevision]));
     const configurationFingerprint = this.fingerprint({
-      projectId, environment, generationId, contractHash: contract.contractHash, binding: binding ? [binding.id, binding.configurationFingerprint] : null,
+      projectId, environment, generationId, binding: binding ? [binding.id, binding.configurationFingerprint] : null,
       plainValues: runtimeVariables,
       buildValues: buildArguments,
       secretSources: Object.fromEntries(Object.entries(secretReferences).map(([key, value]) => [
@@ -727,7 +678,7 @@ export class DatabaseServiceBindingService {
     });
     const serviceBindingRevisions = [
       ...(binding ? [{ id: binding.id, type: binding.serviceType, provider: binding.provider, engine: binding.engine, status: binding.status, configurationFingerprint: binding.configurationFingerprint }] : []),
-      ...(contract.persistentStorageRequired ? [{
+      ...(storage?.status === "ready" ? [{
         id: storage?.id || `storage-contract:${projectId}`,
         type: "storage",
         provider: "managed",
@@ -766,7 +717,7 @@ export class DatabaseServiceBindingService {
   }
 
   private async resolveEnvironment(projectId: string, manager?: EntityManager, requested?: string) {
-    const repository = manager?.getRepository(Project) || this.projects || this.contracts.manager?.getRepository(Project);
+    const repository = manager?.getRepository(Project) || this.projects || this.bindings.manager?.getRepository(Project);
     if (!repository && requested) return canonicalEnvironmentName({ environmentName: requested });
     const project = await repository?.findOne({ where: { id: projectId } });
     if (!project) throw new BadRequestException("Project is unavailable for canonical environment resolution.");
