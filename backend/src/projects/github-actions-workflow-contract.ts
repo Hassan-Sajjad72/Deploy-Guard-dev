@@ -1,7 +1,7 @@
 import {
-  GITHUB_ACTIONS_WORKFLOW_CONTRACT_VERSION,
-  GITHUB_ACTIONS_WORKFLOW_INPUTS,
-} from "./github-actions-operation-contract";
+  RAILPACK_WORKFLOW_CONTRACT_VERSION,
+  RAILPACK_WORKFLOW_INPUTS,
+} from "./railpack-workflow-contract";
 
 export type PinnedReusableWorkflow = {
   owner: string;
@@ -39,22 +39,22 @@ export function generatedCallerWithKeys(workflow: string) {
 export function assertReusableWorkflowCompatibility(workflow: string, pinned: PinnedReusableWorkflow, callerWithKeys?: readonly string[]) {
   const declared = reusableWorkflowInputDeclarations(workflow);
   const byName = new Map(declared.map((input) => [input.name, input]));
-  for (const expected of GITHUB_ACTIONS_WORKFLOW_INPUTS) {
+  for (const expected of RAILPACK_WORKFLOW_INPUTS) {
     const actual = byName.get(expected.name);
     if (!actual) throw new GithubActionsWorkflowContractError(`caller input \`${expected.name}\` is not declared by pinned workflow ${pinned.sha}.`);
     if (actual.required !== expected.required || actual.type !== expected.type) {
-      throw new GithubActionsWorkflowContractError(`input \`${expected.name}\` in pinned workflow ${pinned.sha} must be ${expected.required ? "required" : "optional"} ${expected.type} for ${GITHUB_ACTIONS_WORKFLOW_CONTRACT_VERSION}.`);
+      throw new GithubActionsWorkflowContractError(`input \`${expected.name}\` in pinned workflow ${pinned.sha} must be ${expected.required ? "required" : "optional"} ${expected.type} for ${RAILPACK_WORKFLOW_CONTRACT_VERSION}.`);
     }
   }
-  const expectedNames = new Set(GITHUB_ACTIONS_WORKFLOW_INPUTS.map((input) => input.name));
+  const expectedNames = new Set(RAILPACK_WORKFLOW_INPUTS.map((input) => input.name));
   const extra = declared.find((input) => !expectedNames.has(input.name as never));
   if (extra) throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} declares unknown input \`${extra.name}\`.`);
   if (callerWithKeys) {
     const caller = new Set(callerWithKeys);
     const extraCaller = callerWithKeys.find((name) => !expectedNames.has(name as never));
     if (extraCaller) throw new GithubActionsWorkflowContractError(`caller input \`${extraCaller}\` is not declared by pinned workflow ${pinned.sha}.`);
-    const missing = GITHUB_ACTIONS_WORKFLOW_INPUTS.find((input) => input.required && !caller.has(input.name));
+    const missing = RAILPACK_WORKFLOW_INPUTS.find((input) => input.required && !caller.has(input.name));
     if (missing) throw new GithubActionsWorkflowContractError(`caller is missing required pinned-workflow input \`${missing.name}\`.`);
   }
-  return { contractVersion: GITHUB_ACTIONS_WORKFLOW_CONTRACT_VERSION, sha: pinned.sha, inputs: declared };
+  return { contractVersion: RAILPACK_WORKFLOW_CONTRACT_VERSION, sha: pinned.sha, inputs: declared };
 }

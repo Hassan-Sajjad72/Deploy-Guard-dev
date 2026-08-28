@@ -31,7 +31,7 @@ import { DatabaseTierService } from "./database-tier.service";
 import { ProjectActivityDto } from "./dto/project-activity.dto";
 import { ProjectActivityService } from "./project-activity.service";
 import { rankWorkspaceSummaries } from "./project-recency";
-import { GithubActionsDeploymentService } from "./github-actions-deployment.service";
+import { RailpackDeploymentService } from "./railpack-deployment.service";
 import { RollbackGithubActionsDto } from "./dto/rollback-github-actions.dto";
 import { ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
 import { ManagedDatabaseResetService } from "./managed-database-reset.service";
@@ -46,7 +46,7 @@ export class ProjectsController {
     private readonly auditLogService: AuditLogService,
     private readonly databaseTiers: DatabaseTierService,
     private readonly projectActivity: ProjectActivityService,
-    private readonly githubActionsDeployment: GithubActionsDeploymentService,
+    private readonly githubActionsDeployment: RailpackDeploymentService,
     private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
     private readonly managedDatabaseReset: ManagedDatabaseResetService,
     private readonly deploymentRecovery: DeploymentRecoveryDecisionService,
@@ -245,7 +245,7 @@ export class ProjectsController {
         resourceType: "pipeline_run",
         resourceId: result.deployment.operation.id,
         status: "success",
-        metadata: { projectId, operationId: result.deployment.operation.id, retryOfOperationId: result.deployment.operation.retryOfOperationId },
+        metadata: { projectId, operationId: result.deployment.operation.id, retryOfOperationId: result.deployment.operation.metadata?.retryOfOperationId || null },
         req,
       });
     } else if (result.deployment.state === "rejected") {
@@ -258,7 +258,7 @@ export class ProjectsController {
         metadata: {
           projectId,
           operationId: result.deployment.operation.id,
-          retryOfOperationId: result.deployment.operation.retryOfOperationId,
+          retryOfOperationId: result.deployment.operation.metadata?.retryOfOperationId || null,
           reason: result.deployment.message,
         },
         req,

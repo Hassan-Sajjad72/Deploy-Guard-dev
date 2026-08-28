@@ -5,7 +5,7 @@ import { createSign } from "crypto";
 import { Repository } from "typeorm";
 import { GithubAppInstallation } from "./github-app-installation.entity";
 import { User, UserRole } from "../users/user.entity";
-import { BUILD_PLAN_WORKFLOW_INPUT_NAMES, GITHUB_ACTIONS_CALLER_INPUT_NAMES, GITHUB_ACTIONS_OPTIONAL_CALLER_INPUT_NAMES, GITHUB_ACTIONS_WORKFLOW_INPUTS } from "./github-actions-operation-contract";
+import { RAILPACK_CALLER_INPUT_NAMES, RAILPACK_OPTIONAL_CALLER_INPUT_NAMES, RAILPACK_WORKFLOW_INPUTS } from "./railpack-workflow-contract";
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, GithubActionsWorkflowContractError, parsePinnedReusableWorkflow } from "./github-actions-workflow-contract";
 
 export const DEPLOYGUARD_WORKFLOW_PATH = ".github/workflows/deployguard.yml";
@@ -22,19 +22,13 @@ export function canonicalDeployguardReusableWorkflow(config: ConfigService) {
 }
 
 export function renderDeployguardCallerWorkflow(reusable: string) {
-  const names = [...GITHUB_ACTIONS_CALLER_INPUT_NAMES];
-  const optional = new Set<string>(GITHUB_ACTIONS_OPTIONAL_CALLER_INPUT_NAMES);
+  const names = [...RAILPACK_CALLER_INPUT_NAMES];
+  const optional = new Set<string>(RAILPACK_OPTIONAL_CALLER_INPUT_NAMES);
   const inputDefinitions = names.map((name) => {
-    const defaultValue = name === "rollback_release_json" ? ', default: "{}"' : optional.has(name) ? ', default: ""' : "";
+    const defaultValue = optional.has(name) ? ', default: ""' : "";
     return `      ${name}: { required: ${optional.has(name) ? "false" : "true"}, type: string${defaultValue} }`;
   }).join("\n");
-  const forwarded = GITHUB_ACTIONS_WORKFLOW_INPUTS.map(({ name }) => {
-    if (BUILD_PLAN_WORKFLOW_INPUT_NAMES.includes(name as typeof BUILD_PLAN_WORKFLOW_INPUT_NAMES[number])) {
-      return `      ${name}: \${{ fromJSON(inputs.build_plan_contract_json).${name} }}`;
-    }
-    if (name === "rollback_source_operation_id") return `      ${name}: \${{ fromJSON(inputs.rollback_release_json).sourceOperationId || '' }}`;
-    if (name === "rollback_image_uri") return `      ${name}: \${{ fromJSON(inputs.rollback_release_json).imageUri || '' }}`;
-    if (name === "rollback_task_definition_arn") return `      ${name}: \${{ fromJSON(inputs.rollback_release_json).taskDefinitionArn || '' }}`;
+  const forwarded = RAILPACK_WORKFLOW_INPUTS.map(({ name }) => {
     return `      ${name}: \${{ inputs.${name} }}`;
   }).join("\n");
   return `name: DeployGuard\non:\n  workflow_dispatch:\n    inputs:\n${inputDefinitions}\npermissions:\n  contents: read\n  id-token: write\njobs:\n  deploy:\n    uses: ${reusable}\n    with:\n${forwarded}\n`;

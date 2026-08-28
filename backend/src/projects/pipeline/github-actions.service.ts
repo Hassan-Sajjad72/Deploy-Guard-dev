@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { inflateRawSync } from "node:zlib";
-import { BUILD_PLAN_WORKFLOW_INPUT_NAMES, GITHUB_ACTIONS_CALLER_INPUT_NAMES, GITHUB_ACTIONS_OPTIONAL_CALLER_INPUT_NAMES } from "../github-actions-operation-contract";
+import { RAILPACK_CALLER_INPUT_NAMES, RAILPACK_OPTIONAL_CALLER_INPUT_NAMES, RAILPACK_WORKFLOW_INPUTS } from "../railpack-workflow-contract";
 
 export type GithubActionsDiagnosticCode =
   | "workflow_file_missing"
@@ -60,30 +60,16 @@ export function compactGithubWorkflowInputs(inputs?: Record<string, string>) {
 
 export function githubWorkflowDispatchInputs(inputs?: Record<string, string>) {
   if (!inputs) return undefined;
-  const callerInputs = { ...inputs };
-  const rollback = {
-    sourceOperationId: callerInputs.rollback_source_operation_id || "",
-    imageUri: callerInputs.rollback_image_uri || "",
-    taskDefinitionArn: callerInputs.rollback_task_definition_arn || "",
-  };
-  delete callerInputs.rollback_source_operation_id;
-  delete callerInputs.rollback_image_uri;
-  delete callerInputs.rollback_task_definition_arn;
-  const rollbackValues = Object.values(rollback);
-  if (rollbackValues.some(Boolean) && !rollbackValues.every(Boolean)) {
-    throw new GithubActionsDispatchError("invalid_workflow_inputs", "Immutable rollback dispatch evidence is incomplete.");
+  const allowed = new Set(RAILPACK_CALLER_INPUT_NAMES);
+  const unknown = Object.keys(inputs).find((name) => !allowed.has(name as typeof RAILPACK_CALLER_INPUT_NAMES[number]));
+  if (unknown) throw new GithubActionsDispatchError("invalid_workflow_inputs", `Unknown Railpack workflow input: ${unknown}.`);
+  const optional = new Set<string>(RAILPACK_OPTIONAL_CALLER_INPUT_NAMES);
+  for (const input of RAILPACK_WORKFLOW_INPUTS) {
+    if (!optional.has(input.name) && !String(inputs[input.name] || "").trim()) {
+      throw new GithubActionsDispatchError("invalid_workflow_inputs", `Required Railpack workflow input is missing: ${input.name}.`);
+    }
   }
-  const buildPlan = Object.fromEntries(BUILD_PLAN_WORKFLOW_INPUT_NAMES.map((name) => [
-    name,
-    name === "app_port" ? Number(callerInputs[name]) : callerInputs[name] || "",
-  ]));
-  if (!Number.isInteger(buildPlan.app_port) || Number(buildPlan.app_port) < 1 || Number(buildPlan.app_port) > 65535) {
-    throw new GithubActionsDispatchError("invalid_workflow_inputs", "Immutable BuildPlan port is invalid.");
-  }
-  for (const name of BUILD_PLAN_WORKFLOW_INPUT_NAMES) delete callerInputs[name];
-  callerInputs.build_plan_contract_json = JSON.stringify(buildPlan);
-  if (rollbackValues.every(Boolean)) callerInputs.rollback_release_json = JSON.stringify(rollback);
-  return compactGithubWorkflowInputs(callerInputs);
+  return compactGithubWorkflowInputs(inputs);
 }
 
 export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryBytes = 512 * 1024) {
@@ -276,8 +262,8 @@ export class GithubActionsService {
     }
     const definitions = content.match(/\n    inputs:\n([\s\S]*?)\npermissions:/)?.[1] || "";
     const declared = [...definitions.matchAll(/^\s{6}([a-z][a-z0-9_]*):\s*\{/gm)].map((match) => match[1]).sort();
-    const expected = [...GITHUB_ACTIONS_CALLER_INPUT_NAMES].sort();
-    const required = expected.filter((name) => !GITHUB_ACTIONS_OPTIONAL_CALLER_INPUT_NAMES.includes(name as typeof GITHUB_ACTIONS_OPTIONAL_CALLER_INPUT_NAMES[number]));
+    const expected = [...RAILPACK_CALLER_INPUT_NAMES].sort();
+    const required = expected.filter((name) => !RAILPACK_OPTIONAL_CALLER_INPUT_NAMES.includes(name as typeof RAILPACK_OPTIONAL_CALLER_INPUT_NAMES[number]));
     if (declared.length !== expected.length || declared.some((name, index) => name !== expected[index]) || inputNames.some((name) => !declared.includes(name)) || required.some((name) => !inputNames.includes(name))) {
       const detail = "Generated workflow input names do not match the canonical DeployGuard dispatch contract.";
       throw new GithubActionsDispatchError("invalid_workflow_inputs", detail, this.failureEvidence("invalid_workflow_inputs", null, detail, workflowFile, repository, branch, inputNames, operationId));

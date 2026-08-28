@@ -6,7 +6,7 @@ import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { UsersModule } from "../users/users.module";
 import { DeploymentContractService } from "./deployment-contract.service";
 import { DatabaseTierService } from "./database-tier.service";
-import { GithubActionsDeploymentService } from "./github-actions-deployment.service";
+import { RailpackDeploymentService } from "./railpack-deployment.service";
 import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
 import { GithubActionsAwsCapabilityService } from "./github-actions-aws-capability.service";
 import { GithubAppInstallation } from "./github-app-installation.entity";
@@ -82,7 +82,7 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
   ],
   controllers: [ProjectsController],
   providers: [
-    ProjectsService, GithubAppService, GithubActionsService, GithubActionsDeploymentService, GithubActionsRuntimeSecretService,
+    ProjectsService, GithubAppService, GithubActionsService, RailpackDeploymentService, GithubActionsRuntimeSecretService,
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
     DeploymentContractService, DatabaseTierService,
     RepositorySourceService,
