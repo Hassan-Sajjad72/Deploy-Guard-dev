@@ -255,30 +255,12 @@ export class ProjectsService {
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const deploymentAffecting = dto.appDirectory !== undefined || dto.deploymentOverrides !== undefined;
     const persist = async (target: Project, repository: Repository<Project>, manager?: EntityManager) => {
       this.applyProjectUpdate(target, dto);
-      const saved = await repository.save(target);
-      if (deploymentAffecting) {
-        await this.deploymentContractService.invalidateProject(
-          saved.id,
-          "Deployment settings changed. Run stack detection and pre-flight again.",
-          manager,
-        );
-      }
-      return saved;
+      return repository.save(target);
     };
 
-    const savedProject = deploymentAffecting
-      ? await this.dataSource.transaction(async (manager) => {
-          await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
-          const repository = manager.getRepository(Project);
-          const current = await repository.findOne({ where: { id: projectId } });
-          if (!current || current.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
-          this.assertCanManage(user, current);
-          return persist(current, repository, manager);
-        })
-      : await persist(project, this.projectRepository);
+    const savedProject = await persist(project, this.projectRepository);
 
     await this.auditLogService.record({
       actorUser: user,
@@ -341,13 +323,7 @@ export class ProjectsService {
       current.repositoryProvider = "github";
       current.targetBranch = nextBranch;
       current.status = ProjectStatus.CONFIGURED;
-      const saved = await repository.save(current);
-      await this.deploymentContractService.invalidateProject(
-        saved.id,
-        "Repository changed. Run stack detection and pre-flight again.",
-        manager,
-      );
-      return saved;
+      return repository.save(current);
     });
 
     await this.auditLogService.record({
@@ -397,13 +373,7 @@ export class ProjectsService {
       this.assertCanManage(user, current);
       current.targetBranch = dto.targetBranch;
       current.status = ProjectStatus.CONFIGURED;
-      const saved = await repository.save(current);
-      await this.deploymentContractService.invalidateProject(
-        saved.id,
-        "Target branch changed. Run stack detection and pre-flight again.",
-        manager,
-      );
-      return saved;
+      return repository.save(current);
     });
 
     await this.auditLogService.record({
