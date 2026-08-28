@@ -109,7 +109,7 @@ export class AiTroubleshootingService {
       messages,
       results,
       provider,
-      operation: run ? { id: run.id, action: run.metadata?.deploymentAction || "deploy", commitSha: run.commitSha, generationId: run.generationId, failedStage: run.metadata?.failedStage || run.currentStage, failedAt: run.failedAt, summary: run.errorMessage } : null,
+      operation: run ? { id: run.id, action: run.metadata?.deploymentAction || "deploy", commitSha: run.commitSha, generationId: run.generationId, failedStage: run.metadata?.failedStage || run.currentStage, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage } : null,
       evidence: { context: { ...collected.context, project: project ? { name: project.name, repository: project.repositoryFullName } : null }, groups: collected.groups },
       suggestedQuestions: TROUBLESHOOTING_QUESTIONS,
     };

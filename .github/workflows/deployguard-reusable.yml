@@ -156,6 +156,7 @@ jobs:
           git -C /tmp/deployguard-control-plane fetch --depth 1 origin "$CONTROL_PLANE_SHA"
           git -C /tmp/deployguard-control-plane checkout --detach "$CONTROL_PLANE_SHA"
           [ "$(git -C /tmp/deployguard-control-plane rev-parse HEAD)" = "$CONTROL_PLANE_SHA" ]
+          mkdir -p .deployguard
           cp -R /tmp/deployguard-control-plane/infrastructure/railpack-runtime .deployguard/terraform
           printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime.json
           jq -n \

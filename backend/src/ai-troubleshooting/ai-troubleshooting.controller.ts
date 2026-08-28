@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { Request } from "express";
 import { requireRole } from "../common/rbac/require-role.guard";
 import { User, UserRole } from "../users/user.entity";
@@ -13,10 +13,10 @@ export class AiTroubleshootingController {
   @Get("provider-status") status(@Req() req: Request & { user: User }, @Param("projectId") projectId: string) { return this.service.providerStatus(req.user, projectId); }
   @Post() start(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Body() dto: StartAnalysisDto) { return this.service.start(req.user, projectId, dto.pipelineRunId); }
   @Get() list(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Query("page") page?: string, @Query("limit") limit?: string) { return this.service.list(req.user, projectId, optionalPositiveInteger(page), optionalPositiveInteger(limit)); }
-  @Get(":sessionId") get(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Param("sessionId") sessionId: string) { return this.service.get(req.user, projectId, sessionId); }
-  @Post(":sessionId/regenerate") regenerate(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Param("sessionId") sessionId: string) { return this.service.regenerate(req.user, projectId, sessionId); }
-  @Post(":sessionId/follow-up") followUp(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Param("sessionId") sessionId: string, @Body() dto: FollowUpDto) { return this.service.followUp(req.user, projectId, sessionId, dto.message); }
-  @Delete(":sessionId") close(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Param("sessionId") sessionId: string) { return this.service.close(req.user, projectId, sessionId); }
+  @Get(":sessionId") get(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Param("sessionId", ParseUUIDPipe) sessionId: string) { return this.service.get(req.user, projectId, sessionId); }
+  @Post(":sessionId/regenerate") regenerate(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Param("sessionId", ParseUUIDPipe) sessionId: string) { return this.service.regenerate(req.user, projectId, sessionId); }
+  @Post(":sessionId/follow-up") followUp(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Param("sessionId", ParseUUIDPipe) sessionId: string, @Body() dto: FollowUpDto) { return this.service.followUp(req.user, projectId, sessionId, dto.message); }
+  @Delete(":sessionId") close(@Req() req: Request & { user: User }, @Param("projectId") projectId: string, @Param("sessionId", ParseUUIDPipe) sessionId: string) { return this.service.close(req.user, projectId, sessionId); }
 }
 
 function optionalPositiveInteger(value?: string): number | undefined {

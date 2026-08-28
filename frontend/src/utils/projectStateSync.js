@@ -7,6 +7,7 @@ export function publishProjectStateChanged(projectId) {
 }
 
 export function subscribeProjectStateChanged(projectId, refresh) {
+  const refreshWithoutEvent = () => { void refresh(); };
   const onStateChanged = (event) => {
     if (String(event.detail?.projectId || "") === String(projectId)) void refresh();
   };
@@ -14,13 +15,13 @@ export function subscribeProjectStateChanged(projectId, refresh) {
     if (document.visibilityState === "visible") void refresh();
   };
   window.addEventListener(PROJECT_STATE_CHANGED_EVENT, onStateChanged);
-  window.addEventListener("focus", refresh);
-  window.addEventListener("pageshow", refresh);
+  window.addEventListener("focus", refreshWithoutEvent);
+  window.addEventListener("pageshow", refreshWithoutEvent);
   document.addEventListener("visibilitychange", onPageVisible);
   return () => {
     window.removeEventListener(PROJECT_STATE_CHANGED_EVENT, onStateChanged);
-    window.removeEventListener("focus", refresh);
-    window.removeEventListener("pageshow", refresh);
+    window.removeEventListener("focus", refreshWithoutEvent);
+    window.removeEventListener("pageshow", refreshWithoutEvent);
     document.removeEventListener("visibilitychange", onPageVisible);
   };
 }
