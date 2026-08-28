@@ -34,12 +34,12 @@ export default function ProjectForm({ form, isSubmitting, onChange, onSubmit, su
             {isDeveloperMode ? <label className="field"><span>Project visibility</span><select id="visibility" name="visibility" onChange={onChange} value={form.visibility}><option value="private">Private</option><option value="workspace">Workspace</option></select><small>Private restricts access to the owner and administrators.</small></label> : null}
           </div>
           {isDeveloperMode ? <div className="state muted"><strong>Application directory:</strong> An explicit path limits detection and builds to that folder. If left blank, DeployGuard selects the strongest supported app manifest automatically.</div> : null}
-          <div className="state muted"><strong>{isDeveloperMode ? "Automation safety:" : "After you create it:"}</strong> {isDeveloperMode ? "DeployGuard runs detection, template generation, and pre-flight after creation. Deployment runs only through the repository's GitHub Actions workflow." : "DeployGuard prepares and checks the app automatically. Cloud resources are created only after you choose Deploy."}</div>
+          <div className="state muted"><strong>{isDeveloperMode ? "Deployment safety:" : "After you create it:"}</strong> {isDeveloperMode ? "DeployGuard records the selected source and dispatches the repository's GitHub Actions workflow. Railpack builds the image; DeployGuard runs it on AWS." : "Cloud resources are created only after you choose Deploy."}</div>
         </div>
       </section>
 
       <section className="panel next-step-preview">
-        <div><p className="eyebrow">What happens next</p><h2>Create once. DeployGuard takes it from here.</h2><p className="muted">{isDeveloperMode ? "After creation, detection, template generation, pre-flight, and the internal deployment pipeline start automatically. You do not need a Dockerfile, docker-compose, Terraform, GitHub Actions, or repository AWS credentials." : "DeployGuard prepares, builds, checks, and deploys the selected app using the platform's configured environment."}</p></div>
+        <div><p className="eyebrow">What happens next</p><h2>Create once. DeployGuard takes it from here.</h2><p className="muted">{isDeveloperMode ? "DeployGuard checks out the selected source, Railpack builds an OCI image, and GitHub Actions provisions the AWS runtime. You do not need a Dockerfile, docker-compose, Terraform, or repository AWS credentials." : "DeployGuard builds and deploys the selected source using the platform's configured environment."}</p></div>
         <div className="quick-actions"><Link className="secondary-button" to="/projects">Cancel</Link><button className="button" disabled={isSubmitting} type="submit">{isSubmitting ? "Creating project..." : submitLabel}</button></div>
       </section>
     </form>

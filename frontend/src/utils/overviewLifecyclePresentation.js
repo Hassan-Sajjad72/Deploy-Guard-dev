@@ -37,7 +37,7 @@ export function overviewLifecycleCopy(currentState) {
   const state = latestOperationFailed(currentState) ? "FAILED" : canonicalState;
   const operationType = latestOverviewOperationType(currentState);
   const copy = {
-    READY: ["Ready to Deploy", "Analysis and pre-flight are complete. No deployment has started yet."],
+    READY: ["Ready to Deploy", "Repository and branch are configured. No deployment has started yet."],
     DEPLOYING: operationType === "rollback"
       ? ["Rollback in progress", "GitHub Actions is processing the current rollback. Actions are unavailable until it reconciles."]
       : ["Deployment in progress", "GitHub Actions is processing the current deployment. Actions are unavailable until it reconciles."],
