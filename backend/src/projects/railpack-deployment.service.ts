@@ -25,6 +25,7 @@ import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./proje
 import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
 import { materializeStableRelease } from "./stable-release-projection";
 import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
+import { DESTROY_CONFIRMATION_PHRASE } from "./destroy-confirmation";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 
@@ -78,8 +79,8 @@ export class RailpackDeploymentService {
     return this.dispatch(user, projectId, "deploy");
   }
   async destroy(user: User, projectId: string, confirmationPhrase: string) {
-    const project = await this.project(user, projectId);
-    if (confirmationPhrase !== project.name) throw new ForbiddenException("Type the project name to confirm destroy.");
+    await this.project(user, projectId);
+    if (confirmationPhrase !== DESTROY_CONFIRMATION_PHRASE) throw new ForbiddenException(`Type ${DESTROY_CONFIRMATION_PHRASE} to confirm destroy.`);
     return this.dispatch(user, projectId, "destroy");
   }
   async rollbackCandidates(user: User, projectId: string) {

@@ -18,6 +18,7 @@ import {
 } from "../../api/projectApi.js";
 import { deploymentPhasePresentation } from "../../utils/developerDeploymentPresentation.js";
 import { canonicalOverviewState, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
+import { DESTROY_CONFIRMATION_PHRASE } from "../../utils/deploymentConfirmation.js";
 
 function formatDate(value) {
   return value
@@ -125,7 +126,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   }
 
   async function destroy() {
-    if (dispatching.current || !canManage || destroyPhrase !== "DESTROY") return;
+    if (dispatching.current || !canManage || destroyPhrase !== DESTROY_CONFIRMATION_PHRASE) return;
     dispatching.current = true;
     setBusy("destroy");
     setError("");
@@ -232,9 +233,9 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
 
     {destroyOpen ? <Modal labelledBy="overview-destroy-title" onClose={() => { if (!busy) { setDestroyOpen(false); setDestroyPhrase(""); } }}>
       <p className="eyebrow">Permanent project deletion</p><h2 id="overview-destroy-title">Delete this project and its owned resources?</h2>
-      <p>Each recorded generation and the separate project resources will be cleaned by exact identity. Shared platform networking, cluster and load balancer remain untouched. Type <strong>DESTROY</strong> to confirm.</p>
+      <p>Each recorded generation and the separate project resources will be cleaned by exact identity. Shared platform networking, cluster and load balancer remain untouched. Type <strong>{DESTROY_CONFIRMATION_PHRASE}</strong> to confirm.</p>
       <label className="field"><span>Confirmation</span><input autoComplete="off" autoFocus onChange={(event) => setDestroyPhrase(event.target.value)} value={destroyPhrase} /></label>
-      <div className="overview-modal-actions"><Button disabled={Boolean(busy)} onClick={() => { setDestroyOpen(false); setDestroyPhrase(""); }} tone="ghost">Cancel</Button><Button disabled={busy === "destroy" || destroyPhrase !== "DESTROY"} onClick={() => void destroy()} tone="danger">{busy === "destroy" ? "Destroying…" : "Confirm destroy"}</Button></div>
+      <div className="overview-modal-actions"><Button disabled={Boolean(busy)} onClick={() => { setDestroyOpen(false); setDestroyPhrase(""); }} tone="ghost">Cancel</Button><Button disabled={busy === "destroy" || destroyPhrase !== DESTROY_CONFIRMATION_PHRASE} onClick={() => void destroy()} tone="danger">{busy === "destroy" ? "Destroying…" : "Confirm destroy"}</Button></div>
     </Modal> : null}
 
     {rollbackOpen ? <Modal labelledBy="overview-rollback-title" onClose={() => { if (!busy) setRollbackOpen(false); }}>
