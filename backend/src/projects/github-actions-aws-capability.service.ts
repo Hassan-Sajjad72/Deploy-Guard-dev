@@ -86,7 +86,7 @@ export async function verifyEffectiveWorkflowCapabilities(
   roleArn: string,
   scope: WorkflowAwsCapabilityScope,
   action: WorkflowLifecycleAction,
-  capabilities: readonly WorkflowAwsCapability[] = capabilitiesFor(action),
+  capabilities: readonly WorkflowAwsCapability[] = capabilitiesFor(action, scope),
   abortSignal?: AbortSignal,
 ) {
   const denied = new Set<string>();
@@ -110,7 +110,7 @@ export async function reconcileWorkflowCapabilities(input: {
   capabilities?: readonly WorkflowAwsCapability[];
   abortSignal?: AbortSignal;
 }) {
-  const capabilities = input.capabilities || capabilitiesFor(input.action);
+  const capabilities = input.capabilities || capabilitiesFor(input.action, input.scope);
   let existingPolicy: unknown = null;
   try {
     existingPolicy = decodedPolicy((await input.client.send(new GetRolePolicyCommand({ RoleName: input.roleName, PolicyName: POLICY_NAME }), { abortSignal: input.abortSignal })).PolicyDocument);
@@ -207,7 +207,7 @@ export class GithubActionsAwsCapabilityService {
 
   constructor(private readonly config: ConfigService) {}
 
-  async ensure(input: Omit<WorkflowAwsCapabilityScope, "accountId" | "region" | "terraformStateBucket" | "vpcId" | "sharedEcsClusterArn" | "sharedAlbArn" | "sharedAlbListenerArn"> & { action: WorkflowLifecycleAction }) {
+  async ensure(input: Omit<WorkflowAwsCapabilityScope, "accountId" | "region" | "terraformStateBucket" | "vpcId"> & { action: WorkflowLifecycleAction }) {
     const runtimeContract = workflowCapabilityRuntimeStatus();
     if (runtimeContract.stale) {
       throw new WorkflowAwsCapabilityError(["stale-capability-contract"], "The running backend predates the current AWS capability contract. Restart DeployGuard before dispatch.");
@@ -221,15 +221,9 @@ export class GithubActionsAwsCapabilityService {
       region: this.config.get<string>("AWS_REGION", "us-east-1"),
       terraformStateBucket: this.config.get<string>("DEPLOYGUARD_TERRAFORM_STATE_BUCKET", ""),
       vpcId: this.config.get<string>("DEPLOYGUARD_VPC_ID", "").trim(),
-      sharedEcsClusterArn: this.config.get<string>("DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN", "").trim(),
-      sharedAlbArn: this.config.get<string>("DEPLOYGUARD_SHARED_ALB_ARN", "").trim(),
-      sharedAlbListenerArn: this.config.get<string>("DEPLOYGUARD_SHARED_ALB_LISTENER_ARN", "").trim(),
     };
     if (!scope.terraformStateBucket) throw new WorkflowAwsCapabilityError(["terraform-state-bucket"], "The Terraform state bucket is not configured.");
     if (!/^vpc-[0-9a-f]+$/i.test(scope.vpcId)) throw new WorkflowAwsCapabilityError(["vpc"], "The configured DeployGuard VPC identity is invalid.");
-    if (!scope.sharedEcsClusterArn || !scope.sharedAlbArn || !scope.sharedAlbListenerArn) {
-      throw new WorkflowAwsCapabilityError(["shared-platform"], "The configured shared ECS cluster, ALB and listener identities are incomplete.");
-    }
     const key = `${roleArn}:${input.action}:${input.projectId}:${input.environmentName}:${input.generationId}`;
     const active = this.inFlight.get(key);
     if (active) return active;

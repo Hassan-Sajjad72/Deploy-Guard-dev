@@ -129,7 +129,7 @@ export type ProjectStateAuthority = {
   } | null;
   infrastructure: {
     exists: boolean | null;
-    status: "active" | "destroyed" | "not_provisioned" | "unknown";
+    status: "active" | "destroyed" | "not_provisioned" | "provisioning_failed" | "unknown";
     source: "github_actions" | "infrastructure_record" | "unavailable";
     observedAt: string | null;
   };

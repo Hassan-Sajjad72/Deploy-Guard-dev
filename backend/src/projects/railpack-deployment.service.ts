@@ -10,6 +10,7 @@ import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.se
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { GithubAppService } from "./github-app.service";
 import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
+import { GithubActionsAwsCapabilityService, WorkflowAwsCapabilityError } from "./github-actions-aws-capability.service";
 import { GithubActionsDispatchError, GithubActionsService } from "./pipeline/github-actions.service";
 import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
 import { Project } from "./project.entity";
@@ -36,6 +37,7 @@ export class RailpackDeploymentService {
     private readonly githubApp: GithubAppService,
     private readonly actions: GithubActionsService,
     private readonly oidcTrust: GithubActionsOidcTrustService,
+    private readonly awsCapabilities: GithubActionsAwsCapabilityService,
     private readonly source: RepositorySourceService,
     private readonly crypto: ProjectEnvironmentCryptoService,
     private readonly runtimeSecrets: GithubActionsRuntimeSecretService,
@@ -146,6 +148,9 @@ export class RailpackDeploymentService {
       };
       operation.commitSha = sourceSha;
       operation.imageTag = inputs.image_tag;
+      operation.currentStage = "aws_capability_verification";
+      await this.runs.save(operation);
+      await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled: runtime.managedDatabase.enabled });
       operation.currentStage = "workflow_dispatch";
       operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", configuredControlPlaneSha: inputs.control_plane_sha, immutableDispatchInputs: inputs, immutableDispatchFingerprint: immutableRailpackDispatchFingerprint(inputs) };
       await this.runs.save(operation);
@@ -167,6 +172,9 @@ export class RailpackDeploymentService {
   }
 
   private dispatchFailure(error: unknown, stage: string | null) {
+    if (error instanceof WorkflowAwsCapabilityError) {
+      return { stage: stage || "aws_capability_verification", message: `AWS platform capability verification failed: ${error.missingCapabilities.join(", ") || "required capability unavailable"}.`, evidence: { classification: "platform_configuration", missingCapabilities: error.missingCapabilities } };
+    }
     if (error instanceof GithubActionsDispatchError) {
       return { stage: stage || "workflow_dispatch", message: error.safeDetail || "DeployGuard could not dispatch the GitHub Actions workflow.", evidence: error.evidence || { classification: error.diagnosticCode } };
     }
@@ -249,6 +257,15 @@ export class RailpackDeploymentService {
             ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
             ...(failureEvidence ? { failedStage: failureEvidence.failedStage, safeLog: failureEvidence.safeLog, workflowStages: failureEvidence.workflowStages, failureSource: "github_actions" } : {}),
           };
+        }
+      } else {
+        // Job metadata is available while the workflow runs; logs remain
+        // terminal-only. Do not erase persisted stages on an empty response.
+        const stages = await this.actions.getWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
+        if (stages.length) {
+          const activeStage = stages.find((item) => item.status === "running") || stages.find((item) => item.status === "failed");
+          operation.currentStage = activeStage?.key || operation.currentStage;
+          operation.metadata = { ...(operation.metadata || {}), workflowStages: stages, workflowUpdatedAt: new Date().toISOString() };
         }
       }
       await this.runs.save(operation);

@@ -111,10 +111,20 @@ export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryByt
 
 export const DEPLOYGUARD_RESULT_ARTIFACT_ENTRY = "terraform/deployguard-result.json";
 
+export type GithubActionsWorkflowStage = {
+  key: string;
+  label: string;
+  status: "failed" | "passed" | "running" | "pending" | "skipped";
+  startedAt: string | null;
+  completedAt: string | null;
+  jobUrl: string | null;
+  failureReason: string | null;
+};
+
 export type GithubActionsTerminalFailureEvidence = {
   failedStage: string;
   rawEvidence: string;
-  workflowStages: Array<{ key: string; label: string; status: "failed" | "passed" | "running" | "skipped"; startedAt: string | null; completedAt: string | null; jobUrl: string | null; failureReason: string | null }>;
+  workflowStages: GithubActionsWorkflowStage[];
 };
 
 @Injectable()
@@ -336,6 +346,31 @@ export class GithubActionsService {
     return response.text();
   }
 
+  /** Job/step metadata is safe to collect while a run is active. Logs remain
+   * terminal-only evidence and are deliberately not read here. */
+  async getWorkflowStages(repository: string, workflowRunId: string, token: string): Promise<GithubActionsWorkflowStage[]> {
+    const response = await this.getWorkflowJobs(repository, workflowRunId, token);
+    const normalized = (value: unknown) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const stageStatus = (step: { status?: string; conclusion?: string | null }): GithubActionsWorkflowStage["status"] => {
+      const conclusion = String(step.conclusion || "").toLowerCase();
+      const status = String(step.status || "").toLowerCase();
+      if (conclusion === "failure" || conclusion === "cancelled" || conclusion === "timed_out") return "failed";
+      if (conclusion === "skipped") return "skipped";
+      if (conclusion === "success") return "passed";
+      if (["in_progress", "running"].includes(status)) return "running";
+      return "pending";
+    };
+    return (response.jobs || []).flatMap((job) => (job.steps || []).map((step) => ({
+      key: normalized(step.name) || normalized(job.name) || "workflow_bootstrap",
+      label: String(step.name || job.name || "GitHub Actions workflow bootstrap"),
+      status: stageStatus(step),
+      startedAt: step.started_at || null,
+      completedAt: step.completed_at || null,
+      jobUrl: job.html_url || null,
+      failureReason: stageStatus(step) === "failed" ? `GitHub Actions step failed: ${String(step.name || job.name || "workflow bootstrap")}` : null,
+    })));
+  }
+
   /**
    * Collect only bounded evidence for a terminal failure. This deliberately
    * works for bootstrap failures where no deployment artifact exists.
@@ -349,16 +384,7 @@ export class GithubActionsService {
     const failedStep = (failed.steps || []).find((step) => String(step.conclusion || "").toLowerCase() === "failure");
     const normalized = (value: unknown) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
     const failedStage = normalized(failedStep?.name) || normalized(failed.name) || "workflow_bootstrap";
-    const workflowStages = (failed.steps || []).map((step) => ({
-      key: normalized(step.name) || "workflow_bootstrap",
-      label: String(step.name || "GitHub Actions workflow bootstrap"),
-      status: String(step.conclusion || step.status || "").toLowerCase() === "failure" ? "failed" as const
-        : String(step.conclusion || step.status || "").toLowerCase() === "skipped" ? "skipped" as const
-          : String(step.status || "").toLowerCase() === "in_progress" ? "running" as const : "passed" as const,
-      startedAt: step.started_at || null, completedAt: step.completed_at || null,
-      jobUrl: failed.html_url || null,
-      failureReason: String(step.conclusion || "").toLowerCase() === "failure" ? `GitHub Actions step failed: ${String(step.name || "workflow bootstrap")}` : null,
-    }));
+    const workflowStages = await this.getWorkflowStages(repository, workflowRunId, token);
     const summary = [
       `GitHub Actions job: ${String(failed.name || "workflow bootstrap")}`,
       `Job status: ${String(failed.status || "completed")}`,

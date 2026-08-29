@@ -200,22 +200,25 @@ resource "aws_iam_role_policy_attachment" "execution" {
 }
 
 data "aws_iam_policy_document" "runtime_secrets" {
+  count = length(local.runtime_secret_arns) > 0 ? 1 : 0
   statement {
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = distinct(concat(
-      [for reference in values(var.secret_references) : split(":", reference)[0] == "arn" ? join(":", slice(split(":", reference), 0, 7)) : reference],
-      var.managed_database_enabled ? [aws_secretsmanager_secret.database[0].arn] : [],
-    ))
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = local.runtime_secret_arns
   }
 }
 
 resource "aws_iam_role_policy" "runtime_secrets" {
+  count  = length(local.runtime_secret_arns) > 0 ? 1 : 0
   name   = "runtime-secrets"
   role   = aws_iam_role.execution.id
-  policy = data.aws_iam_policy_document.runtime_secrets.json
+  policy = data.aws_iam_policy_document.runtime_secrets[0].json
 }
 
 locals {
+  runtime_secret_arns = distinct(concat(
+    [for reference in values(var.secret_references) : split(":", reference)[0] == "arn" ? join(":", slice(split(":", reference), 0, 7)) : reference],
+    var.managed_database_enabled ? [aws_secretsmanager_secret.database[0].arn] : [],
+  ))
   database_port  = var.managed_database_engine == "mysql" ? 3306 : var.managed_database_engine == "mongodb" ? 27017 : 5432
   database_image = var.managed_database_engine == "mysql" ? "mysql:8" : var.managed_database_engine == "mongodb" ? "mongo:8" : "postgres:16"
   database_path  = var.managed_database_engine == "mysql" ? "/var/lib/mysql" : var.managed_database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"

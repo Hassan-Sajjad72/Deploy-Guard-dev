@@ -8,6 +8,7 @@ import { isAiTroubleshootingEligible } from "../src/ai-troubleshooting/ai-troubl
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { githubActionsFailureLifecyclePhase } from "../src/projects/pipeline/github-actions-stage-presentation";
 import { GithubActionsService } from "../src/projects/pipeline/github-actions.service";
+import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 
 const user = { id: 7 } as any;
 const project = {
@@ -45,6 +46,17 @@ async function verifyPreDispatchFailure() {
   assert.equal(typeof failed.metadata.safeLog, "string");
   assert.equal(isAiTroubleshootingEligible(failed), true, "sanitized dispatch failure must be troubleshooting eligible");
   return failed;
+}
+
+function verifyCapabilityFailureIsBoundedAndPreDispatch() {
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  const failure = service.dispatchFailure(new WorkflowAwsCapabilityError([
+    "ecs:CreateCluster", "elasticloadbalancing:CreateLoadBalancer", "iam:AttachRolePolicy",
+  ], "fixture"), "aws_capability_verification");
+  assert.equal(failure.stage, "aws_capability_verification");
+  assert.equal(failure.evidence.classification, "platform_configuration");
+  assert.deepEqual(failure.evidence.missingCapabilities, ["ecs:CreateCluster", "elasticloadbalancing:CreateLoadBalancer", "iam:AttachRolePolicy"]);
+  assert.doesNotMatch(failure.message, /fixture/, "internal IAM simulator text must not become high-level operation evidence");
 }
 
 async function verifyCurrentStateProjection(failed: any, realGithubRun = false) {
@@ -137,6 +149,31 @@ async function verifyTerminalGithubFailure() {
   return failedRun;
 }
 
+async function verifyActiveGithubStagesPersistWithoutPipeline() {
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  service.actions = {
+    getWorkflowRun: async () => ({ status: "in_progress", conclusion: null }),
+    getWorkflowStages: async () => [
+      { key: "checkout", label: "Checkout", status: "passed", startedAt: "2026-08-29T10:00:00.000Z", completedAt: "2026-08-29T10:00:03.000Z", jobUrl: null, failureReason: null },
+      { key: "aws_oidc", label: "AWS OIDC", status: "passed", startedAt: "2026-08-29T10:00:03.000Z", completedAt: "2026-08-29T10:00:06.000Z", jobUrl: null, failureReason: null },
+      { key: "railpack_build", label: "Railpack Build", status: "running", startedAt: "2026-08-29T10:00:06.000Z", completedAt: null, jobUrl: null, failureReason: null },
+      { key: "terraform_apply", label: "Terraform Apply", status: "pending", startedAt: null, completedAt: null, jobUrl: null, failureReason: null },
+    ],
+  };
+  const operation: any = { id: "55555555-5555-4555-8555-555555555555", projectId: project.id, triggeredByUserId: user.id, githubWorkflowRunId: "123", status: PipelineRunStatus.RUNNING, currentStage: "github_actions", metadata: { executionEngine: "railpack" } };
+  await service.reconcile(operation);
+  assert.equal(saved.at(-1).currentStage, "railpack_build");
+  assert.deepEqual(saved.at(-1).metadata.workflowStages.map((stage: any) => stage.status), ["passed", "passed", "running", "pending"]);
+  service.actions.getWorkflowStages = async () => [];
+  await service.reconcile(operation);
+  assert.equal(saved.at(-1).metadata.workflowStages.length, 4, "a transient empty jobs response must retain prior stage evidence");
+}
+
 async function verifyCurrentStateReconcilesWithoutPipeline() {
   const startedAt = new Date("2026-08-29T10:00:00.000Z");
   const failedAt = new Date("2026-08-29T10:02:00.000Z");
@@ -219,8 +256,10 @@ async function verifyConcurrentStateReadsShareReconciliation() {
 
 void (async () => {
   const failed = await verifyPreDispatchFailure();
+  verifyCapabilityFailureIsBoundedAndPreDispatch();
   await verifyCurrentStateProjection(failed);
   const terminalFailure = await verifyTerminalGithubFailure();
+  await verifyActiveGithubStagesPersistWithoutPipeline();
   await verifyCurrentStateProjection(terminalFailure, true);
   await verifyCurrentStateReconcilesWithoutPipeline();
   await verifyConcurrentStateReadsShareReconciliation();
@@ -248,6 +287,8 @@ void (async () => {
   assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
   assert.match(overviewPage, /getProjectCurrentState/);
   assert.match(pipelinePage, /getProjectCurrentState/);
+  assert.match(infrastructurePage, /Provisioning failed/);
+  assert.doesNotMatch(infrastructurePage, /attempt\?\.message/);
   assert.match(infrastructurePage, /getProjectCurrentState/);
   assert.match(troubleshootingPage, /getGithubActionsDeploymentHistory/);
   console.log("DISPATCH_STATE_PROJECTION=PASS");

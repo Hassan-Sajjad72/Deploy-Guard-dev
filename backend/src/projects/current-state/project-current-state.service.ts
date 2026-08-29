@@ -567,6 +567,9 @@ export class ProjectCurrentStateService {
     const stoppedBeforeProvisioning = projected.developerState === "failed_application"
       && ["configuration", "build"].includes(String(projected.applicationError?.category || ""))
       && !authoritativeLiveRelease;
+    const failedDuringProvisioning = projected.developerState === "failed_application"
+      && ["runtime", "deployment"].includes(String(projected.applicationError?.category || ""))
+      && !authoritativeLiveRelease;
     const liveReleaseObservedAt = projected.stableRelease?.promotedAt || observedAt;
     const infrastructureStatus = runtimeDeleted
       ? { exists: false, status: "destroyed" as const, source: "github_actions" as const }
@@ -574,6 +577,8 @@ export class ProjectCurrentStateService {
         ? { exists: true, status: "active" as const, source: "github_actions" as const }
         : stoppedBeforeProvisioning
           ? { exists: false, status: "not_provisioned" as const, source: "unavailable" as const }
+          : failedDuringProvisioning
+            ? { exists: null, status: "provisioning_failed" as const, source: "github_actions" as const }
         : { exists: null, status: "unknown" as const, source: "unavailable" as const };
     const canonical = projected.developerState === "ready"
       ? "READY" as const
