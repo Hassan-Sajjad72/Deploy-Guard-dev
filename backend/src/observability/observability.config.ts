@@ -10,7 +10,9 @@ export function getObservabilityConfig(config: ConfigService) {
     prometheusEnabled: envBoolean(config, "PROMETHEUS_ENABLED", false),
     prometheusBaseUrl: config.get<string>("PROMETHEUS_BASE_URL", "http://localhost:9090"),
     prometheusScrapeToken: config.get<string>("PROMETHEUS_SCRAPE_TOKEN", production ? "" : "deployguard-local-monitoring"),
-    grafanaBaseUrl: config.get<string>("GRAFANA_BASE_URL", "http://localhost:3001/d/deployguard-runtime/deployguard-runtime"),
+    // Grafana is an independent optional integration. An empty value means it
+    // is genuinely not configured; CloudWatch availability never controls it.
+    grafanaBaseUrl: config.get<string>("GRAFANA_BASE_URL", "").trim(),
     prometheusQueryTimeoutSeconds: Number(config.get<string>("PROMETHEUS_QUERY_TIMEOUT_SECONDS", "10")),
     cloudWatchLogsEnabled: envBoolean(config, "CLOUDWATCH_LOGS_ENABLED", true),
     cloudWatchMetricsEnabled: envBoolean(config, "CLOUDWATCH_METRICS_ENABLED", true),

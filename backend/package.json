@@ -17,8 +17,9 @@
     "test:railpack-materialization-workspace": "ts-node scripts/verify-railpack-materialization-workspace.ts",
     "test:troubleshooting-boundaries": "ts-node scripts/verify-troubleshooting-boundaries.ts",
     "test:product-start-schema-integrity": "ts-node scripts/verify-product-start-schema-integrity.ts",
+    "test:developer-runtime-experience": "ts-node scripts/verify-developer-runtime-experience.ts && ts-node scripts/verify-github-actions-cost-evidence.ts",
     "test:local-repository-certification": "npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract && npm run test:dispatch-state-projection && npm run test:product-start-schema-integrity",
-    "test:full-local-certification": "npm run build && npm --prefix ../frontend run build && npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract && npm run test:railpack-materialization-workspace && npm run test:troubleshooting-boundaries && npm run test:dispatch-state-projection && npm run test:unified-railpack-lifecycle && npm --prefix ../frontend run test:railpack-failure-presentation && npm --prefix ../frontend run test:project-state-sync && npm run test:product-start-schema-integrity",
+    "test:full-local-certification": "npm run build && npm --prefix ../frontend run build && npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract && npm run test:railpack-materialization-workspace && npm run test:troubleshooting-boundaries && npm run test:dispatch-state-projection && npm run test:unified-railpack-lifecycle && npm run test:developer-runtime-experience && npm --prefix ../frontend run test:infrastructure-presentation && npm --prefix ../frontend run test:monitoring-presentation && npm --prefix ../frontend run test:railpack-failure-presentation && npm --prefix ../frontend run test:project-state-sync && npm run test:product-start-schema-integrity",
     "test:reliability-certification": "npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts"
   },

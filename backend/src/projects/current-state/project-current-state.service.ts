@@ -106,11 +106,11 @@ export class ProjectCurrentStateService {
             : "unavailable",
         source: estimate?.source === CostEstimateSource.INFRACOST ? "infracost" : "unavailable",
         currency: estimate?.currency || null,
-        monthly: estimate?.status === CostEstimateStatus.NO_APPROVAL_REQUIRED ? Number(estimate.totalMonthlyCost) : null,
+        monthly: estimate && [CostEstimateStatus.NO_APPROVAL_REQUIRED, CostEstimateStatus.APPROVAL_REQUIRED].includes(estimate.status) ? Number(estimate.totalMonthlyCost) : null,
         generationId: authoritativeGenerationId,
         releaseId: authoritativeRelease.id,
         operationId: authoritativeRelease.deployedByPipelineRunId || null,
-        estimatedAt: (estimate?.updatedAt || authoritativeRelease.deployedAt).toISOString(),
+        estimatedAt: estimate?.updatedAt?.toISOString() || null,
         unavailableReason,
         breakdown: Array.isArray((estimate?.normalizedBreakdown as Record<string, unknown> | null)?.resources)
           ? ((estimate.normalizedBreakdown as { resources: Array<Record<string, unknown>> }).resources).map((resource) => ({

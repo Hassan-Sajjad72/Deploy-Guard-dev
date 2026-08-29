@@ -215,7 +215,7 @@ export type DeveloperProjectCurrentState = {
     generationId: string | null;
     releaseId: string | null;
     operationId: string | null;
-    estimatedAt: string;
+    estimatedAt: string | null;
     unavailableReason: string | null;
     breakdown: Array<{ name: string; service: string | null; monthly: number }>;
   } | null;

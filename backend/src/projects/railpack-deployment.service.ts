@@ -24,6 +24,7 @@ import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
 import { materializeStableRelease } from "./stable-release-projection";
+import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 
@@ -59,6 +60,7 @@ export class RailpackDeploymentService {
     private readonly config: ConfigService,
     private readonly sanitizer: LogSanitizerService,
     private readonly dataSource: DataSource,
+    private readonly costEvidence: GithubActionsCostEvidenceService,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy"); }
@@ -138,7 +140,10 @@ export class RailpackDeploymentService {
       // Earlier Railpack releases can have valid, persisted evidence but no
       // control-plane release projection. Reconcile that local state without
       // contacting GitHub or changing AWS.
-      await Promise.all(completed.map((operation) => this.reconcileCompletedRelease(operation)));
+      await Promise.all(completed.map(async (operation) => {
+        await this.reconcileCompletedRelease(operation);
+        await this.reconcileCostEvidence(operation);
+      }));
     })();
     this.reconciliationInFlight.set(projectId, task);
     try { await task; }
@@ -327,6 +332,7 @@ export class RailpackDeploymentService {
             await this.persistFinalizationFailure(operation, evidence, error);
             return operation;
           }
+          await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project)).catch(() => null);
         } else {
           const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
           operation.status = PipelineRunStatus.FAILED;
@@ -432,6 +438,30 @@ export class RailpackDeploymentService {
     } catch {
       // A historical row cannot become LIVE unless its persisted immutable
       // evidence still validates. Leave it non-authoritative for inspection.
+    }
+  }
+
+  /**
+   * Cost evidence is a read-only, retryable projection of an already verified
+   * release. It can backfill a LIVE release after a control-plane upgrade and
+   * can never promote or fail the deployment itself.
+   */
+  private async reconcileCostEvidence(operation: ProjectPipelineRun) {
+    const action = String(operation.metadata?.deploymentAction || "");
+    if (!operation.generationId
+      || operation.metadata?.releaseEvidenceVerified !== true
+      || !["deploy", "rollback"].includes(action)) return;
+    const [project, user] = await Promise.all([
+      this.projects.findOne({ where: { id: operation.projectId } }),
+      this.users.findOne({ where: { id: operation.triggeredByUserId } }),
+    ]);
+    if (!project?.repositoryFullName || !user) return;
+    try {
+      const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
+      await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project));
+    } catch {
+      // Pricing failure is persisted by the cost evidence service when it can
+      // be classified. It must never invalidate the authoritative LIVE release.
     }
   }
 

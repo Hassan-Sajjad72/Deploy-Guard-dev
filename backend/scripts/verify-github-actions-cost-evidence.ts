@@ -4,6 +4,7 @@ import { CostEstimateStatus } from "../src/finops/project-cost-estimate.entity";
 
 const estimates: any[] = [];
 const artifactRequests: Array<{ runId: string; name: string }> = [];
+let artifactsAvailable = true;
 const repository = {
   findOne: async () => null,
   find: async () => [...estimates].reverse(),
@@ -17,8 +18,9 @@ const repository = {
 const actions = {
   getArtifactEntry: async (_repo: string, runId: string, _operation: string, _token: string, name: string) => {
     artifactRequests.push({ runId, name });
-    if (name === "terraform/deployguard-cost-plan.json") return '{"projects":[{"breakdown":{"resources":[{"name":"aws_ecs_service.app","resourceType":"aws_ecs_service","monthlyCost":"7.25"}]}}]}';
-    if (name === "project-terraform/deployguard-project-cost-plan.json") return runId === "rollback-candidate" ? null : '{"projects":[{"breakdown":{"resources":[{"name":"aws_efs_file_system.database","resourceType":"aws_efs_file_system","monthlyCost":"2.50"}]}}]}';
+    if (!artifactsAvailable) return null;
+    if (name === "deployguard-cost-plan.json") return '{"projects":[{"breakdown":{"resources":[{"name":"aws_ecs_service.app","resourceType":"aws_ecs_service","monthlyCost":"7.25"}]}}]}';
+    if (name === "deployguard-project-cost-plan.json") return runId === "rollback-candidate" ? null : '{"projects":[{"breakdown":{"resources":[{"name":"aws_efs_file_system.database","resourceType":"aws_efs_file_system","monthlyCost":"2.50"}]}}]}';
     return null;
   },
 };
@@ -55,8 +57,8 @@ async function run() {
   assert.equal(result?.pipelineRunId, operation.id);
   assert.equal(result?.metadata?.candidateWorkflowRunId, "candidate-run");
   assert.deepEqual(artifactRequests, [
-    { runId: "candidate-run", name: "terraform/deployguard-cost-plan.json" },
-    { runId: "candidate-run", name: "project-terraform/deployguard-project-cost-plan.json" },
+    { runId: "candidate-run", name: "deployguard-cost-plan.json" },
+    { runId: "candidate-run", name: "deployguard-project-cost-plan.json" },
   ]);
   const rollback = {
     ...operation,
@@ -69,6 +71,17 @@ async function run() {
   assert.equal(rollbackResult?.metadata?.releaseId, `release-${rollback.id}`);
   assert.deepEqual(rollbackResult?.metadata?.terraformScopes, ["generation", "project_inherited"]);
   assert.equal((rollbackResult?.normalizedBreakdown as any).resources[1].metadata.inheritedFromOperationId, operation.id);
+  artifactsAvailable = false;
+  const unavailable = {
+    ...operation,
+    id: "66666666-6666-4666-8666-666666666666",
+    generationId: "77777777-7777-4777-8777-777777777777",
+    githubWorkflowRunId: "historical-run-without-plan",
+    metadata: { deploymentAction: "deploy" },
+  };
+  const unavailableResult = await service.capture(unavailable as never, "owner/repository", "token", "dev");
+  assert.equal(unavailableResult?.status, CostEstimateStatus.FAILED);
+  assert.equal(unavailableResult?.errorMessage, "The immutable generation Terraform cost-plan artifact is unavailable.");
   console.log("GitHub Actions Infracost evidence checks passed: Deploy/Redeploy and Rollback bind exact candidate, operation, generation, release, and preserved project-persistence evidence.");
 }
 run().catch((error) => { console.error(error); process.exitCode = 1; });

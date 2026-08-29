@@ -39,7 +39,10 @@ export class CloudWatchMetricsService {
     private readonly notifications: NotificationDispatcherService,
   ) {}
 
-  isEnabled() { return getObservabilityConfig(this.config).awsRuntimeMonitoringEnabled; }
+  isEnabled() {
+    const config = getObservabilityConfig(this.config);
+    return config.awsRuntimeMonitoringEnabled && config.cloudWatchMetricsEnabled;
+  }
 
   async getForUser(projectId: string, identity: LiveRuntimeIdentity, range = "1h") {
     return this.collect(identity, range);

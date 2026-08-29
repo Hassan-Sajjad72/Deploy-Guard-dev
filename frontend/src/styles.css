@@ -212,6 +212,10 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 .infrastructure-cost-bars li>span{overflow-wrap:anywhere}
 .infrastructure-cost-bars li strong{font-size:.8rem;white-space:nowrap}
 .infrastructure-cost-bars li i{background:linear-gradient(90deg,var(--violet),var(--info));border-radius:999px;display:block;grid-column:1/-1;height:10px;min-width:2%;max-width:100%}
+.infrastructure-support-grid{display:grid;gap:var(--space-3);grid-template-columns:repeat(3,minmax(0,1fr))}
+.infrastructure-support-grid article{background:var(--surface-muted);border:1px solid var(--border);border-radius:var(--radius-sm);display:grid;gap:6px;min-width:0;padding:var(--space-4)}
+.infrastructure-support-grid article>span{color:var(--muted);font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.infrastructure-support-grid article>p{font-size:.82rem;margin:0;overflow-wrap:anywhere}
 .infrastructure-export-card{align-items:center;display:flex;gap:var(--space-4);justify-content:space-between}
 .infrastructure-export-card h2{margin-bottom:var(--space-2)}
 .infrastructure-export-card p:last-child{margin-bottom:0;max-width:760px}
@@ -221,7 +225,7 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
   .infrastructure-topology li:not(:last-child):after{display:none}
 }
 @media(max-width:560px){
-  .infrastructure-summary-grid,.infrastructure-cost-summary{grid-template-columns:1fr}
+  .infrastructure-summary-grid,.infrastructure-cost-summary,.infrastructure-support-grid{grid-template-columns:1fr}
   .infrastructure-section-heading,.infrastructure-export-card{align-items:stretch;flex-direction:column}
   .infrastructure-source{align-self:flex-start}
   .infrastructure-topology{display:grid;grid-template-columns:1fr}
@@ -231,7 +235,7 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 
 /* Iteration 5: runtime health and provider evidence only. */
 .monitoring-page{gap:var(--space-5)}
-.monitoring-summary-grid{display:grid;gap:var(--space-3);grid-template-columns:repeat(4,minmax(0,1fr))}
+.monitoring-summary-grid{display:grid;gap:var(--space-3);grid-template-columns:repeat(3,minmax(0,1fr))}
 .monitoring-summary-grid .metric-card{box-shadow:none;padding:var(--space-4)}
 .monitoring-health-card{display:grid;gap:var(--space-4)}
 .monitoring-section-heading{align-items:flex-start;display:flex;gap:var(--space-3);justify-content:space-between}
