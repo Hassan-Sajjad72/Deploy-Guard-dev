@@ -11,6 +11,7 @@ import { GithubActionsService } from "../src/projects/pipeline/github-actions.se
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
 import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
+import { PINNED_AWS_PROVIDER_VERSION, PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS } from "./pinned-aws-provider-5.100.0-expectations";
 
 const user = { id: 7 } as any;
 const project = {
@@ -97,6 +98,17 @@ function verifyProviderContractAndConditionalDatabaseScope() {
   assert.ok(database.some((capability) => capability.id === "database-secrets"));
   const databaseActions = new Set(database.flatMap((capability) => capability.actions));
   for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds"]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
+  assert.equal(PINNED_AWS_PROVIDER_VERSION, "5.100.0");
+  const root = join(__dirname, "..", "..");
+  const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
+  const manifestActions = new Set(Object.values(RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS).flat());
+  for (const expected of PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS) {
+    assert.match(terraform, new RegExp(`resource\\s+"${expected.terraformResource}"`), `provider expectation targets a current Terraform resource: ${expected.terraformResource}`);
+    assert.ok(manifestActions.has(expected.action), `independent provider expectation missing from manifest: ${expected.action} (${expected.providerFunction})`);
+    assert.ok(allActions.has(expected.action), `independent provider expectation missing from capability contract: ${expected.action} (${expected.providerFunction})`);
+  }
+  assert.ok(capabilitiesFor("destroy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
+  assert.ok(!capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
 }
 
 async function verifyCurrentStateProjection(failed: any, realGithubRun = false) {
