@@ -15,7 +15,7 @@ assert.match(pipeline, /setInterval\(load, 4000\)/, "an active operation refresh
 assert.match(execution, /workflowStages/);
 assert.doesNotMatch(execution, /safeLog/, "sanitized failure logs stay in the focused recovery surface");
 assert.match(recovery, /safeLog/);
-assert.match(currentState, /latest\.currentStage === "healthy" && Boolean\(stableUrl\)/, "LIVE needs workflow health verification and a discoverable endpoint");
+assert.match(currentState, /latest\.currentStage === "release_complete"[\s\S]*latestMetadata\.releaseEvidenceVerified === true[\s\S]*Boolean\(stableRelease && stableUrl\)/, "LIVE needs validated release evidence plus an authoritative stable endpoint");
 assert.match(currentState, /Verification needs attention/, "unverified completed workflows remain truthful");
 assert.match(currentState, /this\.githubLifecycleProgress\(phase\)/, "active progress derives from lifecycle milestones");
 assert.match(sidebar, /getProjectCurrentState/);
@@ -26,10 +26,10 @@ assert.doesNotMatch(sidebar, /"DESTROYED"\]\.?includes\(state\?\.state\)/, "dest
 
 assert.deepEqual(
   deploymentPhasePresentation({ developerState: "building", progress: { phase: "build" } }).map((item) => [item.key, item.status]),
-  [["analyze", "passed"], ["prepare", "passed"], ["build", "running"], ["deploy", "waiting"], ["verify", "waiting"]],
+  [["source", "waiting"], ["build", "running"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"]],
 );
 assert.deepEqual(
   deploymentPhasePresentation({ developerState: "failed_application", progress: { phase: "verify" } }).map((item) => [item.key, item.status]),
-  [["analyze", "passed"], ["prepare", "passed"], ["build", "passed"], ["deploy", "passed"], ["verify", "failed"]],
+  [["source", "waiting"], ["build", "waiting"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "failed"]],
 );
 console.log("Unified lifecycle projection, refresh, rail, navigation, and failure-boundary verification passed.");

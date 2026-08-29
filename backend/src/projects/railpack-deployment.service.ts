@@ -2,7 +2,8 @@ import { ForbiddenException, Injectable, NotFoundException, ServiceUnavailableEx
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash, randomUUID } from "crypto";
-import { In, Repository } from "typeorm";
+import { DataSource, In, Repository } from "typeorm";
+import { ProjectStableRelease } from "../orchestration/project-stable-release.entity";
 import { User } from "../users/user.entity";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
@@ -20,6 +21,9 @@ import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secr
 import { aliasesFor } from "./configuration-ownership";
 import { immutableRailpackDispatchFingerprint, immutableRailpackImageTag, RailpackRuntimeConfiguration, RailpackWorkflowInputs, runtimeReferencesBase64 } from "./railpack-workflow-contract";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
+import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
+import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
+import { materializeStableRelease } from "./stable-release-projection";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 
@@ -43,6 +47,7 @@ export class RailpackDeploymentService {
     private readonly runtimeSecrets: GithubActionsRuntimeSecretService,
     private readonly config: ConfigService,
     private readonly sanitizer: LogSanitizerService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy"); }
@@ -92,8 +97,15 @@ export class RailpackDeploymentService {
     const existing = this.reconciliationInFlight.get(projectId);
     if (existing) return existing;
     const task = (async () => {
-      const active = await this.runs.find({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" }, take: 50 });
+      const [active, completed] = await Promise.all([
+        this.runs.find({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" }, take: 50 }),
+        this.runs.find({ where: { projectId, status: PipelineRunStatus.COMPLETED }, order: { createdAt: "DESC" }, take: 50 }),
+      ]);
       await Promise.all(active.map((operation) => this.reconcile(operation)));
+      // Earlier Railpack releases can have valid, persisted evidence but no
+      // control-plane release projection. Reconcile that local state without
+      // contacting GitHub or changing AWS.
+      await Promise.all(completed.map((operation) => this.reconcileCompletedRelease(operation)));
     })();
     this.reconciliationInFlight.set(projectId, task);
     try { await task; }
@@ -244,10 +256,7 @@ export class RailpackDeploymentService {
             await this.runs.save(operation);
             return operation;
           }
-          operation.status = PipelineRunStatus.COMPLETED;
-          operation.currentStage = "release_complete";
-          operation.errorMessage = null;
-          operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(), ...evidence };
+          await this.finalizeVerifiedRelease(project, operation, evidence, conclusion);
         } else {
           const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
           operation.status = PipelineRunStatus.FAILED;
@@ -295,6 +304,10 @@ export class RailpackDeploymentService {
     if (!raw) return null;
     let artifact: Record<string, unknown>;
     try { artifact = JSON.parse(raw) as Record<string, unknown>; } catch { throw new Error("The release result artifact is not valid JSON."); }
+    return this.validatedReleaseEvidence(operation, artifact);
+  }
+
+  private validatedReleaseEvidence(operation: ProjectPipelineRun, artifact: Record<string, unknown>): Record<string, unknown> {
     const action = String(artifact.action || "");
     const sourceSha = String(artifact.sourceSha || "");
     const operationId = String(artifact.operationId || "");
@@ -312,6 +325,128 @@ export class RailpackDeploymentService {
       throw new Error("The release result artifact does not prove ECS and ALB materialization.");
     }
     return { releaseArtifact: artifact, imageUri: match[1], imageDigest: match[2], albUrl: terraform.alb_url, taskDefinitionArn: terraform.task_definition_arn, ecsServiceArn: terraform.ecs_service_arn };
+  }
+
+  private async reconcileCompletedRelease(operation: ProjectPipelineRun) {
+    const action = String(operation.metadata?.deploymentAction || "");
+    if (!["deploy", "rollback"].includes(action) || (operation.generationId && operation.metadata?.releaseEvidenceVerified === true)) return;
+    const artifact = operation.metadata?.releaseArtifact;
+    if (!artifact || typeof artifact !== "object") return;
+    const project = await this.projects.findOne({ where: { id: operation.projectId } });
+    if (!project) return;
+    try {
+      await this.finalizeVerifiedRelease(project, operation, this.validatedReleaseEvidence(operation, artifact as Record<string, unknown>), String(operation.metadata?.workflowConclusion || "success"));
+    } catch {
+      // A historical row cannot become LIVE unless its persisted immutable
+      // evidence still validates. Leave it non-authoritative for inspection.
+    }
+  }
+
+  /**
+   * A release is LIVE only after one validated immutable artifact atomically
+   * establishes the operation, runtime generation, route, and stable-release
+   * projection. The workflow's curl verification is represented by the
+   * validated artifact, never inferred from its GitHub conclusion alone.
+   */
+  private async finalizeVerifiedRelease(project: Project, operation: ProjectPipelineRun, evidence: Record<string, unknown>, workflowConclusion: string) {
+    const action = String(operation.metadata?.deploymentAction || "");
+    if (!["deploy", "rollback"].includes(action)) return operation;
+    const artifact = evidence.releaseArtifact;
+    if (!artifact || typeof artifact !== "object") throw new Error("Validated release evidence is missing its immutable artifact.");
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`railpack-release-finalization:${project.id}:${canonicalEnvironmentName(project)}`]);
+      const operations = manager.getRepository(ProjectPipelineRun);
+      const current = await operations.findOne({ where: { id: operation.id, projectId: project.id } });
+      if (!current) throw new Error("Release operation disappeared before finalization.");
+      const immutable = this.validatedReleaseEvidence(current, artifact as Record<string, unknown>);
+      const environmentName = canonicalEnvironmentName(project);
+      const generationId = current.generationId || current.id;
+      const generations = manager.getRepository(ProjectDeploymentGeneration);
+      let generation = await generations.findOne({ where: { id: generationId } });
+      if (generation && (generation.projectId !== project.id || generation.environmentName !== environmentName)) {
+        throw new Error("Release generation identity conflicts with another project environment.");
+      }
+      if (!generation) {
+        const maximum = await generations.createQueryBuilder("generation")
+          .select("COALESCE(MAX(generation.ordinal), 0)", "maximum")
+          .where("generation.projectId = :projectId", { projectId: project.id })
+          .andWhere("generation.environmentName = :environmentName", { environmentName })
+          .getRawOne<{ maximum: string | number }>();
+        generation = generations.create({
+          id: generationId,
+          projectId: project.id,
+          environmentName,
+          ordinal: Number(maximum?.maximum || 0) + 1,
+          candidateListenerPriority: null,
+          status: DeploymentGenerationStatus.LIVE,
+          terraformStateKey: `projects/${project.id}/${environmentName}/runtime/terraform.tfstate`,
+          resourceManifest: {
+            ecsServiceArn: immutable.ecsServiceArn,
+            taskDefinitionArn: immutable.taskDefinitionArn,
+            albUrl: immutable.albUrl,
+          },
+          cleanupMetadata: {},
+          createdByOperationId: current.id,
+          retiredByOperationId: null,
+          activatedAt: new Date(),
+          retiredAt: null,
+          failedAt: null,
+          cleanedAt: null,
+          metadata: { executionEngine: "railpack", immutableImageDigest: immutable.imageDigest, releaseOperationId: current.id },
+        });
+      } else {
+        generation.status = DeploymentGenerationStatus.LIVE;
+        generation.activatedAt = generation.activatedAt || new Date();
+        generation.resourceManifest = { ...generation.resourceManifest, ecsServiceArn: immutable.ecsServiceArn, taskDefinitionArn: immutable.taskDefinitionArn, albUrl: immutable.albUrl };
+        generation.metadata = { ...generation.metadata, executionEngine: "railpack", immutableImageDigest: immutable.imageDigest, releaseOperationId: current.id };
+      }
+      const previous = await generations.find({ where: { projectId: project.id, environmentName, status: DeploymentGenerationStatus.LIVE } });
+      for (const existing of previous) {
+        if (existing.id === generation.id) continue;
+        existing.status = DeploymentGenerationStatus.RETIRED;
+        existing.retiredByOperationId = current.id;
+        existing.retiredAt = new Date();
+        await generations.save(existing);
+      }
+      await generations.save(generation);
+
+      const routes = manager.getRepository(ProjectEnvironmentRoute);
+      let route = await routes.findOne({ where: { projectId: project.id, environmentName } });
+      if (!route) {
+        await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["deployguard-listener-priority-allocation"]);
+        const used = new Set((await routes.find({ select: { listenerPriority: true } })).map((item) => item.listenerPriority));
+        let listenerPriority = 1000;
+        while (used.has(listenerPriority)) listenerPriority += 1;
+        route = routes.create({ projectId: project.id, environmentName, listenerPriority, listenerRuleArn: null, liveGenerationId: null, candidateGenerationId: null, metadata: { allocation: "railpack-release-finalization" } });
+      }
+      route.liveGenerationId = generation.id;
+      route.candidateGenerationId = null;
+      route.metadata = { ...route.metadata, lastPromotionOperationId: current.id, albUrl: immutable.albUrl };
+      await routes.save(route);
+
+      await materializeStableRelease(manager, {
+        projectId: project.id,
+        generationId: generation.id,
+        environmentName,
+        operationId: current.id,
+        commitSha: current.commitSha || "",
+        imageUri: String(immutable.imageUri),
+        taskDefinitionArn: String(immutable.taskDefinitionArn),
+        ecsServiceArn: String(immutable.ecsServiceArn),
+        healthCheckPath: "/",
+        appPort: DEPLOYGUARD_PLATFORM_PORT,
+        metadata: { deployedUrl: immutable.albUrl, imageDigest: immutable.imageDigest, releaseEvidenceVerified: true, deploymentAction: action },
+      });
+      current.generationId = generation.id;
+      current.status = PipelineRunStatus.COMPLETED;
+      current.currentStage = "release_complete";
+      current.errorMessage = null;
+      current.completedAt = current.completedAt || new Date();
+      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl: immutable.albUrl, releaseEvidenceVerified: true };
+      await operations.save(current);
+      Object.assign(operation, current);
+    });
+    return operation;
   }
 
   private required(key: string) { const value = this.config.get<string>(key, "").trim(); if (!value) throw new ServiceUnavailableException(`Platform configuration is missing: ${key}.`); return value; }

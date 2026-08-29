@@ -60,18 +60,19 @@ export class ProjectCurrentStateService {
     await this.deploymentReconciliation.reconcileActive(user, projectId);
     const environmentName = canonicalEnvironmentName(project);
     const route = await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } });
-    const projected = await this.withGithubActionsState(
-      projectId,
-      environmentName,
-      this.githubActionsReadinessState(project),
-      route?.liveGenerationId || null,
-    );
     const authoritativeGenerationId = route?.liveGenerationId || null;
     const authoritativeRelease = authoritativeGenerationId
       ? await this.releaseRepository.findOne({
         where: { projectId, environmentName, generationId: authoritativeGenerationId, status: StableReleaseStatus.STABLE },
       })
       : null;
+    const projected = await this.withGithubActionsState(
+      projectId,
+      environmentName,
+      this.githubActionsReadinessState(project),
+      authoritativeGenerationId,
+      authoritativeRelease,
+    );
     const estimate = authoritativeRelease?.deployedByPipelineRunId
       ? await this.estimateRepository.findOne({
         where: {
@@ -186,6 +187,7 @@ export class ProjectCurrentStateService {
     environmentName: string,
     projected: DeveloperProjectCurrentState,
     liveGenerationId: string | null,
+    authoritativeRelease: ProjectStableRelease | null = null,
   ): Promise<DeveloperProjectCurrentState> {
     const githubRuns = this.runRepository.createQueryBuilder("run")
       .where("run.projectId = :projectId", { projectId })
@@ -195,27 +197,28 @@ export class ProjectCurrentStateService {
       .andWhere("COALESCE(run.metadata ->> 'internalMaintenance', 'false') != 'true'");
     const latest = await githubRuns.clone().orderBy("run.createdAt", "DESC").getOne();
     if (!latest) return projected;
-    const stable = liveGenerationId ? await githubRuns.clone()
+    const stable = liveGenerationId && authoritativeRelease?.deployedByPipelineRunId ? await githubRuns.clone()
+        .andWhere("run.id = :operationId", { operationId: authoritativeRelease.deployedByPipelineRunId })
         .andWhere("run.generationId = :generationId", { generationId: liveGenerationId })
         .andWhere("run.status = :completed", { completed: PipelineRunStatus.COMPLETED })
-        .andWhere("run.metadata ->> 'deploymentAction' IN (:...releaseActions)", { releaseActions: ["deploy", "rollback"] })
-        .andWhere("run.metadata ->> 'deployedUrl' IS NOT NULL")
-        .orderBy("run.completedAt", "DESC")
         .getOne() : null;
 
     const latestMetadata = (latest.metadata || {}) as Record<string, unknown>;
     const stableMetadata = (stable?.metadata || {}) as Record<string, unknown>;
     const attempt = String(latestMetadata.attempt || 1);
     const latestCommit = latest.commitSha || projected.commit;
-    const stableUrl = typeof stableMetadata.deployedUrl === "string"
-      ? stableMetadata.deployedUrl
+    const stableReleaseMetadata = (authoritativeRelease?.metadata || {}) as Record<string, unknown>;
+    const stableUrl = typeof stableReleaseMetadata.deployedUrl === "string"
+      ? stableReleaseMetadata.deployedUrl
       : null;
-    const stableRelease = stable && stableUrl
+    const stableRelease = stable && authoritativeRelease && stableUrl
       ? {
+          id: authoritativeRelease.id,
+          operationId: authoritativeRelease.deployedByPipelineRunId,
           revision: String(stableMetadata.attempt || 1),
-          generationId: stable.generationId || null,
+          generationId: authoritativeRelease.generationId || null,
           commit: stable.commitSha || latestCommit || "unknown",
-          promotedAt: (stable.completedAt || stable.updatedAt).toISOString(),
+          promotedAt: authoritativeRelease.deployedAt.toISOString(),
           rollbackAvailable: stableMetadata.rollbackAvailable === true,
         }
       : null;
@@ -299,11 +302,14 @@ export class ProjectCurrentStateService {
           canRetry: false,
         };
       }
-      // A completed workflow is not itself proof that a user can reach a
-      // healthy application. `healthy` is written only after the reusable
-      // workflow's ALB/endpoint verification step succeeds, and a public URL
-      // must still be discoverable before this product projection can be LIVE.
-      const healthVerified = latest.currentStage === "healthy" && Boolean(stableUrl);
+      // GitHub success alone is never enough. `release_complete` is written
+      // only after validated evidence from the workflow's ECS/ALB/public curl
+      // verification atomically established this generation, route, and
+      // stable release.
+      const healthVerified = latest.currentStage === "release_complete"
+        && latest.generationId === liveGenerationId
+        && latestMetadata.releaseEvidenceVerified === true
+        && Boolean(stableRelease && stableUrl);
       if (!healthVerified) {
         return {
           ...projected,

@@ -2,7 +2,10 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
-import { PipelineRunStatus } from "../src/projects/project-pipeline-run.entity";
+import { PipelineRunStatus, ProjectPipelineRun } from "../src/projects/project-pipeline-run.entity";
+import { ProjectDeploymentGeneration } from "../src/projects/project-deployment-generation.entity";
+import { ProjectEnvironmentRoute } from "../src/projects/project-environment-route.entity";
+import { ProjectStableRelease } from "../src/orchestration/project-stable-release.entity";
 import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
 import { isAiTroubleshootingEligible } from "../src/ai-troubleshooting/ai-troubleshooting.service";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
@@ -57,14 +60,53 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
     globalThis.fetch = originalFetch;
   }
   const saved: any[] = [];
+  const generations: any[] = [];
+  const routes: any[] = [];
+  const releases: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.projects = { findOne: async () => project }; service.users = { findOne: async () => user };
   service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
   service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
   const operation: any = { id: valid.operationId, projectId: project.id, triggeredByUserId: user.id, githubWorkflowRunId: "456", status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", commitSha: valid.sourceSha, metadata: { deploymentAction: "deploy" } };
+  const generationRepository = {
+    findOne: async ({ where }: any) => generations.find((generation) => generation.id === where.id) || null,
+    createQueryBuilder: () => ({ select: () => ({ where: () => ({ andWhere: () => ({ getRawOne: async () => ({ maximum: "0" }) }) }) }) }),
+    create: (row: any) => row,
+    find: async () => generations.filter((generation) => generation.status === "live"),
+    save: async (row: any) => { const index = generations.findIndex((generation) => generation.id === row.id); if (index >= 0) generations[index] = structuredClone(row); else generations.push(structuredClone(row)); return row; },
+  };
+  const routeRepository = {
+    findOne: async () => routes[0] || null,
+    find: async () => routes,
+    create: (row: any) => row,
+    save: async (row: any) => { routes[0] = structuredClone(row); return row; },
+  };
+  const releaseRepository = {
+    findOne: async () => null,
+    create: (row: any) => ({ id: "77777777-7777-4777-8777-777777777777", ...row }),
+    save: async (row: any) => { releases.push(structuredClone(row)); return row; },
+  };
+  const operationRepository = {
+    findOne: async () => operation,
+    save: async (row: any) => { saved.push(structuredClone(row)); return row; },
+  };
+  const manager: any = {
+    query: async () => undefined,
+    getRepository: (entity: unknown) => entity === ProjectPipelineRun ? operationRepository
+      : entity === ProjectDeploymentGeneration ? generationRepository
+        : entity === ProjectEnvironmentRoute ? routeRepository
+          : entity === ProjectStableRelease ? releaseRepository
+            : null,
+  };
+  service.dataSource = { transaction: async (callback: any) => callback(manager) };
   service.actions = { getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }), getResultArtifact: async () => JSON.stringify(valid) };
   await service.reconcile(operation);
   assert.equal(saved.at(-1).status, PipelineRunStatus.COMPLETED);
+  assert.equal(operation.generationId, operation.id, "the immutable operation establishes the authoritative runtime generation");
+  assert.equal(generations[0]?.status, "live");
+  assert.equal(routes[0]?.liveGenerationId, operation.id);
+  assert.equal(releases[0]?.metadata?.deployedUrl, valid.terraform.alb_url);
+  assert.equal(operation.metadata.releaseEvidenceVerified, true);
   for (const [key, value] of [["operationId", "wrong"], ["sourceSha", "d".repeat(40)], ["action", "rollback"]] as const) {
     const invalid = { ...valid, [key]: value };
     service.actions.getResultArtifact = async () => JSON.stringify(invalid);
@@ -205,6 +247,51 @@ async function verifyCurrentStateProjection(failed: any, realGithubRun = false) 
     assert.match(state.developerMessage, /could not start/i);
     assert.doesNotMatch(state.developerMessage, /GitHub Actions failed/i);
   }
+}
+
+async function verifyVerifiedReleaseProjectsLive() {
+  const completedAt = new Date("2026-08-29T12:00:00.000Z");
+  const generationId = "88888888-8888-4888-8888-888888888888";
+  const stableUrl = "http://verified.example.test";
+  const latest: any = {
+    id: generationId, projectId: project.id, generationId, status: PipelineRunStatus.COMPLETED,
+    currentStage: "release_complete", githubWorkflowRunId: "456", commitSha: "c".repeat(40),
+    createdAt: completedAt, startedAt: completedAt, completedAt, updatedAt: completedAt, failedAt: null,
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy", attempt: 1, deployedUrl: stableUrl, releaseEvidenceVerified: true },
+  };
+  const stableRelease: any = {
+    id: "99999999-9999-4999-8999-999999999999", generationId, deployedByPipelineRunId: latest.id,
+    deployedAt: completedAt, metadata: { deployedUrl: stableUrl, releaseEvidenceVerified: true },
+  };
+  const base: any = {
+    repository: project.repositoryFullName, branch: project.targetBranch, commit: null, latestAttempt: null,
+    stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null,
+    canRetry: false, stateAuthority: null,
+    developerState: "ready", developerAction: "deploy", developerMessage: "ready", progress: { percentage: 0, phase: null, label: "Ready" },
+  };
+  const projectState = async (candidate: any, release: any) => {
+    const builder: any = {
+      stable: false,
+      where() { return this; },
+      andWhere(value: string) { if (value.includes("run.id =")) this.stable = true; return this; },
+      orderBy() { return this; },
+      clone() { return this; },
+      getOne: async () => candidate,
+    };
+    const service = Object.create(ProjectCurrentStateService.prototype) as any;
+    service.runRepository = { createQueryBuilder: () => builder };
+    return service.withGithubActionsState(project.id, "dev", base, release ? generationId : null, release);
+  };
+  const live = await projectState(latest, stableRelease);
+  assert.equal(live.developerState, "live");
+  assert.equal(live.latestAttempt.generationId, generationId);
+  assert.equal(live.stableRelease.generationId, generationId);
+  assert.equal(live.stableUrl, stableUrl);
+
+  const invalid = await projectState({ ...latest, metadata: { ...latest.metadata, releaseEvidenceVerified: false } }, stableRelease);
+  assert.equal(invalid.developerState, "platform_attention", "a completed operation without validated release evidence must not become LIVE");
+  const healthFailed = await projectState({ ...latest, status: PipelineRunStatus.FAILED, currentStage: "release_failed", metadata: { ...latest.metadata, failedStage: "release_failed" } }, null);
+  assert.equal(healthFailed.developerState, "failed_application", "failed verification without a stable release must not become LIVE");
 }
 
 async function verifyTerminalGithubFailure() {
@@ -374,6 +461,7 @@ void (async () => {
   await verifyReleaseArtifactEvidenceReconciliation();
   verifyProviderContractAndConditionalDatabaseScope();
   await verifyCurrentStateProjection(failed);
+  await verifyVerifiedReleaseProjectsLive();
   const terminalFailure = await verifyTerminalGithubFailure();
   await verifyActiveGithubStagesPersistWithoutPipeline();
   await verifyCurrentStateProjection(terminalFailure, true);
