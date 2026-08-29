@@ -1,4 +1,5 @@
 name: DeployGuard Railpack release
+# deployguard-result-contract: deployguard.release-result/v2
 
 on:
   workflow_call:
@@ -22,6 +23,7 @@ on:
       platform_port: { required: true, type: string }
       rollback_image_digest: { required: false, type: string, default: "" }
       control_plane_sha: { required: true, type: string }
+      result_contract_version: { required: true, type: string }
 
 permissions:
   contents: read
@@ -46,6 +48,7 @@ jobs:
       PLATFORM_PORT: ${{ inputs.platform_port }}
       ENVIRONMENT_REFERENCES_BASE64: ${{ inputs.environment_references_base64 }}
       CONTROL_PLANE_SHA: ${{ inputs.control_plane_sha }}
+      RESULT_CONTRACT_VERSION: ${{ inputs.result_contract_version }}
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
@@ -71,6 +74,7 @@ jobs:
           [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'Invalid deployment action.' >&2; exit 1; }
           [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid project identity.' >&2; exit 1; }
           [[ "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid operation identity.' >&2; exit 1; }
+          [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v2 ] || { echo 'Incompatible DeployGuard result contract.' >&2; exit 1; }
           [[ "$PLATFORM_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PLATFORM_PORT" -le 65535 ] || { echo 'Invalid platform port.' >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = deploy ]; then [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo 'Exact source SHA mismatch.' >&2; exit 1; }; fi
           if [ "$DEPLOYMENT_ACTION" = rollback ]; then [[ "$ROLLBACK_IMAGE_DIGEST" =~ @sha256:[0-9a-f]{64}$ ]] || { echo 'Rollback requires an immutable ECR image digest.' >&2; exit 1; }; fi
@@ -177,11 +181,12 @@ jobs:
           if [ "$DEPLOYMENT_ACTION" = destroy ]; then
             terraform -chdir=.deployguard/terraform destroy -input=false -auto-approve
             jq -n \
-              --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" \
+              --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" \
               --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" \
               --slurpfile runtime .deployguard/runtime.json \
               '{
                 action:$action,
+                contractVersion:$contractVersion,
                 sourceSha:$sourceSha,
                 operationId:$operationId,
                 destroyed:true,
@@ -223,7 +228,7 @@ jobs:
             terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value = .value.value)' > .deployguard/terraform-outputs.json
             alb_url="$(jq -r '.alb_url' .deployguard/terraform-outputs.json)"
             curl --fail --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused "$alb_url" >/dev/null
-            jq -n --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg image "$IMAGE" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" '{action:$action,sourceSha:$sourceSha,operationId:$operationId,image:$image,terraform:$terraform}' > .deployguard/release-runtime.json
+            jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg image "$IMAGE" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,image:$image,terraform:$terraform}' > .deployguard/release-runtime.json
           fi
           mkdir -p terraform
           cp .deployguard/release-runtime.json terraform/deployguard-result.json

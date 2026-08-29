@@ -8,8 +8,9 @@ export const DEVELOPER_DEPLOYMENT_PHASES = Object.freeze([
 
 export const DEVELOPER_DESTROY_PHASES = Object.freeze([
   { key: "prepare", label: "Prepare" },
-  { key: "destroy", label: "Destroy" },
-  { key: "verify", label: "Verify" },
+  { key: "destroy", label: "Destroy infrastructure" },
+  { key: "verify", label: "Verify deletion" },
+  { key: "finalize", label: "Finalize cleanup" },
 ]);
 
 const ACTIVE_STATES = new Set(["preparing", "queued", "building", "deploying", "verifying", "destroying"]);
@@ -20,8 +21,10 @@ export function deploymentPhasePresentation(currentState) {
     || currentState?.developerState === "destroyed"
     || currentState?.stateAuthority?.activeOperation?.type === "destroy";
   const phases = destroy ? DEVELOPER_DESTROY_PHASES : DEVELOPER_DEPLOYMENT_PHASES;
-  const reportedKey = currentState?.progress?.phase === "prepare" ? "source" : currentState?.progress?.phase || null;
-  const currentKey = destroy && ["build", "deploy"].includes(reportedKey) ? "destroy" : reportedKey;
+  const reportedKey = !destroy && currentState?.progress?.phase === "prepare" ? "source" : currentState?.progress?.phase || null;
+  const currentKey = destroy && ["build", "deploy"].includes(reportedKey) ? "destroy"
+    : destroy && currentState?.latestAttempt?.outcome === "completed" ? "finalize"
+      : reportedKey;
   const currentIndex = phases.findIndex((phase) => phase.key === currentKey);
   const completed = currentState?.developerState === "live"
     || currentState?.latestAttempt?.outcome === "completed";
@@ -36,6 +39,8 @@ export function deploymentPhasePresentation(currentState) {
     publish: ["publish_immutable_image_to_ecr"],
     deploy: ["install_terraform", "materialize_release_runtime"],
     verify: ["verify_alb_health_and_write_result"],
+    destroy: ["install_terraform", "materialize_release_runtime"],
+    finalize: ["project_delete_cleanup"],
   };
 
   function evidenceStatus(phase) {

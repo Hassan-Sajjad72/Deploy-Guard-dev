@@ -15,7 +15,7 @@ const projectNavigation = [
   { icon: "dashboard", label: "Overview", path: "" },
   { icon: "pipeline", label: "Pipeline", path: "pipeline" },
   { icon: "infrastructure", label: "Infrastructure", path: "infrastructure", when: (state) => ["DEPLOYING", "FAILED", "LIVE", "DESTROYING"].includes(state?.state) },
-  { icon: "activity", label: "Monitoring", path: "monitoring", when: (state) => state?.state === "LIVE" },
+  { icon: "activity", label: "Monitoring", path: "monitoring", when: (state) => state?.runtime?.state === "present" },
   { icon: "settings", label: "Settings", path: "settings" },
   { icon: "logs", label: "Troubleshoot", path: "troubleshooting", when: (state) => state?.state === "FAILED" },
 ];

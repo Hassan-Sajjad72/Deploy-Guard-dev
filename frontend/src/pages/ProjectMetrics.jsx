@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { getApplicationLogStreamUrl, getApplicationRuntimeMetrics, getProjectDetailedCurrentState } from "../api/projectApi.js";
 import {
   Card,
@@ -120,7 +120,7 @@ export default function ProjectMetrics() {
       const current = await getProjectDetailedCurrentState(projectId);
       setState(current);
       setRuntime(null);
-      if (current.stateAuthority?.state === "LIVE" && current.stateAuthority?.infrastructure?.exists) {
+      if (current.stateAuthority?.runtime?.state === "present" && current.stateAuthority?.infrastructure?.exists) {
         setRuntime(await getApplicationRuntimeMetrics(projectId, { range }));
       }
       setError("");
@@ -129,21 +129,21 @@ export default function ProjectMetrics() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
   useEffect(() => {
-    if (state?.stateAuthority?.state !== "LIVE" || !state?.stateAuthority?.infrastructure?.exists) return undefined;
+    if (state?.stateAuthority?.runtime?.state !== "present" || !state?.stateAuthority?.infrastructure?.exists) return undefined;
     const timer = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(timer);
-  }, [load, state?.stateAuthority?.state, state?.stateAuthority?.infrastructure?.exists]);
+  }, [load, state?.stateAuthority?.runtime?.state, state?.stateAuthority?.infrastructure?.exists]);
 
   const presentation = projectStatePresentation(state);
   const authority = state?.stateAuthority;
   const evidence = state?.infrastructureEvidence;
-  const liveInfrastructure = authority?.state === "LIVE" && authority?.infrastructure?.exists;
+  const liveInfrastructure = authority?.runtime?.state === "present" && authority?.infrastructure?.exists;
   const runtimeCharts = metricDefinitions.filter(({ key }) => (runtime?.[key]?.points || []).length > 0);
   const lastScrape = runtimeLastScrape(runtime);
 
   if (loading) return <LoadingState message="Loading deployment health…" />;
   if (error && !state) return <ErrorState message={error} onRetry={load} />;
-  if (state && !liveInfrastructure) return <Navigate replace to={`/projects/${projectId}`} />;
+  if (state && !liveInfrastructure) return <div className="monitoring-page page-stack" data-authoritative-state={presentation.state} data-monitoring-available="false"><PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} description="Runtime monitoring follows the same authoritative AWS observation as Infrastructure." eyebrow="Application health" status={presentation.state} title="Monitoring" /><section aria-label="Deployment health summary" className="monitoring-summary-grid"><MetricCard label="Application" value={label(authority?.runtime?.state)} /><MetricCard label="ECS" value={label(evidence?.resources?.find((resource) => resource.type === "ECS Fargate")?.status)} /><MetricCard label="Load Balancer" value={label(evidence?.resources?.find((resource) => resource.type === "ALB")?.status)} /><MetricCard label="Logs" value="Unavailable" /><MetricCard label="Metrics" value="Unavailable" /><MetricCard label="Grafana" value="Not applicable" /></section><EmptyState icon="activity" message={authority?.monitoring?.reason || "The authoritative runtime is not currently present."} title="Runtime monitoring unavailable" /></div>;
 
   const ecs = evidence?.ecs;
   const albHealth = evidence?.alb?.targetHealth || [];
@@ -156,9 +156,11 @@ export default function ProjectMetrics() {
     no_samples_yet: "No samples yet",
   }[metricsState] || "Temporarily unavailable";
   const grafanaConfigured = runtime?.grafana?.configured === true && Boolean(runtime?.grafana?.url);
+  const destroyOperation = authority?.activeOperation?.type === "destroy" ? "running" : authority?.latestCompletedOperation?.type === "destroy" && authority?.latestCompletedOperation?.outcome === "failed" ? "failed" : null;
   return <div className="monitoring-page page-stack" data-authoritative-state={presentation.state} data-monitoring-available={authority?.monitoring?.available ? "true" : "false"}>
     <PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} context={`Source: GitHub Actions and AWS · Last updated: ${date(evidence?.lastUpdatedAt)} · ${label(evidence?.freshness)}`} description="Deployed application and infrastructure health only. GitHub Actions execution timing remains on Pipeline." eyebrow="Application health" status={presentation.state} title="Monitoring" />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
+    {destroyOperation ? <Card><strong>{destroyOperation === "running" ? "Destroy is in progress." : "The latest Destroy failed."}</strong><p>The authoritative runtime is still present, so its ECS, ALB, logs, and metrics remain available.</p></Card> : null}
     <section aria-label="Deployment health summary" className="monitoring-summary-grid">
       <MetricCard detail={`Source: ${evidenceSourceLabel(authority?.applicationHealth?.source)}`} label="Application" tone={authority?.applicationHealth?.status === "healthy" ? "success" : "warning"} value={label(authority?.applicationHealth?.status)} />
       <MetricCard detail={ecs ? `${ecs.desiredCount} desired · ${ecs.pendingCount} pending` : "No current AWS observation"} label="ECS" tone={ecs?.runningCount === ecs?.desiredCount ? "success" : "neutral"} value={ecs ? `${ecs.runningCount}/${ecs.desiredCount}` : "Unavailable"} />

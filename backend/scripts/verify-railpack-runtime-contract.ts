@@ -1,6 +1,8 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
+import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
@@ -9,6 +11,20 @@ const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-re
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
 const providerLock = readFileSync(join(root, "infrastructure", "railpack-runtime", ".terraform.lock.hcl"), "utf8");
+const pinned = parsePinnedReusableWorkflow("Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@" + "a".repeat(40));
+const caller = renderDeployguardCallerWorkflow(pinned.reference);
+assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller)));
+const staleResultContract = workflow.replace(/^      result_contract_version:.*\n/m, "");
+assert.throws(
+  () => assertReusableWorkflowCompatibility(staleResultContract, pinned, generatedCallerWithKeys(caller)),
+  /result_contract_version/,
+  "a reusable workflow with the stale result schema is blocked before dispatch",
+);
+assert.throws(
+  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v2", "# deployguard-result-contract: deployguard.release-result/v1"), pinned, generatedCallerWithKeys(caller)),
+  /does not produce deployguard\.release-result\/v2/,
+  "input compatibility alone cannot certify an incompatible result producer",
+);
 
 assert.doesNotMatch(terraform, /aws_db_instance|aws_db_subnet_group/);
 assert.match(terraform, /aws_ecs_task_definition/);
@@ -41,6 +57,12 @@ assert.ok(workflow.indexOf("- name: Install Terraform") < workflow.indexOf("- na
 assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4\.6\.2/);
 assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials@0a3a7f8c8f8b37f3c7d2b23fe4cdd20b3b8a2746/);
 assert.match(workflow, /control_plane_sha/);
+assert.match(workflow, /result_contract_version: \{ required: true, type: string \}/);
+assert.match(workflow, /RESULT_CONTRACT_VERSION.*inputs\.result_contract_version/);
+assert.match(workflow, /deployguard\.release-result\/v2/);
+assert.match(deploymentService, /result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION/);
+assert.match(deploymentService, /release_contract_incompatible/);
+assert.match(deploymentService, /Destroy requires the authoritative verified deployed release identity/);
 assert.match(workflow, /railpack build --name/);
 assert.match(workflow, /BUILDKIT_IMAGE: moby\/buildkit:v0\.16\.0@sha256:bc1fe18224dbcb92599139db0c745696c48ba9fd4ac24038d1fa81fdd7dcac27/);
 assert.match(workflow, /docker version --format/);

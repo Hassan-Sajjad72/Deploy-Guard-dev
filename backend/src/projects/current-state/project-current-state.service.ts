@@ -137,8 +137,10 @@ export class ProjectCurrentStateService {
     // bounded observation here so every page receives the same authority.
     const failedDestroy = projectedWithCost.latestAttempt?.operationType === "destroy"
       && projectedWithCost.latestAttempt?.outcome === "blocked";
+    const activeDestroy = projectedWithCost.latestAttempt?.operationType === "destroy"
+      && projectedWithCost.latestAttempt?.outcome === null;
     const runtimeObservation = hasAuthoritativeLiveRelease && route?.liveGenerationId
-      && (options.refreshCloudState || failedDestroy)
+      && (options.refreshCloudState || failedDestroy || activeDestroy)
       ? await this.runtimeObservation(project, route.liveGenerationId, projectedWithCost.stableUrl!)
       : null;
     const awsEvidence = runtimeObservation?.evidence || null;
@@ -277,7 +279,7 @@ export class ProjectCurrentStateService {
         developerState: "platform_attention",
         developerAction: "none",
         developerMessage: "AWS project deletion was verified, but DeployGuard control-plane cleanup is incomplete. Retry Failed Destroy to resume cleanup.",
-        progress: { percentage: 90, phase: "verify", label: "Destroy cleanup needs attention" },
+        progress: { percentage: 95, phase: "finalize", label: "Destroy cleanup needs attention" },
         latestAttempt: {
           ...latestAttempt,
           status: "platform_attention",
@@ -376,7 +378,7 @@ export class ProjectCurrentStateService {
       }
       const failedStage = String(latestMetadata.failedStage || latest.currentStage || "github_actions");
       const failureMessage = githubActionsFailureMessage(this.conciseFailureMessage(latest.errorMessage), failedStage, action);
-      const failurePhase = githubActionsFailureLifecyclePhase(failedStage);
+      const failurePhase = githubActionsFailureLifecyclePhase(failedStage, action);
       const category = failurePhase === "source" ? "configuration"
         : failurePhase === "build" ? "build"
         : failurePhase === "verify" ? "health"
@@ -428,7 +430,7 @@ export class ProjectCurrentStateService {
     if (stableRelease && stableUrl) {
       const operationStatus = action === "destroy" ? "destroying" : state;
       const operationProgress: DeveloperProjectCurrentState["progress"] = action === "destroy"
-        ? { percentage: 70, phase: "deploy", label: "Destroying application" }
+        ? this.destroyProgress(stage)
         : { percentage: this.githubLifecycleProgress(phase), phase, label: action === "rollback" ? "Rolling back" : "Deploying" };
       return {
         ...projected,
@@ -449,7 +451,7 @@ export class ProjectCurrentStateService {
         developerState: "destroying",
         developerAction: "none",
         developerMessage: "DeployGuard is removing this project's infrastructure.",
-        progress: { percentage: 70, phase: "deploy", label: "Destroying application" },
+        progress: this.destroyProgress(stage),
         latestAttempt: { ...latestAttempt, status: "destroying" },
         applicationError: null,
         canRetry: false,
@@ -469,6 +471,14 @@ export class ProjectCurrentStateService {
       applicationError: null,
       canRetry: false,
     };
+  }
+
+  private destroyProgress(stage: string): DeveloperProjectCurrentState["progress"] {
+    const key = String(stage || "").toLowerCase();
+    if (key.includes("cleanup") || key.includes("finalization")) return { percentage: 95, phase: "finalize", label: "Finalizing cleanup" };
+    if (key.includes("evidence") || key.includes("verify") || key === "publish_verified_release_result") return { percentage: 85, phase: "verify", label: "Verifying deletion" };
+    if (key.includes("terraform") || key === "materialize_release_runtime") return { percentage: 60, phase: "deploy", label: "Destroying infrastructure" };
+    return { percentage: 20, phase: "prepare", label: "Preparing Destroy" };
   }
 
   private githubLifecycleProgress(phase: "source" | "prepare" | "build" | "deploy" | "verify") {
@@ -590,10 +600,11 @@ export class ProjectCurrentStateService {
         ? "current" as const
         : "stale" as const;
     const failedDestroy = !isActive && operationType === "destroy" && latest?.outcome === "blocked";
+    const activeDestroy = isActive && operationType === "destroy";
     const destroyed = projected.developerState === "destroyed";
     const destroyCleanupIncomplete = projected.destroyCleanupIncomplete === true;
-    const runtimeRemovedByObservation = failedDestroy && runtimeObservation?.runtime === "absent";
-    const runtimeUnverifiedAfterDestroy = failedDestroy && runtimeObservation?.runtime !== "present";
+    const runtimeRemovedByObservation = (failedDestroy || activeDestroy) && runtimeObservation?.runtime === "absent";
+    const runtimeUnverifiedAfterDestroy = (failedDestroy || activeDestroy) && runtimeObservation?.runtime === "unknown";
     const runtimeDeleted = destroyed || destroyCleanupIncomplete || runtimeRemovedByObservation;
     const authoritativeLiveRelease = Boolean(projected.stableRelease && projected.stableUrl) && !runtimeDeleted && !runtimeUnverifiedAfterDestroy;
     const stoppedBeforeProvisioning = projected.developerState === "failed_application"
@@ -652,6 +663,13 @@ export class ProjectCurrentStateService {
     const authority: ProjectStateAuthority = {
       state: canonical,
       reason: destroyFailureMessage,
+      runtime: runtimeRemovedByObservation || destroyed || destroyCleanupIncomplete
+        ? { state: "removed", observedAt: runtimeObservation?.observedAt || observedAt, source: runtimeObservation ? "aws_observation" : "github_actions" }
+        : runtimeUnverifiedAfterDestroy
+          ? { state: "unknown", observedAt: runtimeObservation?.observedAt || null, source: "aws_observation" }
+          : authoritativeLiveRelease
+            ? { state: "present", observedAt: runtimeObservation?.observedAt || liveReleaseObservedAt, source: runtimeObservation ? "aws_observation" : "verified_release" }
+            : { state: "not_deployed", observedAt: null, source: "unavailable" },
       activeOperation: isActive && latest ? {
         // The run id is intentionally the public operation identity; internal
         // queue detail never leaks to the UI.
@@ -680,7 +698,7 @@ export class ProjectCurrentStateService {
           ? { status: "unavailable", source: "aws_observation", observedAt: runtimeObservation?.observedAt || null }
         : projected.developerState === "failed_application" && projected.applicationError?.category === "health"
           ? { status: "failed", source: "github_actions", observedAt }
-          : isActive
+          : isActive && !activeDestroy
             ? { status: "pending", source: "github_actions", observedAt }
             : { status: "unavailable", source: "unavailable", observedAt: null },
       monitoring: authoritativeLiveRelease
@@ -705,7 +723,7 @@ export class ProjectCurrentStateService {
       ? "active" as const : presence === "absent" ? "destroyed" as const : "unavailable" as const;
     return {
       ...projected,
-      ...(runtimeUnverifiedAfterDestroy ? {
+      ...(failedDestroy && (runtimeRemovedByObservation || runtimeUnverifiedAfterDestroy) ? {
         developerState: "platform_attention" as const,
         developerAction: "none" as const,
         developerMessage: destroyFailureMessage,
@@ -714,6 +732,17 @@ export class ProjectCurrentStateService {
         estimatedCost: null,
         applicationError: { category: "runtime" as const, message: destroyFailureMessage },
         canRetry: projected.canRetry,
+      } : activeDestroy && (runtimeRemovedByObservation || runtimeUnverifiedAfterDestroy) ? {
+        developerState: "destroying" as const,
+        developerAction: "none" as const,
+        developerMessage: runtimeRemovedByObservation
+          ? "Destroy is in progress and the authoritative runtime is now removed. DeployGuard is verifying deletion and finalizing cleanup."
+          : "Destroy is in progress and the authoritative runtime is temporarily unverified.",
+        stableRelease: null,
+        stableUrl: null,
+        estimatedCost: null,
+        applicationError: null,
+        canRetry: false,
       } : {}),
       stateAuthority: authority,
       infrastructureEvidence: {

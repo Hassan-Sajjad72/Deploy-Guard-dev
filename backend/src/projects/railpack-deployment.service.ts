@@ -19,7 +19,7 @@ import { RepositorySourceService } from "./repository-source.service";
 import { DEPLOYGUARD_PLATFORM_PORT } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
 import { aliasesFor } from "./configuration-ownership";
-import { immutableRailpackDispatchFingerprint, immutableRailpackImageTag, RailpackRuntimeConfiguration, RailpackWorkflowInputs, runtimeReferencesBase64 } from "./railpack-workflow-contract";
+import { immutableRailpackDispatchFingerprint, immutableRailpackImageTag, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, runtimeReferencesBase64 } from "./railpack-workflow-contract";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
@@ -28,8 +28,10 @@ import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence
 import { DESTROY_CONFIRMATION_PHRASE } from "./destroy-confirmation";
 import { githubActionsDestroyEvidenceFromValue } from "./github-actions-destroy-evidence";
 import { ProjectDeletionService } from "./project-deletion.service";
+import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant } from "./pipeline/github-actions-stage-presentation";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
+class TerminalReleaseEvidenceError extends Error {}
 
 type RollbackTargetIdentity = {
   releaseId: string;
@@ -200,7 +202,10 @@ export class RailpackDeploymentService {
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
       operation.currentStage = "source_resolution";
       await this.runs.save(operation);
-      const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || "" : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
+      const destroyRelease = action === "destroy" ? await this.authoritativeDestroyRelease(project, environmentName, destroyRoute?.liveGenerationId || null) : null;
+      const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || ""
+        : action === "destroy" ? destroyRelease?.commitSha || ""
+          : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
       const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action);
       const inputs: RailpackWorkflowInputs = {
@@ -211,7 +216,7 @@ export class RailpackDeploymentService {
         aws_region: this.config.get<string>("AWS_REGION", "us-east-1"), aws_role_arn: this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"),
         vpc_id: this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
         terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"), platform_port: String(DEPLOYGUARD_PLATFORM_PORT), rollback_image_digest: rollbackTarget?.immutableImage || "",
-        control_plane_sha: controlPlaneSha,
+        control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
       };
       operation.commitSha = sourceSha;
       operation.imageTag = inputs.image_tag;
@@ -253,6 +258,15 @@ export class RailpackDeploymentService {
     return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, imageUri, imageDigest, immutableImage };
   }
 
+  private async authoritativeDestroyRelease(project: Project, environmentName: string, generationId: string | null) {
+    if (!generationId) throw new ServiceUnavailableException("Destroy requires the authoritative verified deployed release identity.");
+    const release = await this.releases.findOne({ where: { projectId: project.id, environmentName, generationId, status: StableReleaseStatus.STABLE } });
+    if (!release || release.metadata?.releaseEvidenceVerified !== true || !/^[0-9a-f]{40}$/i.test(release.commitSha)) {
+      throw new ServiceUnavailableException("Destroy requires the authoritative verified deployed release identity.");
+    }
+    return release;
+  }
+
   private persistedRollbackTarget(operation: ProjectPipelineRun | null): RollbackTargetIdentity {
     const value = operation?.metadata?.rollbackTarget;
     if (!value || typeof value !== "object") throw new ServiceUnavailableException("The failed rollback does not retain a canonical immutable target.");
@@ -279,19 +293,20 @@ export class RailpackDeploymentService {
 
   private presentOperation(operation: ProjectPipelineRun) {
     const metadata = operation.metadata || {};
+    const action = (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
     const dispatchFailed = metadata.dispatchState === "failed" && !operation.githubWorkflowRunId;
     return {
       id: operation.id, attempt: String(metadata.attempt || 1), retryOfOperationId: typeof metadata.retryOfOperationId === "string" ? metadata.retryOfOperationId : null,
-      deploymentAction: metadata.deploymentAction || "deploy", status: dispatchFailed ? "dispatch_failed" : operation.status,
+      deploymentAction: action, status: dispatchFailed ? "dispatch_failed" : operation.status,
       commitSha: operation.commitSha || null, generationId: operation.generationId || null, createdAt: operation.createdAt, startedAt: operation.startedAt,
       completedAt: operation.completedAt, failedAt: operation.failedAt, workflowRunId: operation.githubWorkflowRunId || null,
       workflowUrl: typeof metadata.workflowRunUrl === "string" ? metadata.workflowRunUrl : null, workflowStatus: operation.githubWorkflowStatus || null,
-      stageLabel: dispatchFailed ? "Deployment could not start" : operation.currentStage || null,
-      failedStageLabel: dispatchFailed ? String(metadata.failedStage || "dispatch") : null,
+      stageLabel: dispatchFailed ? "Deployment could not start" : deployguardOperationStagePresentation(operation.currentStage, action).label,
+      failedStageLabel: dispatchFailed ? deployguardOperationStagePresentation(metadata.failedStage || "dispatch", action).label : operation.status === PipelineRunStatus.FAILED ? deployguardOperationStagePresentation(metadata.failedStage || operation.currentStage, action).label : null,
       errorMessage: operation.errorMessage || null, githubRunCreated: Boolean(operation.githubWorkflowRunId),
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
-      workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages : [],
+      workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages.filter((stage) => stage && typeof stage === "object" && githubActionsWorkflowStageRelevant((stage as Record<string, unknown>).key, action)) : [],
     };
   }
 
@@ -336,10 +351,26 @@ export class RailpackDeploymentService {
       if (status === "completed") {
         operation.completedAt = new Date();
         if (conclusion === "success") {
-          const evidence = await this.releaseEvidence(project.repositoryFullName, operation, credential.token);
+          let evidence: Record<string, unknown> | null;
+          try {
+            evidence = await this.releaseEvidence(project.repositoryFullName, operation, credential.token);
+          } catch (error) {
+            if (error instanceof TerminalReleaseEvidenceError) {
+              await this.persistTerminalEvidenceFailure(operation, error);
+              return operation;
+            }
+            throw error;
+          }
           if (!evidence) {
+            const pendingAttempts = Number(operation.metadata?.releaseEvidencePendingAttempts || 0) + 1;
+            const persistedPendingSince = typeof operation.metadata?.releaseEvidencePendingSince === "string" ? operation.metadata.releaseEvidencePendingSince : new Date().toISOString();
+            const pendingSinceMs = Date.parse(persistedPendingSince);
+            if (pendingAttempts >= 3 && Number.isFinite(pendingSinceMs) && Date.now() - pendingSinceMs >= 2 * 60_000) {
+              await this.persistTerminalEvidenceFailure(operation, new TerminalReleaseEvidenceError("The successful terminal workflow did not publish the required release result artifact after bounded reconciliation."));
+              return operation;
+            }
             operation.currentStage = "release_evidence_pending";
-            operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString() };
+            operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(), releaseEvidencePendingAttempts: pendingAttempts, releaseEvidencePendingSince: persistedPendingSince };
             await this.runs.save(operation);
             return operation;
           }
@@ -411,6 +442,22 @@ export class RailpackDeploymentService {
     await this.runs.save(operation);
   }
 
+  private async persistTerminalEvidenceFailure(operation: ProjectPipelineRun, error: unknown) {
+    const detail = this.sanitizer.sanitize(error instanceof Error ? error.message : "Incompatible terminal release evidence.")
+      .replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 2_000);
+    operation.status = PipelineRunStatus.FAILED;
+    operation.currentStage = "release_evidence_validation";
+    operation.failedAt = new Date();
+    operation.completedAt = operation.completedAt || operation.failedAt;
+    operation.errorMessage = "DeployGuard rejected incompatible terminal release evidence.";
+    operation.metadata = {
+      ...(operation.metadata || {}), workflowConclusion: "success", workflowUpdatedAt: new Date().toISOString(),
+      failedStage: "release_evidence_validation", failureSource: "deployguard_reconciliation",
+      failureCategory: "release_contract_incompatible", safeLog: detail || "The terminal result did not match the expected immutable release contract.",
+    };
+    await this.runs.save(operation);
+  }
+
   private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, token: string) {
     try {
       const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, token);
@@ -429,8 +476,12 @@ export class RailpackDeploymentService {
     const raw = await this.actions.getResultArtifact(repositoryFullName, operation.githubWorkflowRunId, operation.id, token);
     if (!raw) return null;
     let artifact: Record<string, unknown>;
-    try { artifact = JSON.parse(raw) as Record<string, unknown>; } catch { throw new Error("The release result artifact is not valid JSON."); }
-    return this.validatedReleaseEvidence(operation, artifact);
+    try {
+      artifact = JSON.parse(raw) as Record<string, unknown>;
+      return this.validatedReleaseEvidence(operation, artifact);
+    } catch (error) {
+      throw new TerminalReleaseEvidenceError(error instanceof Error ? error.message : "The release result artifact is invalid.");
+    }
   }
 
   private validatedReleaseEvidence(operation: ProjectPipelineRun, artifact: Record<string, unknown>): Record<string, unknown> {
@@ -438,6 +489,7 @@ export class RailpackDeploymentService {
     const sourceSha = String(artifact.sourceSha || "");
     const operationId = String(artifact.operationId || "");
     const expectedAction = String(operation.metadata?.deploymentAction || "");
+    if (artifact.contractVersion !== RAILPACK_RESULT_CONTRACT_VERSION) throw new Error(`The release result artifact does not implement ${RAILPACK_RESULT_CONTRACT_VERSION}.`);
     if (action !== expectedAction || sourceSha !== operation.commitSha || operationId !== operation.id) throw new Error("The release result artifact does not match its immutable operation identity.");
     if (action === "destroy") {
       if (artifact.destroyed !== true) throw new Error("The destroy result artifact does not prove deletion.");

@@ -5,6 +5,7 @@ import { createHash } from "crypto";
  * runtime configuration; it deliberately contains no repository analysis.
  */
 export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v1";
+export const RAILPACK_RESULT_CONTRACT_VERSION = "deployguard.release-result/v2";
 
 export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "deployment_action", required: true, type: "string" },
@@ -26,6 +27,7 @@ export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "platform_port", required: true, type: "string" },
   { name: "rollback_image_digest", required: false, type: "string" },
   { name: "control_plane_sha", required: true, type: "string" },
+  { name: "result_contract_version", required: true, type: "string" },
 ] as const;
 
 export type RailpackWorkflowInputName = typeof RAILPACK_WORKFLOW_INPUTS[number]["name"];

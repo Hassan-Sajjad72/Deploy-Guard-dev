@@ -41,6 +41,14 @@ const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
 };
 
 export type GithubActionsPresentationAction = "deploy" | "destroy" | "rollback";
+const ACTION_WORKFLOW_STAGES: Record<GithubActionsPresentationAction, Set<string>> = {
+  deploy: new Set(["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack", "build_immutable_railpack_image", "publish_immutable_image_to_ecr", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
+  rollback: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "select_immutable_rollback_image", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
+  destroy: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
+};
+export function githubActionsWorkflowStageRelevant(stage: unknown, action: GithubActionsPresentationAction) {
+  return ACTION_WORKFLOW_STAGES[action].has(String(stage || ""));
+}
 const LEGACY_CANDIDATE_FAILURE = "Candidate provisioning or health verification failed.";
 const BUILD_PHASE_FAILURE_STAGES = new Set([
   "set_up_job",
@@ -62,6 +70,15 @@ export function githubActionsStagePresentation(stage: unknown, action: GithubAct
   return { key: key || "github_actions", label };
 }
 
+export function deployguardOperationStagePresentation(stage: unknown, action: GithubActionsPresentationAction = "deploy") {
+  const key = String(stage || "github_actions").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  if (action !== "destroy") return githubActionsStagePresentation(key, action);
+  if (["release_evidence_pending", "release_evidence_validation", "verify_exact_project_deletion", "publish_verified_release_result"].includes(key)) return { key, label: "Verify deletion" };
+  if (["project_delete_cleanup", "release_finalization", "release_complete", "destroyed"].includes(key)) return { key, label: "Finalize cleanup" };
+  if (["install_terraform", "materialize_release_runtime", "terraform_apply", "terraform_plan_and_apply"].includes(key)) return { key, label: "Destroy infrastructure" };
+  return { key, label: "Prepare" };
+}
+
 export function githubActionsFailureMessage(errorMessage: unknown, failedStage: unknown, action: GithubActionsPresentationAction = "deploy") {
   const persisted = typeof errorMessage === "string" ? errorMessage.trim() : "";
   if (persisted && persisted !== LEGACY_CANDIDATE_FAILURE) return persisted;
@@ -69,8 +86,9 @@ export function githubActionsFailureMessage(errorMessage: unknown, failedStage: 
   return persisted || "The GitHub Actions deployment failed.";
 }
 
-export function githubActionsFailureLifecyclePhase(failedStage: unknown): "source" | "build" | "deploy" | "verify" {
+export function githubActionsFailureLifecyclePhase(failedStage: unknown, action: GithubActionsPresentationAction = "deploy"): "source" | "build" | "deploy" | "verify" {
   const key = githubActionsStagePresentation(failedStage).key;
+  if (action === "destroy" && (key.includes("evidence") || key.includes("verify") || key === "publish_verified_release_result")) return "verify";
   if (["workflow_bootstrap", "set_up_job", "workflow_dispatch", "configure_aws_credentials_through_oidc", "checkout_exact_application_source", "validate_immutable_release_input"].includes(key)) return "source";
   if (BUILD_PHASE_FAILURE_STAGES.has(key) || key.includes("build")) return "build";
   if (key === "publish_verified_release_result") return "verify";
@@ -85,7 +103,7 @@ export function githubActionsFailureLifecyclePhase(failedStage: unknown): "sourc
  */
 export function githubActionsWorkflowStepPresentation(step: unknown, action: GithubActionsPresentationAction = "deploy") {
   const key = String(step || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-  const presentation = WORKFLOW_STEP_STAGES[key] || null;
+  const presentation = ACTION_WORKFLOW_STAGES[action].has(key) ? WORKFLOW_STEP_STAGES[key] || null : null;
   return presentation;
 }
 

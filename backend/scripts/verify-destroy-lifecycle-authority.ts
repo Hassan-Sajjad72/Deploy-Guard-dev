@@ -34,6 +34,15 @@ function authority(projected: any, runtime: "present" | "absent" | "unknown") {
   });
 }
 
+function activeDestroy() {
+  const projected = failed("destroy");
+  projected.developerMessage = "A destroy operation is in progress. The verified stable release remains live.";
+  projected.latestAttempt = { ...projected.latestAttempt, status: "destroying", outcome: null, completedAt: null };
+  projected.progress = { percentage: 70, phase: "deploy", label: "Destroying application" };
+  projected.canRetry = false;
+  return projected;
+}
+
 function destroyEvidence() {
   return {
     contractVersion: "deployguard.destroy-result/v2", deploymentOperationId: operationId, projectId, environmentName: "dev", generationIds: [generationId],
@@ -49,9 +58,26 @@ async function verifyCanonicalProjection() {
   }
   const intactDestroy = authority(failed("destroy"), "present");
   assert.equal(intactDestroy.stateAuthority.state, "LIVE", "failed Destroy may preserve LIVE only with positive current runtime evidence");
+  assert.equal(intactDestroy.stateAuthority.runtime.state, "present");
+  assert.equal(intactDestroy.stateAuthority.monitoring.available, true, "failed Destroy does not disable monitoring for a runtime still present");
+
+  const activeIntactDestroy = authority(activeDestroy(), "present");
+  assert.equal(activeIntactDestroy.stateAuthority.state, "DESTROYING");
+  assert.equal(activeIntactDestroy.stateAuthority.runtime.state, "present");
+  assert.equal(activeIntactDestroy.stateAuthority.applicationHealth.status, "healthy");
+  assert.equal(activeIntactDestroy.stateAuthority.monitoring.available, true, "operation state does not hide a healthy runtime");
+
+  const activeRemovedDestroy = authority(activeDestroy(), "absent");
+  assert.equal(activeRemovedDestroy.stateAuthority.state, "DESTROYING");
+  assert.equal(activeRemovedDestroy.stateAuthority.runtime.state, "removed");
+  assert.equal(activeRemovedDestroy.stateAuthority.infrastructure.status, "destroyed");
+  assert.equal(activeRemovedDestroy.stateAuthority.applicationHealth.status, "unavailable");
+  assert.equal(activeRemovedDestroy.stateAuthority.monitoring.available, false);
+  assert.equal(activeRemovedDestroy.developerState, "destroying", "resource removal does not erase the still-active Destroy operation");
 
   const removedDestroy = authority(failed("destroy"), "absent");
   assert.equal(removedDestroy.stateAuthority.state, "BLOCKED");
+  assert.equal(removedDestroy.stateAuthority.runtime.state, "removed");
   assert.equal(removedDestroy.stateAuthority.infrastructure.status, "destroyed");
   assert.equal(removedDestroy.stateAuthority.applicationHealth.status, "unavailable");
   assert.equal(removedDestroy.stableRelease, null, "historical stable-release evidence cannot retain LIVE authority after runtime removal");
@@ -112,7 +138,7 @@ async function verifyReconcileUsesDestroyFinalizer() {
   service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
   service.actions = {
     getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }),
-    getResultArtifact: async () => JSON.stringify({ action: "destroy", sourceSha: operation.commitSha, operationId, destroyed: true, destroyVerification: destroyEvidence() }),
+    getResultArtifact: async () => JSON.stringify({ contractVersion: "deployguard.release-result/v2", action: "destroy", sourceSha: operation.commitSha, operationId, destroyed: true, destroyVerification: destroyEvidence() }),
   };
   service.runs = { save: async (row: any) => row };
   service.sanitizer = new LogSanitizerService();
@@ -124,6 +150,57 @@ async function verifyReconcileUsesDestroyFinalizer() {
   assert.equal(operation.status, PipelineRunStatus.COMPLETED);
   assert.equal(operation.currentStage, "project_delete_cleanup");
   assert.equal(operation.metadata.destroyEvidenceValidated, true);
+}
+
+async function verifyAttemptFourContractFailureConverges() {
+  const operation: any = {
+    id: "f07a2838-82fc-4590-9be5-465f38aa5be4", projectId, generationId, triggeredByUserId: 7,
+    githubWorkflowRunId: "33255401081", commitSha: "a".repeat(40), status: PipelineRunStatus.RUNNING,
+    currentStage: "materialize_release_runtime", metadata: { executionEngine: "railpack", deploymentAction: "destroy", attempt: 4 },
+  };
+  const service: any = Object.create(RailpackDeploymentService.prototype);
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => ({ id: 7 }) };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.actions = {
+    getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }),
+    // Attempt 4's stale reusable workflow emitted the pre-v2 shape.
+    getResultArtifact: async () => JSON.stringify({ action: "destroy", sourceSha: operation.commitSha, operationId: operation.id, destroyed: true }),
+  };
+  service.runs = { save: async (row: any) => row };
+  service.sanitizer = new LogSanitizerService();
+  await service.reconcile(operation);
+  assert.equal(operation.status, PipelineRunStatus.FAILED, "terminal GitHub success with stale Destroy evidence must converge to failure");
+  assert.equal(operation.currentStage, "release_evidence_validation");
+  assert.equal(operation.metadata.failureCategory, "release_contract_incompatible");
+  assert.match(operation.metadata.safeLog, /deployguard\.release-result\/v2/);
+  assert.ok(operation.failedAt && operation.completedAt, "terminal reconciliation persists bounded terminal timestamps");
+}
+
+async function verifyDestroyTargetsDeployedRelease() {
+  const deployedSource = "d".repeat(40);
+  const service: any = Object.create(RailpackDeploymentService.prototype);
+  service.releases = { findOne: async ({ where }: any) => ({ ...where, commitSha: deployedSource, metadata: { releaseEvidenceVerified: true } }) };
+  const release = await service.authoritativeDestroyRelease(project, "dev", generationId);
+  assert.equal(release.commitSha, deployedSource, "Destroy identity comes from the authoritative deployed generation, not repository branch HEAD");
+  service.releases.findOne = async () => null;
+  await assert.rejects(() => service.authoritativeDestroyRelease(project, "dev", generationId), /authoritative verified deployed release identity/);
+  await assert.rejects(() => service.authoritativeDestroyRelease(project, "dev", null), /authoritative verified deployed release identity/);
+}
+
+function verifyDestroyPipelinePresentation() {
+  const service: any = Object.create(RailpackDeploymentService.prototype);
+  const presented = service.presentOperation({
+    id: operationId, projectId, generationId, status: PipelineRunStatus.RUNNING, currentStage: "materialize_release_runtime",
+    createdAt: new Date(observedAt), startedAt: new Date(observedAt), completedAt: null, failedAt: null,
+    metadata: { deploymentAction: "destroy", attempt: 4, workflowStages: [
+      { key: "build_immutable_railpack_image", label: "Building Railpack image", status: "skipped" },
+      { key: "materialize_release_runtime", label: "Materializing runtime", status: "running" },
+    ] },
+  });
+  assert.equal(presented.stageLabel, "Destroy infrastructure");
+  assert.deepEqual(presented.workflowStages.map((stage: any) => stage.key), ["materialize_release_runtime"], "Destroy timeline hides action-irrelevant Deploy steps");
+  assert.doesNotMatch(presented.stageLabel, /materialize_release_runtime/);
 }
 
 function verifySharedPageAuthority() {
@@ -143,6 +220,9 @@ void (async () => {
   await verifyCanonicalProjection();
   await verifyDestroyFinalizationAndRetry();
   await verifyReconcileUsesDestroyFinalizer();
+  await verifyAttemptFourContractFailureConverges();
+  await verifyDestroyTargetsDeployedRelease();
+  verifyDestroyPipelinePresentation();
   verifySharedPageAuthority();
   console.log("DESTROY_LIFECYCLE_AUTHORITY=PASS");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

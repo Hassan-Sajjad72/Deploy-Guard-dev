@@ -104,6 +104,7 @@ export type DeveloperProgressPhase =
   | "prepare"
   | "deploy"
   | "verify"
+  | "finalize"
   | null;
 
 /**
@@ -113,6 +114,11 @@ export type DeveloperProgressPhase =
 export type ProjectStateAuthority = {
   state: "READY" | "DEPLOYING" | "FAILED" | "LIVE" | "DESTROYING" | "DESTROYED" | "BLOCKED";
   reason: string;
+  runtime: {
+    state: "present" | "removed" | "unknown" | "not_deployed";
+    observedAt: string | null;
+    source: "aws_observation" | "verified_release" | "github_actions" | "unavailable";
+  };
   activeOperation: {
     id: string;
     type: "deploy" | "destroy" | "rollback";

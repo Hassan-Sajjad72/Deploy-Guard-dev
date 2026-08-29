@@ -29,6 +29,22 @@ assert.deepEqual(deploymentPhasePresentation(failure).map(({ key, status }) => [
   ["deploy", "waiting"],
   ["verify", "waiting"],
 ]);
+const destroy = {
+  developerState: "destroying",
+  progress: { phase: "deploy" },
+  latestAttempt: { operationType: "destroy", outcome: null, workflowStages: [
+    { key: "install_terraform", status: "passed" },
+    { key: "materialize_release_runtime", status: "running" },
+    { key: "build_immutable_railpack_image", status: "skipped" },
+  ] },
+  stateAuthority: { state: "DESTROYING", activeOperation: { type: "destroy" } },
+};
+assert.deepEqual(deploymentPhasePresentation(destroy).map(({ label, status }) => [label, status]), [
+  ["Prepare", "waiting"],
+  ["Destroy infrastructure", "running"],
+  ["Verify deletion", "waiting"],
+  ["Finalize cleanup", "waiting"],
+]);
 const overview = overviewLifecycleCopy(failure);
 assert.equal(overview.title, "Railpack Build failed");
 assert.equal(overview.message, "Build stopped before image publication. View Pipeline for technical evidence.");
