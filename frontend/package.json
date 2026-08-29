@@ -1,0 +1,45 @@
+{
+  "name": "deploy-guard-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "type": "module",
+  "scripts": {
+    "test:operator-segregation-ui": "node scripts/verify-operator-segregation-ui.mjs",
+    "test:application-surfaces": "node scripts/verify-application-surfaces.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "test:current-state-ui": "node scripts/verify-current-state-ui.mjs",
+    "test:visual-system": "node scripts/verify-visual-system.mjs",
+    "test:github-home": "node scripts/verify-github-home.mjs",
+    "test:admin-readability": "node scripts/verify-admin-readability.mjs",
+    "test:admin-console": "node scripts/verify-admin-readability.mjs",
+    "test:deploy-journey": "node scripts/verify-deploy-journey.mjs",
+    "test:managed-environment": "node scripts/verify-managed-environment.mjs",
+    "test:unified-lifecycle": "node scripts/verify-unified-lifecycle.mjs",
+    "test:pipeline-recovery": "node scripts/verify-pipeline-recovery.mjs",
+    "test:professional-pipeline": "node scripts/verify-professional-pipeline.mjs",
+    "test:infrastructure-presentation": "node scripts/verify-infrastructure-presentation.mjs",
+    "test:monitoring-presentation": "node scripts/verify-monitoring-presentation.mjs",
+    "test:destroy-operation-presentation": "node scripts/verify-destroy-operation-presentation.mjs",
+    "test:overview-lifecycle": "node scripts/verify-overview-lifecycle.mjs",
+    "test:railpack-failure-presentation": "node scripts/verify-railpack-failure-presentation.mjs",
+    "test:project-state-sync": "node scripts/verify-project-state-sync.mjs",
+    "test:topology-authority": "node scripts/verify-topology-authority.mjs",
+    "test:recovery-ui": "node scripts/verify-recovery-ui.mjs",
+    "test:time-recency-ui": "node scripts/verify-time-recency-ui.mjs",
+    "test:serialized-project-refresh": "node scripts/verify-serialized-project-refresh.mjs",
+    "test:project-page-loading": "node scripts/verify-project-page-loading.mjs",
+    "test:rollback-stage-monotonicity": "node scripts/verify-rollback-stage-monotonicity.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.0.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.2",
+    "vite": "^8.2.1"
+  }
+}

@@ -1,0 +1,613 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
+import { PipelineRunStatus, ProjectPipelineRun } from "../src/projects/project-pipeline-run.entity";
+import { ProjectDeploymentGeneration } from "../src/projects/project-deployment-generation.entity";
+import { ProjectEnvironmentRoute } from "../src/projects/project-environment-route.entity";
+import { ProjectStableRelease } from "../src/orchestration/project-stable-release.entity";
+import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
+import { isAiTroubleshootingEligible } from "../src/ai-troubleshooting/ai-troubleshooting.service";
+import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
+import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentation } from "../src/projects/pipeline/github-actions-stage-presentation";
+import { DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
+import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
+import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
+import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
+import { PINNED_AWS_PROVIDER_VERSION, PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS } from "./pinned-aws-provider-5.100.0-expectations";
+
+const user = { id: 7 } as any;
+const project = {
+  id: "11111111-1111-4111-8111-111111111111", ownerUserId: 7,
+  repositoryUrl: "https://github.com/example/application.git", repositoryFullName: "example/application",
+  targetBranch: "main", githubInstallationId: "42", environmentName: "dev",
+};
+
+function storedZipEntry(name: string, value: string) {
+  const filename = Buffer.from(name);
+  const data = Buffer.from(value);
+  const local = Buffer.alloc(30 + filename.length + data.length);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0, 8);
+  local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(filename.length, 26);
+  filename.copy(local, 30); data.copy(local, 30 + filename.length);
+  const central = Buffer.alloc(46 + filename.length);
+  central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(0, 10);
+  central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(filename.length, 28);
+  filename.copy(central, 46);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(1, 8); eocd.writeUInt16LE(1, 10); eocd.writeUInt32LE(central.length, 12); eocd.writeUInt32LE(local.length, 16);
+  return Buffer.concat([local, central, eocd]);
+}
+
+async function verifyReleaseArtifactEvidenceReconciliation() {
+  const valid = { action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, terraform: { image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123:cluster/dg", ecs_cluster_name: "dg", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/dg/a", alb_target_group_name: "dg", alb_url: "http://example.test", cloudwatch_log_group_name: "/deployguard/11111111-1111-4111-8111-111111111111/application", application_container_name: "application", task_definition_arn: "arn:aws:ecs:us-east-1:123:task-definition/dg:1", ecs_service_arn: "arn:aws:ecs:us-east-1:123:service/dg/dg", ecs_service_name: "dg" } };
+  assert.equal(DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, "deployguard-result.json");
+  const archive = storedZipEntry("deployguard-result.json", JSON.stringify(valid));
+  assert.equal(exactZipEntry(archive, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY), JSON.stringify(valid));
+  const originalFetch = globalThis.fetch;
+  let artifactListRead = false;
+  globalThis.fetch = (async () => {
+    if (!artifactListRead) {
+      artifactListRead = true;
+      return new Response(JSON.stringify({ artifacts: [{ id: 1, name: `deployguard-result-${valid.operationId}`, expired: false }] }), { status: 200 });
+    }
+    return new Response(archive, { status: 200, headers: { "content-length": String(archive.length) } });
+  }) as typeof fetch;
+  try {
+    const actionService = Object.create(GithubActionsService.prototype) as GithubActionsService;
+    assert.equal(await actionService.getResultArtifact(project.repositoryFullName, "456", valid.operationId, "ignored"), JSON.stringify(valid));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const saved: any[] = [];
+  const generations: any[] = [];
+  const routes: any[] = [];
+  const releases: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project }; service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  const operation: any = { id: valid.operationId, projectId: project.id, triggeredByUserId: user.id, githubWorkflowRunId: "456", status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", commitSha: valid.sourceSha, metadata: { deploymentAction: "deploy" } };
+  const generationRepository = {
+    findOne: async ({ where }: any) => generations.find((generation) => generation.id === where.id) || null,
+    createQueryBuilder: () => ({ select: () => ({ where: () => ({ andWhere: () => ({ getRawOne: async () => ({ maximum: "0" }) }) }) }) }),
+    create: (row: any) => row,
+    find: async () => generations.filter((generation) => generation.status === "live"),
+    save: async (row: any) => { const index = generations.findIndex((generation) => generation.id === row.id); if (index >= 0) generations[index] = structuredClone(row); else generations.push(structuredClone(row)); return row; },
+  };
+  const routeRepository = {
+    findOne: async () => routes[0] || null,
+    find: async () => routes,
+    create: (row: any) => row,
+    save: async (row: any) => { routes[0] = structuredClone(row); return row; },
+  };
+  const releaseRepository = {
+    findOne: async ({ where }: any) => releases.find((release) => Object.entries(where).every(([key, value]) => release[key] === value)) || null,
+    find: async ({ where }: any) => releases.filter((release) => Object.entries(where).every(([key, value]) => release[key] === value)),
+    create: (row: any) => ({ id: `${row.deployedByPipelineRunId}-release`, ...row }),
+    save: async (row: any) => { const index = releases.findIndex((release) => release.id === row.id); if (index >= 0) releases[index] = structuredClone(row); else releases.push(structuredClone(row)); return row; },
+  };
+  let transactionOperation = operation;
+  const operationRepository = {
+    findOne: async () => transactionOperation,
+    save: async (row: any) => { saved.push(structuredClone(row)); return row; },
+  };
+  const manager: any = {
+    query: async () => undefined,
+    getRepository: (entity: unknown) => entity === ProjectPipelineRun ? operationRepository
+      : entity === ProjectDeploymentGeneration ? generationRepository
+        : entity === ProjectEnvironmentRoute ? routeRepository
+          : entity === ProjectStableRelease ? releaseRepository
+            : null,
+  };
+  service.dataSource = { transaction: async (callback: any) => callback(manager) };
+  service.actions = { getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }), getResultArtifact: async () => JSON.stringify(valid) };
+  await service.reconcile(operation);
+  assert.equal(saved.at(-1).status, PipelineRunStatus.COMPLETED);
+  assert.equal(operation.generationId, operation.id, "the immutable operation establishes the authoritative runtime generation");
+  assert.equal(generations[0]?.status, "live");
+  assert.equal(routes[0]?.liveGenerationId, operation.id);
+  assert.equal(releases[0]?.metadata?.deployedUrl, valid.terraform.alb_url);
+  assert.equal(generations[0]?.resourceManifest?.cloudWatchLogGroupName, valid.terraform.cloudwatch_log_group_name);
+  assert.equal(generations[0]?.resourceManifest?.applicationContainerName, "application");
+  assert.equal(operation.metadata.releaseEvidenceVerified, true);
+  const redeployEvidence = structuredClone(valid);
+  redeployEvidence.operationId = "88888888-8888-4888-8888-888888888888";
+  redeployEvidence.sourceSha = "e".repeat(40);
+  redeployEvidence.image = `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"b".repeat(64)}`;
+  redeployEvidence.terraform.image = redeployEvidence.image;
+  redeployEvidence.terraform.task_definition_arn = "arn:aws:ecs:us-east-1:123:task-definition/dg:2";
+  const redeploy: any = { ...operation, id: redeployEvidence.operationId, generationId: null, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", commitSha: redeployEvidence.sourceSha, metadata: { deploymentAction: "deploy" } };
+  transactionOperation = redeploy;
+  service.actions.getResultArtifact = async () => JSON.stringify(redeployEvidence);
+  await service.reconcile(redeploy);
+  assert.equal(redeploy.status, PipelineRunStatus.COMPLETED, "a later verified release must finalize against the same project-scoped Terraform state");
+  assert.equal(redeploy.currentStage, "release_complete");
+  assert.equal(generations.length, 2);
+  assert.equal(generations.find((generation) => generation.id === operation.id)?.status, "retired");
+  assert.equal(generations.find((generation) => generation.id === redeploy.id)?.status, "live");
+  assert.equal(routes[0]?.liveGenerationId, redeploy.id);
+  assert.equal(releases.find((release) => release.deployedByPipelineRunId === operation.id)?.status, "rollback_target");
+  assert.equal(releases.find((release) => release.deployedByPipelineRunId === redeploy.id)?.status, "stable");
+  const rollbackEvidence = structuredClone(valid);
+  rollbackEvidence.action = "rollback";
+  rollbackEvidence.operationId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  rollbackEvidence.terraform.task_definition_arn = "arn:aws:ecs:us-east-1:123:task-definition/dg:3";
+  const rollback: any = { ...operation, id: rollbackEvidence.operationId, generationId: null, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: { deploymentAction: "rollback" } };
+  transactionOperation = rollback;
+  service.actions.getResultArtifact = async () => JSON.stringify(rollbackEvidence);
+  await service.reconcile(rollback);
+  assert.equal(rollback.status, PipelineRunStatus.COMPLETED);
+  assert.equal(routes[0]?.liveGenerationId, rollback.id, "rollback finalization creates and promotes a new operation generation");
+  assert.equal(releases.find((release) => release.deployedByPipelineRunId === redeploy.id)?.status, "rollback_target", "the previously LIVE redeploy becomes the immediate rollback target");
+  assert.equal(releases.find((release) => release.deployedByPipelineRunId === operation.id)?.status, "superseded", "older rollback history is not an ambiguous UI target");
+  transactionOperation = operation;
+  for (const [key, value] of [["operationId", "wrong"], ["sourceSha", "d".repeat(40)], ["action", "rollback"]] as const) {
+    const invalid = { ...valid, [key]: value };
+    service.actions.getResultArtifact = async () => JSON.stringify(invalid);
+    await assert.rejects(() => service.releaseEvidence(project.repositoryFullName, operation, "ignored"));
+  }
+
+  const pendingOperation = { ...operation, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending" };
+  service.actions.getResultArtifact = async () => null;
+  await service.reconcile(pendingOperation);
+  assert.equal(saved.at(-1).status, PipelineRunStatus.RUNNING, "missing evidence must not complete a successful workflow");
+  assert.equal(saved.at(-1).currentStage, "release_evidence_pending");
+  service.actions.getResultArtifact = async () => "not-json";
+  await assert.rejects(() => service.releaseEvidence(project.repositoryFullName, operation, "ignored"));
+}
+
+async function verifyTerminalFinalizationFailureIsRetryable() {
+  const validEvidence = {
+    releaseArtifact: { operationId: "99999999-9999-4999-8999-999999999999" },
+    imageUri: "123.dkr.ecr.us-east-1.amazonaws.com/repo",
+    imageDigest: `sha256:${"f".repeat(64)}`,
+    albUrl: "http://example.test",
+    taskDefinitionArn: "arn:aws:ecs:us-east-1:123:task-definition/dg:3",
+    ecsServiceArn: "arn:aws:ecs:us-east-1:123:service/dg/dg",
+  };
+  const operation: any = {
+    id: validEvidence.releaseArtifact.operationId,
+    projectId: project.id,
+    triggeredByUserId: user.id,
+    githubWorkflowRunId: "789",
+    status: PipelineRunStatus.RUNNING,
+    currentStage: "release_evidence_pending",
+    commitSha: "a".repeat(40),
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy" },
+  };
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  service.sanitizer = new LogSanitizerService();
+  service.actions = {
+    getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }),
+    getResultArtifact: async () => "unused",
+  };
+  service.releaseEvidence = async () => validEvidence;
+  service.finalizeVerifiedRelease = async () => { throw new Error("token=top-secret-password"); };
+  await service.reconcile(operation);
+  assert.equal(operation.status, PipelineRunStatus.FAILED, "a terminal successful workflow must not remain active when control-plane finalization fails");
+  assert.equal(operation.currentStage, "release_finalization");
+  assert.equal(operation.metadata.failureSource, "deployguard_reconciliation");
+  assert.equal(operation.metadata.failureCategory, "release_finalization");
+  assert.equal(operation.metadata.releaseEvidenceValidated, true);
+  assert.equal(operation.errorMessage, "DeployGuard could not finalize the verified release.");
+  assert.match(operation.metadata.safeLog, /token=\[REDACTED\]/i, "persisted reconciliation evidence must be sanitized");
+  assert.equal(saved.at(-1).status, PipelineRunStatus.FAILED);
+
+  const transient: any = { ...operation, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: PipelineRunStatus.RUNNING, currentStage: "github_actions", metadata: { executionEngine: "railpack", deploymentAction: "deploy" } };
+  service.actions.getWorkflowRun = async () => { throw new Error("network unavailable"); };
+  await service.reconcile(transient);
+  assert.equal(transient.status, PipelineRunStatus.RUNNING, "transient GitHub polling failures remain active for later reconciliation");
+
+  const recovery = Object.create(RailpackDeploymentService.prototype) as any;
+  recovery.project = async () => project;
+  recovery.runs = { findOne: async () => operation };
+  let retryArgs: any[] | null = null;
+  recovery.dispatch = async (...args: any[]) => { retryArgs = args; return { deployment: { state: "accepted" } }; };
+  await recovery.retry(user, project.id);
+  assert.equal(retryArgs?.[2], "deploy");
+  assert.equal(retryArgs?.[4], operation.id, "normal retry must retain the failed reconciliation operation as its recovery ancestor");
+}
+
+async function verifyPreDispatchFailure() {
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.runs = {
+    findOne: async () => null,
+    count: async () => 0,
+    create: (row: any) => row,
+    save: async (row: any) => { saved.push(structuredClone(row)); return row; },
+  };
+  service.config = { get: (key: string, fallback = "") => key === "DEPLOYGUARD_REUSABLE_WORKFLOW" ? "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0123456789abcdef0123456789abcdef01234567" : fallback };
+  service.githubApp = {
+    tokenForRepository: async () => {
+      assert.equal(saved[0]?.status, PipelineRunStatus.QUEUED, "attempt must exist before GitHub authentication");
+      assert.equal(saved[0]?.metadata?.executionEngine, "railpack");
+      throw new Error("caller reconciliation permission was denied");
+    },
+  };
+  const result = await service.deploy(user, project.id);
+  assert.equal(result.deployment.state, "dispatch_failed");
+  const failed = saved.at(-1);
+  assert.equal(failed.status, PipelineRunStatus.FAILED);
+  assert.equal(failed.githubWorkflowStatus, "not_dispatched");
+  assert.equal(failed.githubWorkflowRunId, undefined);
+  assert.equal(failed.metadata.dispatchState, "failed");
+  assert.equal(failed.metadata.failureSource, "deployguard_dispatch");
+  assert.equal(typeof failed.metadata.safeLog, "string");
+  assert.equal(isAiTroubleshootingEligible(failed), true, "sanitized dispatch failure must be troubleshooting eligible");
+  return failed;
+}
+
+function verifyCapabilityFailureIsBoundedAndPreDispatch() {
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  const failure = service.dispatchFailure(new WorkflowAwsCapabilityError([
+    "ecs:CreateCluster", "elasticloadbalancing:CreateLoadBalancer", "iam:AttachRolePolicy",
+  ], "fixture"), "aws_capability_verification");
+  assert.equal(failure.stage, "aws_capability_verification");
+  assert.equal(failure.evidence.classification, "platform_configuration");
+  assert.deepEqual(failure.evidence.missingCapabilities, ["ecs:CreateCluster", "elasticloadbalancing:CreateLoadBalancer", "iam:AttachRolePolicy"]);
+  assert.doesNotMatch(failure.message, /fixture/, "internal IAM simulator text must not become high-level operation evidence");
+}
+
+async function verifyPerActionCapabilitySimulation() {
+  const scope: any = { accountId: "000000000000", region: "us-east-1", projectId: project.id, environmentName: "dev", generationId: "22222222-2222-4222-8222-222222222222", terraformStateBucket: "deployguard-state", vpcId: "vpc-00000000000000000", managedDatabaseEnabled: false };
+  const state = WORKFLOW_AWS_CAPABILITIES.find((capability) => capability.id === "terraform-state")!;
+  const role = WORKFLOW_AWS_CAPABILITIES.find((capability) => capability.id === "execution-role")!;
+  const calls: any[] = [];
+  const allowed = { send: async (command: any) => { const input = command.input; calls.push(input); return { EvaluationResults: input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: "allowed" })) }; } };
+  assert.deepEqual(await verifyEffectiveWorkflowCapabilities(allowed, "arn:aws:iam::000000000000:role/deployguard", scope, "deploy", [state]), []);
+  const listBucket = calls.find((call) => call.ActionNames.includes("s3:ListBucket"));
+  const objectAccess = calls.find((call) => call.ActionNames.includes("s3:GetObject"));
+  assert.deepEqual(listBucket.ResourceArns, ["arn:aws:s3:::deployguard-state"]);
+  assert.deepEqual(objectAccess.ResourceArns, [`arn:aws:s3:::deployguard-state/projects/${project.id}/runtime/terraform.tfstate`]);
+  calls.length = 0;
+  await verifyEffectiveWorkflowCapabilities(allowed, "arn:aws:iam::000000000000:role/deployguard", scope, "deploy", [role]);
+  assert.ok(calls.every((call) => call.ResourceArns.every((resource: string) => resource.includes(":role/dg-") || resource === "*")), "IAM simulation must not pass the managed policy ARN as a resource");
+  const missing = { send: async (command: any) => ({ EvaluationResults: command.input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: action === "s3:PutObject" ? "implicitDeny" : "allowed" })) }) };
+  assert.deepEqual(await verifyEffectiveWorkflowCapabilities(missing, "arn:aws:iam::000000000000:role/deployguard", scope, "deploy", [state]), ["s3:PutObject"]);
+  const policy: any = workflowCapabilityPolicy(scope);
+  const attach = policy.Statement.find((statement: any) => statement.Action.includes("iam:AttachRolePolicy"));
+  assert.deepEqual(attach.Resource, ["arn:aws:iam::000000000000:role/dg-*"]);
+  assert.equal(attach.Condition.StringEquals["iam:PolicyARN"], "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy");
+}
+
+function verifyProviderContractAndConditionalDatabaseScope() {
+  const scope: any = { accountId: "000000000000", region: "us-east-1", projectId: project.id, environmentName: "dev", generationId: "22222222-2222-4222-8222-222222222222", terraformStateBucket: "deployguard-state", vpcId: "vpc-00000000000000000" };
+  const allActions = new Set(WORKFLOW_AWS_CAPABILITIES.flatMap((capability) => capability.actions));
+  for (const [resource, actions] of Object.entries(RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS)) {
+    for (const action of actions) assert.ok(allActions.has(action), `provider action ${action} for ${resource} is absent from the canonical contract`);
+  }
+  const normal = capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: false });
+  assert.ok(!normal.some((capability) => capability.id === "database-efs" || capability.id === "database-secrets"));
+  assert.ok(!normal.flatMap((capability) => capability.actions).some((action) => action.startsWith("elasticfilesystem:") || action === "secretsmanager:GetResourcePolicy"));
+  const database = capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: true });
+  assert.ok(database.some((capability) => capability.id === "database-efs"));
+  assert.ok(database.some((capability) => capability.id === "database-secrets"));
+  const databaseActions = new Set(database.flatMap((capability) => capability.actions));
+  for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds"]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
+  assert.equal(PINNED_AWS_PROVIDER_VERSION, "5.100.0");
+  const root = join(__dirname, "..", "..");
+  const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
+  const manifestActions = new Set(Object.values(RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS).flat());
+  for (const expected of PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS) {
+    assert.match(terraform, new RegExp(`resource\\s+"${expected.terraformResource}"`), `provider expectation targets a current Terraform resource: ${expected.terraformResource}`);
+    assert.ok(manifestActions.has(expected.action), `independent provider expectation missing from manifest: ${expected.action} (${expected.providerFunction})`);
+    assert.ok(allActions.has(expected.action), `independent provider expectation missing from capability contract: ${expected.action} (${expected.providerFunction})`);
+  }
+  assert.ok(capabilitiesFor("destroy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
+  assert.ok(!capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
+}
+
+async function verifyCurrentStateProjection(failed: any, realGithubRun = false) {
+  const queries: string[] = [];
+  const builder: any = {
+    where(value: string) { queries.push(value); return this; },
+    andWhere(value: string) { queries.push(value); return this; },
+    orderBy() { return this; }, clone() { return this; },
+    getOne: async () => failed,
+  };
+  const service = Object.create(ProjectCurrentStateService.prototype) as any;
+  service.runRepository = { createQueryBuilder: () => builder };
+  service.releaseRepository = { findOne: async () => null };
+  const base = {
+    repository: project.repositoryFullName, branch: project.targetBranch, commit: null, latestAttempt: null,
+    stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null,
+    canRetry: false, stateAuthority: null,
+    developerState: "ready", developerAction: "deploy", developerMessage: "ready", progress: { percentage: 0, phase: null, label: "Ready" },
+  };
+  const state = await service.withGithubActionsState(project.id, "dev", base, null);
+  assert.ok(queries.some((query) => query.includes("'railpack'")), "current state must select Railpack operations");
+  assert.equal(state.latestAttempt.operationId, failed.id);
+  assert.equal(state.latestAttempt.workflowRunId, realGithubRun ? "123" : null);
+  assert.equal(state.developerState, "failed_application");
+  if (realGithubRun) {
+    assert.equal(state.progress.phase, "build", "Railpack build failure must not project as runtime deployment");
+    assert.deepEqual(state.latestAttempt.workflowStages?.map((stage) => [stage.key, stage.status]), [
+      ["checkout_exact_application_source", "passed"],
+      ["install_pinned_railpack", "passed"],
+      ["build_immutable_railpack_image", "failed"],
+      ["publish_immutable_image_to_ecr", "skipped"],
+      ["install_terraform", "skipped"],
+    ]);
+  } else {
+    assert.match(state.developerMessage, /could not start/i);
+    assert.doesNotMatch(state.developerMessage, /GitHub Actions failed/i);
+  }
+}
+
+async function verifyVerifiedReleaseProjectsLive() {
+  const completedAt = new Date("2026-08-29T12:00:00.000Z");
+  const generationId = "88888888-8888-4888-8888-888888888888";
+  const stableUrl = "http://verified.example.test";
+  const latest: any = {
+    id: generationId, projectId: project.id, generationId, status: PipelineRunStatus.COMPLETED,
+    currentStage: "release_complete", githubWorkflowRunId: "456", commitSha: "c".repeat(40),
+    createdAt: completedAt, startedAt: completedAt, completedAt, updatedAt: completedAt, failedAt: null,
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy", attempt: 1, deployedUrl: stableUrl, releaseEvidenceVerified: true },
+  };
+  const stableRelease: any = {
+    id: "99999999-9999-4999-8999-999999999999", generationId, deployedByPipelineRunId: latest.id,
+    deployedAt: completedAt, metadata: { deployedUrl: stableUrl, releaseEvidenceVerified: true },
+  };
+  const base: any = {
+    repository: project.repositoryFullName, branch: project.targetBranch, commit: null, latestAttempt: null,
+    stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null,
+    canRetry: false, stateAuthority: null,
+    developerState: "ready", developerAction: "deploy", developerMessage: "ready", progress: { percentage: 0, phase: null, label: "Ready" },
+  };
+  const projectState = async (candidate: any, release: any) => {
+    const builder: any = {
+      stable: false,
+      where() { return this; },
+      andWhere(value: string) { if (value.includes("run.id =")) this.stable = true; return this; },
+      orderBy() { return this; },
+      clone() { return this; },
+      getOne: async () => candidate,
+    };
+    const service = Object.create(ProjectCurrentStateService.prototype) as any;
+    service.runRepository = { createQueryBuilder: () => builder };
+    service.releaseRepository = { findOne: async () => null };
+    return service.withGithubActionsState(project.id, "dev", base, release ? generationId : null, release);
+  };
+  const live = await projectState(latest, stableRelease);
+  assert.equal(live.developerState, "live");
+  assert.equal(live.latestAttempt.generationId, generationId);
+  assert.equal(live.stableRelease.generationId, generationId);
+  assert.equal(live.stableUrl, stableUrl);
+
+  const invalid = await projectState({ ...latest, metadata: { ...latest.metadata, releaseEvidenceVerified: false } }, stableRelease);
+  assert.equal(invalid.developerState, "platform_attention", "a completed operation without validated release evidence must not become LIVE");
+  const healthFailed = await projectState({ ...latest, status: PipelineRunStatus.FAILED, currentStage: "release_failed", metadata: { ...latest.metadata, failedStage: "release_failed" } }, null);
+  assert.equal(healthFailed.developerState, "failed_application", "failed verification without a stable release must not become LIVE");
+}
+
+async function verifyTerminalGithubFailure() {
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  const githubActions = Object.create(GithubActionsService.prototype) as any;
+  githubActions.getWorkflowJobs = async () => ({ jobs: [{
+    id: 45, name: "deploy", status: "completed", conclusion: "failure", html_url: "https://github.example/actions/runs/123",
+    steps: [
+      { name: "Post Checkout", status: "completed", conclusion: "success" },
+      { name: "Checkout exact application source", status: "completed", conclusion: "success" },
+      { name: "Install pinned Railpack", status: "completed", conclusion: "success" },
+      { name: "Build immutable Railpack image", status: "completed", conclusion: "failure" },
+      { name: "Publish immutable image to ECR", status: "completed", conclusion: "skipped" },
+      { name: "Install Terraform", status: "completed", conclusion: "skipped" },
+    ],
+  }] });
+  githubActions.getJobLog = async () => "Railpack 0.38.0\nERRO BUILDKIT_HOST environment variable is not set.\ntoken=ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+  const githubEvidence = await githubActions.getTerminalFailureEvidence("example/application", "123", "ignored");
+  assert.ok(githubEvidence);
+  assert.equal(githubEvidence.failedStage, "build_immutable_railpack_image");
+  assert.deepEqual(githubEvidence.workflowStages.map((stage: any) => [stage.key, stage.status]), [
+    ["checkout_exact_application_source", "passed"],
+    ["install_pinned_railpack", "passed"],
+    ["build_immutable_railpack_image", "failed"],
+    ["publish_immutable_image_to_ecr", "skipped"],
+    ["install_terraform", "skipped"],
+  ]);
+  service.actions = { getTerminalFailureEvidence: async () => githubEvidence };
+  service.sanitizer = new LogSanitizerService();
+  const evidence = await service.terminalFailureEvidence("example/application", "123", "ignored");
+  assert.equal(evidence.failedStage, "build_immutable_railpack_image");
+  assert.match(evidence.safeLog, /BUILDKIT_HOST environment variable is not set/);
+  assert.doesNotMatch(evidence.safeLog, /ghp_/);
+  const failedRun = {
+    id: "22222222-2222-4222-8222-222222222222", projectId: project.id, githubWorkflowRunId: "123",
+    status: PipelineRunStatus.RUNNING, currentStage: evidence.failedStage, commitSha: "a".repeat(40),
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy", safeLog: evidence.safeLog, failedStage: evidence.failedStage, workflowStages: evidence.workflowStages, workflowConclusion: "failure" },
+    errorMessage: evidence.safeLog, updatedAt: new Date(), failedAt: new Date(), completedAt: new Date(), createdAt: new Date(), generationId: null,
+  };
+  assert.equal(githubActionsFailureLifecyclePhase(failedRun.currentStage), "build");
+  service.actions.getWorkflowRun = async () => ({ status: "completed", conclusion: "failure" });
+  await service.reconcile(failedRun);
+  const persisted = saved.at(-1);
+  assert.equal(persisted.status, PipelineRunStatus.FAILED);
+  assert.equal(persisted.metadata.workflowConclusion, "failure");
+  assert.equal(persisted.metadata.failedStage, "build_immutable_railpack_image");
+  assert.match(persisted.metadata.safeLog, /BUILDKIT_HOST environment variable is not set/);
+  assert.doesNotMatch(persisted.metadata.safeLog, /ghp_/);
+  assert.equal(isAiTroubleshootingEligible(persisted), true, "terminal GitHub failure with sanitized evidence must be eligible");
+  return failedRun;
+}
+
+async function verifyActiveGithubStagesPersistWithoutPipeline() {
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  service.actions = {
+    getWorkflowRun: async () => ({ status: "in_progress", conclusion: null }),
+    getWorkflowStages: async () => [
+      { key: "checkout", label: "Checkout", status: "passed", startedAt: "2026-08-29T10:00:00.000Z", completedAt: "2026-08-29T10:00:03.000Z", jobUrl: null, failureReason: null },
+      { key: "aws_oidc", label: "AWS OIDC", status: "passed", startedAt: "2026-08-29T10:00:03.000Z", completedAt: "2026-08-29T10:00:06.000Z", jobUrl: null, failureReason: null },
+      { key: "build_immutable_railpack_image", label: "Building Railpack image", status: "running", startedAt: "2026-08-29T10:00:06.000Z", completedAt: null, jobUrl: null, failureReason: null },
+      { key: "materialize_release_runtime", label: "Materializing runtime", status: "pending", startedAt: null, completedAt: null, jobUrl: null, failureReason: null },
+    ],
+  };
+  const operation: any = { id: "55555555-5555-4555-8555-555555555555", projectId: project.id, triggeredByUserId: user.id, githubWorkflowRunId: "123", status: PipelineRunStatus.RUNNING, currentStage: "github_actions", metadata: { executionEngine: "railpack" } };
+  await service.reconcile(operation);
+  assert.equal(saved.at(-1).currentStage, "build_immutable_railpack_image");
+  assert.deepEqual(saved.at(-1).metadata.workflowStages.map((stage: any) => stage.status), ["passed", "passed", "running", "pending"]);
+  service.actions.getWorkflowStages = async () => [];
+  await service.reconcile(operation);
+  assert.equal(saved.at(-1).metadata.workflowStages.length, 4, "a transient empty jobs response must retain prior stage evidence");
+}
+
+async function verifyCurrentStateReconcilesWithoutPipeline() {
+  const startedAt = new Date("2026-08-29T10:00:00.000Z");
+  const failedAt = new Date("2026-08-29T10:02:00.000Z");
+  const operation: any = {
+    id: "33333333-3333-4333-8333-333333333333", projectId: project.id, status: PipelineRunStatus.RUNNING,
+    githubWorkflowRunId: "33215481954", commitSha: "b".repeat(40), generationId: null, createdAt: startedAt, startedAt,
+    updatedAt: startedAt, completedAt: null, failedAt: null,
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy", attempt: 4 },
+  };
+  let reconciliationCalls = 0;
+  const service = Object.create(ProjectCurrentStateService.prototype) as any;
+  service.projectsService = { getProjectEntityForView: async () => ({ ...project, environment: "dev" }) };
+  service.deploymentReconciliation = {
+    reconcileActive: async (actor: any, projectId: string) => {
+      assert.equal(actor, user);
+      assert.equal(projectId, project.id);
+      reconciliationCalls += 1;
+      operation.status = PipelineRunStatus.FAILED;
+      operation.currentStage = "build_immutable_railpack_image";
+      operation.failedAt = failedAt;
+      operation.completedAt = failedAt;
+      operation.updatedAt = failedAt;
+      operation.errorMessage = "ERRO BUILDKIT_HOST environment variable is not set.";
+      operation.metadata = {
+        ...operation.metadata,
+        failedStage: operation.currentStage,
+        safeLog: operation.errorMessage,
+        workflowStages: [
+          { key: "checkout_exact_application_source", status: "passed" },
+          { key: "build_immutable_railpack_image", status: "failed" },
+          { key: "publish_immutable_image_to_ecr", status: "skipped" },
+        ],
+      };
+    },
+  };
+  service.dataSource = { getRepository: () => ({ findOne: async () => null }) };
+  service.releaseRepository = { findOne: async () => null };
+  service.estimateRepository = { findOne: async () => null };
+  service.generationRepository = { find: async () => [] };
+  service.githubActionsReadinessState = () => ({
+    repository: project.repositoryFullName, branch: project.targetBranch, commit: null, latestAttempt: null,
+    stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null,
+    canRetry: false, stateAuthority: null, developerState: "ready", developerAction: "deploy", developerMessage: "ready", progress: { percentage: 0, phase: null, label: "Ready" },
+  });
+  service.withGithubActionsState = async () => {
+    assert.equal(operation.status, PipelineRunStatus.FAILED, "Overview current-state refresh must reconcile terminal GitHub failure before projection");
+    return {
+      developerState: "failed_application", developerAction: "deploy_again", developerMessage: operation.errorMessage,
+      progress: { percentage: 40, phase: "build", label: "Railpack Build failed" }, repository: project.repositoryFullName, branch: project.targetBranch,
+      latestAttempt: {
+        operationId: operation.id, workflowRunId: operation.githubWorkflowRunId, operationType: "deploy", status: "failed_application", outcome: "blocked", attempt: "4",
+        generationId: null, releaseRevision: null, commit: operation.commitSha, message: operation.errorMessage,
+        occurredAt: failedAt.toISOString(), startedAt: startedAt.toISOString(), completedAt: failedAt.toISOString(),
+        workflowStages: operation.metadata.workflowStages,
+      }, stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null, canRetry: true, stateAuthority: null,
+    };
+  };
+  service.withStateAuthority = (_projectId: string, _environment: string, state: any) => state;
+  const overviewState = await service.getCurrentState(user, project.id);
+  assert.equal(reconciliationCalls, 1, "Overview current-state reads reconcile active GitHub operations without opening Pipeline");
+  assert.equal(overviewState.developerState, "failed_application");
+  assert.equal(overviewState.latestAttempt.operationId, operation.id);
+  assert.equal(overviewState.latestAttempt.workflowRunId, operation.githubWorkflowRunId);
+  assert.equal(overviewState.latestAttempt.generationId, null);
+  assert.equal(overviewState.latestAttempt.startedAt, startedAt.toISOString());
+  assert.equal(overviewState.latestAttempt.completedAt, failedAt.toISOString());
+  assert.deepEqual(overviewState.latestAttempt.workflowStages, operation.metadata.workflowStages);
+}
+
+async function verifyConcurrentStateReadsShareReconciliation() {
+  let reconciliationCalls = 0;
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.reconciliationInFlight = new Map();
+  service.projects = { findOne: async () => project };
+  service.runs = { find: async () => [{ id: "44444444-4444-4444-8444-444444444444", status: PipelineRunStatus.RUNNING }] };
+  service.reconcile = async () => { reconciliationCalls += 1; await Promise.resolve(); };
+  await Promise.all([service.reconcileActive(user, project.id), service.reconcileActive(user, project.id)]);
+  assert.equal(reconciliationCalls, 1, "concurrent current-state and history reads must share one GitHub reconciliation");
+}
+
+void (async () => {
+  const failed = await verifyPreDispatchFailure();
+  verifyCapabilityFailureIsBoundedAndPreDispatch();
+  await verifyPerActionCapabilitySimulation();
+  await verifyReleaseArtifactEvidenceReconciliation();
+  await verifyTerminalFinalizationFailureIsRetryable();
+  verifyProviderContractAndConditionalDatabaseScope();
+  await verifyCurrentStateProjection(failed);
+  await verifyVerifiedReleaseProjectsLive();
+  const terminalFailure = await verifyTerminalGithubFailure();
+  await verifyActiveGithubStagesPersistWithoutPipeline();
+  await verifyCurrentStateProjection(terminalFailure, true);
+  await verifyCurrentStateReconcilesWithoutPipeline();
+  await verifyConcurrentStateReadsShareReconciliation();
+  const root = join(__dirname, "..", "..");
+  const phases = readFileSync(join(root, "frontend", "src", "utils", "developerDeploymentPresentation.js"), "utf8");
+  const routes = readFileSync(join(root, "frontend", "src", "routes", "AppRoutes.jsx"), "utf8");
+  const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
+  const overviewPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectDetails.jsx"), "utf8");
+  const pipelinePage = readFileSync(join(root, "frontend", "src", "pages", "ProjectPipeline.jsx"), "utf8");
+  const infrastructurePage = readFileSync(join(root, "frontend", "src", "pages", "ProjectInfrastructure.jsx"), "utf8");
+  const monitoringPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectMetrics.jsx"), "utf8");
+  const troubleshootingPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectTroubleshooting.jsx"), "utf8");
+  const currentStateService = readFileSync(join(root, "backend", "src", "projects", "current-state", "project-current-state.service.ts"), "utf8");
+  const runtimeResolver = readFileSync(join(root, "backend", "src", "observability", "live-runtime-resolver.service.ts"), "utf8");
+  const migration = readFileSync(join(root, "backend", "src", "migrations", "1787356812000-DropLegacyGenerationStateKeyIndex.ts"), "utf8");
+  assert.doesNotMatch(phases, /key: "analyze"/);
+  assert.match(phases, /Source \/ Dispatch/);
+  assert.match(routes, /ProjectInfrastructure/);
+  assert.match(workflow, /tmpdir="\$\(mktemp -d\)"/);
+  assert.match(workflow, /test ! -f \/tmp\/railpack/);
+  assert.doesNotMatch(workflow, /-o \/tmp\/railpack\.tgz/);
+  assert.match(workflow, /name: Build immutable Railpack image[\s\S]*?if: success\(\) && inputs\.deployment_action == 'deploy'/);
+  assert.match(workflow, /name: Publish immutable image to ECR[\s\S]*?steps\.build\.outputs\.image != ''/);
+  assert.match(workflow, /name: Install Terraform[\s\S]*?steps\.image\.outputs\.image != ''/);
+  assert.match(workflow, /name: Materialize release runtime[\s\S]*?steps\.image\.outputs\.image != ''/);
+  assert.match(workflow, /name: Publish verified release result[\s\S]*?if: success\(\) && hashFiles/);
+  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build --name/);
+  assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
+  assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
+  assert.match(overviewPage, /getProjectCurrentState/);
+  assert.match(pipelinePage, /getProjectCurrentState/);
+  assert.match(infrastructurePage, /Provisioning failed/);
+  assert.doesNotMatch(infrastructurePage, /attempt\?\.message/);
+  assert.equal(githubActionsWorkflowStepPresentation("Post Checkout"), null);
+  assert.equal(githubActionsWorkflowStepPresentation("Materialize release runtime")?.key, "materialize_release_runtime");
+  assert.equal(githubActionsFailureLifecyclePhase("Materialize release runtime"), "deploy");
+  const lifecycle = Object.create(ProjectCurrentStateService.prototype) as any;
+  assert.equal(lifecycle.githubLifecyclePhase("materialize_release_runtime", { deploymentAction: "deploy", workflowStages: [{ key: "publish_immutable_image_to_ecr", status: "passed" }] }), "deploy");
+  assert.equal(lifecycle.githubLifecyclePhase("publish_immutable_image_to_ecr", { deploymentAction: "deploy", workflowStages: [{ key: "build_immutable_railpack_image", status: "passed" }] }), "build");
+  assert.match(infrastructurePage, /getProjectDetailedCurrentState/);
+  assert.match(infrastructurePage, /Persisted verified identity/);
+  assert.match(infrastructurePage, /Current AWS observation/);
+  assert.match(infrastructurePage, /terraformStateKey/);
+  assert.match(monitoringPage, /Temporarily unavailable/);
+  assert.doesNotMatch(currentStateService, /DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN|DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME|DEPLOYGUARD_SHARED_ALB_ARN/);
+  assert.doesNotMatch(runtimeResolver, /DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN|DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME|DEPLOYGUARD_SHARED_ALB_ARN|metadata\.targetGroupArn/);
+  assert.match(runtimeResolver, /cloudWatchLogGroupName/);
+  assert.match(runtimeResolver, /applicationContainerName/);
+  assert.match(migration, /uq_project_deployment_generation_state_key/);
+  assert.match(troubleshootingPage, /getGithubActionsDeploymentHistory/);
+  console.log("DISPATCH_STATE_PROJECTION=PASS");
+})().catch((error) => { console.error(error); process.exitCode = 1; });
