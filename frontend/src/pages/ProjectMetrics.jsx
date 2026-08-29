@@ -135,12 +135,15 @@ export default function ProjectMetrics() {
 
   const ecs = evidence?.ecs;
   const albHealth = evidence?.alb?.targetHealth || [];
+  const runtimeAvailable = runtime?.available === true;
+  const runtimeUnavailable = runtime?.available === false;
+  const monitoringConfigured = authority?.monitoring?.status === "available";
   return <div className="monitoring-page page-stack" data-authoritative-state={presentation.state} data-monitoring-available={authority?.monitoring?.available ? "true" : "false"}>
     <PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} context={`Source: GitHub Actions and AWS · Last updated: ${date(evidence?.lastUpdatedAt)} · ${label(evidence?.freshness)}`} description="Deployed application and infrastructure health only. GitHub Actions execution timing remains on Pipeline." eyebrow="Application health" status={presentation.state} title="Monitoring" />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     <section aria-label="Deployment health summary" className="monitoring-summary-grid">
       <MetricCard detail={`Source: ${evidenceSourceLabel(authority?.applicationHealth?.source)}`} label="Application status" tone={authority?.applicationHealth?.status === "healthy" ? "success" : "warning"} value={label(authority?.applicationHealth?.status)} />
-      <MetricCard detail={authority?.monitoring?.available ? "Provider samples are available below." : "No uptime signal has been reported by a runtime provider."} label="Runtime metrics" tone={authority?.monitoring?.available ? "success" : "neutral"} value={authority?.monitoring?.available ? "Available" : "Not configured"} />
+      <MetricCard detail={runtimeAvailable ? "Fresh provider samples are shown below." : runtimeUnavailable ? (runtime.message || "The runtime provider is temporarily unavailable.") : (authority?.monitoring?.reason || "No LIVE runtime telemetry is available.")} label="Runtime metrics" tone={runtimeAvailable ? "success" : "neutral"} value={runtimeAvailable ? "Available" : runtimeUnavailable ? "Temporarily unavailable" : monitoringConfigured ? "Resolving" : "Unavailable"} />
       <MetricCard detail={ecs ? `${ecs.desiredCount} desired · ${ecs.pendingCount} pending` : "No current ECS task evidence"} label="Running ECS tasks" tone={ecs?.runningCount ? "success" : "neutral"} value={ecs ? `${ecs.runningCount}/${ecs.desiredCount}` : "Unavailable"} />
       <MetricCard detail={albHealth.length ? "Live AWS target-health evidence" : "No current load-balancer evidence"} label="ALB target health" tone={albHealth.includes("healthy") ? "success" : "neutral"} value={albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"} />
     </section>
@@ -156,7 +159,7 @@ export default function ProjectMetrics() {
         <article><span>Grafana</span><strong>{runtime?.grafanaUrl ? <a href={runtime.grafanaUrl} rel="noreferrer" target="_blank">Open DeployGuard Runtime</a> : "Not configured"}</strong></article>
       </div>
     </Card>
-    {!authority?.monitoring?.available ? <EmptyState icon="activity" message="Deployment health is still verified through ECS and ALB. Configure Prometheus and Grafana to view CPU, memory, request, error and latency trends." title="Runtime metrics are not configured" /> : null}
+    {!authority?.monitoring?.available ? <EmptyState icon="activity" message={authority?.monitoring?.reason || "Deployment health is still verified through ECS and ALB."} title="Runtime metrics unavailable" /> : null}
     {authority?.monitoring?.available ? <>
       <section aria-label="Metrics time range" className="monitoring-range-controls">{["1h", "6h", "24h"].map((item) => <button aria-pressed={range === item} className={range === item ? "button" : "secondary-button"} key={item} onClick={() => setRange(item)} type="button">{item}</button>)}</section>
       {runtime?.available === false ? <EmptyState icon="activity" message={runtime.message || "Fresh metrics are unavailable."} title="Runtime metrics unavailable" /> : null}

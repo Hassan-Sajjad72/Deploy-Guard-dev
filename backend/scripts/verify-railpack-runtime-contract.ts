@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
+const outputs = readFileSync(join(root, "infrastructure", "railpack-runtime", "outputs.tf"), "utf8");
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
@@ -19,6 +20,12 @@ assert.match(terraform, /runtime_secret_arns = distinct\(concat/);
 assert.doesNotMatch(terraform, /Resource\s*=\s*"\*"/);
 assert.match(terraform, /image\s*=\s*var\.image/);
 assert.match(terraform, /containerPort\s*=\s*var\.platform_port/);
+for (const output of [
+  "aws_region", "ecs_cluster_arn", "ecs_cluster_name", "ecs_service_arn", "ecs_service_name",
+  "task_definition_arn", "alb_arn", "alb_name", "alb_target_group_arn", "alb_target_group_name",
+  "alb_url", "cloudwatch_log_group_name", "application_container_name",
+  "database_efs_file_system_id", "database_efs_access_point_id",
+]) assert.match(outputs, new RegExp(`output\\s+"${output}"`), `Railpack release evidence must expose ${output}`);
 assert.match(workflow, /HOST:"0\.0\.0\.0"/);
 assert.match(workflow, /aws-actions\/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4\.0\.2/);
 assert.match(workflow, /actions\/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4\.2\.2/);

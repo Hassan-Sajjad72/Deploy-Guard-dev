@@ -220,6 +220,7 @@ export class ProjectCurrentStateService {
           commit: stable.commitSha || latestCommit || "unknown",
           promotedAt: authoritativeRelease.deployedAt.toISOString(),
           rollbackAvailable: stableMetadata.rollbackAvailable === true,
+          runtimeIdentity: typeof stableReleaseMetadata.runtimeIdentity === "object" && stableReleaseMetadata.runtimeIdentity ? stableReleaseMetadata.runtimeIdentity as Record<string, unknown> : null,
         }
       : null;
     const action = latestMetadata.deploymentAction === "destroy"
@@ -604,6 +605,21 @@ export class ProjectCurrentStateService {
                 : projected.developerState === "failed_application"
                   ? "FAILED" as const
                   : "BLOCKED" as const;
+    const runtimeIdentity = projected.stableRelease?.runtimeIdentity || null;
+    const identityString = (key: string) => runtimeIdentity && typeof runtimeIdentity[key] === "string"
+      ? runtimeIdentity[key] as string
+      : "";
+    // Configuration merely permits a CloudWatch read.  It is not evidence
+    // that this release has a resolvable runtime provider.  The metrics/log
+    // endpoint resolves that evidence from this same persisted identity.
+    const monitoringIdentityComplete = Boolean(
+      identityString("ecsClusterArn")
+      && identityString("ecsServiceArn")
+      && identityString("targetGroupArn")
+      && identityString("cloudWatchLogGroupName")
+      && identityString("applicationContainerName"),
+    );
+    const awsRuntimeMonitoringEnabled = getObservabilityConfig(this.config).awsRuntimeMonitoringEnabled;
     const authority: ProjectStateAuthority = {
       state: canonical,
       reason: projected.developerMessage,
@@ -637,7 +653,11 @@ export class ProjectCurrentStateService {
             ? { status: "pending", source: "github_actions", observedAt }
             : { status: "unavailable", source: "unavailable", observedAt: null },
       monitoring: authoritativeLiveRelease
-        ? { available: getObservabilityConfig(this.config).awsRuntimeMonitoringEnabled, status: getObservabilityConfig(this.config).awsRuntimeMonitoringEnabled ? "available" : "unavailable", reason: getObservabilityConfig(this.config).awsRuntimeMonitoringEnabled ? "AWS runtime monitoring follows the authoritative LIVE generation." : "AWS runtime monitoring is disabled." }
+        ? !awsRuntimeMonitoringEnabled
+          ? { available: false, status: "unavailable", reason: "AWS runtime monitoring is disabled." }
+          : !monitoringIdentityComplete
+            ? { available: false, status: "unavailable", reason: "The authoritative LIVE release does not yet contain a complete CloudWatch runtime identity." }
+            : { available: true, status: "available", reason: "AWS runtime monitoring is bound to the authoritative LIVE generation." }
         : { available: false, status: "not_deployed", reason: "Monitoring is available only for an active live deployment." },
       reconciliation: {
         lastReconciledAt: observedAt,
@@ -657,7 +677,7 @@ export class ProjectCurrentStateService {
         source: authority.infrastructure.source,
         lastUpdatedAt: awsEvidence?.observedAt || observedAt,
         freshness: awsEvidence ? "current" : freshness,
-        region: this.config.get<string>("AWS_REGION", "us-east-1"),
+        region: typeof runtimeIdentity?.region === "string" ? runtimeIdentity.region : this.config.get<string>("AWS_REGION", "us-east-1"),
         executionEngine: "github_actions",
         resources: (["ECR", "ECS Fargate", "ALB"] as const).map((type) => ({ type, status: resourceStatus === "active" && !awsEvidence ? "unavailable" : resourceStatus })),
         ecr: awsEvidence?.ecr || null,
@@ -666,9 +686,7 @@ export class ProjectCurrentStateService {
         terraformState: {
           status: resourceStatus,
           storage: this.config.get<string>("DEPLOYGUARD_TERRAFORM_STATE_BUCKET") ? "encrypted_s3" : "unavailable",
-          key: this.config.get<string>("DEPLOYGUARD_TERRAFORM_STATE_BUCKET") && projected.stableRelease?.generationId
-            ? `projects/${projectId}/${environmentName}/${projected.stableRelease.generationId}/terraform.tfstate`
-            : null,
+          key: typeof runtimeIdentity?.terraformStateKey === "string" ? runtimeIdentity.terraformStateKey : null,
           lastApplyAt: authoritativeLiveRelease ? liveReleaseObservedAt : null,
           lastDestroyAt: runtimeDeleted ? observedAt : null,
         },
@@ -685,6 +703,7 @@ export class ProjectCurrentStateService {
           breakdown: projected.estimatedCost?.breakdown || [],
         },
         persistentStorage: null,
+        runtimeIdentity: projected.stableRelease?.runtimeIdentity || null,
       },
     };
   }
@@ -697,14 +716,13 @@ export class ProjectCurrentStateService {
       where: { projectId, environmentName: environment, generationId, status: StableReleaseStatus.STABLE },
       order: { deployedAt: "DESC" },
     });
-    if (!generation || !release?.imageUri || !release.taskDefinitionArn) return null;
-    const region = this.config.get<string>("AWS_REGION", "us-east-1");
-    const repository = `deployguard-${projectId.toLowerCase()}`;
-    const cluster = this.config.get<string>("DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN", "")
-      || this.config.get<string>("DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME", "");
-    const sharedAlbArn = this.config.get<string>("DEPLOYGUARD_SHARED_ALB_ARN", "");
-    const targetGroupArn = typeof release.metadata?.targetGroupArn === "string" ? release.metadata.targetGroupArn : "";
-    if (!cluster || !release.ecsServiceArn || !targetGroupArn) return null;
+    const identity = generation?.resourceManifest || {};
+    const string = (key: string) => typeof identity[key] === "string" ? identity[key] : "";
+    const region = string("region") || this.config.get<string>("AWS_REGION", "us-east-1");
+    const cluster = string("ecsClusterArn") || string("ecsClusterName");
+    const targetGroupArn = string("targetGroupArn");
+    const repository = string("imageUri").replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, "").split("@")[0];
+    if (!generation || !release?.imageUri || !release.taskDefinitionArn || !cluster || !targetGroupArn || !repository) return null;
     try {
       const ecs = new ECSClient({ region });
       const ecr = new ECRClient({ region });
@@ -731,18 +749,17 @@ export class ProjectCurrentStateService {
       ]);
       const tags = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined) =>
         Object.fromEntries((input || []).map((tag) => [tag.Key || tag.key || "", tag.Value || tag.value || ""]));
-      const ownsGeneration = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined) => {
+      const ownsProjectRuntime = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined) => {
         const values = tags(input);
         return values.ManagedBy === "DeployGuard"
           && values.DeployGuardProjectId === projectId
-          && values.Environment === environment
-          && values.DeployGuardGenerationId === generationId;
+          && values.DeployGuardOperationId === release.deployedByPipelineRunId;
       };
       const repositoryTagValues = tags(repositoryTags.tags);
       const ownsProjectRepository = repositoryTagValues.ManagedBy === "DeployGuard"
         && repositoryTagValues.DeployGuardProjectId === projectId
         && repositoryTagValues.DeployGuardScope === "project";
-      if (!ownsProjectRepository || !ownsGeneration(serviceTags.tags) || !ownsGeneration(taskDefinitionResult.tags) || !ownsGeneration(targetGroupTags.TagDescriptions?.[0]?.Tags)) return null;
+      if (!ownsProjectRepository || !ownsProjectRuntime(serviceTags.tags) || !ownsProjectRuntime(taskDefinitionResult.tags) || !ownsProjectRuntime(targetGroupTags.TagDescriptions?.[0]?.Tags)) return null;
       const immutableImage = imageResult.imageDetails?.[0];
       if (!immutableImage) return null;
       return {
@@ -757,7 +774,7 @@ export class ProjectCurrentStateService {
           pendingCount: service.pendingCount || 0,
         },
         alb: {
-          name: sharedAlbArn || "shared-deployguard-alb",
+          name: string("albName") || targetGroup.LoadBalancerArns?.[0] || "application-alb",
           status: "active",
           targetHealth: (targetHealth?.TargetHealthDescriptions || []).map((item) => item.TargetHealth?.State || "unknown"),
           endpoint: /^https?:\/\//i.test(stableUrl) ? stableUrl : null,

@@ -40,7 +40,7 @@ function storedZipEntry(name: string, value: string) {
 }
 
 async function verifyReleaseArtifactEvidenceReconciliation() {
-  const valid = { action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, terraform: { image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, alb_url: "http://example.test", task_definition_arn: "arn:aws:ecs:us-east-1:123:task-definition/dg:1", ecs_service_arn: "arn:aws:ecs:us-east-1:123:service/dg/dg" } };
+  const valid = { action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, terraform: { image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123:cluster/dg", ecs_cluster_name: "dg", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/dg/a", alb_target_group_name: "dg", alb_url: "http://example.test", cloudwatch_log_group_name: "/deployguard/11111111-1111-4111-8111-111111111111/application", application_container_name: "application", task_definition_arn: "arn:aws:ecs:us-east-1:123:task-definition/dg:1", ecs_service_arn: "arn:aws:ecs:us-east-1:123:service/dg/dg", ecs_service_name: "dg" } };
   assert.equal(DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, "deployguard-result.json");
   const archive = storedZipEntry("deployguard-result.json", JSON.stringify(valid));
   assert.equal(exactZipEntry(archive, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY), JSON.stringify(valid));
@@ -82,12 +82,13 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
     save: async (row: any) => { routes[0] = structuredClone(row); return row; },
   };
   const releaseRepository = {
-    findOne: async () => null,
-    create: (row: any) => ({ id: "77777777-7777-4777-8777-777777777777", ...row }),
-    save: async (row: any) => { releases.push(structuredClone(row)); return row; },
+    findOne: async ({ where }: any) => releases.find((release) => Object.entries(where).every(([key, value]) => release[key] === value)) || null,
+    create: (row: any) => ({ id: `${row.deployedByPipelineRunId}-release`, ...row }),
+    save: async (row: any) => { const index = releases.findIndex((release) => release.id === row.id); if (index >= 0) releases[index] = structuredClone(row); else releases.push(structuredClone(row)); return row; },
   };
+  let transactionOperation = operation;
   const operationRepository = {
-    findOne: async () => operation,
+    findOne: async () => transactionOperation,
     save: async (row: any) => { saved.push(structuredClone(row)); return row; },
   };
   const manager: any = {
@@ -106,7 +107,28 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   assert.equal(generations[0]?.status, "live");
   assert.equal(routes[0]?.liveGenerationId, operation.id);
   assert.equal(releases[0]?.metadata?.deployedUrl, valid.terraform.alb_url);
+  assert.equal(generations[0]?.resourceManifest?.cloudWatchLogGroupName, valid.terraform.cloudwatch_log_group_name);
+  assert.equal(generations[0]?.resourceManifest?.applicationContainerName, "application");
   assert.equal(operation.metadata.releaseEvidenceVerified, true);
+  const redeployEvidence = structuredClone(valid);
+  redeployEvidence.operationId = "88888888-8888-4888-8888-888888888888";
+  redeployEvidence.sourceSha = "e".repeat(40);
+  redeployEvidence.image = `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"b".repeat(64)}`;
+  redeployEvidence.terraform.image = redeployEvidence.image;
+  redeployEvidence.terraform.task_definition_arn = "arn:aws:ecs:us-east-1:123:task-definition/dg:2";
+  const redeploy: any = { ...operation, id: redeployEvidence.operationId, generationId: null, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", commitSha: redeployEvidence.sourceSha, metadata: { deploymentAction: "deploy" } };
+  transactionOperation = redeploy;
+  service.actions.getResultArtifact = async () => JSON.stringify(redeployEvidence);
+  await service.reconcile(redeploy);
+  assert.equal(redeploy.status, PipelineRunStatus.COMPLETED, "a later verified release must finalize against the same project-scoped Terraform state");
+  assert.equal(redeploy.currentStage, "release_complete");
+  assert.equal(generations.length, 2);
+  assert.equal(generations.find((generation) => generation.id === operation.id)?.status, "retired");
+  assert.equal(generations.find((generation) => generation.id === redeploy.id)?.status, "live");
+  assert.equal(routes[0]?.liveGenerationId, redeploy.id);
+  assert.equal(releases.find((release) => release.deployedByPipelineRunId === operation.id)?.status, "rollback_target");
+  assert.equal(releases.find((release) => release.deployedByPipelineRunId === redeploy.id)?.status, "stable");
+  transactionOperation = operation;
   for (const [key, value] of [["operationId", "wrong"], ["sourceSha", "d".repeat(40)], ["action", "rollback"]] as const) {
     const invalid = { ...valid, [key]: value };
     service.actions.getResultArtifact = async () => JSON.stringify(invalid);
@@ -474,7 +496,11 @@ void (async () => {
   const overviewPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectDetails.jsx"), "utf8");
   const pipelinePage = readFileSync(join(root, "frontend", "src", "pages", "ProjectPipeline.jsx"), "utf8");
   const infrastructurePage = readFileSync(join(root, "frontend", "src", "pages", "ProjectInfrastructure.jsx"), "utf8");
+  const monitoringPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectMetrics.jsx"), "utf8");
   const troubleshootingPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectTroubleshooting.jsx"), "utf8");
+  const currentStateService = readFileSync(join(root, "backend", "src", "projects", "current-state", "project-current-state.service.ts"), "utf8");
+  const runtimeResolver = readFileSync(join(root, "backend", "src", "observability", "live-runtime-resolver.service.ts"), "utf8");
+  const migration = readFileSync(join(root, "backend", "src", "migrations", "1787356812000-DropLegacyGenerationStateKeyIndex.ts"), "utf8");
   assert.doesNotMatch(phases, /key: "analyze"/);
   assert.match(phases, /Source \/ Dispatch/);
   assert.match(routes, /ProjectInfrastructure/);
@@ -499,7 +525,16 @@ void (async () => {
   const lifecycle = Object.create(ProjectCurrentStateService.prototype) as any;
   assert.equal(lifecycle.githubLifecyclePhase("materialize_release_runtime", { deploymentAction: "deploy", workflowStages: [{ key: "publish_immutable_image_to_ecr", status: "passed" }] }), "deploy");
   assert.equal(lifecycle.githubLifecyclePhase("publish_immutable_image_to_ecr", { deploymentAction: "deploy", workflowStages: [{ key: "build_immutable_railpack_image", status: "passed" }] }), "build");
-  assert.match(infrastructurePage, /getProjectCurrentState/);
+  assert.match(infrastructurePage, /getProjectDetailedCurrentState/);
+  assert.match(infrastructurePage, /Persisted verified identity/);
+  assert.match(infrastructurePage, /Current AWS observation/);
+  assert.match(infrastructurePage, /terraformStateKey/);
+  assert.match(monitoringPage, /Temporarily unavailable/);
+  assert.doesNotMatch(currentStateService, /DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN|DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME|DEPLOYGUARD_SHARED_ALB_ARN/);
+  assert.doesNotMatch(runtimeResolver, /DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN|DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME|DEPLOYGUARD_SHARED_ALB_ARN|metadata\.targetGroupArn/);
+  assert.match(runtimeResolver, /cloudWatchLogGroupName/);
+  assert.match(runtimeResolver, /applicationContainerName/);
+  assert.match(migration, /uq_project_deployment_generation_state_key/);
   assert.match(troubleshootingPage, /getGithubActionsDeploymentHistory/);
   console.log("DISPATCH_STATE_PROJECTION=PASS");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

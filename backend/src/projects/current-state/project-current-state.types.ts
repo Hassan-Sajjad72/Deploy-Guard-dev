@@ -166,6 +166,7 @@ export type DeveloperProjectCurrentState = {
     terraformState: { status: "active" | "destroyed" | "unavailable"; storage: "encrypted_s3" | "unavailable"; key: string | null; lastApplyAt: string | null; lastDestroyAt: string | null };
     cost: { status: "estimated" | "approval_required" | "unavailable"; currency: string | null; monthly: number | null; source: "infracost" | "unavailable"; generationId: string | null; releaseId: string | null; operationId: string | null; estimatedAt?: string | null; unavailableReason?: string | null; breakdown?: Array<{ name: string; service: string | null; monthly: number }> };
     persistentStorage: null | { type: "EFS"; status: string; encrypted: boolean; backupEnabled: boolean; region: string | null };
+    runtimeIdentity?: Record<string, unknown> | null;
   };
   developerState: DeveloperState;
   developerAction: DeveloperAction;
@@ -203,6 +204,7 @@ export type DeveloperProjectCurrentState = {
     commit: string;
     promotedAt: string;
     rollbackAvailable: boolean;
+    runtimeIdentity?: Record<string, unknown> | null;
   } | null;
   stableUrl: string | null;
   estimatedCost: {

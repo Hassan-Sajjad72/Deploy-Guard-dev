@@ -100,14 +100,17 @@ export class LiveRuntimeResolverService {
         status: DeploymentGenerationStatus.LIVE,
       },
     });
-    const targetGroupArn = typeof release.metadata?.targetGroupArn === "string" ? release.metadata.targetGroupArn : "";
-    const cluster = this.config.get<string>("DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN", "")
-      || this.config.get<string>("DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME", "");
-    if (!generation || !cluster || !targetGroupArn) {
+    const manifest = generation?.resourceManifest || {};
+    const string = (key: string) => typeof manifest[key] === "string" ? manifest[key] : "";
+    const cluster = string("ecsClusterArn") || string("ecsClusterName");
+    const targetGroupArn = string("targetGroupArn");
+    const expectedLogGroup = string("cloudWatchLogGroupName");
+    const expectedContainerName = string("applicationContainerName");
+    if (!generation || !cluster || !targetGroupArn || !expectedLogGroup || !expectedContainerName) {
       throw new ServiceUnavailableException("The authoritative LIVE runtime identity is incomplete.");
     }
 
-    const region = this.config.get<string>("AWS_REGION", "us-east-1");
+    const region = string("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const ecs = this.ecs(region);
     const elb = this.elb(region);
     const resolved = await Promise.allSettled([
@@ -139,12 +142,11 @@ export class LiveRuntimeResolverService {
     ) {
       throw new ServiceUnavailableException("AWS does not match the authoritative LIVE release identity.");
     }
-    const appContainer = taskDefinition?.containerDefinitions?.find((container) => container.name === "app")
+    const appContainer = taskDefinition?.containerDefinitions?.find((container) => container.name === expectedContainerName)
       || taskDefinition?.containerDefinitions?.[0];
     const logOptions = appContainer?.logConfiguration?.options || {};
-    const expectedLogGroup = `/deployguard/${project.id}/${environmentName}/${generation.id}/app`;
-    if (logOptions["awslogs-group"] !== expectedLogGroup) {
-      throw new ServiceUnavailableException("The LIVE task definition does not contain the expected generation log group.");
+    if (appContainer?.name !== expectedContainerName || logOptions["awslogs-group"] !== expectedLogGroup) {
+      throw new ServiceUnavailableException("The LIVE task definition does not contain the verified Railpack log identity.");
     }
     const value: LiveRuntimeIdentity = {
       projectId: project.id,
@@ -163,7 +165,7 @@ export class LiveRuntimeResolverService {
       loadBalancerArn: targetGroup.LoadBalancerArns[0],
       logGroupName: expectedLogGroup,
       logStreamPrefix: logOptions["awslogs-stream-prefix"] || "ecs",
-      containerName: appContainer?.name || "app",
+      containerName: expectedContainerName,
       resolvedAt: new Date().toISOString(),
       targetHealth: (healthResult.TargetHealthDescriptions || []).map((item) => item.TargetHealth?.State || "unknown"),
     };

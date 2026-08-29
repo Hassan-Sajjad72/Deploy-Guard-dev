@@ -360,6 +360,7 @@ export class RailpackDeploymentService {
       if (!current) throw new Error("Release operation disappeared before finalization.");
       const immutable = this.validatedReleaseEvidence(current, artifact as Record<string, unknown>);
       const environmentName = canonicalEnvironmentName(project);
+      const runtimeIdentity = this.runtimeIdentity(project, environmentName, immutable);
       const generationId = current.generationId || current.id;
       const generations = manager.getRepository(ProjectDeploymentGeneration);
       let generation = await generations.findOne({ where: { id: generationId } });
@@ -381,9 +382,7 @@ export class RailpackDeploymentService {
           status: DeploymentGenerationStatus.LIVE,
           terraformStateKey: `projects/${project.id}/${environmentName}/runtime/terraform.tfstate`,
           resourceManifest: {
-            ecsServiceArn: immutable.ecsServiceArn,
-            taskDefinitionArn: immutable.taskDefinitionArn,
-            albUrl: immutable.albUrl,
+            ...runtimeIdentity,
           },
           cleanupMetadata: {},
           createdByOperationId: current.id,
@@ -397,7 +396,7 @@ export class RailpackDeploymentService {
       } else {
         generation.status = DeploymentGenerationStatus.LIVE;
         generation.activatedAt = generation.activatedAt || new Date();
-        generation.resourceManifest = { ...generation.resourceManifest, ecsServiceArn: immutable.ecsServiceArn, taskDefinitionArn: immutable.taskDefinitionArn, albUrl: immutable.albUrl };
+        generation.resourceManifest = { ...generation.resourceManifest, ...runtimeIdentity };
         generation.metadata = { ...generation.metadata, executionEngine: "railpack", immutableImageDigest: immutable.imageDigest, releaseOperationId: current.id };
       }
       const previous = await generations.find({ where: { projectId: project.id, environmentName, status: DeploymentGenerationStatus.LIVE } });
@@ -421,7 +420,7 @@ export class RailpackDeploymentService {
       }
       route.liveGenerationId = generation.id;
       route.candidateGenerationId = null;
-      route.metadata = { ...route.metadata, lastPromotionOperationId: current.id, albUrl: immutable.albUrl };
+      route.metadata = { ...route.metadata, lastPromotionOperationId: current.id, runtimeIdentity };
       await routes.save(route);
 
       await materializeStableRelease(manager, {
@@ -435,18 +434,44 @@ export class RailpackDeploymentService {
         ecsServiceArn: String(immutable.ecsServiceArn),
         healthCheckPath: "/",
         appPort: DEPLOYGUARD_PLATFORM_PORT,
-        metadata: { deployedUrl: immutable.albUrl, imageDigest: immutable.imageDigest, releaseEvidenceVerified: true, deploymentAction: action },
+        metadata: { deployedUrl: immutable.albUrl, imageDigest: immutable.imageDigest, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
       });
       current.generationId = generation.id;
       current.status = PipelineRunStatus.COMPLETED;
       current.currentStage = "release_complete";
       current.errorMessage = null;
       current.completedAt = current.completedAt || new Date();
-      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl: immutable.albUrl, releaseEvidenceVerified: true };
+      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl: immutable.albUrl, releaseEvidenceVerified: true, runtimeIdentity };
       await operations.save(current);
       Object.assign(operation, current);
     });
     return operation;
+  }
+
+  private runtimeIdentity(project: Project, environmentName: string, evidence: Record<string, unknown>) {
+    const artifact = evidence.releaseArtifact as Record<string, unknown>;
+    const terraform = artifact.terraform as Record<string, unknown>;
+    const optional = (key: string) => typeof terraform?.[key] === "string" && terraform[key] ? terraform[key] : null;
+    return {
+      region: optional("aws_region"),
+      ecsClusterArn: optional("ecs_cluster_arn"),
+      ecsClusterName: optional("ecs_cluster_name"),
+      ecsServiceArn: evidence.ecsServiceArn,
+      ecsServiceName: optional("ecs_service_name"),
+      taskDefinitionArn: evidence.taskDefinitionArn,
+      albArn: optional("alb_arn"),
+      albName: optional("alb_name"),
+      targetGroupArn: optional("alb_target_group_arn"),
+      targetGroupName: optional("alb_target_group_name"),
+      publicUrl: evidence.albUrl,
+      cloudWatchLogGroupName: optional("cloudwatch_log_group_name"),
+      applicationContainerName: optional("application_container_name"),
+      imageUri: evidence.imageUri,
+      imageDigest: evidence.imageDigest,
+      terraformStateKey: `projects/${project.id}/${environmentName}/runtime/terraform.tfstate`,
+      databaseEfsFileSystemId: optional("database_efs_file_system_id"),
+      databaseEfsAccessPointId: optional("database_efs_access_point_id"),
+    };
   }
 
   private required(key: string) { const value = this.config.get<string>(key, "").trim(); if (!value) throw new ServiceUnavailableException(`Platform configuration is missing: ${key}.`); return value; }
