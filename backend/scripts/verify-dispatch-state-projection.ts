@@ -144,6 +144,63 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   await assert.rejects(() => service.releaseEvidence(project.repositoryFullName, operation, "ignored"));
 }
 
+async function verifyTerminalFinalizationFailureIsRetryable() {
+  const validEvidence = {
+    releaseArtifact: { operationId: "99999999-9999-4999-8999-999999999999" },
+    imageUri: "123.dkr.ecr.us-east-1.amazonaws.com/repo",
+    imageDigest: `sha256:${"f".repeat(64)}`,
+    albUrl: "http://example.test",
+    taskDefinitionArn: "arn:aws:ecs:us-east-1:123:task-definition/dg:3",
+    ecsServiceArn: "arn:aws:ecs:us-east-1:123:service/dg/dg",
+  };
+  const operation: any = {
+    id: validEvidence.releaseArtifact.operationId,
+    projectId: project.id,
+    triggeredByUserId: user.id,
+    githubWorkflowRunId: "789",
+    status: PipelineRunStatus.RUNNING,
+    currentStage: "release_evidence_pending",
+    commitSha: "a".repeat(40),
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy" },
+  };
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  service.sanitizer = new LogSanitizerService();
+  service.actions = {
+    getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }),
+    getResultArtifact: async () => "unused",
+  };
+  service.releaseEvidence = async () => validEvidence;
+  service.finalizeVerifiedRelease = async () => { throw new Error("token=top-secret-password"); };
+  await service.reconcile(operation);
+  assert.equal(operation.status, PipelineRunStatus.FAILED, "a terminal successful workflow must not remain active when control-plane finalization fails");
+  assert.equal(operation.currentStage, "release_finalization");
+  assert.equal(operation.metadata.failureSource, "deployguard_reconciliation");
+  assert.equal(operation.metadata.failureCategory, "release_finalization");
+  assert.equal(operation.metadata.releaseEvidenceValidated, true);
+  assert.equal(operation.errorMessage, "DeployGuard could not finalize the verified release.");
+  assert.match(operation.metadata.safeLog, /token=\[REDACTED\]/i, "persisted reconciliation evidence must be sanitized");
+  assert.equal(saved.at(-1).status, PipelineRunStatus.FAILED);
+
+  const transient: any = { ...operation, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: PipelineRunStatus.RUNNING, currentStage: "github_actions", metadata: { executionEngine: "railpack", deploymentAction: "deploy" } };
+  service.actions.getWorkflowRun = async () => { throw new Error("network unavailable"); };
+  await service.reconcile(transient);
+  assert.equal(transient.status, PipelineRunStatus.RUNNING, "transient GitHub polling failures remain active for later reconciliation");
+
+  const recovery = Object.create(RailpackDeploymentService.prototype) as any;
+  recovery.project = async () => project;
+  recovery.runs = { findOne: async () => operation };
+  let retryArgs: any[] | null = null;
+  recovery.dispatch = async (...args: any[]) => { retryArgs = args; return { deployment: { state: "accepted" } }; };
+  await recovery.retry(user, project.id);
+  assert.equal(retryArgs?.[2], "deploy");
+  assert.equal(retryArgs?.[5], operation.id, "normal retry must retain the failed reconciliation operation as its recovery ancestor");
+}
+
 async function verifyPreDispatchFailure() {
   const saved: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
@@ -481,6 +538,7 @@ void (async () => {
   verifyCapabilityFailureIsBoundedAndPreDispatch();
   await verifyPerActionCapabilitySimulation();
   await verifyReleaseArtifactEvidenceReconciliation();
+  await verifyTerminalFinalizationFailureIsRetryable();
   verifyProviderContractAndConditionalDatabaseScope();
   await verifyCurrentStateProjection(failed);
   await verifyVerifiedReleaseProjectsLive();

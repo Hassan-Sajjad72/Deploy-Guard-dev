@@ -256,7 +256,16 @@ export class RailpackDeploymentService {
             await this.runs.save(operation);
             return operation;
           }
-          await this.finalizeVerifiedRelease(project, operation, evidence, conclusion);
+          try {
+            await this.finalizeVerifiedRelease(project, operation, evidence, conclusion);
+          } catch (error) {
+            // GitHub has already completed and the operation-specific evidence
+            // passed immutable validation. This is not a polling failure: keep
+            // the release non-LIVE and persist a bounded control-plane failure
+            // so the normal retry flow can recover it.
+            await this.persistFinalizationFailure(operation, evidence, error);
+            return operation;
+          }
         } else {
           const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
           operation.status = PipelineRunStatus.FAILED;
@@ -283,6 +292,29 @@ export class RailpackDeploymentService {
       // solely because GitHub status was temporarily unavailable.
     }
     return operation;
+  }
+
+  private async persistFinalizationFailure(operation: ProjectPipelineRun, evidence: Record<string, unknown>, error: unknown) {
+    const detail = this.sanitizer.sanitize(error instanceof Error ? error.message : "Unknown release finalization error")
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .trim()
+      .slice(0, 2_000);
+    operation.status = PipelineRunStatus.FAILED;
+    operation.currentStage = "release_finalization";
+    operation.failedAt = new Date();
+    operation.errorMessage = "DeployGuard could not finalize the verified release.";
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      ...evidence,
+      workflowConclusion: "success",
+      workflowUpdatedAt: new Date().toISOString(),
+      releaseEvidenceValidated: true,
+      failedStage: "release_finalization",
+      failureSource: "deployguard_reconciliation",
+      failureCategory: "release_finalization",
+      safeLog: detail || "DeployGuard could not finalize the verified release.",
+    };
+    await this.runs.save(operation);
   }
 
   private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, token: string) {
