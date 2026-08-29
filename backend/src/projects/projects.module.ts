@@ -48,6 +48,7 @@ import { NotificationSubscription } from "../notifications/notification-subscrip
 import { ProjectDeletionService } from "./project-deletion.service";
 import { SharedPlatformFoundationService } from "./shared-platform-foundation.service";
 import { ProductStartSchemaIntegrityService } from "./product-start-schema-integrity.service";
+import { LiveRuntimeIdentityRecoveryService } from "./current-state/live-runtime-identity-recovery.service";
 
 @Module({
   imports: [
@@ -86,7 +87,8 @@ import { ProductStartSchemaIntegrityService } from "./product-start-schema-integ
     ProjectDeletionService,
     SharedPlatformFoundationService,
     ProductStartSchemaIntegrityService,
+    LiveRuntimeIdentityRecoveryService,
   ],
-  exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService],
+  exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService, LiveRuntimeIdentityRecoveryService],
 })
 export class ProjectsModule {}

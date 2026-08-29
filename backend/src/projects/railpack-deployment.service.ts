@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash, randomUUID } from "crypto";
 import { DataSource, In, Repository } from "typeorm";
-import { ProjectStableRelease } from "../orchestration/project-stable-release.entity";
+import { ProjectStableRelease, StableReleaseStatus } from "../orchestration/project-stable-release.entity";
 import { User } from "../users/user.entity";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
@@ -27,6 +27,16 @@ import { materializeStableRelease } from "./stable-release-projection";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 
+type RollbackTargetIdentity = {
+  releaseId: string;
+  targetOperationId: string;
+  generationId: string | null;
+  sourceSha: string;
+  imageUri: string;
+  imageDigest: string;
+  immutableImage: string;
+};
+
 /** Single-service Railpack deployment admission; it does not inspect source. */
 @Injectable()
 export class RailpackDeploymentService {
@@ -36,6 +46,7 @@ export class RailpackDeploymentService {
     @InjectRepository(Project) private readonly projects: Repository<Project>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(ProjectPipelineRun) private readonly runs: Repository<ProjectPipelineRun>,
+    @InjectRepository(ProjectStableRelease) private readonly releases: Repository<ProjectStableRelease>,
     @InjectRepository(ProjectEnvironmentVariable) private readonly variables: Repository<ProjectEnvironmentVariable>,
     @InjectRepository(ProjectDatabaseTier) private readonly databaseTiers: Repository<ProjectDatabaseTier>,
     private readonly githubApp: GithubAppService,
@@ -56,8 +67,8 @@ export class RailpackDeploymentService {
     const previous = await this.runs.findOne({ where: { projectId, status: PipelineRunStatus.FAILED }, order: { createdAt: "DESC" } });
     const action = previous?.metadata?.deploymentAction === "destroy" ? "destroy"
       : previous?.metadata?.deploymentAction === "rollback" ? "rollback" : "deploy";
-    const rollbackDigest = action === "rollback" && typeof previous?.metadata?.rollbackImageDigest === "string" ? previous.metadata.rollbackImageDigest : "";
-    return this.dispatch(user, projectId, action, rollbackDigest, "", previous?.id || null);
+    const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
+    return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null);
   }
   async resetAndDeployFresh(user: User, projectId: string, confirmationPhrase: string, _request?: unknown) {
     const project = await this.project(user, projectId);
@@ -70,15 +81,37 @@ export class RailpackDeploymentService {
     return this.dispatch(user, projectId, "destroy");
   }
   async rollbackCandidates(user: User, projectId: string) {
-    await this.project(user, projectId);
-    const operations = await this.runs.find({ where: { projectId, status: PipelineRunStatus.COMPLETED }, order: { createdAt: "DESC" }, take: 20 });
-    return { candidates: operations.filter((run) => typeof run.metadata?.imageDigest === "string").map((run) => ({ operationId: run.id, sourceSha: run.commitSha, imageDigest: run.metadata!.imageDigest })) };
+    const project = await this.project(user, projectId);
+    const environmentName = canonicalEnvironmentName(project);
+    const target = await this.releases.findOne({
+      where: { projectId, environmentName, status: StableReleaseStatus.ROLLBACK_TARGET },
+      order: { deployedAt: "DESC" },
+    });
+    if (!target) return { candidates: [] };
+    const immutable = this.rollbackTarget(target);
+    return { candidates: [{
+      releaseId: target.id,
+      targetOperationId: target.deployedByPipelineRunId,
+      generationId: target.generationId,
+      releaseRevision: target.shortCommitSha,
+      commitSha: target.commitSha,
+      imageUri: immutable.imageUri,
+      imageDigest: immutable.imageDigest,
+      appPort: target.appPort,
+      healthCheckPath: target.healthCheckPath,
+      deployedAt: target.deployedAt,
+    }] };
   }
   async rollback(user: User, projectId: string, targetOperationId: string) {
-    const target = await this.runs.findOne({ where: { id: targetOperationId, projectId } });
-    const digest = typeof target?.metadata?.imageDigest === "string" ? target.metadata.imageDigest : "";
-    if (!digest) throw new NotFoundException("The selected release does not have an immutable image digest.");
-    return this.dispatch(user, projectId, "rollback", digest, target.commitSha);
+    const project = await this.project(user, projectId);
+    const target = await this.releases.findOne({ where: {
+      projectId,
+      environmentName: canonicalEnvironmentName(project),
+      deployedByPipelineRunId: targetOperationId,
+      status: StableReleaseStatus.ROLLBACK_TARGET,
+    } });
+    if (!target) throw new NotFoundException("The selected rollback release is no longer the immediate rollback target.");
+    return this.dispatch(user, projectId, "rollback", this.rollbackTarget(target));
   }
   async latest(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
@@ -112,7 +145,7 @@ export class RailpackDeploymentService {
     finally { if (this.reconciliationInFlight.get(projectId) === task) this.reconciliationInFlight.delete(projectId); }
   }
 
-  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackImageDigest = "", rollbackSourceSha = "", retryOfOperationId: string | null = null) {
+  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null) {
     const project = await this.project(user, projectId);
     const active = await this.runs.findOne({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
     if (active) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: active } };
@@ -126,7 +159,7 @@ export class RailpackDeploymentService {
       id: operationId, projectId, triggeredByUserId: user.id, repositoryUrl: project.repositoryUrl, repositoryFullName: project.repositoryFullName,
       targetBranch: project.targetBranch, status: PipelineRunStatus.QUEUED,
       currentStage: "dispatching", startedAt: new Date(), githubWorkflowStatus: "dispatching",
-      metadata: { executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt, ...(retryOfOperationId ? { retryOfOperationId } : {}) },
+      metadata: { executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt, ...(rollbackTarget ? { rollbackTarget } : {}), ...(retryOfOperationId ? { retryOfOperationId } : {}) },
     }));
     try {
       operation.currentStage = "control_plane_release";
@@ -145,7 +178,7 @@ export class RailpackDeploymentService {
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
       operation.currentStage = "source_resolution";
       await this.runs.save(operation);
-      const sourceSha = action === "rollback" ? rollbackSourceSha : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
+      const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || "" : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
       const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha);
       const inputs: RailpackWorkflowInputs = {
@@ -155,7 +188,7 @@ export class RailpackDeploymentService {
         managed_database_enabled: String(runtime.managedDatabase.enabled), infrastructure_namespace: `/deployguard/${project.id}/${environmentName}`,
         aws_region: this.config.get<string>("AWS_REGION", "us-east-1"), aws_role_arn: this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"),
         vpc_id: this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
-        terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"), platform_port: String(DEPLOYGUARD_PLATFORM_PORT), rollback_image_digest: rollbackImageDigest,
+        terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"), platform_port: String(DEPLOYGUARD_PLATFORM_PORT), rollback_image_digest: rollbackTarget?.immutableImage || "",
         control_plane_sha: controlPlaneSha,
       };
       operation.commitSha = sourceSha;
@@ -181,6 +214,34 @@ export class RailpackDeploymentService {
       return { deployment: { state: "dispatch_failed", message: "Deployment could not start. DeployGuard failed while starting the GitHub Actions deployment.", operation } };
     }
     return { deployment: { state: "accepted", message: "Railpack deployment dispatched to GitHub Actions.", operation } };
+  }
+
+  private rollbackTarget(release: ProjectStableRelease): RollbackTargetIdentity {
+    const imageDigest = typeof release.metadata?.imageDigest === "string" ? release.metadata.imageDigest : "";
+    const imageUri = release.imageUri;
+    const immutableImage = `${imageUri}@${imageDigest}`;
+    if (release.metadata?.releaseEvidenceVerified !== true
+      || !release.deployedByPipelineRunId
+      || !/^[0-9a-f]{40}$/i.test(release.commitSha)
+      || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*$/i.test(imageUri)
+      || !/^sha256:[0-9a-f]{64}$/.test(imageDigest)
+      || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(immutableImage)) {
+      throw new ServiceUnavailableException("The rollback target does not contain valid immutable ECR release evidence.");
+    }
+    return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, imageUri, imageDigest, immutableImage };
+  }
+
+  private persistedRollbackTarget(operation: ProjectPipelineRun | null): RollbackTargetIdentity {
+    const value = operation?.metadata?.rollbackTarget;
+    if (!value || typeof value !== "object") throw new ServiceUnavailableException("The failed rollback does not retain a canonical immutable target.");
+    const target = value as Record<string, unknown>;
+    const immutableImage = String(target.immutableImage || "");
+    if (!/^[0-9a-f]{40}$/i.test(String(target.sourceSha || ""))
+      || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(immutableImage)
+      || immutableImage !== `${String(target.imageUri || "")}@${String(target.imageDigest || "")}`) {
+      throw new ServiceUnavailableException("The failed rollback target identity is invalid.");
+    }
+    return target as unknown as RollbackTargetIdentity;
   }
 
   private dispatchFailure(error: unknown, stage: string | null) {

@@ -12,10 +12,11 @@ import { LogSanitizerService } from "./log-sanitizer.service";
 import { ObservabilityController } from "./observability.controller";
 import { ObservabilityService } from "./observability.service";
 import { PrometheusMetricsController } from "./prometheus-metrics.controller";
+import { ProjectsModule } from "../projects/projects.module";
 
 /** Read-only AWS monitoring for the authoritative GitHub Actions LIVE generation. */
 @Module({
-  imports: [TypeOrmModule.forFeature([Project, ProjectDeploymentGeneration, ProjectStableRelease]), NotificationsModule],
+  imports: [TypeOrmModule.forFeature([Project, ProjectDeploymentGeneration, ProjectStableRelease]), NotificationsModule, ProjectsModule],
   controllers: [ObservabilityController, PrometheusMetricsController],
   providers: [
     LiveRuntimeResolverService,

@@ -167,7 +167,6 @@ export class ProjectsController {
 
   @Get(":projectId/current-state/details")
   @Header("Cache-Control", "private, no-store")
-  @UseGuards(requireRole([UserRole.ADMIN]))
   async getDetailedCurrentState(
     @Req() req: Request,
     @Param("projectId", ParseUUIDPipe) projectId: string,

@@ -43,6 +43,17 @@ export async function materializeStableRelease(
       status: StableReleaseStatus.STABLE,
     },
   });
+  const olderTargets = await releases.find({
+    where: {
+      projectId: input.projectId,
+      environmentName: input.environmentName,
+      status: StableReleaseStatus.ROLLBACK_TARGET,
+    },
+  });
+  for (const target of olderTargets) {
+    target.status = StableReleaseStatus.SUPERSEDED;
+    await releases.save(target);
+  }
   if (current) {
     current.status = StableReleaseStatus.ROLLBACK_TARGET;
     await releases.save(current);

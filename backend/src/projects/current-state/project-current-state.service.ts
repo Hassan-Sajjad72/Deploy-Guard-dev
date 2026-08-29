@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { DescribeImagesCommand, DescribeRepositoriesCommand, ECRClient, ListTagsForResourceCommand as EcrListTagsForResourceCommand } from "@aws-sdk/client-ecr";
+import { DescribeImagesCommand, DescribeRepositoriesCommand, ECRClient } from "@aws-sdk/client-ecr";
 import { DescribeServicesCommand, DescribeTaskDefinitionCommand, ECSClient, ListTagsForResourceCommand as EcsListTagsForResourceCommand } from "@aws-sdk/client-ecs";
 import { DescribeTagsCommand, DescribeTargetGroupsCommand, DescribeTargetHealthCommand, ElasticLoadBalancingV2Client } from "@aws-sdk/client-elastic-load-balancing-v2";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -18,6 +18,7 @@ import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "../proj
 import { canonicalEnvironmentName } from "../canonical-environment";
 import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from "../pipeline/github-actions-stage-presentation";
 import { RailpackDeploymentService } from "../railpack-deployment.service";
+import { LiveRuntimeIdentityRecoveryService } from "./live-runtime-identity-recovery.service";
 
 function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" | "commitSha">) {
   return operation.metadata?.executionEngine === "railpack"
@@ -45,6 +46,7 @@ export class ProjectCurrentStateService {
     private readonly generationRepository: Repository<ProjectDeploymentGeneration>,
     private readonly projectsService: ProjectsService,
     private readonly deploymentReconciliation: RailpackDeploymentService,
+    private readonly runtimeIdentityRecovery: LiveRuntimeIdentityRecoveryService,
     private readonly config: ConfigService,
     private readonly dataSource: DataSource,
   ) {}
@@ -208,6 +210,10 @@ export class ProjectCurrentStateService {
     const attempt = String(latestMetadata.attempt || 1);
     const latestCommit = latest.commitSha || projected.commit;
     const stableReleaseMetadata = (authoritativeRelease?.metadata || {}) as Record<string, unknown>;
+    const rollbackTarget = authoritativeRelease ? await this.releaseRepository.findOne({
+      where: { projectId, environmentName, status: StableReleaseStatus.ROLLBACK_TARGET },
+      order: { deployedAt: "DESC" },
+    }) : null;
     const stableUrl = typeof stableReleaseMetadata.deployedUrl === "string"
       ? stableReleaseMetadata.deployedUrl
       : null;
@@ -219,7 +225,7 @@ export class ProjectCurrentStateService {
           generationId: authoritativeRelease.generationId || null,
           commit: stable.commitSha || latestCommit || "unknown",
           promotedAt: authoritativeRelease.deployedAt.toISOString(),
-          rollbackAvailable: stableMetadata.rollbackAvailable === true,
+          rollbackAvailable: Boolean(rollbackTarget),
           runtimeIdentity: typeof stableReleaseMetadata.runtimeIdentity === "object" && stableReleaseMetadata.runtimeIdentity ? stableReleaseMetadata.runtimeIdentity as Record<string, unknown> : null,
         }
       : null;
@@ -736,13 +742,11 @@ export class ProjectCurrentStateService {
       const repositoryEvidence = repositoryResult.repositories?.[0];
       const targetGroup = targetGroupsResult.TargetGroups?.[0];
       if (!service?.serviceName || service.status !== "ACTIVE" || service.taskDefinition !== release.taskDefinitionArn || !repositoryEvidence?.repositoryArn || !targetGroup?.TargetGroupArn) return null;
-      const imageId = release.imageUri.includes("@sha256:")
-        ? { imageDigest: release.imageUri.slice(release.imageUri.indexOf("@") + 1) }
-        : { imageTag: release.imageUri.slice(release.imageUri.lastIndexOf(":") + 1) };
-      const [taskDefinitionResult, imageResult, repositoryTags, serviceTags, targetGroupTags, targetHealth] = await Promise.all([
+      const imageDigest = string("imageDigest");
+      if (!/^sha256:[0-9a-f]{64}$/.test(imageDigest) || repositoryEvidence.repositoryUri !== string("imageUri")) return null;
+      const [taskDefinitionResult, imageResult, serviceTags, targetGroupTags, targetHealth] = await Promise.all([
         ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: release.taskDefinitionArn, include: ["TAGS"] })),
-        ecr.send(new DescribeImagesCommand({ repositoryName: repository, imageIds: [imageId] })),
-        ecr.send(new EcrListTagsForResourceCommand({ resourceArn: repositoryEvidence.repositoryArn })),
+        ecr.send(new DescribeImagesCommand({ repositoryName: repository, imageIds: [{ imageDigest }] })),
         ecs.send(new EcsListTagsForResourceCommand({ resourceArn: service.serviceArn! })),
         elb.send(new DescribeTagsCommand({ ResourceArns: [targetGroupArn] })),
         elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: targetGroupArn })),
@@ -755,13 +759,9 @@ export class ProjectCurrentStateService {
           && values.DeployGuardProjectId === projectId
           && values.DeployGuardOperationId === release.deployedByPipelineRunId;
       };
-      const repositoryTagValues = tags(repositoryTags.tags);
-      const ownsProjectRepository = repositoryTagValues.ManagedBy === "DeployGuard"
-        && repositoryTagValues.DeployGuardProjectId === projectId
-        && repositoryTagValues.DeployGuardScope === "project";
-      if (!ownsProjectRepository || !ownsProjectRuntime(serviceTags.tags) || !ownsProjectRuntime(taskDefinitionResult.tags) || !ownsProjectRuntime(targetGroupTags.TagDescriptions?.[0]?.Tags)) return null;
+      if (!ownsProjectRuntime(serviceTags.tags) || !ownsProjectRuntime(taskDefinitionResult.tags) || !ownsProjectRuntime(targetGroupTags.TagDescriptions?.[0]?.Tags)) return null;
       const immutableImage = imageResult.imageDetails?.[0];
-      if (!immutableImage) return null;
+      if (!immutableImage || immutableImage.imageDigest !== imageDigest) return null;
       return {
         observedAt: new Date().toISOString(),
         ecr: { repository, imageTag: immutableImage.imageTags?.[0] || null, imageDigest: immutableImage.imageDigest || null },
@@ -789,8 +789,10 @@ export class ProjectCurrentStateService {
     user: User,
     projectId: string,
   ) {
-    // Detailed infrastructure inspection is an explicit, privileged surface.
-    // It may enrich the persisted projection with read-only AWS evidence.
+    const project = await this.projectsService.getProjectEntityForView(user, projectId);
+    await this.runtimeIdentityRecovery.recover(project);
+    // Detailed infrastructure inspection enriches the same safe developer
+    // read model with bounded read-only AWS evidence.
     return this.getCurrentState(user, projectId, { refreshCloudState: true });
   }
 }

@@ -18,6 +18,7 @@ import { canonicalEnvironmentName } from "../projects/canonical-environment";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "../projects/project-deployment-generation.entity";
 import { Project, ProjectStatus } from "../projects/project.entity";
 import { User, UserRole } from "../users/user.entity";
+import { LiveRuntimeIdentityRecoveryService } from "../projects/current-state/live-runtime-identity-recovery.service";
 
 export type LiveRuntimeIdentity = {
   projectId: string;
@@ -50,6 +51,7 @@ export class LiveRuntimeResolverService {
     @InjectRepository(ProjectDeploymentGeneration) private readonly generations: Repository<ProjectDeploymentGeneration>,
     @InjectRepository(ProjectStableRelease) private readonly releases: Repository<ProjectStableRelease>,
     private readonly config: ConfigService,
+    private readonly runtimeIdentityRecovery: LiveRuntimeIdentityRecoveryService,
   ) {}
 
   async resolveForUser(user: User, projectId: string) {
@@ -81,6 +83,7 @@ export class LiveRuntimeResolverService {
   }
 
   private async resolveProject(project: Project): Promise<LiveRuntimeIdentity> {
+    await this.runtimeIdentityRecovery.recover(project);
     const environmentName = canonicalEnvironmentName(project);
     const release = await this.releases.findOne({
       where: { projectId: project.id, environmentName, status: StableReleaseStatus.STABLE },

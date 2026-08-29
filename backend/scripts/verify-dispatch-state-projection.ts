@@ -83,6 +83,7 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   };
   const releaseRepository = {
     findOne: async ({ where }: any) => releases.find((release) => Object.entries(where).every(([key, value]) => release[key] === value)) || null,
+    find: async ({ where }: any) => releases.filter((release) => Object.entries(where).every(([key, value]) => release[key] === value)),
     create: (row: any) => ({ id: `${row.deployedByPipelineRunId}-release`, ...row }),
     save: async (row: any) => { const index = releases.findIndex((release) => release.id === row.id); if (index >= 0) releases[index] = structuredClone(row); else releases.push(structuredClone(row)); return row; },
   };
@@ -128,6 +129,18 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   assert.equal(routes[0]?.liveGenerationId, redeploy.id);
   assert.equal(releases.find((release) => release.deployedByPipelineRunId === operation.id)?.status, "rollback_target");
   assert.equal(releases.find((release) => release.deployedByPipelineRunId === redeploy.id)?.status, "stable");
+  const rollbackEvidence = structuredClone(valid);
+  rollbackEvidence.action = "rollback";
+  rollbackEvidence.operationId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  rollbackEvidence.terraform.task_definition_arn = "arn:aws:ecs:us-east-1:123:task-definition/dg:3";
+  const rollback: any = { ...operation, id: rollbackEvidence.operationId, generationId: null, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: { deploymentAction: "rollback" } };
+  transactionOperation = rollback;
+  service.actions.getResultArtifact = async () => JSON.stringify(rollbackEvidence);
+  await service.reconcile(rollback);
+  assert.equal(rollback.status, PipelineRunStatus.COMPLETED);
+  assert.equal(routes[0]?.liveGenerationId, rollback.id, "rollback finalization creates and promotes a new operation generation");
+  assert.equal(releases.find((release) => release.deployedByPipelineRunId === redeploy.id)?.status, "rollback_target", "the previously LIVE redeploy becomes the immediate rollback target");
+  assert.equal(releases.find((release) => release.deployedByPipelineRunId === operation.id)?.status, "superseded", "older rollback history is not an ambiguous UI target");
   transactionOperation = operation;
   for (const [key, value] of [["operationId", "wrong"], ["sourceSha", "d".repeat(40)], ["action", "rollback"]] as const) {
     const invalid = { ...valid, [key]: value };
@@ -198,7 +211,7 @@ async function verifyTerminalFinalizationFailureIsRetryable() {
   recovery.dispatch = async (...args: any[]) => { retryArgs = args; return { deployment: { state: "accepted" } }; };
   await recovery.retry(user, project.id);
   assert.equal(retryArgs?.[2], "deploy");
-  assert.equal(retryArgs?.[5], operation.id, "normal retry must retain the failed reconciliation operation as its recovery ancestor");
+  assert.equal(retryArgs?.[4], operation.id, "normal retry must retain the failed reconciliation operation as its recovery ancestor");
 }
 
 async function verifyPreDispatchFailure() {
@@ -302,6 +315,7 @@ async function verifyCurrentStateProjection(failed: any, realGithubRun = false) 
   };
   const service = Object.create(ProjectCurrentStateService.prototype) as any;
   service.runRepository = { createQueryBuilder: () => builder };
+  service.releaseRepository = { findOne: async () => null };
   const base = {
     repository: project.repositoryFullName, branch: project.targetBranch, commit: null, latestAttempt: null,
     stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null,
@@ -359,6 +373,7 @@ async function verifyVerifiedReleaseProjectsLive() {
     };
     const service = Object.create(ProjectCurrentStateService.prototype) as any;
     service.runRepository = { createQueryBuilder: () => builder };
+    service.releaseRepository = { findOne: async () => null };
     return service.withGithubActionsState(project.id, "dev", base, release ? generationId : null, release);
   };
   const live = await projectState(latest, stableRelease);

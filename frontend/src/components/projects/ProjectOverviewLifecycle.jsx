@@ -168,7 +168,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
     setAcceptedOperation(null);
     setRollbackError("");
     try {
-      const response = await rollbackGithubActionsDeployment(projectId, target.operationId);
+      const response = await rollbackGithubActionsDeployment(projectId, target.targetOperationId);
       setAcceptedOperation(response.deployment?.operation || null);
       setRollbackOpen(false);
       await onRefresh();
