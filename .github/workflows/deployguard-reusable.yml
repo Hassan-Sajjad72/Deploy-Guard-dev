@@ -137,7 +137,10 @@ jobs:
           set -euo pipefail
           printf 'image=%s\n' "$ROLLBACK_IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
       - name: Install Terraform
-        if: success() && inputs.deployment_action == 'deploy' && steps.image.outputs.image != ''
+        # Every valid lifecycle action can reach Materialize release runtime.
+        # Keep setup unconditional after validation so a new runtime action
+        # cannot reach `terraform` without this pinned installation.
+        if: success()
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.10.5

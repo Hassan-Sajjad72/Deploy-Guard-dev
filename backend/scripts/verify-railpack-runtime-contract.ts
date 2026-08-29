@@ -23,6 +23,14 @@ assert.match(workflow, /HOST:"0\.0\.0\.0"/);
 assert.match(workflow, /aws-actions\/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4\.0\.2/);
 assert.match(workflow, /actions\/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4\.2\.2/);
 assert.match(workflow, /hashicorp\/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3\.1\.2/);
+const terraformSetup = /- name: Install Terraform\n([\s\S]*?)(?=\n      - name: Materialize release runtime)/.exec(workflow)?.[1] || "";
+const runtimeMaterialization = /- name: Materialize release runtime\n([\s\S]*?)(?=\n      - name: Publish verified release result)/.exec(workflow)?.[1] || "";
+assert.match(terraformSetup, /if: success\(\)/);
+assert.doesNotMatch(terraformSetup, /deployment_action|steps\.image\.outputs\.image/);
+for (const action of ["deploy", "rollback", "destroy"]) {
+  assert.match(runtimeMaterialization, new RegExp(`inputs\\.deployment_action == '${action}'`), `runtime materialization must include ${action}`);
+}
+assert.ok(workflow.indexOf("- name: Install Terraform") < workflow.indexOf("- name: Materialize release runtime"), "pinned Terraform setup must precede every runtime materialization path");
 assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4\.6\.2/);
 assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials@0a3a7f8c8f8b37f3c7d2b23fe4cdd20b3b8a2746/);
 assert.match(workflow, /control_plane_sha/);
