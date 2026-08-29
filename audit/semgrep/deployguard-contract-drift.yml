@@ -1,0 +1,42 @@
+rules:
+  - id: deployguard-no-mutable-reusable-workflow-ref
+    languages: [generic]
+    severity: ERROR
+    message: DeployGuard reusable workflows must be pinned to an immutable 40-character SHA.
+    paths:
+      include: ["**/*.yml", "**/*.yaml", "**/*.ts", "**/*.js"]
+      exclude: ["**/node_modules/**", "**/dist/**", "**/scripts/**"]
+    patterns:
+      - pattern-regex: 'DEPLOYGUARD_REUSABLE_WORKFLOW[^\n@]*@(main|master|develop|latest|v?[0-9]+(?:\.[0-9]+){0,2})'
+
+  - id: deployguard-no-terraform-placeholder-in-ecs-reference
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: terraform:// is a deferred infrastructure intent, never an ECS secret reference.
+    paths:
+      include: ["backend/src/**/*.ts"]
+    pattern-regex: 'secretReferences[\s\S]{0,240}terraform://'
+
+  - id: deployguard-no-role-based-managed-database-owner
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Managed database ownership must use the canonical component ID, not a role label.
+    paths:
+      include: ["backend/src/**/*.ts"]
+    pattern-regex: '(databaseOwner|ownerComponentId)[\s\S]{0,180}role\s*={2,3}\s*["\x27](backend|frontend|application)["\x27]'
+
+  - id: deployguard-no-legacy-route-execution-authority
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Legacy relationship route evidence cannot drive executable browser bindings.
+    paths:
+      include: ["backend/src/projects/github-actions-deployment.service.ts"]
+    pattern-regex: 'buildTimePublicConfig[\s\S]{0,1200}(relationships|stripPathPrefix|pathPrefix)'
+
+  - id: deployguard-no-health-fallback-presented-as-proven
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Do not present healthCheckPath || "/" as a proven application health endpoint.
+    paths:
+      include: ["frontend/src/**/*.js", "frontend/src/**/*.jsx"]
+    pattern-regex: 'healthCheckPath\s*\|\|\s*["\x27]/["\x27]'

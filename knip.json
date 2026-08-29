@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    "backend": {
+      "entry": ["src/main.ts", "scripts/**/*.ts"],
+      "project": ["src/**/*.ts", "scripts/**/*.ts", "test-fixtures/**/*.ts"]
+    },
+    "frontend": {
+      "entry": ["src/main.jsx", "vite.config.js"],
+      "project": ["src/**/*.{js,jsx}"]
+    },
+    ".": {
+      "entry": ["scripts/**/*.mjs"],
+      "project": ["scripts/**/*.mjs"]
+    }
+  },
+  "ignore": ["**/dist/**", "**/node_modules/**", "**/coverage/**"]
+}

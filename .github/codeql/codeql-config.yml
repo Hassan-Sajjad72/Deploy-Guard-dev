@@ -1,0 +1,15 @@
+name: deployguard-local-whole-repository-audit
+
+# This configuration is used by the local CodeQL database build.  Keep both
+# product languages indexed so authority can be traced across API, workflow
+# generation, fixture scripts, and generated-runtime verification.
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  - "**/node_modules/**"
+  - "**/dist/**"
+  - "**/coverage/**"
+  - "**/.deployguard/**"
+  - "**/.terraform/**"
+  - "**/fixtures/**/node_modules/**"
