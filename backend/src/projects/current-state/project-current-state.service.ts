@@ -510,7 +510,7 @@ export class ProjectCurrentStateService {
   ): "prepare" | "build" | "deploy" | "verify" {
     const phaseForStage = (stage: unknown, recognizePromotion = false) => {
       const value = String(stage || "").toLowerCase();
-      if (value.includes("build") || value === "install_pinned_railpack" || value === "publish_immutable_image_to_ecr") return "build" as const;
+      if (value.includes("build") || value === "install_pinned_railpack" || value === "validate_application_runtime" || value === "publish_immutable_image_to_ecr") return "build" as const;
       if (value.includes("terraform") || value === "materialize_release_runtime" || (recognizePromotion && value.startsWith("promotion_"))) return "deploy" as const;
       if (value.includes("health") || value.includes("verify") || value === "publish_verified_release_result") return "verify" as const;
       return "prepare" as const;

@@ -16,7 +16,13 @@ const user = { id: "11111111-1111-4111-8111-111111111111" } as any;
 
 function stageVocabulary() {
   const cases: Array<[unknown, "deploy" | "rollback" | "destroy", string]> = [
-    ["install_pinned_railpack", "deploy", "Build Application"],
+    ["checkout_exact_application_source", "deploy", "Checkout Source"],
+    ["configure_aws_credentials_through_oidc", "deploy", "Authenticate AWS"],
+    ["validate_immutable_release_input", "deploy", "Validate Release"],
+    ["install_pinned_railpack", "deploy", "Prepare Build"],
+    ["build_immutable_railpack_image", "deploy", "Build Application"],
+    ["validate_application_runtime", "deploy", "Validate Application Runtime"],
+    ["publish_immutable_image_to_ecr", "deploy", "Publish Image"],
     ["materialize_release_runtime", "deploy", "Deploy Runtime and Verify Application"],
     ["release_complete", "deploy", "Finalize Release"],
     ["select_immutable_rollback_image", "rollback", "Restore Release"],
@@ -27,7 +33,8 @@ function stageVocabulary() {
     ["project_delete_cleanup", "destroy", "Finalize Cleanup"],
   ];
   for (const [key, action, expected] of cases) assert.equal(deployguardOperationStagePresentation(key, action).label, expected);
-  assert.equal(githubActionsWorkflowStepPresentation("Install pinned Railpack", "deploy")?.label, "Build Application");
+  assert.equal(githubActionsWorkflowStepPresentation("Install pinned Railpack", "deploy")?.label, "Prepare Build");
+  assert.equal(githubActionsWorkflowStepPresentation("Validate application runtime", "deploy")?.label, "Validate Application Runtime");
   assert.equal(githubActionsWorkflowStepPresentation("Materialize release runtime", "destroy")?.label, "Destroy Infrastructure");
   assert.equal(githubActionsWorkflowStepPresentation("Publish verified release result", "rollback")?.label, "Finalize Rollback");
 

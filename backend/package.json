@@ -12,6 +12,7 @@
     "start:debug": "nest start --debug --watch",
     "test:no-legacy-architecture": "ts-node scripts/verify-no-legacy-architecture.ts",
     "test:railpack-runtime-contract": "ts-node scripts/verify-railpack-runtime-contract.ts",
+    "test:application-runtime-validation": "ts-node scripts/verify-application-runtime-validation.ts",
     "test:dispatch-state-projection": "ts-node scripts/verify-dispatch-state-projection.ts",
     "test:unified-railpack-lifecycle": "ts-node scripts/verify-unified-railpack-lifecycle.ts",
     "test:railpack-materialization-workspace": "ts-node scripts/verify-railpack-materialization-workspace.ts",
@@ -22,7 +23,7 @@
     "test:destroy-lifecycle-authority": "ts-node scripts/verify-destroy-lifecycle-authority.ts",
     "test:product-maturity-certification": "ts-node scripts/verify-product-maturity-certification.ts",
     "test:local-repository-certification": "npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract && npm run test:dispatch-state-projection && npm run test:product-start-schema-integrity",
-    "test:full-local-certification": "npm run build && npm --prefix ../frontend run build && npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract && npm run test:railpack-materialization-workspace && npm run test:troubleshooting-boundaries && npm run test:dispatch-state-projection && npm run test:unified-railpack-lifecycle && npm run test:destroy-confirmation-contract && npm run test:destroy-lifecycle-authority && npm run test:developer-runtime-experience && npm run test:product-maturity-certification && npm --prefix ../frontend run test:infrastructure-presentation && npm --prefix ../frontend run test:monitoring-presentation && npm --prefix ../frontend run test:railpack-failure-presentation && npm --prefix ../frontend run test:project-state-sync && npm run test:product-start-schema-integrity",
+    "test:full-local-certification": "npm run build && npm --prefix ../frontend run build && npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract && npm run test:application-runtime-validation && npm run test:railpack-materialization-workspace && npm run test:troubleshooting-boundaries && npm run test:dispatch-state-projection && npm run test:unified-railpack-lifecycle && npm run test:destroy-confirmation-contract && npm run test:destroy-lifecycle-authority && npm run test:developer-runtime-experience && npm run test:product-maturity-certification && npm --prefix ../frontend run test:infrastructure-presentation && npm --prefix ../frontend run test:monitoring-presentation && npm --prefix ../frontend run test:railpack-failure-presentation && npm --prefix ../frontend run test:project-state-sync && npm run test:product-start-schema-integrity",
     "test:reliability-certification": "npm run test:no-legacy-architecture && npm run test:railpack-runtime-contract",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts"
   },

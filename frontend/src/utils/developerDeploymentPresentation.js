@@ -46,7 +46,7 @@ export function deploymentPhasePresentation(currentState) {
   const evidence = Array.isArray(currentState?.latestAttempt?.workflowStages) ? currentState.latestAttempt.workflowStages : [];
   const lifecycleKeys = {
     source: ["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack"],
-    build: ["build_immutable_railpack_image", "build_and_push_immutable_railpack_image"],
+    build: ["build_immutable_railpack_image", "build_and_push_immutable_railpack_image", "validate_application_runtime"],
     publish: ["publish_immutable_image_to_ecr"],
     deploy: ["install_terraform", "materialize_release_runtime"],
     verify: ["verify_alb_health_and_write_result"],

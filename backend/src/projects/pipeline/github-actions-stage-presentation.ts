@@ -1,15 +1,18 @@
 const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
   set_up_job: "Prepare Source",
-  configure_aws_credentials_through_oidc: "Prepare Source",
-  install_pinned_railpack: "Build Application",
+  checkout_exact_application_source: "Checkout Source",
+  configure_aws_credentials_through_oidc: "Authenticate AWS",
+  validate_immutable_release_input: "Validate Release",
+  install_pinned_railpack: "Prepare Build",
   build_immutable_railpack_image: "Build Application",
   build_and_push_immutable_railpack_image: "Build Application",
+  validate_application_runtime: "Validate Application Runtime",
   publish_immutable_image_to_ecr: "Publish Image",
   workflow_dispatch: "Prepare Source",
   workflow_bootstrap: "Prepare Source",
   workflow_run_discovery: "GitHub Actions run was not created",
   github_actions: "Prepare Source",
-  checkout_application: "Prepare Source",
+  checkout_application: "Checkout Source",
   derive_immutable_release_identity: "Prepare Source",
   ensure_ecr_repository: "Publish Image",
   generate_dockerfile_when_absent: "Build Application",
@@ -34,11 +37,12 @@ const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
 };
 
 const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
-  checkout_exact_application_source: { key: "checkout_exact_application_source", label: "Prepare Source" },
-  configure_aws_credentials_through_oidc: { key: "configure_aws_credentials_through_oidc", label: "Prepare Source" },
-  validate_immutable_release_input: { key: "validate_immutable_release_input", label: "Prepare Source" },
-  install_pinned_railpack: { key: "install_pinned_railpack", label: "Build Application" },
+  checkout_exact_application_source: { key: "checkout_exact_application_source", label: "Checkout Source" },
+  configure_aws_credentials_through_oidc: { key: "configure_aws_credentials_through_oidc", label: "Authenticate AWS" },
+  validate_immutable_release_input: { key: "validate_immutable_release_input", label: "Validate Release" },
+  install_pinned_railpack: { key: "install_pinned_railpack", label: "Prepare Build" },
   build_immutable_railpack_image: { key: "build_immutable_railpack_image", label: "Build Application" },
+  validate_application_runtime: { key: "validate_application_runtime", label: "Validate Application Runtime" },
   publish_immutable_image_to_ecr: { key: "publish_immutable_image_to_ecr", label: "Publish Image" },
   select_immutable_rollback_image: { key: "select_immutable_rollback_image", label: "Restore Release" },
   install_terraform: { key: "install_terraform", label: "Deploy Runtime" },
@@ -48,7 +52,7 @@ const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
 
 export type GithubActionsPresentationAction = "deploy" | "destroy" | "rollback";
 const ACTION_WORKFLOW_STAGES: Record<GithubActionsPresentationAction, Set<string>> = {
-  deploy: new Set(["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack", "build_immutable_railpack_image", "publish_immutable_image_to_ecr", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
+  deploy: new Set(["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack", "build_immutable_railpack_image", "validate_application_runtime", "publish_immutable_image_to_ecr", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
   rollback: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "select_immutable_rollback_image", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
   destroy: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
 };
@@ -66,6 +70,7 @@ const BUILD_PHASE_FAILURE_STAGES = new Set([
   "build_and_push_immutable_image",
   "build_immutable_railpack_image",
   "build_and_push_immutable_railpack_image",
+  "validate_application_runtime",
 ]);
 
 export function githubActionsStagePresentation(stage: unknown, action: GithubActionsPresentationAction = "deploy") {
