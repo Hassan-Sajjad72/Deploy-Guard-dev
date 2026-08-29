@@ -4,6 +4,7 @@ import { apiRequest, getApiBaseUrl } from "./client.js";
 // in-flight snapshot so the initial browser waterfall has one current-state
 // read without ever caching stale deployment status.
 const currentStateRequests = new Map();
+const detailedCurrentStateRequests = new Map();
 
 export function getProjects() {
   return apiRequest("/api/projects");
@@ -76,9 +77,18 @@ export function getProjectCurrentState(projectId) {
 }
 
 export function getProjectDetailedCurrentState(projectId) {
-  return apiRequest(
+  const key = String(projectId);
+  const existing = detailedCurrentStateRequests.get(key);
+  if (existing) return existing;
+  const request = apiRequest(
     `/api/projects/${encodeURIComponent(projectId)}/current-state/details`
   );
+  detailedCurrentStateRequests.set(key, request);
+  request.then(
+    () => { if (detailedCurrentStateRequests.get(key) === request) detailedCurrentStateRequests.delete(key); },
+    () => { if (detailedCurrentStateRequests.get(key) === request) detailedCurrentStateRequests.delete(key); },
+  );
+  return request;
 }
 
 export function deployGithubActionsDeployment(projectId) {

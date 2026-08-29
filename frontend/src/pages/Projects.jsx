@@ -9,6 +9,7 @@ import LoadingState from "../components/common/LoadingState.jsx";
 import { useAuth } from "../hooks/useAuth.js";
 import { formatRelativeTime } from "../utils/time.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+import { conciseProjectSummary } from "../utils/overviewLifecyclePresentation.js";
 
 const filters = [
   ["ALL", "All"],
@@ -17,11 +18,6 @@ const filters = [
   ["FAILED", "Failed"],
   ["DESTROYED", "Destroyed"],
 ];
-
-function abbreviated(value) {
-  const text = String(value || "No deployment operation");
-  return text.length > 20 ? `${text.slice(0, 10)}…${text.slice(-8)}` : text;
-}
 
 export default function Projects() {
   const { role } = useAuth();
@@ -69,12 +65,11 @@ export default function Projects() {
       {!projects.length ? <EmptyState message="No deployment attempts match this state." title="No matching projects" /> : <div className="project-card-grid">
         {projects.map(({ project, currentState }) => {
           const presentation = projectStatePresentation(currentState);
-          const operation = currentState?.latestAttempt?.operationId;
           const activity = project.activity?.lastMeaningfulActivityAt || currentState?.latestAttempt?.occurredAt || project.createdAt;
           return <Card className="project-summary-card" data-authoritative-state={presentation.state} key={project.id}>
             <div className="project-card-heading"><div className="project-list-identity"><span className="project-glyph"><AppIcon name="box" size={17} /></span><div><Link title={project.name} to={`/projects/${project.id}`}><h2>{project.name}</h2></Link><p title={currentState?.repository || project.repositoryFullName}>{currentState?.repository || project.repositoryFullName}</p><small>{currentState?.branch || project.targetBranch || "Branch unavailable"}</small></div></div><StatusChip status={presentation.state} /></div>
-            <div className="project-card-facts"><article><span>Latest operation</span><strong title={operation || "No deployment operation"}>{abbreviated(operation)}</strong></article><article><span>Last activity</span><strong title={activity || "Unavailable"}>{formatRelativeTime(activity)}</strong></article></div>
-            <p className="project-card-headline">{presentation.headline}</p>
+            <div className="project-card-facts"><article><span>Latest attempt</span><strong>{currentState?.latestAttempt ? `Attempt ${currentState.latestAttempt.attempt || "—"}` : "Not started"}</strong></article><article><span>Last activity</span><strong title={activity || "Unavailable"}>{formatRelativeTime(activity)}</strong></article></div>
+            <p className="project-card-headline">{conciseProjectSummary(currentState)}</p>
             <Link aria-label={`Open ${project.name}`} className="secondary-button project-card-action" to={`/projects/${project.id}`}>Open project <AppIcon name="arrow" size={16} /></Link>
           </Card>;
         })}

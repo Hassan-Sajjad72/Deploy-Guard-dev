@@ -50,7 +50,7 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
     try {
       const response = await bulkUpsertProjectEnvVars(projectId, entries);
       setIgnoredEnvironmentNames([...new Set([...clientIgnored, ...(response.ignoredVariableNames || [])])].sort());
-      setValues({}); setPaste(""); setPasteResult({ entries: [], errors: [], warnings: [] }); setModalOpen(false);
+      setPaste(""); setPasteResult({ entries: [], errors: [], warnings: [] }); setModalOpen(false);
       const savedCount = response.variables?.length || 0;
       setSuccess(`${savedCount} environment variable${savedCount === 1 ? "" : "s"} saved. Values are now masked.`);
       await load();

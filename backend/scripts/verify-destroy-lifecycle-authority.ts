@@ -198,7 +198,7 @@ function verifyDestroyPipelinePresentation() {
       { key: "materialize_release_runtime", label: "Materializing runtime", status: "running" },
     ] },
   });
-  assert.equal(presented.stageLabel, "Destroy infrastructure");
+  assert.equal(presented.stageLabel, "Destroy Infrastructure");
   assert.deepEqual(presented.workflowStages.map((stage: any) => stage.key), ["materialize_release_runtime"], "Destroy timeline hides action-irrelevant Deploy steps");
   assert.doesNotMatch(presented.stageLabel, /materialize_release_runtime/);
 }

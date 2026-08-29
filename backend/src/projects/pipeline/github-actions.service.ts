@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { inflateRawSync } from "node:zlib";
 import { RAILPACK_CALLER_INPUT_NAMES, RAILPACK_OPTIONAL_CALLER_INPUT_NAMES, RAILPACK_WORKFLOW_INPUTS } from "../railpack-workflow-contract";
-import { githubActionsWorkflowStepPresentation } from "./github-actions-stage-presentation";
+import { GithubActionsPresentationAction, githubActionsWorkflowStepPresentation } from "./github-actions-stage-presentation";
 
 export type GithubActionsDiagnosticCode =
   | "workflow_file_missing"
@@ -351,7 +351,7 @@ export class GithubActionsService {
 
   /** Job/step metadata is safe to collect while a run is active. Logs remain
    * terminal-only evidence and are deliberately not read here. */
-  async getWorkflowStages(repository: string, workflowRunId: string, token: string): Promise<GithubActionsWorkflowStage[]> {
+  async getWorkflowStages(repository: string, workflowRunId: string, token: string, action: GithubActionsPresentationAction = "deploy"): Promise<GithubActionsWorkflowStage[]> {
     const response = await this.getWorkflowJobs(repository, workflowRunId, token);
     const normalized = (value: unknown) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
     const stageStatus = (step: { status?: string; conclusion?: string | null }): GithubActionsWorkflowStage["status"] => {
@@ -364,7 +364,7 @@ export class GithubActionsService {
       return "pending";
     };
     return (response.jobs || []).flatMap((job) => (job.steps || []).flatMap((step) => {
-      const presentation = githubActionsWorkflowStepPresentation(step.name);
+      const presentation = githubActionsWorkflowStepPresentation(step.name, action);
       if (!presentation) return [];
       return [{
       key: presentation.key,
@@ -382,7 +382,7 @@ export class GithubActionsService {
    * Collect only bounded evidence for a terminal failure. This deliberately
    * works for bootstrap failures where no deployment artifact exists.
    */
-  async getTerminalFailureEvidence(repository: string, workflowRunId: string, token: string): Promise<GithubActionsTerminalFailureEvidence | null> {
+  async getTerminalFailureEvidence(repository: string, workflowRunId: string, token: string, action: GithubActionsPresentationAction = "deploy"): Promise<GithubActionsTerminalFailureEvidence | null> {
     const response = await this.getWorkflowJobs(repository, workflowRunId, token);
     const jobs = response.jobs || [];
     const failed = jobs.find((job) => String(job.conclusion || "").toLowerCase() === "failure")
@@ -391,7 +391,7 @@ export class GithubActionsService {
     const failedStep = (failed.steps || []).find((step) => String(step.conclusion || "").toLowerCase() === "failure");
     const normalized = (value: unknown) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
     const failedStage = normalized(failedStep?.name) || normalized(failed.name) || "workflow_bootstrap";
-    const workflowStages = await this.getWorkflowStages(repository, workflowRunId, token);
+    const workflowStages = await this.getWorkflowStages(repository, workflowRunId, token, action);
     const summary = [
       `GitHub Actions job: ${String(failed.name || "workflow bootstrap")}`,
       `Job status: ${String(failed.status || "completed")}`,

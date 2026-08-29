@@ -52,7 +52,7 @@ assert.match(projects, /latestAttempt\?\.operationId/);
 assert.match(projects, /stateFilter === "ALL" \|\| projectStatePresentation/);
 assert.match(projects, /\["DESTROYED", "Destroyed"\]/);
 assert.match(projects, /project-card-grid/);
-assert.match(projects, /Latest operation/);
+assert.match(projects, /Latest attempt/);
 assert.match(projects, /Last activity/);
 assert.doesNotMatch(projects, /project-trust-table/);
 assert.match(projects, /to="\/deploy"/);

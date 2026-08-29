@@ -16,7 +16,7 @@ assert.match(page, /<CopyValue/);
 assert.match(page, /label="Copy full identifier"/);
 assert.match(page, /function shortened/);
 assert.match(page, /Service flow/);
-for (const node of ["Source", "Railpack", "ECR", "ECS", "ALB", "Application"]) assert.match(page, new RegExp(node));
+for (const node of ["Source", "Build", "ECR", "ECS", "ALB", "Application"]) assert.match(page, new RegExp(node));
 for (const supporting of ["Terraform", "CloudWatch", "Infracost"]) assert.match(page, new RegExp(supporting));
 assert.match(page, /current LIVE release has no persisted Infracost evidence/i);
 assert.match(page, /Pricing unavailable/);

@@ -28,7 +28,7 @@ import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence
 import { DESTROY_CONFIRMATION_PHRASE } from "./destroy-confirmation";
 import { githubActionsDestroyEvidenceFromValue } from "./github-actions-destroy-evidence";
 import { ProjectDeletionService } from "./project-deletion.service";
-import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant } from "./pipeline/github-actions-stage-presentation";
+import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -47,6 +47,7 @@ type RollbackTargetIdentity = {
 @Injectable()
 export class RailpackDeploymentService {
   private readonly reconciliationInFlight = new Map<string, Promise<void>>();
+  private completedReconciliationAfter = new Map<string, number>();
 
   constructor(
     @InjectRepository(Project) private readonly projects: Repository<Project>,
@@ -148,22 +149,38 @@ export class RailpackDeploymentService {
     const existing = this.reconciliationInFlight.get(projectId);
     if (existing) return existing;
     const task = (async () => {
-      const [active, completed] = await Promise.all([
-        this.runs.find({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" }, take: 50 }),
-        this.runs.find({ where: { projectId, status: PipelineRunStatus.COMPLETED }, order: { createdAt: "DESC" }, take: 50 }),
-      ]);
+      const active = await this.runs.find({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" }, take: 50 });
       await Promise.all(active.map((operation) => this.reconcile(operation)));
       // Earlier Railpack releases can have valid, persisted evidence but no
       // control-plane release projection. Reconcile that local state without
       // contacting GitHub or changing AWS.
-      await Promise.all(completed.map(async (operation) => {
-        await this.reconcileCompletedRelease(operation);
-        await this.reconcileCostEvidence(operation);
-      }));
+      this.completedReconciliationAfter ||= new Map<string, number>();
+      if ((this.completedReconciliationAfter.get(projectId) || 0) <= Date.now()) {
+        const completed = await this.runs.find({ where: { projectId, status: PipelineRunStatus.COMPLETED }, order: { createdAt: "DESC" }, take: 50 });
+        await Promise.all(completed.map(async (operation) => {
+          await this.reconcileCompletedRelease(operation);
+          await this.reconcileCostEvidence(operation);
+        }));
+        this.completedReconciliationAfter.set(projectId, Date.now() + 60_000);
+      }
     })();
     this.reconciliationInFlight.set(projectId, task);
     try { await task; }
     finally { if (this.reconciliationInFlight.get(projectId) === task) this.reconciliationInFlight.delete(projectId); }
+  }
+
+  /** Reconcile active operations for projects already filtered by the
+   * workspace authorization boundary, using one bounded database query. */
+  async reconcileVisibleProjects(user: User, projectIds: string[]) {
+    void user;
+    const ids = [...new Set(projectIds)].filter(Boolean);
+    if (!ids.length) return;
+    const active = await this.runs.find({
+      where: { projectId: In(ids), status: In(ACTIVE) },
+      order: { createdAt: "DESC" },
+      take: Math.max(50, ids.length * 5),
+    });
+    await Promise.all(active.map((operation) => this.reconcile(operation)));
   }
 
   private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null) {
@@ -306,7 +323,13 @@ export class RailpackDeploymentService {
       errorMessage: operation.errorMessage || null, githubRunCreated: Boolean(operation.githubWorkflowRunId),
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
-      workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages.filter((stage) => stage && typeof stage === "object" && githubActionsWorkflowStageRelevant((stage as Record<string, unknown>).key, action)) : [],
+      workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages
+        .filter((stage) => stage && typeof stage === "object" && githubActionsWorkflowStageRelevant((stage as Record<string, unknown>).key, action))
+        .map((stage) => {
+          const value = stage as Record<string, unknown>;
+          const presentation = githubActionsWorkflowStepPresentation(value.key, action);
+          return { ...value, label: presentation?.label || deployguardOperationStagePresentation(value.key, action).label };
+        }) : [],
     };
   }
 
@@ -392,7 +415,7 @@ export class RailpackDeploymentService {
             await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project)).catch(() => null);
           }
         } else {
-          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
+          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy");
           operation.status = PipelineRunStatus.FAILED;
           operation.currentStage = failureEvidence?.failedStage || "release_failed";
           operation.errorMessage = failureEvidence?.safeLog || `GitHub Actions concluded: ${conclusion || "failure"}.`;
@@ -404,7 +427,7 @@ export class RailpackDeploymentService {
       } else {
         // Job metadata is available while the workflow runs; logs remain
         // terminal-only. Do not erase persisted stages on an empty response.
-        const stages = await this.actions.getWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
+        const stages = await this.actions.getWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy");
         if (stages.length) {
           const activeStage = stages.find((item) => item.status === "running") || stages.find((item) => item.status === "failed");
           operation.currentStage = activeStage?.key || operation.currentStage;
@@ -458,9 +481,9 @@ export class RailpackDeploymentService {
     await this.runs.save(operation);
   }
 
-  private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, token: string) {
+  private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, token: string, action: "deploy" | "rollback" | "destroy") {
     try {
-      const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, token);
+      const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, token, action);
       if (!evidence) return null;
       const safeLog = this.sanitizer.sanitize(evidence.rawEvidence).replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 12_000);
       if (!safeLog) return null;

@@ -39,20 +39,19 @@ export default function AppRoutes() {
           <Route element={<ProjectPipeline />} path="/projects/:projectId/pipeline" />
           <Route element={<ProjectInfrastructure />} path="/projects/:projectId/infrastructure" />
           <Route element={<ProjectMetrics />} path="/projects/:projectId/monitoring" />
-          {/* Retired URLs resolve to the normal project page. */}
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/environment" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/env" />
+          {/* Historical bookmarks resolve to the current owning surface. */}
+          <Route element={<LegacyProjectRedirect section="/settings" />} path="/projects/:projectId/environment" />
+          <Route element={<LegacyProjectRedirect section="/settings" />} path="/projects/:projectId/env" />
           <Route element={<ProjectSettings />} path="/projects/:projectId/settings" />
           <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/costs" />
           <Route element={<ProjectTroubleshooting />} path="/projects/:projectId/troubleshooting" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/state-management" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/storage" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/orchestration" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/rollback" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/releases" />
-          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/requirements/*" />
+          <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/state-management" />
+          <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/storage" />
+          <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/orchestration" />
+          <Route element={<LegacyProjectRedirect section="/pipeline" />} path="/projects/:projectId/rollback" />
+          <Route element={<LegacyProjectRedirect section="/pipeline" />} path="/projects/:projectId/releases" />
+          <Route element={<LegacyProjectRedirect section="/settings" />} path="/projects/:projectId/requirements/*" />
           <Route element={<LegacyProjectRedirect section="/pipeline" />} path="/projects/:projectId/logs/*" />
-          <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/costs/*" />
           <Route element={<LegacyProjectRedirect section="/monitoring" />} path="/projects/:projectId/observability/*" />
           <Route element={<LegacyProjectRedirect section="/pipeline" />} path="/projects/:projectId/orchestration/*" />
         </Route>

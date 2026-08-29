@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getWorkspaceSummary } from "../api/projectApi.js";
 import AppIcon from "../components/common/AppIcon.jsx";
@@ -19,16 +19,20 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let mounted = true;
-    async function load() {
-      try { const response = await getWorkspaceSummary(); if (mounted) { setSummaries(response.summaries || []); setUsage(response.usage || null); setWorkspace(response); setError(""); } }
-      catch (caught) { if (mounted) setError(caught.message); }
-      finally { if (mounted) setLoading(false); }
-    }
-    load(); const timer = window.setInterval(load, 8000);
-    return () => { mounted = false; window.clearInterval(timer); };
+  const load = useCallback(async () => {
+    try { const response = await getWorkspaceSummary(); setSummaries(response.summaries || []); setUsage(response.usage || null); setWorkspace(response); setError(""); }
+    catch (caught) { setError(caught.message); }
+    finally { setLoading(false); }
   }, []);
+  useEffect(() => { void load(); }, [load]);
+  const hasActiveOperation = summaries.some(({ currentState }) => projectStatePresentation(currentState).active);
+  useEffect(() => {
+    if (!hasActiveOperation) return undefined;
+    const refresh = () => { if (document.visibilityState === "visible") void load(); };
+    const timer = window.setInterval(refresh, 8000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [hasActiveOperation, load]);
 
   const view = useMemo(() => {
     const active = summaries.filter(({ currentState }) => projectStatePresentation(currentState).active);

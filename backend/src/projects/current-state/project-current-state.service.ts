@@ -43,6 +43,9 @@ type RuntimeObservation = {
 
 @Injectable()
 export class ProjectCurrentStateService {
+  private runtimeObservationCache = new Map<string, { expiresAt: number; value: RuntimeObservation }>();
+  private runtimeObservationInFlight = new Map<string, Promise<RuntimeObservation>>();
+
   constructor(
     @InjectRepository(ProjectPipelineRun)
     private readonly runRepository: Repository<ProjectPipelineRun>,
@@ -62,12 +65,12 @@ export class ProjectCurrentStateService {
   async getCurrentState(
     user: User,
     projectId: string,
-    options: { refreshCloudState?: boolean } = {},
+    options: { refreshCloudState?: boolean; skipReconciliation?: boolean } = {},
   ): Promise<DeveloperProjectCurrentState> {
     // GitHub Actions release records are the deployment authority.  Railpack
     // interprets source only inside the build, never in this read model.
     const project = await this.projectsService.getProjectEntityForView(user, projectId);
-    await this.deploymentReconciliation.reconcileActive(user, projectId);
+    if (!options.skipReconciliation) await this.deploymentReconciliation.reconcileActive(user, projectId);
     const environmentName = canonicalEnvironmentName(project);
     const route = await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } });
     const authoritativeGenerationId = route?.liveGenerationId || null;
@@ -787,6 +790,25 @@ export class ProjectCurrentStateService {
   }
 
   private async runtimeObservation(project: Project, generationId: string, stableUrl: string): Promise<RuntimeObservation> {
+    this.runtimeObservationCache ||= new Map();
+    this.runtimeObservationInFlight ||= new Map();
+    const key = `${project.id}:${generationId}`;
+    const cached = this.runtimeObservationCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const inFlight = this.runtimeObservationInFlight.get(key);
+    if (inFlight) return inFlight;
+    const task = this.readRuntimeObservation(project, generationId, stableUrl);
+    this.runtimeObservationInFlight.set(key, task);
+    try {
+      const value = await task;
+      this.runtimeObservationCache.set(key, { expiresAt: Date.now() + 15_000, value });
+      return value;
+    } finally {
+      if (this.runtimeObservationInFlight.get(key) === task) this.runtimeObservationInFlight.delete(key);
+    }
+  }
+
+  private async readRuntimeObservation(project: Project, generationId: string, stableUrl: string): Promise<RuntimeObservation> {
     const present = await this.liveAwsEvidence(project, generationId, stableUrl);
     if (present) return {
       observedAt: present.observedAt,

@@ -67,8 +67,9 @@ export class ProjectsController {
   @Get("workspace-summary")
   async getWorkspaceSummary(@Req() req: Request) {
     const projects = await this.projectsService.listProjects(req.user!);
+    await this.githubActionsDeployment.reconcileVisibleProjects(req.user!, projects.map((project) => project.id));
     const states = await Promise.all(
-      projects.map((project) => this.projectCurrentStateService.getCurrentState(req.user!, project.id)),
+      projects.map((project) => this.projectCurrentStateService.getCurrentState(req.user!, project.id, { skipReconciliation: true })),
     );
 
     const summaries = projects.map((project, index) => ({

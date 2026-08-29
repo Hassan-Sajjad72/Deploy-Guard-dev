@@ -79,8 +79,6 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   const healthDetail = runtimeNotDeployed
     ? "Runtime was not deployed."
     : `${health.source?.replaceAll("_", " ") || "No health source"} · ${formatDate(health.observedAt)}`;
-  const reconciliation = authority.reconciliation || {};
-  const generationState = currentState.generationState || { generations: [] };
 
   useEffect(() => {
     if (!acceptedOperation) return;
@@ -207,7 +205,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       <div aria-label={`Deployment progress ${currentState.progress?.percentage || 0}%`} className="deployment-progress-track"><span style={{ width: `${Math.max(0, Math.min(100, Number(currentState.progress?.percentage || 0)))}%` }} /></div>
       <StageRail phases={phases} />
       {error ? <ErrorState message={error} /> : null}
-      {acceptedOperation ? <p className="state success" data-accepted-operation={acceptedOperation.id}>Operation {acceptedOperation.id} is {acceptedOperation.status || "queued"}. Phase: {acceptedOperation.phase || acceptedOperation.stage || "queued"}. Requested {formatDate(acceptedOperation.requestedAt || acceptedOperation.createdAt)}. View Pipeline for progress.</p> : null}
+      {acceptedOperation ? <p className="state success">Deployment request accepted {formatDate(acceptedOperation.requestedAt || acceptedOperation.createdAt)}. View Pipeline for progress.</p> : null}
       <div aria-label="Canonical lifecycle actions" className="overview-actions" role="group">{actions()}</div>
       {state === "LIVE" && !latestOperationFailed && canManage && !currentState.stableRelease?.rollbackAvailable ? <p className="muted">No previous successful release is available.</p> : null}
     </Card>
@@ -218,18 +216,6 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       <MetricCard detail={latest?.startedAt && latest?.completedAt ? `${formatDate(latest.startedAt)} to ${formatDate(latest.completedAt)}` : "A completed synchronized run is required."} label="Last deployment duration" value={duration(latest?.startedAt, latest?.completedAt)} />
       <MetricCard detail={healthDetail} label="Application health" tone={runtimeNotDeployed ? "neutral" : health.status === "healthy" ? "success" : health.status === "failed" ? "danger" : "warning"} value={healthValue} />
     </section>
-
-    <section className="overview-evidence-line"><span>Source: {reconciliation.source?.replaceAll("_", " ") || "unavailable"}</span><span>Last updated: {formatDate(reconciliation.lastReconciledAt)}</span><StatusChip status={reconciliation.freshness || "unavailable"}>{reconciliation.freshness || "Unavailable"}</StatusChip></section>
-
-    {generationState.generations.length ? <Card className="overview-generation-state">
-      <p className="eyebrow">Immutable generations</p>
-      <h2>Release isolation</h2>
-      <dl>
-        <div><dt>LIVE</dt><dd>{shortCommit(generationState.liveGenerationId)}</dd></div>
-        <div><dt>DEPLOYING</dt><dd>{shortCommit(generationState.candidateGenerationId)}</dd></div>
-        <div><dt>Cleanup pending</dt><dd>{generationState.generations.filter((generation) => generation.status === "cleanup_pending").length}</dd></div>
-      </dl>
-    </Card> : null}
 
     {destroyOpen ? <Modal labelledBy="overview-destroy-title" onClose={() => { if (!busy) { setDestroyOpen(false); setDestroyPhrase(""); } }}>
       <p className="eyebrow">Permanent project deletion</p><h2 id="overview-destroy-title">Delete this project and its owned resources?</h2>

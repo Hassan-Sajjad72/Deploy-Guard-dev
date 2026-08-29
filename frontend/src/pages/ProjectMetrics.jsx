@@ -96,7 +96,7 @@ function RuntimeLogViewer({ projectId, live, onConnectionChange }) {
   }, [live, projectId, reconnectKey]);
   return <Card className="monitoring-log-card">
     <div className="monitoring-section-heading"><div><p className="eyebrow">Live runtime output</p><h2>ECS application logs</h2><p>Bounded recent history followed by new CloudWatch events from the authoritative LIVE generation.</p></div><div className="monitoring-log-actions"><StatusChip status={connection.state === "connected" ? "healthy" : connection.state}>{label(connection.state)}</StatusChip><button className="secondary-button" onClick={() => setReconnectKey((value) => value + 1)} type="button">Reconnect</button></div></div>
-    <p className="monitoring-log-connection">{connection.message}{connection.generationId ? ` Generation ${connection.generationId.slice(0, 12)}.` : ""}</p>
+    <p className="monitoring-log-connection">{connection.message}</p>
     <div aria-label="Live ECS application logs" aria-live="polite" className="monitoring-log-viewer" role="log">
       {events.length ? events.map((entry, index) => <div className="monitoring-log-line" key={entry.id || `${entry.timestamp}-${index}`}><time>{new Date(entry.timestamp).toLocaleTimeString()}</time><span title={entry.source}>{entry.source || "ecs/app"}</span><code>{entry.message}</code></div>) : <p className="monitoring-log-empty">No application log events are available in the bounded history window yet.</p>}
     </div>
@@ -177,7 +177,6 @@ export default function ProjectMetrics() {
         <article><span>Evidence freshness</span><strong>{label(evidence?.freshness)}</strong></article>
         <article><span>ALB health</span><strong>{albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"}</strong></article>
         <article><span>ECS task health</span><strong>{ecs ? `${ecs.runningCount} running / ${ecs.desiredCount} desired / ${ecs.pendingCount} pending` : "Unavailable"}</strong></article>
-        <article><span>LIVE generation</span><strong>{runtime?.generationId ? runtime.generationId.slice(0, 12) : "Unavailable"}</strong></article>
         <article><span>Grafana</span><strong>{grafanaConfigured ? <a href={runtime.grafana.url} rel="noreferrer" target="_blank">Open Grafana</a> : "Not configured"}</strong></article>
       </div>
     </Card>

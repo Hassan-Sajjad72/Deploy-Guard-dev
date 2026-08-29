@@ -531,7 +531,7 @@ async function verifyCurrentStateReconcilesWithoutPipeline() {
     assert.equal(operation.status, PipelineRunStatus.FAILED, "Overview current-state refresh must reconcile terminal GitHub failure before projection");
     return {
       developerState: "failed_application", developerAction: "deploy_again", developerMessage: operation.errorMessage,
-      progress: { percentage: 40, phase: "build", label: "Railpack Build failed" }, repository: project.repositoryFullName, branch: project.targetBranch,
+      progress: { percentage: 40, phase: "build", label: "Build Application failed" }, repository: project.repositoryFullName, branch: project.targetBranch,
       latestAttempt: {
         operationId: operation.id, workflowRunId: operation.githubWorkflowRunId, operationType: "deploy", status: "failed_application", outcome: "blocked", attempt: "4",
         generationId: null, releaseRevision: null, commit: operation.commitSha, message: operation.errorMessage,
@@ -590,7 +590,7 @@ void (async () => {
   const runtimeResolver = readFileSync(join(root, "backend", "src", "observability", "live-runtime-resolver.service.ts"), "utf8");
   const migration = readFileSync(join(root, "backend", "src", "migrations", "1787356812000-DropLegacyGenerationStateKeyIndex.ts"), "utf8");
   assert.doesNotMatch(phases, /key: "analyze"/);
-  assert.match(phases, /Source \/ Dispatch/);
+  assert.match(phases, /Prepare Source/);
   assert.match(routes, /ProjectInfrastructure/);
   assert.match(workflow, /tmpdir="\$\(mktemp -d\)"/);
   assert.match(workflow, /test ! -f \/tmp\/railpack/);

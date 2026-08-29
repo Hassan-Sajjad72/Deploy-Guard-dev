@@ -1,16 +1,24 @@
 export const DEVELOPER_DEPLOYMENT_PHASES = Object.freeze([
-  { key: "source", label: "Source / Dispatch" },
-  { key: "build", label: "Railpack Build" },
+  { key: "source", label: "Prepare Source" },
+  { key: "build", label: "Build Application" },
   { key: "publish", label: "Publish Image" },
   { key: "deploy", label: "Deploy Runtime" },
-  { key: "verify", label: "Verify" },
+  { key: "verify", label: "Verify Application" },
+]);
+
+export const DEVELOPER_ROLLBACK_PHASES = Object.freeze([
+  { key: "source", label: "Prepare Rollback" },
+  { key: "build", label: "Restore Release" },
+  { key: "publish", label: "Update Runtime" },
+  { key: "deploy", label: "Verify Application" },
+  { key: "verify", label: "Finalize Rollback" },
 ]);
 
 export const DEVELOPER_DESTROY_PHASES = Object.freeze([
   { key: "prepare", label: "Prepare" },
-  { key: "destroy", label: "Destroy infrastructure" },
-  { key: "verify", label: "Verify deletion" },
-  { key: "finalize", label: "Finalize cleanup" },
+  { key: "destroy", label: "Destroy Infrastructure" },
+  { key: "verify", label: "Verify Deletion" },
+  { key: "finalize", label: "Finalize Cleanup" },
 ]);
 
 const ACTIVE_STATES = new Set(["preparing", "queued", "building", "deploying", "verifying", "destroying"]);
@@ -20,7 +28,10 @@ export function deploymentPhasePresentation(currentState) {
     || currentState?.developerState === "destroying"
     || currentState?.developerState === "destroyed"
     || currentState?.stateAuthority?.activeOperation?.type === "destroy";
-  const phases = destroy ? DEVELOPER_DESTROY_PHASES : DEVELOPER_DEPLOYMENT_PHASES;
+  const rollback = currentState?.deploymentAction === "rollback"
+    || currentState?.latestAttempt?.operationType === "rollback"
+    || currentState?.stateAuthority?.activeOperation?.type === "rollback";
+  const phases = destroy ? DEVELOPER_DESTROY_PHASES : rollback ? DEVELOPER_ROLLBACK_PHASES : DEVELOPER_DEPLOYMENT_PHASES;
   const reportedKey = !destroy && currentState?.progress?.phase === "prepare" ? "source" : currentState?.progress?.phase || null;
   const currentKey = destroy && ["build", "deploy"].includes(reportedKey) ? "destroy"
     : destroy && currentState?.latestAttempt?.outcome === "completed" ? "finalize"
@@ -79,7 +90,7 @@ export function deploymentActionPresentation(currentState, projectId) {
     case "approve_cost":
       return { kind: "command", label: "Approve Cost" };
     case "provide_configuration":
-      return { kind: "link", label: "Provide Configuration", href: `/projects/${projectId}/requirements` };
+      return { kind: "link", label: "Provide Configuration", href: `/projects/${projectId}/settings` };
     case "open_application":
       return currentState?.stableUrl
         ? { kind: "external", label: "Open Application", href: currentState.stableUrl }

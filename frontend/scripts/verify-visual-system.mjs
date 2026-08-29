@@ -8,7 +8,7 @@ const sidebar = readFileSync(new URL("../src/components/layout/Sidebar.jsx", imp
 const navbar = readFileSync(new URL("../src/components/layout/Navbar.jsx", import.meta.url), "utf8");
 const layout = readFileSync(new URL("../src/components/layout/AppLayout.jsx", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.jsx", import.meta.url), "utf8");
-const canonical = readFileSync(new URL("../src/components/projects/CanonicalDeploymentView.jsx", import.meta.url), "utf8");
+const canonical = readFileSync(new URL("../src/components/projects/ProjectOverviewLifecycle.jsx", import.meta.url), "utf8");
 const enterprise = readFileSync(new URL("../src/design-system.css", import.meta.url), "utf8");
 const about = readFileSync(new URL("../src/pages/About.jsx", import.meta.url), "utf8");
 const publicFooter = readFileSync(new URL("../src/components/layout/PublicFooter.jsx", import.meta.url), "utf8");
@@ -79,7 +79,7 @@ assert.match(publicFooter, /aria-label="Footer navigation"/);
 assert.match(publicFooter, /DeployGuard © 2026/);
 for (const credit of ["Asim Ali Fayyaz", "Yaseen Mushtaq", "Intelligement", "https:\/\/www.intelligement.com"]) assert.match(about, new RegExp(credit));
 assert.match(publicAdminLink, /className="landing-admin-link"/);
-for (const stage of ["Repository", "Detect & plan", "Build & publish", "Provision", "Run & verify", "Verified live application"]) assert.match(architecture, new RegExp(stage.replace(/[&]/g, "&")));
+for (const stage of ["Repository", "Build image", "Publish", "Provision", "Run & verify", "Verified live application"]) assert.match(architecture, new RegExp(stage.replace(/[&]/g, "&")));
 assert.match(enterprise, /\.architecture-panel/);
 assert.match(enterprise, /\.architecture-connector::after[\s\S]*dg-architecture-signal/);
 assert.match(enterprise, /\.pipeline-stage-row\.is-running::before[\s\S]*dg-stage-scan/);
