@@ -10,7 +10,7 @@ import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentati
 import { GithubActionsService } from "../src/projects/pipeline/github-actions.service";
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
-import { WORKFLOW_AWS_CAPABILITIES, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
+import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
 
 const user = { id: 7 } as any;
 const project = {
@@ -81,6 +81,22 @@ async function verifyPerActionCapabilitySimulation() {
   const attach = policy.Statement.find((statement: any) => statement.Action.includes("iam:AttachRolePolicy"));
   assert.deepEqual(attach.Resource, ["arn:aws:iam::000000000000:role/dg-*"]);
   assert.equal(attach.Condition.StringEquals["iam:PolicyARN"], "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy");
+}
+
+function verifyProviderContractAndConditionalDatabaseScope() {
+  const scope: any = { accountId: "000000000000", region: "us-east-1", projectId: project.id, environmentName: "dev", generationId: "22222222-2222-4222-8222-222222222222", terraformStateBucket: "deployguard-state", vpcId: "vpc-00000000000000000" };
+  const allActions = new Set(WORKFLOW_AWS_CAPABILITIES.flatMap((capability) => capability.actions));
+  for (const [resource, actions] of Object.entries(RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS)) {
+    for (const action of actions) assert.ok(allActions.has(action), `provider action ${action} for ${resource} is absent from the canonical contract`);
+  }
+  const normal = capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: false });
+  assert.ok(!normal.some((capability) => capability.id === "database-efs" || capability.id === "database-secrets"));
+  assert.ok(!normal.flatMap((capability) => capability.actions).some((action) => action.startsWith("elasticfilesystem:") || action === "secretsmanager:GetResourcePolicy"));
+  const database = capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: true });
+  assert.ok(database.some((capability) => capability.id === "database-efs"));
+  assert.ok(database.some((capability) => capability.id === "database-secrets"));
+  const databaseActions = new Set(database.flatMap((capability) => capability.actions));
+  for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds"]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
 }
 
 async function verifyCurrentStateProjection(failed: any, realGithubRun = false) {
@@ -283,6 +299,7 @@ void (async () => {
   const failed = await verifyPreDispatchFailure();
   verifyCapabilityFailureIsBoundedAndPreDispatch();
   await verifyPerActionCapabilitySimulation();
+  verifyProviderContractAndConditionalDatabaseScope();
   await verifyCurrentStateProjection(failed);
   const terminalFailure = await verifyTerminalGithubFailure();
   await verifyActiveGithubStagesPersistWithoutPipeline();
