@@ -11,5 +11,8 @@
     "test:canonical-backend-environment": "node scripts/verify-canonical-backend-environment.mjs",
     "product:build": "npm --prefix backend run build && npm --prefix frontend run build",
     "install:all": "cd frontend && npm install && cd ../backend && npm install"
+  },
+  "devDependencies": {
+    "knip": "6.32.2"
   }
 }
