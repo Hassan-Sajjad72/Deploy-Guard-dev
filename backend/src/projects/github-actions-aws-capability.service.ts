@@ -50,11 +50,12 @@ export class WorkflowAwsCapabilityError extends ServiceUnavailableException {
 
 async function simulateCapability(client: IamSender, roleArn: string, scope: WorkflowAwsCapabilityScope, capability: WorkflowAwsCapability, abortSignal?: AbortSignal) {
   const denied = new Set<string>();
-  const actionGroups = new Map<string, { actions: string[]; resources: string[] }>();
+  const actionGroups = new Map<string, { actions: string[]; resources: string[]; context: Record<string, string[]> }>();
   for (const action of capability.actions) {
     const resources = (capability.simulationResources?.(scope, action) || capability.resources(scope)).map(concreteSimulationResource);
-    const key = canonicalJson(resources);
-    const group = actionGroups.get(key) || { actions: [], resources };
+    const context = capability.simulationContextForAction?.(scope, action) || capability.simulationContext?.(scope) || {};
+    const key = canonicalJson({ resources, context });
+    const group = actionGroups.get(key) || { actions: [], resources, context };
     group.actions.push(action);
     actionGroups.set(key, group);
   }
@@ -65,7 +66,7 @@ async function simulateCapability(client: IamSender, roleArn: string, scope: Wor
         PolicySourceArn: roleArn,
         ActionNames: group.actions,
         ResourceArns: group.resources,
-        ContextEntries: Object.entries(capability.simulationContext?.(scope) || {}).map(([key, values]) => ({
+        ContextEntries: Object.entries(group.context).map(([key, values]) => ({
           ContextKeyName: key,
           ContextKeyType: "string" as const,
           ContextKeyValues: values,

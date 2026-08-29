@@ -28,26 +28,16 @@ const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
 };
 
 const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
-  checkout_application: { key: "checkout_application", label: "Repository checkout" },
+  checkout_exact_application_source: { key: "checkout_exact_application_source", label: "Repository checkout" },
   configure_aws_credentials_through_oidc: { key: "configure_aws_credentials_through_oidc", label: "Connecting securely to AWS" },
+  validate_immutable_release_input: { key: "validate_immutable_release_input", label: "Validating immutable release" },
   install_pinned_railpack: { key: "install_pinned_railpack", label: "Installing Railpack" },
   build_immutable_railpack_image: { key: "build_immutable_railpack_image", label: "Building Railpack image" },
-  build_and_push_immutable_railpack_image: { key: "build_and_push_immutable_railpack_image", label: "Building Railpack image" },
   publish_immutable_image_to_ecr: { key: "publish_immutable_image_to_ecr", label: "Publishing immutable image" },
-  derive_immutable_release_identity: { key: "derive_immutable_release_identity", label: "Preparing immutable release" },
-  ensure_ecr_repository: { key: "ensure_ecr_repository", label: "Preparing image repository" },
-  generate_dockerfile_when_absent: { key: "generate_dockerfile_when_absent", label: "Dockerfile preparation" },
-  build_and_push_immutable_image: { key: "build_and_push_immutable_image", label: "Docker image build and ECR publication" },
+  select_immutable_rollback_image: { key: "select_immutable_rollback_image", label: "Selecting immutable rollback image" },
   install_terraform: { key: "install_terraform", label: "Terraform initialization" },
-  generate_deployment_terraform: { key: "generate_deployment_terraform", label: "Preparing deployment Terraform" },
-  terraform_plan_and_apply: { key: "terraform_plan_and_apply", label: "Terraform plan and apply" },
-  terraform_apply: { key: "terraform_apply", label: "Terraform apply" },
-  destroy_other_recorded_generations_exactly: { key: "destroy_other_recorded_generations_exactly", label: "Cleaning recorded generations" },
-  destroy_project_scoped_persistence: { key: "destroy_project_scoped_persistence", label: "Deleting project persistence" },
-  delete_exact_project_owned_runtime_artifacts: { key: "delete_exact_project_owned_runtime_artifacts", label: "Deleting project runtime artifacts" },
-  verify_alb_health_and_write_result: { key: "verify_alb_health_and_write_result", label: "ALB health verification" },
-  verify_exact_project_deletion_and_write_result: { key: "verify_exact_project_deletion", label: "Verifying exact project deletion" },
-  upload_deployguard_result: { key: "upload_deployguard_result", label: "Uploading deployment result" },
+  materialize_release_runtime: { key: "materialize_release_runtime", label: "Materializing runtime" },
+  publish_verified_release_result: { key: "publish_verified_release_result", label: "Publishing verified release result" },
 };
 
 export type GithubActionsPresentationAction = "deploy" | "destroy" | "rollback";
@@ -81,8 +71,9 @@ export function githubActionsFailureMessage(errorMessage: unknown, failedStage: 
 
 export function githubActionsFailureLifecyclePhase(failedStage: unknown): "source" | "build" | "deploy" | "verify" {
   const key = githubActionsStagePresentation(failedStage).key;
-  if (["workflow_bootstrap", "set_up_job", "workflow_dispatch", "configure_aws_credentials_through_oidc"].includes(key)) return "source";
+  if (["workflow_bootstrap", "set_up_job", "workflow_dispatch", "configure_aws_credentials_through_oidc", "checkout_exact_application_source", "validate_immutable_release_input"].includes(key)) return "source";
   if (BUILD_PHASE_FAILURE_STAGES.has(key) || key.includes("build")) return "build";
+  if (key === "publish_verified_release_result") return "verify";
   if (key.includes("health") || key.includes("verify")) return "verify";
   return "deploy";
 }
@@ -95,9 +86,7 @@ export function githubActionsFailureLifecyclePhase(failedStage: unknown): "sourc
 export function githubActionsWorkflowStepPresentation(step: unknown, action: GithubActionsPresentationAction = "deploy") {
   const key = String(step || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
   const presentation = WORKFLOW_STEP_STAGES[key] || null;
-  return presentation && key === "terraform_plan_and_apply" && action === "destroy"
-    ? { ...presentation, label: "Terraform destroy plan and apply" }
-    : presentation;
+  return presentation;
 }
 
 export function githubActionsExecutionStageFromLog(log: string) {

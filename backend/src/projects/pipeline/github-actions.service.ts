@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { inflateRawSync } from "node:zlib";
 import { RAILPACK_CALLER_INPUT_NAMES, RAILPACK_OPTIONAL_CALLER_INPUT_NAMES, RAILPACK_WORKFLOW_INPUTS } from "../railpack-workflow-contract";
+import { githubActionsWorkflowStepPresentation } from "./github-actions-stage-presentation";
 
 export type GithubActionsDiagnosticCode =
   | "workflow_file_missing"
@@ -360,15 +361,19 @@ export class GithubActionsService {
       if (["in_progress", "running"].includes(status)) return "running";
       return "pending";
     };
-    return (response.jobs || []).flatMap((job) => (job.steps || []).map((step) => ({
-      key: normalized(step.name) || normalized(job.name) || "workflow_bootstrap",
-      label: String(step.name || job.name || "GitHub Actions workflow bootstrap"),
+    return (response.jobs || []).flatMap((job) => (job.steps || []).flatMap((step) => {
+      const presentation = githubActionsWorkflowStepPresentation(step.name);
+      if (!presentation) return [];
+      return [{
+      key: presentation.key,
+      label: presentation.label,
       status: stageStatus(step),
       startedAt: step.started_at || null,
       completedAt: step.completed_at || null,
       jobUrl: job.html_url || null,
       failureReason: stageStatus(step) === "failed" ? `GitHub Actions step failed: ${String(step.name || job.name || "workflow bootstrap")}` : null,
-    })));
+      }];
+    }));
   }
 
   /**

@@ -472,12 +472,11 @@ export class ProjectCurrentStateService {
   ): "prepare" | "build" | "deploy" | "verify" {
     const phaseForStage = (stage: unknown, recognizePromotion = false) => {
       const value = String(stage || "").toLowerCase();
-      if (value.includes("build")) return "build" as const;
-      if (value.includes("terraform") || (recognizePromotion && value.startsWith("promotion_"))) return "deploy" as const;
-      if (value.includes("health") || value.includes("verify")) return "verify" as const;
+      if (value.includes("build") || value === "install_pinned_railpack" || value === "publish_immutable_image_to_ecr") return "build" as const;
+      if (value.includes("terraform") || value === "materialize_release_runtime" || (recognizePromotion && value.startsWith("promotion_"))) return "deploy" as const;
+      if (value.includes("health") || value.includes("verify") || value === "publish_verified_release_result") return "verify" as const;
       return "prepare" as const;
     };
-    if (metadata.deploymentAction !== "rollback") return phaseForStage(currentStage);
     const rank = { prepare: 0, build: 1, deploy: 2, verify: 3 } as const;
     const workflowStages = Array.isArray(metadata.workflowStages) ? metadata.workflowStages : [];
     const confirmedWorkflowPhase = workflowStages.reduce<"prepare" | "build" | "deploy" | "verify">((highest, item) => {
@@ -487,6 +486,10 @@ export class ProjectCurrentStateService {
       const candidate = phaseForStage(stage.key, true);
       return rank[candidate] > rank[highest] ? candidate : highest;
     }, "prepare");
+    if (metadata.deploymentAction !== "rollback") {
+      const currentPhase = phaseForStage(currentStage);
+      return rank[confirmedWorkflowPhase] > rank[currentPhase] ? confirmedWorkflowPhase : currentPhase;
+    }
     const workflowPhase = String(metadata.workflowPhase || "").toLowerCase();
     const promotionHandoff = ["promotion", "compensation"].includes(workflowPhase)
       || String(currentStage || "").toLowerCase().startsWith("promotion_");

@@ -6,9 +6,11 @@ import { PipelineRunStatus } from "../src/projects/project-pipeline-run.entity";
 import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
 import { isAiTroubleshootingEligible } from "../src/ai-troubleshooting/ai-troubleshooting.service";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
-import { githubActionsFailureLifecyclePhase } from "../src/projects/pipeline/github-actions-stage-presentation";
+import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentation } from "../src/projects/pipeline/github-actions-stage-presentation";
 import { GithubActionsService } from "../src/projects/pipeline/github-actions.service";
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
+import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
+import { WORKFLOW_AWS_CAPABILITIES, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
 
 const user = { id: 7 } as any;
 const project = {
@@ -59,6 +61,28 @@ function verifyCapabilityFailureIsBoundedAndPreDispatch() {
   assert.doesNotMatch(failure.message, /fixture/, "internal IAM simulator text must not become high-level operation evidence");
 }
 
+async function verifyPerActionCapabilitySimulation() {
+  const scope: any = { accountId: "000000000000", region: "us-east-1", projectId: project.id, environmentName: "dev", generationId: "22222222-2222-4222-8222-222222222222", terraformStateBucket: "deployguard-state", vpcId: "vpc-00000000000000000", managedDatabaseEnabled: false };
+  const state = WORKFLOW_AWS_CAPABILITIES.find((capability) => capability.id === "terraform-state")!;
+  const role = WORKFLOW_AWS_CAPABILITIES.find((capability) => capability.id === "execution-role")!;
+  const calls: any[] = [];
+  const allowed = { send: async (command: any) => { const input = command.input; calls.push(input); return { EvaluationResults: input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: "allowed" })) }; } };
+  assert.deepEqual(await verifyEffectiveWorkflowCapabilities(allowed, "arn:aws:iam::000000000000:role/deployguard", scope, "deploy", [state]), []);
+  const listBucket = calls.find((call) => call.ActionNames.includes("s3:ListBucket"));
+  const objectAccess = calls.find((call) => call.ActionNames.includes("s3:GetObject"));
+  assert.deepEqual(listBucket.ResourceArns, ["arn:aws:s3:::deployguard-state"]);
+  assert.deepEqual(objectAccess.ResourceArns, [`arn:aws:s3:::deployguard-state/projects/${project.id}/runtime/terraform.tfstate`]);
+  calls.length = 0;
+  await verifyEffectiveWorkflowCapabilities(allowed, "arn:aws:iam::000000000000:role/deployguard", scope, "deploy", [role]);
+  assert.ok(calls.every((call) => call.ResourceArns.every((resource: string) => resource.includes(":role/dg-") || resource === "*")), "IAM simulation must not pass the managed policy ARN as a resource");
+  const missing = { send: async (command: any) => ({ EvaluationResults: command.input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: action === "s3:PutObject" ? "implicitDeny" : "allowed" })) }) };
+  assert.deepEqual(await verifyEffectiveWorkflowCapabilities(missing, "arn:aws:iam::000000000000:role/deployguard", scope, "deploy", [state]), ["s3:PutObject"]);
+  const policy: any = workflowCapabilityPolicy(scope);
+  const attach = policy.Statement.find((statement: any) => statement.Action.includes("iam:AttachRolePolicy"));
+  assert.deepEqual(attach.Resource, ["arn:aws:iam::000000000000:role/dg-*"]);
+  assert.equal(attach.Condition.StringEquals["iam:PolicyARN"], "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy");
+}
+
 async function verifyCurrentStateProjection(failed: any, realGithubRun = false) {
   const queries: string[] = [];
   const builder: any = {
@@ -85,7 +109,7 @@ async function verifyCurrentStateProjection(failed: any, realGithubRun = false) 
     assert.deepEqual(state.latestAttempt.workflowStages?.map((stage) => [stage.key, stage.status]), [
       ["checkout_exact_application_source", "passed"],
       ["install_pinned_railpack", "passed"],
-      ["build_and_push_immutable_railpack_image", "failed"],
+      ["build_immutable_railpack_image", "failed"],
       ["publish_immutable_image_to_ecr", "skipped"],
       ["install_terraform", "skipped"],
     ]);
@@ -106,9 +130,10 @@ async function verifyTerminalGithubFailure() {
   githubActions.getWorkflowJobs = async () => ({ jobs: [{
     id: 45, name: "deploy", status: "completed", conclusion: "failure", html_url: "https://github.example/actions/runs/123",
     steps: [
+      { name: "Post Checkout", status: "completed", conclusion: "success" },
       { name: "Checkout exact application source", status: "completed", conclusion: "success" },
       { name: "Install pinned Railpack", status: "completed", conclusion: "success" },
-      { name: "Build and push immutable Railpack image", status: "completed", conclusion: "failure" },
+      { name: "Build immutable Railpack image", status: "completed", conclusion: "failure" },
       { name: "Publish immutable image to ECR", status: "completed", conclusion: "skipped" },
       { name: "Install Terraform", status: "completed", conclusion: "skipped" },
     ],
@@ -116,18 +141,18 @@ async function verifyTerminalGithubFailure() {
   githubActions.getJobLog = async () => "Railpack 0.38.0\nERRO BUILDKIT_HOST environment variable is not set.\ntoken=ghp_abcdefghijklmnopqrstuvwxyz1234567890";
   const githubEvidence = await githubActions.getTerminalFailureEvidence("example/application", "123", "ignored");
   assert.ok(githubEvidence);
-  assert.equal(githubEvidence.failedStage, "build_and_push_immutable_railpack_image");
+  assert.equal(githubEvidence.failedStage, "build_immutable_railpack_image");
   assert.deepEqual(githubEvidence.workflowStages.map((stage: any) => [stage.key, stage.status]), [
     ["checkout_exact_application_source", "passed"],
     ["install_pinned_railpack", "passed"],
-    ["build_and_push_immutable_railpack_image", "failed"],
+    ["build_immutable_railpack_image", "failed"],
     ["publish_immutable_image_to_ecr", "skipped"],
     ["install_terraform", "skipped"],
   ]);
   service.actions = { getTerminalFailureEvidence: async () => githubEvidence };
   service.sanitizer = new LogSanitizerService();
   const evidence = await service.terminalFailureEvidence("example/application", "123", "ignored");
-  assert.equal(evidence.failedStage, "build_and_push_immutable_railpack_image");
+  assert.equal(evidence.failedStage, "build_immutable_railpack_image");
   assert.match(evidence.safeLog, /BUILDKIT_HOST environment variable is not set/);
   assert.doesNotMatch(evidence.safeLog, /ghp_/);
   const failedRun = {
@@ -142,7 +167,7 @@ async function verifyTerminalGithubFailure() {
   const persisted = saved.at(-1);
   assert.equal(persisted.status, PipelineRunStatus.FAILED);
   assert.equal(persisted.metadata.workflowConclusion, "failure");
-  assert.equal(persisted.metadata.failedStage, "build_and_push_immutable_railpack_image");
+  assert.equal(persisted.metadata.failedStage, "build_immutable_railpack_image");
   assert.match(persisted.metadata.safeLog, /BUILDKIT_HOST environment variable is not set/);
   assert.doesNotMatch(persisted.metadata.safeLog, /ghp_/);
   assert.equal(isAiTroubleshootingEligible(persisted), true, "terminal GitHub failure with sanitized evidence must be eligible");
@@ -161,13 +186,13 @@ async function verifyActiveGithubStagesPersistWithoutPipeline() {
     getWorkflowStages: async () => [
       { key: "checkout", label: "Checkout", status: "passed", startedAt: "2026-08-29T10:00:00.000Z", completedAt: "2026-08-29T10:00:03.000Z", jobUrl: null, failureReason: null },
       { key: "aws_oidc", label: "AWS OIDC", status: "passed", startedAt: "2026-08-29T10:00:03.000Z", completedAt: "2026-08-29T10:00:06.000Z", jobUrl: null, failureReason: null },
-      { key: "railpack_build", label: "Railpack Build", status: "running", startedAt: "2026-08-29T10:00:06.000Z", completedAt: null, jobUrl: null, failureReason: null },
-      { key: "terraform_apply", label: "Terraform Apply", status: "pending", startedAt: null, completedAt: null, jobUrl: null, failureReason: null },
+      { key: "build_immutable_railpack_image", label: "Building Railpack image", status: "running", startedAt: "2026-08-29T10:00:06.000Z", completedAt: null, jobUrl: null, failureReason: null },
+      { key: "materialize_release_runtime", label: "Materializing runtime", status: "pending", startedAt: null, completedAt: null, jobUrl: null, failureReason: null },
     ],
   };
   const operation: any = { id: "55555555-5555-4555-8555-555555555555", projectId: project.id, triggeredByUserId: user.id, githubWorkflowRunId: "123", status: PipelineRunStatus.RUNNING, currentStage: "github_actions", metadata: { executionEngine: "railpack" } };
   await service.reconcile(operation);
-  assert.equal(saved.at(-1).currentStage, "railpack_build");
+  assert.equal(saved.at(-1).currentStage, "build_immutable_railpack_image");
   assert.deepEqual(saved.at(-1).metadata.workflowStages.map((stage: any) => stage.status), ["passed", "passed", "running", "pending"]);
   service.actions.getWorkflowStages = async () => [];
   await service.reconcile(operation);
@@ -257,6 +282,7 @@ async function verifyConcurrentStateReadsShareReconciliation() {
 void (async () => {
   const failed = await verifyPreDispatchFailure();
   verifyCapabilityFailureIsBoundedAndPreDispatch();
+  await verifyPerActionCapabilitySimulation();
   await verifyCurrentStateProjection(failed);
   const terminalFailure = await verifyTerminalGithubFailure();
   await verifyActiveGithubStagesPersistWithoutPipeline();
@@ -289,6 +315,12 @@ void (async () => {
   assert.match(pipelinePage, /getProjectCurrentState/);
   assert.match(infrastructurePage, /Provisioning failed/);
   assert.doesNotMatch(infrastructurePage, /attempt\?\.message/);
+  assert.equal(githubActionsWorkflowStepPresentation("Post Checkout"), null);
+  assert.equal(githubActionsWorkflowStepPresentation("Materialize release runtime")?.key, "materialize_release_runtime");
+  assert.equal(githubActionsFailureLifecyclePhase("Materialize release runtime"), "deploy");
+  const lifecycle = Object.create(ProjectCurrentStateService.prototype) as any;
+  assert.equal(lifecycle.githubLifecyclePhase("materialize_release_runtime", { deploymentAction: "deploy", workflowStages: [{ key: "publish_immutable_image_to_ecr", status: "passed" }] }), "deploy");
+  assert.equal(lifecycle.githubLifecyclePhase("publish_immutable_image_to_ecr", { deploymentAction: "deploy", workflowStages: [{ key: "build_immutable_railpack_image", status: "passed" }] }), "build");
   assert.match(infrastructurePage, /getProjectCurrentState/);
   assert.match(troubleshootingPage, /getGithubActionsDeploymentHistory/);
   console.log("DISPATCH_STATE_PROJECTION=PASS");

@@ -7,6 +7,7 @@ const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", 
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
+const providerLock = readFileSync(join(root, "infrastructure", "railpack-runtime", ".terraform.lock.hcl"), "utf8");
 
 assert.doesNotMatch(terraform, /aws_db_instance|aws_db_subnet_group/);
 assert.match(terraform, /aws_ecs_task_definition/);
@@ -47,5 +48,13 @@ assert.match(deploymentService, /awsCapabilities\.ensure/);
 assert.match(capabilityContract, /ecs:CreateCluster/);
 assert.match(capabilityContract, /elasticloadbalancing:CreateLoadBalancer/);
 assert.match(capabilityContract, /iam:AttachRolePolicy/);
+assert.match(capabilityContract, /RAILPACK_RUNTIME_AWS_PROVIDER_VERSION = "5\.100\.0"/);
+assert.match(providerLock, /version\s+=\s+"5\.100\.0"/);
+for (const action of [
+  "elasticloadbalancing:DescribeLoadBalancerAttributes", "elasticloadbalancing:ModifyLoadBalancerAttributes", "elasticloadbalancing:DescribeTargetGroupAttributes",
+  "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:SetSubnets", "ecs:CreateCluster", "ecs:DeleteCluster", "ecs:RegisterTaskDefinition", "ecs:DeleteTaskDefinitions",
+  "ec2:UpdateSecurityGroupRuleDescriptionsIngress", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:PutRolePolicy", "secretsmanager:UpdateSecret",
+  "elasticfilesystem:ModifyMountTargetSecurityGroups", "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+]) assert.ok(capabilityContract.includes(action), `pinned-provider capability missing: ${action}`);
 assert.doesNotMatch(capabilityContract, /sharedEcsClusterArn|sharedAlbArn|sharedAlbListenerArn|service-discovery|CreateRule/);
 console.log("RAILPACK_RUNTIME_CONTRACT=PASS");
