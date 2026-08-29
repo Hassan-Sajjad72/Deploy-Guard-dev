@@ -12,6 +12,13 @@ export const PINNED_AWS_PROVIDER_REVISION = "f7a3b98da589ab1d52756b0dcee0dbf2de8
 
 export const PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS = [
   {
+    terraformResource: "aws_iam_role",
+    lifecycle: "destroy",
+    providerFunction: "resourceRoleDelete -> findInstanceProfilesForRole",
+    providerFile: "internal/service/iam/role.go",
+    action: "iam:ListInstanceProfilesForRole",
+  },
+  {
     terraformResource: "aws_security_group",
     lifecycle: "destroy",
     providerFunction: "resourceSecurityGroupDelete -> deleteLingeringENIs -> findNetworkInterfaces",

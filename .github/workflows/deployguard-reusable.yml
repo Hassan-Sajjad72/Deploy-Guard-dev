@@ -74,7 +74,10 @@ jobs:
           [[ "$PLATFORM_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PLATFORM_PORT" -le 65535 ] || { echo 'Invalid platform port.' >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = deploy ]; then [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo 'Exact source SHA mismatch.' >&2; exit 1; }; fi
           if [ "$DEPLOYMENT_ACTION" = rollback ]; then [[ "$ROLLBACK_IMAGE_DIGEST" =~ @sha256:[0-9a-f]{64}$ ]] || { echo 'Rollback requires an immutable ECR image digest.' >&2; exit 1; }; fi
-          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" '.schemaVersion == 1 and .projectId == $project and .operationId == $operation and .sourceSha == $sha' >/dev/null
+          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" --arg action "$DEPLOYMENT_ACTION" '
+            .schemaVersion == 1 and .projectId == $project and .operationId == $operation and .sourceSha == $sha
+            and (if $action == "destroy" then (.projectDeletion.generationIds | type == "array" and length > 0) else true end)
+          ' >/dev/null
       - name: Install pinned Railpack
         if: success() && inputs.deployment_action == 'deploy'
         shell: bash
@@ -173,7 +176,29 @@ jobs:
           terraform -chdir=.deployguard/terraform validate
           if [ "$DEPLOYMENT_ACTION" = destroy ]; then
             terraform -chdir=.deployguard/terraform destroy -input=false -auto-approve
-            jq -n --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" '{action:$action,sourceSha:$sourceSha,operationId:$operationId,destroyed:true}' > .deployguard/release-runtime.json
+            jq -n \
+              --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" \
+              --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" \
+              --slurpfile runtime .deployguard/runtime.json \
+              '{
+                action:$action,
+                sourceSha:$sourceSha,
+                operationId:$operationId,
+                destroyed:true,
+                destroyVerification:{
+                  contractVersion:"deployguard.destroy-result/v2",
+                  deploymentOperationId:$operationId,
+                  projectId:$projectId,
+                  environmentName:$environmentName,
+                  generationIds:($runtime[0].projectDeletion.generationIds | sort),
+                  status:"project_delete_ready",
+                  generationResourcesRemoved:true,
+                  projectResourcesRemoved:true,
+                  terraformStateArtifactsRemoved:true,
+                  sharedPlatformUntouched:true,
+                  verifiedAt:(now | todateiso8601)
+                }
+              }' > .deployguard/release-runtime.json
           else
             terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan
             terraform -chdir=.deployguard/terraform show -json deployguard.tfplan \

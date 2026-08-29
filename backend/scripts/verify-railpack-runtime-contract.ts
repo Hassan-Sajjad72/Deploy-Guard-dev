@@ -55,6 +55,9 @@ assert.match(workflow, /key=projects\/\$PROJECT_ID\/\$ENVIRONMENT_NAME\/runtime\
 assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
 assert.match(workflow, /aws ecs wait services-stable/);
 assert.match(workflow, /curl --fail/);
+assert.match(workflow, /destroyVerification:\{/);
+assert.match(workflow, /contractVersion:"deployguard\.destroy-result\/v2"/);
+assert.match(workflow, /generationIds:\(\$runtime\[0\]\.projectDeletion\.generationIds \| sort\)/);
 assert.doesNotMatch(workflow, /build_plan_base64|generated_dockerfile_base64|terraform:\/\//);
 assert.match(deploymentService, /getResultArtifact/);
 assert.match(deploymentService, /releaseEvidence/);
@@ -72,6 +75,7 @@ for (const action of [
   "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:SetSubnets", "ecs:CreateCluster", "ecs:DeleteCluster", "ecs:RegisterTaskDefinition", "ecs:DeleteTaskDefinitions",
   "ec2:UpdateSecurityGroupRuleDescriptionsIngress", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:PutRolePolicy", "secretsmanager:UpdateSecret",
   "elasticfilesystem:ModifyMountTargetSecurityGroups", "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+  "iam:ListInstanceProfilesForRole",
 ]) assert.ok(capabilityContract.includes(action), `pinned-provider capability missing: ${action}`);
 assert.doesNotMatch(capabilityContract, /sharedEcsClusterArn|sharedAlbArn|sharedAlbListenerArn|service-discovery|CreateRule/);
 console.log("RAILPACK_RUNTIME_CONTRACT=PASS");

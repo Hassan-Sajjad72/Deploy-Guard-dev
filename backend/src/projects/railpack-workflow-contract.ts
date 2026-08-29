@@ -42,6 +42,8 @@ export type RailpackRuntimeConfiguration = {
   environment: Record<string, string>;
   secretReferences: Record<string, string>;
   managedDatabase: { enabled: boolean; engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[] };
+  /** Exact persisted generations the Destroy workflow is authorized to erase. */
+  projectDeletion?: { generationIds: string[] };
 };
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -77,5 +79,11 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     !value.managedDatabase.aliases.every((alias) => KEY.test(alias)) ||
     ![null, "postgres", "mysql", "mongodb"].includes(value.managedDatabase.engine)) {
     throw new Error("Railpack managed database configuration is invalid.");
+  }
+  if (value.projectDeletion && (!Array.isArray(value.projectDeletion.generationIds)
+    || !value.projectDeletion.generationIds.length
+    || value.projectDeletion.generationIds.some((id) => !UUID.test(id))
+    || new Set(value.projectDeletion.generationIds).size !== value.projectDeletion.generationIds.length)) {
+    throw new Error("Railpack destroy generation identity is invalid.");
   }
 }

@@ -278,7 +278,7 @@ async function verifyPerActionCapabilitySimulation() {
   assert.equal(attach.Condition.StringEquals["iam:PolicyARN"], "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy");
 }
 
-function verifyProviderContractAndConditionalDatabaseScope() {
+async function verifyProviderContractAndConditionalDatabaseScope() {
   const scope: any = { accountId: "000000000000", region: "us-east-1", projectId: project.id, environmentName: "dev", generationId: "22222222-2222-4222-8222-222222222222", terraformStateBucket: "deployguard-state", vpcId: "vpc-00000000000000000" };
   const allActions = new Set(WORKFLOW_AWS_CAPABILITIES.flatMap((capability) => capability.actions));
   for (const [resource, actions] of Object.entries(RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS)) {
@@ -302,6 +302,11 @@ function verifyProviderContractAndConditionalDatabaseScope() {
     assert.ok(allActions.has(expected.action), `independent provider expectation missing from capability contract: ${expected.action} (${expected.providerFunction})`);
   }
   assert.ok(capabilitiesFor("destroy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
+  const destroyCapabilities = capabilitiesFor("destroy", { ...scope, managedDatabaseEnabled: false });
+  const destroyActions = destroyCapabilities.flatMap((capability) => capability.actions);
+  assert.ok(destroyActions.includes("iam:ListInstanceProfilesForRole"), "Terraform Destroy must preflight the provider's IAM role-deletion helper call");
+  const denyInstanceProfiles = { send: async (command: any) => ({ EvaluationResults: command.input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: action === "iam:ListInstanceProfilesForRole" ? "implicitDeny" : "allowed" })) }) };
+  assert.deepEqual(await verifyEffectiveWorkflowCapabilities(denyInstanceProfiles, "arn:aws:iam::000000000000:role/deployguard", scope, "destroy", destroyCapabilities), ["iam:ListInstanceProfilesForRole"], "missing IAM role-delete helper permission fails before Terraform Destroy");
   assert.ok(!capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
 }
 
@@ -554,7 +559,7 @@ void (async () => {
   await verifyPerActionCapabilitySimulation();
   await verifyReleaseArtifactEvidenceReconciliation();
   await verifyTerminalFinalizationFailureIsRetryable();
-  verifyProviderContractAndConditionalDatabaseScope();
+  await verifyProviderContractAndConditionalDatabaseScope();
   await verifyCurrentStateProjection(failed);
   await verifyVerifiedReleaseProjectsLive();
   const terminalFailure = await verifyTerminalGithubFailure();

@@ -26,6 +26,8 @@ import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
 import { materializeStableRelease } from "./stable-release-projection";
 import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
 import { DESTROY_CONFIRMATION_PHRASE } from "./destroy-confirmation";
+import { githubActionsDestroyEvidenceFromValue } from "./github-actions-destroy-evidence";
+import { ProjectDeletionService } from "./project-deletion.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 
@@ -62,14 +64,25 @@ export class RailpackDeploymentService {
     private readonly sanitizer: LogSanitizerService,
     private readonly dataSource: DataSource,
     private readonly costEvidence: GithubActionsCostEvidenceService,
+    private readonly projectDeletion: ProjectDeletionService,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy"); }
   async retry(user: User, projectId: string) {
-    await this.project(user, projectId);
+    const project = await this.project(user, projectId);
     const previous = await this.runs.findOne({ where: { projectId, status: PipelineRunStatus.FAILED }, order: { createdAt: "DESC" } });
     const action = previous?.metadata?.deploymentAction === "destroy" ? "destroy"
       : previous?.metadata?.deploymentAction === "rollback" ? "rollback" : "deploy";
+    const destroyVerification = action === "destroy" && previous ? this.verifiedDestroyEvidence(previous, project) : null;
+    if (previous && destroyVerification) {
+      try {
+        await this.projectDeletion.finalize(project, previous);
+        return { deployment: { state: "no_op", message: "Verified AWS deletion was already complete; DeployGuard control-plane cleanup completed without redispatching Terraform.", operation: previous } };
+      } catch (error) {
+        await this.persistDestroyCleanupFailure(previous, destroyVerification, error);
+        return { deployment: { state: "no_op", message: "Verified AWS deletion remains complete; DeployGuard control-plane cleanup still needs attention and can be retried.", operation: previous } };
+      }
+    }
     const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
     return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null);
   }
@@ -158,12 +171,15 @@ export class RailpackDeploymentService {
     const environmentName = canonicalEnvironmentName(project);
     const operationId = randomUUID();
     const attempt = await this.runs.count({ where: { projectId } }) + 1;
+    const destroyRoute = action === "destroy"
+      ? await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } })
+      : null;
     // Persist before every external boundary. A rejected caller reconciliation
     // or GitHub API request is a real DeployGuard operation, even though it
     // never acquired a GitHub run id.
     const operation = await this.runs.save(this.runs.create({
       id: operationId, projectId, triggeredByUserId: user.id, repositoryUrl: project.repositoryUrl, repositoryFullName: project.repositoryFullName,
-      targetBranch: project.targetBranch, status: PipelineRunStatus.QUEUED,
+      targetBranch: project.targetBranch, generationId: destroyRoute?.liveGenerationId || null, status: PipelineRunStatus.QUEUED,
       currentStage: "dispatching", startedAt: new Date(), githubWorkflowStatus: "dispatching",
       metadata: { executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt, ...(rollbackTarget ? { rollbackTarget } : {}), ...(retryOfOperationId ? { retryOfOperationId } : {}) },
     }));
@@ -186,7 +202,7 @@ export class RailpackDeploymentService {
       await this.runs.save(operation);
       const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || "" : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
-      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha);
+      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action);
       const inputs: RailpackWorkflowInputs = {
         deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
         repository_full_name: project.repositoryFullName, repository_branch: project.targetBranch, commit_sha: sourceSha,
@@ -279,7 +295,7 @@ export class RailpackDeploymentService {
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string): Promise<RailpackRuntimeConfiguration> {
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy"): Promise<RailpackRuntimeConfiguration> {
     const rows = await this.variables.createQueryBuilder("variable").addSelect("variable.value").where({ projectId: project.id, environment: environmentName, isActive: true }).getMany();
     const environment: Record<string, string> = { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" };
     const secretValues: Record<string, string> = {};
@@ -297,7 +313,11 @@ export class RailpackDeploymentService {
       ...aliasesFor(engine, "username"), ...aliasesFor(engine, "password"),
       ...aliasesFor(engine, "database"), ...aliasesFor(engine, "url"),
     ] : [];
-    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedDatabase: { enabled: Boolean(tier), engine: tier?.engine || null, aliases: [...new Set(managedAliases)].sort() } };
+    const projectDeletion = action === "destroy"
+      ? { generationIds: (await this.dataSource.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName } })).map((generation) => generation.id).sort() }
+      : undefined;
+    if (action === "destroy" && !projectDeletion?.generationIds.length) throw new ServiceUnavailableException("Destroy requires an exact persisted runtime generation.");
+    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedDatabase: { enabled: Boolean(tier), engine: tier?.engine || null, aliases: [...new Set(managedAliases)].sort() }, ...(projectDeletion ? { projectDeletion } : {}) };
   }
 
   private async reconcile(operation: ProjectPipelineRun) {
@@ -333,7 +353,13 @@ export class RailpackDeploymentService {
             await this.persistFinalizationFailure(operation, evidence, error);
             return operation;
           }
-          await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project)).catch(() => null);
+          // Successful exact-scope project deletion removes the project and
+          // its operation records transactionally. Do not re-save a deleted
+          // historical operation after that terminal lifecycle result.
+          if (operation.metadata?.deploymentAction === "destroy" && operation.status === PipelineRunStatus.COMPLETED) return operation;
+          if (operation.metadata?.deploymentAction !== "destroy") {
+            await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project)).catch(() => null);
+          }
         } else {
           const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
           operation.status = PipelineRunStatus.FAILED;
@@ -415,7 +441,9 @@ export class RailpackDeploymentService {
     if (action !== expectedAction || sourceSha !== operation.commitSha || operationId !== operation.id) throw new Error("The release result artifact does not match its immutable operation identity.");
     if (action === "destroy") {
       if (artifact.destroyed !== true) throw new Error("The destroy result artifact does not prove deletion.");
-      return { releaseArtifact: artifact, destroyed: true };
+      const destroyVerification = githubActionsDestroyEvidenceFromValue(artifact.destroyVerification);
+      if (!destroyVerification) throw new Error("The destroy result artifact does not contain exact-scope deletion evidence.");
+      return { releaseArtifact: artifact, destroyed: true, destroyVerification };
     }
     const image = String(artifact.image || "");
     const match = image.match(/^(.*)@(sha256:[0-9a-f]{64})$/);
@@ -474,6 +502,7 @@ export class RailpackDeploymentService {
    */
   private async finalizeVerifiedRelease(project: Project, operation: ProjectPipelineRun, evidence: Record<string, unknown>, workflowConclusion: string) {
     const action = String(operation.metadata?.deploymentAction || "");
+    if (action === "destroy") return this.finalizeVerifiedDestroy(project, operation, evidence, workflowConclusion);
     if (!["deploy", "rollback"].includes(action)) return operation;
     const artifact = evidence.releaseArtifact;
     if (!artifact || typeof artifact !== "object") throw new Error("Validated release evidence is missing its immutable artifact.");
@@ -570,6 +599,70 @@ export class RailpackDeploymentService {
       Object.assign(operation, current);
     });
     return operation;
+  }
+
+  /** Destroy has its own exact-scope finalizer; it never promotes a release. */
+  private async finalizeVerifiedDestroy(project: Project, operation: ProjectPipelineRun, evidence: Record<string, unknown>, workflowConclusion: string) {
+    const verification = githubActionsDestroyEvidenceFromValue(evidence.destroyVerification);
+    if (!verification
+      || verification.deploymentOperationId !== operation.id
+      || verification.projectId !== project.id
+      || verification.environmentName !== canonicalEnvironmentName(project)
+      || !operation.generationId
+      || !verification.generationIds.includes(operation.generationId)) {
+      throw new Error("Validated destroy evidence does not match the exact project, environment, and generation scope.");
+    }
+    operation.status = PipelineRunStatus.COMPLETED;
+    operation.currentStage = "project_delete_cleanup";
+    operation.completedAt = operation.completedAt || new Date();
+    operation.errorMessage = null;
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      ...evidence,
+      destroyVerification: verification,
+      workflowConclusion,
+      workflowUpdatedAt: new Date().toISOString(),
+      destroyEvidenceValidated: true,
+    };
+    await this.runs.save(operation);
+    try {
+      await this.projectDeletion.finalize(project, operation);
+    } catch (error) {
+      await this.persistDestroyCleanupFailure(operation, verification, error);
+    }
+    return operation;
+  }
+
+  private verifiedDestroyEvidence(operation: ProjectPipelineRun, project: Project) {
+    const verification = githubActionsDestroyEvidenceFromValue(operation.metadata?.destroyVerification);
+    return verification
+      && verification.deploymentOperationId === operation.id
+      && verification.projectId === project.id
+      && verification.environmentName === canonicalEnvironmentName(project)
+      && Boolean(operation.generationId)
+      && verification.generationIds.includes(operation.generationId!)
+      ? verification
+      : null;
+  }
+
+  private async persistDestroyCleanupFailure(operation: ProjectPipelineRun, verification: Record<string, unknown>, error: unknown) {
+    const detail = this.sanitizer.sanitize(error instanceof Error ? error.message : "Unknown project deletion cleanup error")
+      .replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 2_000);
+    operation.status = PipelineRunStatus.FAILED;
+    operation.currentStage = "project_delete_cleanup";
+    operation.failedAt = new Date();
+    operation.errorMessage = "DeployGuard could not complete verified project deletion cleanup.";
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      destroyVerification: verification,
+      destroyEvidenceValidated: true,
+      workflowConclusion: "success",
+      failedStage: "project_delete_cleanup",
+      failureSource: "deployguard_reconciliation",
+      failureCategory: "project_delete_incomplete",
+      safeLog: detail || "DeployGuard could not complete verified project deletion cleanup.",
+    };
+    await this.runs.save(operation);
   }
 
   private runtimeIdentity(project: Project, environmentName: string, evidence: Record<string, unknown>) {
