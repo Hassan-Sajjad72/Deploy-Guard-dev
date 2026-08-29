@@ -7,7 +7,7 @@ import { ProjectCurrentStateService } from "../src/projects/current-state/projec
 import { isAiTroubleshootingEligible } from "../src/ai-troubleshooting/ai-troubleshooting.service";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentation } from "../src/projects/pipeline/github-actions-stage-presentation";
-import { GithubActionsService } from "../src/projects/pipeline/github-actions.service";
+import { DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
 import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
@@ -19,6 +19,66 @@ const project = {
   repositoryUrl: "https://github.com/example/application.git", repositoryFullName: "example/application",
   targetBranch: "main", githubInstallationId: "42", environmentName: "dev",
 };
+
+function storedZipEntry(name: string, value: string) {
+  const filename = Buffer.from(name);
+  const data = Buffer.from(value);
+  const local = Buffer.alloc(30 + filename.length + data.length);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0, 8);
+  local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(filename.length, 26);
+  filename.copy(local, 30); data.copy(local, 30 + filename.length);
+  const central = Buffer.alloc(46 + filename.length);
+  central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(0, 10);
+  central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(filename.length, 28);
+  filename.copy(central, 46);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(1, 8); eocd.writeUInt16LE(1, 10); eocd.writeUInt32LE(central.length, 12); eocd.writeUInt32LE(local.length, 16);
+  return Buffer.concat([local, central, eocd]);
+}
+
+async function verifyReleaseArtifactEvidenceReconciliation() {
+  const valid = { action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, terraform: { image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, alb_url: "http://example.test", task_definition_arn: "arn:aws:ecs:us-east-1:123:task-definition/dg:1", ecs_service_arn: "arn:aws:ecs:us-east-1:123:service/dg/dg" } };
+  assert.equal(DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, "deployguard-result.json");
+  const archive = storedZipEntry("deployguard-result.json", JSON.stringify(valid));
+  assert.equal(exactZipEntry(archive, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY), JSON.stringify(valid));
+  const originalFetch = globalThis.fetch;
+  let artifactListRead = false;
+  globalThis.fetch = (async () => {
+    if (!artifactListRead) {
+      artifactListRead = true;
+      return new Response(JSON.stringify({ artifacts: [{ id: 1, name: `deployguard-result-${valid.operationId}`, expired: false }] }), { status: 200 });
+    }
+    return new Response(archive, { status: 200, headers: { "content-length": String(archive.length) } });
+  }) as typeof fetch;
+  try {
+    const actionService = Object.create(GithubActionsService.prototype) as GithubActionsService;
+    assert.equal(await actionService.getResultArtifact(project.repositoryFullName, "456", valid.operationId, "ignored"), JSON.stringify(valid));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project }; service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  const operation: any = { id: valid.operationId, projectId: project.id, triggeredByUserId: user.id, githubWorkflowRunId: "456", status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", commitSha: valid.sourceSha, metadata: { deploymentAction: "deploy" } };
+  service.actions = { getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }), getResultArtifact: async () => JSON.stringify(valid) };
+  await service.reconcile(operation);
+  assert.equal(saved.at(-1).status, PipelineRunStatus.COMPLETED);
+  for (const [key, value] of [["operationId", "wrong"], ["sourceSha", "d".repeat(40)], ["action", "rollback"]] as const) {
+    const invalid = { ...valid, [key]: value };
+    service.actions.getResultArtifact = async () => JSON.stringify(invalid);
+    await assert.rejects(() => service.releaseEvidence(project.repositoryFullName, operation, "ignored"));
+  }
+
+  const pendingOperation = { ...operation, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending" };
+  service.actions.getResultArtifact = async () => null;
+  await service.reconcile(pendingOperation);
+  assert.equal(saved.at(-1).status, PipelineRunStatus.RUNNING, "missing evidence must not complete a successful workflow");
+  assert.equal(saved.at(-1).currentStage, "release_evidence_pending");
+  service.actions.getResultArtifact = async () => "not-json";
+  await assert.rejects(() => service.releaseEvidence(project.repositoryFullName, operation, "ignored"));
+}
 
 async function verifyPreDispatchFailure() {
   const saved: any[] = [];
@@ -311,6 +371,7 @@ void (async () => {
   const failed = await verifyPreDispatchFailure();
   verifyCapabilityFailureIsBoundedAndPreDispatch();
   await verifyPerActionCapabilitySimulation();
+  await verifyReleaseArtifactEvidenceReconciliation();
   verifyProviderContractAndConditionalDatabaseScope();
   await verifyCurrentStateProjection(failed);
   const terminalFailure = await verifyTerminalGithubFailure();

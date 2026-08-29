@@ -110,7 +110,9 @@ export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryByt
   return null;
 }
 
-export const DEPLOYGUARD_RESULT_ARTIFACT_ENTRY = "terraform/deployguard-result.json";
+// actions/upload-artifact preserves the file but strips the uploaded common
+// directory, so `path: terraform/deployguard-result.json` is ZIP-rooted.
+export const DEPLOYGUARD_RESULT_ARTIFACT_ENTRY = "deployguard-result.json";
 
 export type GithubActionsWorkflowStage = {
   key: string;
