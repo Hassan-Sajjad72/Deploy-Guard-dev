@@ -13,7 +13,7 @@ import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentati
 import { DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
-import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
+import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
 import { PINNED_AWS_PROVIDER_VERSION, PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS } from "./pinned-aws-provider-5.100.0-expectations";
 import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
 import { ProjectServiceRuntimeConfigRevision } from "../src/projects/project-service-runtime-config-revision.entity";
@@ -318,12 +318,33 @@ async function verifyProviderContractAndConditionalDatabaseScope() {
   }
   const normal = capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: false });
   assert.ok(!normal.some((capability) => capability.id === "database-efs" || capability.id === "database-secrets"));
-  assert.ok(!normal.flatMap((capability) => capability.actions).some((action) => action.startsWith("elasticfilesystem:") || action === "secretsmanager:GetResourcePolicy"));
+  assert.ok(!normal.flatMap((capability) => capability.actions).some((action) => action.startsWith("elasticfilesystem:") || action.startsWith("route53:") || action === "ec2:DescribeRegions" || action === "secretsmanager:GetResourcePolicy"));
   const database = capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: true });
   assert.ok(database.some((capability) => capability.id === "database-efs"));
   assert.ok(database.some((capability) => capability.id === "database-secrets"));
   const databaseActions = new Set(database.flatMap((capability) => capability.actions));
-  for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds"]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
+  const privateDnsActions = ["route53:CreateHostedZone", "route53:GetHostedZone", "route53:ListHostedZonesByName", "route53:DeleteHostedZone", "ec2:DescribeRegions"];
+  for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds", ...privateDnsActions]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
+  assert.equal(WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, "deployguard.railpack-runtime-aws/v7");
+  const databasePolicy: any = workflowCapabilityPolicy({ ...scope, managedDatabaseEnabled: true });
+  const globalRoute53 = databasePolicy.Statement.find((statement: any) => statement.Action.includes("route53:CreateHostedZone"));
+  const hostedZoneRoute53 = databasePolicy.Statement.find((statement: any) => statement.Action.includes("route53:GetHostedZone"));
+  assert.deepEqual(globalRoute53.Resource, ["*"], "Route 53 create/list use the required global IAM scope");
+  assert.deepEqual(hostedZoneRoute53.Resource, ["arn:aws:route53:::hostedzone/*"], "Route 53 hosted-zone read/delete remain resource-scoped");
+  const allowed = { send: async (command: any) => ({ EvaluationResults: command.input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: "allowed" })) }) };
+  assert.deepEqual(await verifyEffectiveWorkflowCapabilities(allowed, "arn:aws:iam::000000000000:role/deployguard", { ...scope, managedDatabaseEnabled: true }, "deploy", database), [], "the complete managed-database capability set must pass admission");
+  for (const action of privateDnsActions) {
+    const denied = { send: async (command: any) => ({ EvaluationResults: command.input.ActionNames.map((candidate: string) => ({ EvalActionName: candidate, EvalDecision: candidate === action ? "implicitDeny" : "allowed" })) }) };
+    assert.deepEqual(
+      await verifyEffectiveWorkflowCapabilities(denied, "arn:aws:iam::000000000000:role/deployguard", { ...scope, managedDatabaseEnabled: true }, "deploy", database),
+      [action],
+      `${action} denial must fail managed-database admission before workflow dispatch`,
+    );
+  }
+  for (const lifecycle of ["deploy", "rollback", "destroy"] as const) {
+    const actions = new Set(capabilitiesFor(lifecycle, { ...scope, managedDatabaseEnabled: true }).flatMap((capability) => capability.actions));
+    for (const action of privateDnsActions) assert.ok(actions.has(action), `${lifecycle} must admit the complete private-DNS lifecycle: ${action}`);
+  }
   assert.equal(PINNED_AWS_PROVIDER_VERSION, "5.100.0");
   const root = join(__dirname, "..", "..");
   const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
