@@ -101,7 +101,7 @@ async function verifyHistoricalIdentityRecovery() {
   const generationRepository: any = { findOne: async () => generation };
   const releaseRepository: any = { findOne: async () => release };
   const routeRepository: any = { findOne: async () => route };
-  const recovery: any = new LiveRuntimeIdentityRecoveryService(generationRepository, releaseRepository, routeRepository);
+  const recovery: any = new LiveRuntimeIdentityRecoveryService(generationRepository, releaseRepository, routeRepository, { find: async () => [] } as never);
   const identity = await recovery.recover({ id: projectId, environmentName: "dev" });
   assert.equal(identity.ecsClusterName, undefined, "deprecated scalar release columns cannot reconstruct generation authority");
   assert.equal(identity.ecsServiceArn, generation.resourceManifest.ecsServiceArn, "historical scalar data remains readable but is not expanded into new authority");
