@@ -135,4 +135,6 @@ assert.match(designSystem, /document\.body\.style\.overflow = "hidden"[\s\S]*doc
 assert.match(designSystem, /event\.key === "Escape"[\s\S]*event\.key !== "Tab"/, "Escape close and keyboard focus trapping remain active");
 assert.match(designSystem, /event\.target === event\.currentTarget && onClose\?\.\(\)/, "backdrop close remains scoped to backdrop interaction");
 assert.match(designSystem, /aria-labelledby=\{labelledBy\} aria-modal="true"[\s\S]*role="dialog"/, "shared modal accessibility contract remains intact");
+assert.match(designSystem, /createPortal\(<div className="ds-modal-backdrop"[\s\S]*document\.body\)/, "shared modal escapes transformed page containing blocks through a body portal");
+assert.match(designSystem, /createPortal\(<div className="ds-drawer-backdrop"[\s\S]*document\.body\)/, "shared drawer escapes transformed page containing blocks through a body portal");
 console.log("Overview canonical lifecycle action and responsive presentation verification passed.");

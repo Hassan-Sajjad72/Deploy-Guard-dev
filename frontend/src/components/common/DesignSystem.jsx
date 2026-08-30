@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import AppIcon from "./AppIcon.jsx";
 
@@ -21,8 +22,11 @@ export function statusTone(status) {
 
 function useDialogFocus(onClose) {
   const dialogRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  const previousFocusRef = useRef(typeof document === "undefined" ? null : document.activeElement);
+  onCloseRef.current = onClose;
   useEffect(() => {
-    const previous = document.activeElement;
+    const previous = previousFocusRef.current;
     const bodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const focusableSelector = "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])";
@@ -32,7 +36,7 @@ function useDialogFocus(onClose) {
       initial?.focus();
     }, 0);
     function onKeyDown(event) {
-      if (event.key === "Escape") onClose?.();
+      if (event.key === "Escape") onCloseRef.current?.();
       if (event.key !== "Tab" || !dialogRef.current) return;
       const focusable = [...dialogRef.current.querySelectorAll(focusableSelector)].filter((element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true");
       if (!focusable.length) { event.preventDefault(); dialogRef.current.focus(); return; }
@@ -51,7 +55,7 @@ function useDialogFocus(onClose) {
       document.body.style.overflow = bodyOverflow;
       previous?.focus?.();
     };
-  }, [onClose]);
+  }, []);
   return dialogRef;
 }
 
@@ -124,9 +128,15 @@ export function ReadinessSummary({ children, level = "blocked", message, require
 
 export function Modal({ children, labelledBy, onClose }) {
   const dialogRef = useDialogFocus(onClose);
-  return <div className="ds-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
+  if (typeof document === "undefined") return null;
+  return createPortal(<div className="ds-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
     <section aria-labelledby={labelledBy} aria-modal="true" className="ds-modal glass-modal" ref={dialogRef} role="dialog" tabIndex={-1}>{children}</section>
-  </div>;
+  </div>, document.body);
+}
+
+export function ViewportPortal({ children }) {
+  if (typeof document === "undefined") return null;
+  return createPortal(children, document.body);
 }
 
 export function Banner({ children, tone = "info", title }) {
@@ -201,12 +211,13 @@ export function Tabs({ activeId, idPrefix, items, label = "Sections", onChange }
 
 export function DetailsDrawer({ children, labelledBy, onClose, title }) {
   const dialogRef = useDialogFocus(onClose);
-  return <div className="ds-drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
+  if (typeof document === "undefined") return null;
+  return createPortal(<div className="ds-drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
     <aside aria-labelledby={labelledBy} aria-modal="true" className="ds-details-drawer glass-modal" ref={dialogRef} role="dialog" tabIndex={-1}>
       <header><h2 id={labelledBy}>{title}</h2><button aria-label="Close details" className="ds-drawer-close" onClick={onClose} type="button">Close</button></header>
       <div className="ds-drawer-body">{children}</div>
     </aside>
-  </div>;
+  </div>, document.body);
 }
 
 export function StageRail({ phases = [] }) {
