@@ -71,8 +71,8 @@ export class LogSanitizerService {
       .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer [REDACTED]")
       .replace(/eyJ[A-Za-z0-9._-]{20,}/g, "[REDACTED_JWT]")
       .replace(/(password|passwd|pwd)\s*[:=]\s*[^\s]+/gi, "$1=[REDACTED]")
-      .replace(/(api[_-]?key|token|secret|authorization|oauth[_-]?code)\s*[:=]\s*[^\s]+/gi, "$1=[REDACTED]")
-      .replace(/(["']?(?:api[_-]?key|token|secret|password|authorization|credential)["']?\s*:\s*["'])[^"']+(["'])/gi, "$1[REDACTED]$2")
+      .replace(/(api[\s_-]?key|token|secret|authorization|oauth[\s_-]?code)\s*[:=]\s*[^\s]+/gi, "$1=[REDACTED]")
+      .replace(/(["']?(?:api[\s_-]?key|token|secret|password|authorization|credential)["']?\s*:\s*["'])[^"']+(["'])/gi, "$1[REDACTED]$2")
       .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]")
       .replace(/([a-z]+:\/\/[^:\s]+):([^@\s]+)@/gi, "$1:[REDACTED]@");
   }
