@@ -207,7 +207,14 @@ jobs:
               repository="$(jq -r '.rollbackImage | split("@")[0] | split("/")[1:] | join("/")' <<<"$service")"
               compact_service="${service_id//-/}"
               [ "$repository" = "deployguard-${PROJECT_ID}" ] || [ "$repository" = "deployguard-${compact_project:0:12}-${compact_service:0:8}" ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=terraform_materialization' >&2; exit 1; }
-              aws ecr delete-repository --repository-name "$repository" --force >/dev/null 2>&1 || aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1 || true
+              if ! aws ecr delete-repository --repository-name "$repository" --force >/dev/null; then
+                echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
+                exit 1
+              fi
+              if aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1; then
+                echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
+                exit 1
+              fi
             done < <(jq -c '.services[]' .deployguard/runtime.json)
             state_key="projects/${PROJECT_ID}/${ENVIRONMENT_NAME}/runtime/terraform.tfstate"
             aws s3api delete-object --bucket "$TERRAFORM_STATE_BUCKET" --key "$state_key" >/dev/null

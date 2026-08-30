@@ -337,8 +337,11 @@ async function verifyProviderContractAndConditionalDatabaseScope() {
   const destroyCapabilities = capabilitiesFor("destroy", { ...scope, managedDatabaseEnabled: false });
   const destroyActions = destroyCapabilities.flatMap((capability) => capability.actions);
   assert.ok(destroyActions.includes("iam:ListInstanceProfilesForRole"), "Terraform Destroy must preflight the provider's IAM role-deletion helper call");
+  assert.ok(destroyActions.includes("ecr:DeleteRepository"), "Destroy must preflight immutable ECR repository deletion before dispatch");
   const denyInstanceProfiles = { send: async (command: any) => ({ EvaluationResults: command.input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: action === "iam:ListInstanceProfilesForRole" ? "implicitDeny" : "allowed" })) }) };
   assert.deepEqual(await verifyEffectiveWorkflowCapabilities(denyInstanceProfiles, "arn:aws:iam::000000000000:role/deployguard", scope, "destroy", destroyCapabilities), ["iam:ListInstanceProfilesForRole"], "missing IAM role-delete helper permission fails before Terraform Destroy");
+  const denyEcrDelete = { send: async (command: any) => ({ EvaluationResults: command.input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: action === "ecr:DeleteRepository" ? "implicitDeny" : "allowed" })) }) };
+  assert.deepEqual(await verifyEffectiveWorkflowCapabilities(denyEcrDelete, "arn:aws:iam::000000000000:role/deployguard", scope, "destroy", destroyCapabilities), ["ecr:DeleteRepository"], "missing immutable ECR cleanup permission fails before Destroy dispatch");
   assert.ok(!capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
 }
 

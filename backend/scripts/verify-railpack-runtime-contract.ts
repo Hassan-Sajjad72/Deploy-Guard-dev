@@ -30,6 +30,22 @@ const destroyJqResult = spawnSync("jq", ["-e", "--arg", "project", destroyFixtur
 assert.equal(destroyJqResult.status, 0, `workflow must accept the exact canonical destroy runtime fixture: ${destroyJqResult.stderr}`);
 const destroyRuntime = workflow.slice(workflow.indexOf('if [ "$DEPLOYMENT_ACTION" = destroy ]; then'), workflow.indexOf('else\n            terraform -chdir=.deployguard/terraform plan'));
 assert.match(destroyRuntime, /terraform -chdir=\.deployguard\/terraform destroy -input=false -auto-approve[\s\S]*?aws secretsmanager delete-secret --secret-id .*--force-delete-without-recovery[\s\S]*?aws ecr delete-repository --repository-name .* --force[\s\S]*?aws s3api delete-object --bucket "\$TERRAFORM_STATE_BUCKET" --key "\$state_key"[\s\S]*?aws s3api head-object/, "destroy must prove exact Terraform state, DeployGuard-owned runtime-secret, and immutable-image cleanup before it emits deletion evidence");
+assert.match(destroyRuntime, /if ! aws ecr delete-repository[\s\S]*?DG_ECR_CLEANUP_FAILED[\s\S]*?if aws ecr describe-repositories[\s\S]*?DG_ECR_CLEANUP_FAILED/, "Destroy must fail closed when ECR deletion fails or the repository remains observable");
+assert.doesNotMatch(destroyRuntime, /delete-repository[^\n]*\|\|\s*aws ecr describe-repositories[^\n]*\|\|\s*true/, "Destroy must never convert an extant ECR repository into successful deletion evidence");
+const ecrCleanup = destroyRuntime.match(/if ! aws ecr delete-repository[\s\S]*?\n\s*fi\n\s*if aws ecr describe-repositories[\s\S]*?\n\s*fi/)?.[0];
+assert.ok(ecrCleanup, "the executable ECR deletion proof must be extractable");
+const executeEcrCleanup = (deleteExit: number, describeExit: number) => spawnSync("bash", ["-c", `
+  aws() {
+    if [ "$1 $2" = "ecr delete-repository" ]; then return ${deleteExit}; fi
+    if [ "$1 $2" = "ecr describe-repositories" ]; then return ${describeExit}; fi
+    return 99
+  }
+  repository=deployguard-test
+  ${ecrCleanup}
+`], { encoding: "utf8" });
+assert.notEqual(executeEcrCleanup(1, 0).status, 0, "a rejected ECR deletion must stop Destroy before release evidence");
+assert.notEqual(executeEcrCleanup(0, 0).status, 0, "an ECR repository still observable after deletion must stop Destroy before release evidence");
+assert.equal(executeEcrCleanup(0, 1).status, 0, "confirmed ECR absence may continue to state cleanup and release evidence");
 assert.match(destroyRuntime, /\.Name == \$serviceSecret[\s\S]*?\.Name == \$legacySecret/, "destroy supports only exact owned service-scoped or historical project-scoped runtime secret namespaces");
 assert.match(destroyRuntime, /\[ "\$repository" = "deployguard-\$\{PROJECT_ID\}" \] \|\| \[ "\$repository" = "deployguard-\$\{compact_project:0:12\}-\$\{compact_service:0:8\}" \]/, "destroy must reject any ECR repository outside the exact legacy or service-scoped DeployGuard namespace");
 assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller)));
@@ -117,7 +133,7 @@ for (const action of [
   "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:SetSubnets", "ecs:CreateCluster", "ecs:DeleteCluster", "ecs:RegisterTaskDefinition", "ecs:DeleteTaskDefinitions",
   "ec2:UpdateSecurityGroupRuleDescriptionsIngress", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:PutRolePolicy", "secretsmanager:UpdateSecret",
   "elasticfilesystem:ModifyMountTargetSecurityGroups", "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
-  "iam:ListInstanceProfilesForRole",
+  "iam:ListInstanceProfilesForRole", "ecr:DeleteRepository",
 ]) assert.ok(capabilityContract.includes(action), `pinned-provider capability missing: ${action}`);
 assert.match(capabilityContract, /servicediscovery:CreatePrivateDnsNamespace/);
 assert.doesNotMatch(capabilityContract, /sharedEcsClusterArn|sharedAlbArn|sharedAlbListenerArn|CreateRule/);
