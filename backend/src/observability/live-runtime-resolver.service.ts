@@ -111,20 +111,20 @@ export class LiveRuntimeResolverService {
       : [];
     const selected = requestedServiceId
       ? persistedServices.find((service) => service.serviceId === requestedServiceId)
-      : persistedServices[0];
+      : persistedServices.length ? persistedServices.reduce((chosen, service) => String(service.serviceId).localeCompare(String(chosen.serviceId)) < 0 ? service : chosen) : undefined;
     if (requestedServiceId && !selected) throw new BadRequestException("The selected service is not part of the authoritative LIVE generation.");
     const selectedString = (key: string) => typeof selected?.[key] === "string" ? String(selected[key]) : "";
-    const serviceId = selectedString("serviceId") || "legacy";
+    const serviceId = selectedString("serviceId");
     const cacheKey = `${project.id}:${serviceId}`;
     const cached = this.cache.get(cacheKey);
     if (cached?.value.generationId === release.generationId && cached.expiresAt > Date.now()) return cached.value;
     const cluster = string("ecsClusterArn") || string("ecsClusterName");
-    const serviceArn = selectedString("ecsServiceArn") || release.ecsServiceArn;
-    const taskDefinitionArn = selectedString("taskDefinitionArn") || release.taskDefinitionArn;
-    const targetGroupArn = selectedString("targetGroupArn") || string("targetGroupArn");
-    const expectedLogGroup = selectedString("cloudWatchLogGroupName") || string("cloudWatchLogGroupName");
-    const expectedContainerName = selectedString("applicationContainerName") || string("applicationContainerName");
-    if (!generation || !cluster || !serviceArn || !taskDefinitionArn || !targetGroupArn || !expectedLogGroup || !expectedContainerName) {
+    const serviceArn = selectedString("ecsServiceArn");
+    const taskDefinitionArn = selectedString("taskDefinitionArn");
+    const targetGroupArn = selectedString("targetGroupArn");
+    const expectedLogGroup = selectedString("cloudWatchLogGroupName");
+    const expectedContainerName = selectedString("applicationContainerName");
+    if (!generation || !serviceId || !cluster || !serviceArn || !taskDefinitionArn || !targetGroupArn || !expectedLogGroup || !expectedContainerName) {
       throw new ServiceUnavailableException("The authoritative LIVE runtime identity is incomplete.");
     }
 
@@ -160,8 +160,7 @@ export class LiveRuntimeResolverService {
     ) {
       throw new ServiceUnavailableException("AWS does not match the authoritative LIVE release identity.");
     }
-    const appContainer = taskDefinition?.containerDefinitions?.find((container) => container.name === expectedContainerName)
-      || taskDefinition?.containerDefinitions?.[0];
+    const appContainer = taskDefinition?.containerDefinitions?.find((container) => container.name === expectedContainerName);
     const logOptions = appContainer?.logConfiguration?.options || {};
     if (appContainer?.name !== expectedContainerName || logOptions["awslogs-group"] !== expectedLogGroup) {
       throw new ServiceUnavailableException("The LIVE task definition does not contain the verified Railpack log identity.");

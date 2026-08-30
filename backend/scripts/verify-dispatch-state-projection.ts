@@ -16,6 +16,8 @@ import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-acti
 import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
 import { PINNED_AWS_PROVIDER_VERSION, PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS } from "./pinned-aws-provider-5.100.0-expectations";
 import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
+import { ProjectServiceRuntimeConfigRevision } from "../src/projects/project-service-runtime-config-revision.entity";
+import { ProjectGenerationServiceRevision } from "../src/projects/project-generation-service-revision.entity";
 
 const user = { id: 7 } as any;
 const project = {
@@ -42,12 +44,13 @@ function storedZipEntry(name: string, value: string) {
 
 async function verifyReleaseArtifactEvidenceReconciliation() {
   const serviceId = "77777777-7777-4777-8777-777777777777";
-  const contract = (operationId: string, sourceSha: string, action: "deploy" | "rollback" = "deploy", immutableImage?: string) => servicesBase64({ schemaVersion: 2, projectId: project.id, environmentName: "dev", operationId, sourceSha, services: [{ serviceId, serviceName: "Web", serviceDirectory: ".", environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] }, ...(action === "rollback" && immutableImage ? { rollbackImage: immutableImage } : {}) }] });
+  const contract = (operationId: string, sourceSha: string, action: "deploy" | "rollback" = "deploy", immutableImage?: string) => servicesBase64({ schemaVersion: 2, projectId: project.id, environmentName: "dev", operationId, sourceSha, services: [{ serviceId, runtimeConfigRevisionId: "77777777-7777-4777-8777-777777777777", serviceName: "Web", serviceDirectory: ".", environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] }, ...(action === "rollback" && immutableImage ? { rollbackImage: immutableImage } : {}) }] });
   const imageUri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/repo";
   const imageDigest = `sha256:${"a".repeat(64)}`;
   const image = `${imageUri}@${imageDigest}`;
-  const runtime = { name: "Web", image, ecs_service_arn: "arn:aws:ecs:us-east-1:123456789012:service/dg/dg", ecs_service_name: "dg", task_definition_arn: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:1", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/a", alb_target_group_name: "dg", public_url: "http://example.test", cloudwatch_log_group_name: `/deployguard/${project.id}/services/${serviceId}`, application_container_name: "application" };
-  const valid = { contractVersion: "deployguard.release-result/v3", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", services: [{ serviceId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest, image }], terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: { [serviceId]: runtime } } };
+  const runtimeConfigRevisionId = serviceId;
+  const runtime = { name: "Web", image, runtime_config_revision_id: runtimeConfigRevisionId, ecs_service_arn: "arn:aws:ecs:us-east-1:123456789012:service/dg/dg", ecs_service_name: "dg", task_definition_arn: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:1", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/a", alb_target_group_name: "dg", public_url: "http://example.test", cloudwatch_log_group_name: `/deployguard/${project.id}/services/${serviceId}`, application_container_name: "application" };
+  const valid = { contractVersion: "deployguard.release-result/v4", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", services: [{ serviceId, runtimeConfigRevisionId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest, image }], terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: { [serviceId]: runtime }, database: null } };
   assert.equal(DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, "deployguard-result.json");
   const archive = storedZipEntry("deployguard-result.json", JSON.stringify(valid));
   assert.equal(exactZipEntry(archive, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY), JSON.stringify(valid));
@@ -70,6 +73,8 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   const generations: any[] = [];
   const routes: any[] = [];
   const releases: any[] = [];
+  const generationRevisions: any[] = [];
+  const runtimeConfig = { id: runtimeConfigRevisionId, projectId: project.id, serviceId, createdByOperationId: valid.operationId, isRollbackSafe: true, sealedAt: null, databaseConfiguration: { attached: false }, nonSecretEnvironment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {} };
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.sanitizer = new LogSanitizerService();
   service.projects = { findOne: async () => project }; service.users = { findOne: async () => user };
@@ -100,12 +105,20 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
     findOne: async () => transactionOperation,
     save: async (row: any) => { saved.push(structuredClone(row)); return row; },
   };
+  const runtimeConfigRepository = { find: async () => [runtimeConfig], save: async (row: any) => Object.assign(runtimeConfig, row) };
+  const generationRevisionRepository = {
+    find: async ({ where }: any) => generationRevisions.filter((revision) => revision.generationId === where.generationId),
+    create: (row: any) => ({ id: `${row.generationId}-${row.serviceId}`, ...row }),
+    save: async (rows: any[]) => { generationRevisions.push(...rows.map((row) => structuredClone(row))); return rows; },
+  };
   const manager: any = {
     query: async () => undefined,
     getRepository: (entity: unknown) => entity === ProjectPipelineRun ? operationRepository
       : entity === ProjectDeploymentGeneration ? generationRepository
         : entity === ProjectEnvironmentRoute ? routeRepository
           : entity === ProjectStableRelease ? releaseRepository
+            : entity === ProjectServiceRuntimeConfigRevision ? runtimeConfigRepository
+              : entity === ProjectGenerationServiceRevision ? generationRevisionRepository
             : null,
   };
   service.dataSource = { transaction: async (callback: any) => callback(manager) };
@@ -116,8 +129,8 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   assert.equal(generations[0]?.status, "live");
   assert.equal(routes[0]?.liveGenerationId, operation.id);
   assert.equal(releases[0]?.metadata?.deployedUrl, runtime.public_url);
-  assert.equal(generations[0]?.resourceManifest?.cloudWatchLogGroupName, runtime.cloudwatch_log_group_name);
-  assert.equal(generations[0]?.resourceManifest?.applicationContainerName, "application");
+  assert.equal(generations[0]?.resourceManifest?.services?.find((item: any) => item.serviceId === serviceId)?.cloudWatchLogGroupName, runtime.cloudwatch_log_group_name);
+  assert.equal(generations[0]?.resourceManifest?.services?.find((item: any) => item.serviceId === serviceId)?.applicationContainerName, "application");
   assert.equal(operation.metadata.releaseEvidenceVerified, true);
   const redeployEvidence = structuredClone(valid);
   redeployEvidence.operationId = "88888888-8888-4888-8888-888888888888";
@@ -128,6 +141,7 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   redeployEvidence.terraform.services[serviceId].task_definition_arn = "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:2";
   const redeploy: any = { ...operation, id: redeployEvidence.operationId, generationId: null, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", commitSha: redeployEvidence.sourceSha, metadata: { deploymentAction: "deploy", immutableDispatchInputs: { services_base64: contract(redeployEvidence.operationId, redeployEvidence.sourceSha) } } };
   transactionOperation = redeploy;
+  runtimeConfig.createdByOperationId = redeploy.id;
   service.actions.getResultArtifact = async () => JSON.stringify(redeployEvidence);
   await service.reconcile(redeploy);
   assert.equal(redeploy.status, PipelineRunStatus.COMPLETED, "a later verified release must finalize against the same project-scoped Terraform state");

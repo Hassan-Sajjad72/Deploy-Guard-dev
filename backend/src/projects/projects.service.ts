@@ -35,6 +35,7 @@ import { GithubAppService } from "./github-app.service";
 import { ProjectDeployableService } from "./project-deployable-service.entity";
 import { normalizeServiceDirectory } from "./deployable-service-path";
 import { DeployableServiceInputDto, UpdateDeployableServiceDto } from "./dto/deployable-service.dto";
+import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 
 type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
@@ -49,6 +50,8 @@ export class ProjectsService {
     private readonly databaseTierRepository: Repository<ProjectDatabaseTier>,
     @InjectRepository(ProjectDeployableService)
     private readonly deployableServices: Repository<ProjectDeployableService>,
+    @InjectRepository(ProjectGenerationServiceRevision)
+    private readonly generationServiceRevisions: Repository<ProjectGenerationServiceRevision>,
     private readonly auditLogService: AuditLogService,
     private readonly usersService: UsersService,
     private readonly dataSource: DataSource,
@@ -303,6 +306,7 @@ export class ProjectsService {
     if (!service) throw new NotFoundException("Deployable service not found");
     const attached = await this.databaseTierRepository.findOne({ where: { projectId, attachedServiceId: serviceId } });
     if (attached) throw new BadRequestException("Move or disable the managed database before removing its attached service.");
+    if (await this.generationServiceRevisions.exist({ where: { projectId, serviceId } })) throw new BadRequestException("A service with immutable release history cannot be removed before the project is destroyed.");
     await this.deployableServices.remove(service);
     const remaining = services.filter((item) => item.id !== serviceId);
     for (const [position, item] of remaining.entries()) { item.position = position; await this.deployableServices.save(item); }

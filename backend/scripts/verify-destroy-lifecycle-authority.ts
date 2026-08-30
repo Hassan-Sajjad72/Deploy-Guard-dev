@@ -18,7 +18,7 @@ function failed(action: "deploy" | "rollback" | "destroy") {
     developerState: "live", developerAction: "open_application", developerMessage: `The latest ${action} operation failed. The verified stable release remains live.`,
     progress: { percentage: 60, phase: "deploy" as const, label: "Failed" }, repository: "owner/repository", branch: "main", commit: "a".repeat(40),
     latestAttempt: { operationId, generationId, workflowRunId: "33252955775", operationType: action, status: "failed_application", outcome: "blocked" as const, attempt: "2", message: "Terraform failed", releaseRevision: null, commit: "a".repeat(40), occurredAt: observedAt },
-    stableRelease: { id: "release", operationId: "previous", revision: "1", generationId, commit: "a".repeat(40), promotedAt: observedAt, rollbackAvailable: true, runtimeIdentity: { region: "us-east-1", ecsClusterArn: "cluster", ecsServiceArn: "service", targetGroupArn: "target", cloudWatchLogGroupName: "/deployguard/app", applicationContainerName: "application" } },
+    stableRelease: { id: "release", operationId: "previous", revision: "1", generationId, commit: "a".repeat(40), promotedAt: observedAt, rollbackAvailable: true, runtimeIdentity: { region: "us-east-1", ecsClusterArn: "cluster", services: [{ serviceId: "99999999-9999-4999-8999-999999999999", ecsServiceArn: "service", targetGroupArn: "target", cloudWatchLogGroupName: "/deployguard/app", applicationContainerName: "application" }] } },
     stableUrl: "https://application.example.test", estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null, canRetry: true, stateAuthority: null,
   } as any;
 }
@@ -138,7 +138,7 @@ async function verifyReconcileUsesDestroyFinalizer() {
   service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
   service.actions = {
     getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }),
-    getResultArtifact: async () => JSON.stringify({ contractVersion: "deployguard.release-result/v3", action: "destroy", sourceSha: operation.commitSha, operationId, destroyed: true, destroyVerification: destroyEvidence() }),
+    getResultArtifact: async () => JSON.stringify({ contractVersion: "deployguard.release-result/v4", action: "destroy", sourceSha: operation.commitSha, operationId, destroyed: true, destroyVerification: destroyEvidence() }),
   };
   service.runs = { save: async (row: any) => row };
   service.sanitizer = new LogSanitizerService();
@@ -173,7 +173,7 @@ async function verifyAttemptFourContractFailureConverges() {
   assert.equal(operation.status, PipelineRunStatus.FAILED, "terminal GitHub success with stale Destroy evidence must converge to failure");
   assert.equal(operation.currentStage, "release_evidence_validation");
   assert.equal(operation.metadata.failureCategory, "release_contract_incompatible");
-  assert.match(operation.metadata.safeLog, /deployguard\.release-result\/v3/);
+  assert.match(operation.metadata.safeLog, /deployguard\.release-result\/v4/);
   assert.ok(operation.failedAt && operation.completedAt, "terminal reconciliation persists bounded terminal timestamps");
 }
 

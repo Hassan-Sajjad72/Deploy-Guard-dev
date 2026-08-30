@@ -16,7 +16,7 @@ const pinned = parsePinnedReusableWorkflow("Hassan-Sajjad72/Deploy-Guard-dev/.gi
 const caller = renderDeployguardCallerWorkflow(pinned.reference);
 const jqContract = workflow.match(/jq -e[^']*'\n([\s\S]*?)\n\s*' \.deployguard\/runtime\.json/)?.[1];
 assert.ok(jqContract, "the workflow service-contract jq filter must be extractable");
-const contractFixture = { schemaVersion: 2, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", serviceName: "Web", serviceDirectory: ".", environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: "arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::" }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
+const contractFixture = { schemaVersion: 2, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "44444444-4444-4444-8444-444444444444", serviceName: "Web", serviceDirectory: ".", environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::${"b".repeat(64)}` }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
 const jqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(contractFixture), encoding: "utf8" });
 assert.equal(jqResult.status, 0, `workflow service contract must accept the canonical runtime fixture: ${jqResult.stderr}`);
 const invalidReference = structuredClone(contractFixture);
@@ -31,8 +31,8 @@ assert.throws(
   "a reusable workflow with the stale result schema is blocked before dispatch",
 );
 assert.throws(
-  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v3", "# deployguard-result-contract: deployguard.release-result/v2"), pinned, generatedCallerWithKeys(caller)),
-  /does not produce deployguard\.release-result\/v3/,
+  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v4", "# deployguard-result-contract: deployguard.release-result/v3"), pinned, generatedCallerWithKeys(caller)),
+  /does not produce deployguard\.release-result\/v4/,
   "input compatibility alone cannot certify an incompatible result producer",
 );
 
@@ -48,7 +48,7 @@ assert.match(terraform, /image\s*=\s*each\.value\.image/);
 assert.match(terraform, /containerPort\s*=\s*var\.platform_port/);
 for (const output of [
   "aws_region", "ecs_cluster_arn", "ecs_cluster_name", "services",
-  "database_efs_file_system_id", "database_efs_access_point_id",
+  "database_efs_file_system_id", "database_efs_access_point_id", "database",
 ]) assert.match(outputs, new RegExp(`output\\s+"${output}"`), `Railpack release evidence must expose ${output}`);
 assert.match(workflow, /HOST:"0\.0\.0\.0"/);
 assert.match(workflow, /aws-actions\/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4\.0\.2/);
@@ -67,7 +67,7 @@ assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials@0a3a7f8c8f
 assert.match(workflow, /control_plane_sha/);
 assert.match(workflow, /result_contract_version: \{ required: true, type: string \}/);
 assert.match(workflow, /RESULT_CONTRACT_VERSION.*inputs\.result_contract_version/);
-assert.match(workflow, /deployguard\.release-result\/v3/);
+assert.match(workflow, /deployguard\.release-result\/v4/);
 assert.match(workflow, /services_base64/);
 assert.match(workflow, /\.services \| to_entries\[\]/);
 assert.doesNotMatch(workflow, /rollback_image_uri|runtime_environment_base64|runtime_secret_references_base64/);
@@ -110,5 +110,6 @@ for (const action of [
   "elasticfilesystem:ModifyMountTargetSecurityGroups", "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
   "iam:ListInstanceProfilesForRole",
 ]) assert.ok(capabilityContract.includes(action), `pinned-provider capability missing: ${action}`);
-assert.doesNotMatch(capabilityContract, /sharedEcsClusterArn|sharedAlbArn|sharedAlbListenerArn|service-discovery|CreateRule/);
+assert.match(capabilityContract, /servicediscovery:CreatePrivateDnsNamespace/);
+assert.doesNotMatch(capabilityContract, /sharedEcsClusterArn|sharedAlbArn|sharedAlbListenerArn|CreateRule/);
 console.log("RAILPACK_RUNTIME_CONTRACT=PASS");

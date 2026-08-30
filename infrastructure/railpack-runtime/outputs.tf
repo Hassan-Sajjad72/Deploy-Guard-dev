@@ -5,6 +5,7 @@ output "services" {
   value = { for id, service in var.services : id => {
     name                       = service.name
     image                      = service.image
+    runtime_config_revision_id = service.runtime_config_revision_id
     ecs_service_arn            = aws_ecs_service.application[id].id
     ecs_service_name           = aws_ecs_service.application[id].name
     task_definition_arn        = aws_ecs_task_definition.application[id].arn
@@ -19,3 +20,20 @@ output "services" {
 }
 output "database_efs_file_system_id" { value = local.database_enabled ? aws_efs_file_system.database[0].id : null }
 output "database_efs_access_point_id" { value = local.database_enabled ? aws_efs_access_point.database[0].id : null }
+output "database" {
+  value = local.database_enabled ? {
+    attached_service_id       = local.database_service_id
+    engine                    = local.database_engine
+    host                      = local.database_host
+    port                      = local.database_port
+    ecs_service_arn           = aws_ecs_service.database[0].id
+    ecs_service_name          = aws_ecs_service.database[0].name
+    task_definition_arn       = aws_ecs_task_definition.database[0].arn
+    cloudwatch_log_group_name = aws_cloudwatch_log_group.database[0].name
+    efs_file_system_id        = aws_efs_file_system.database[0].id
+    efs_access_point_id       = aws_efs_access_point.database[0].id
+    credentials_secret_arn    = aws_secretsmanager_secret.database[0].arn
+    secret_version_id         = aws_secretsmanager_secret_version.database[0].version_id
+  } : null
+  sensitive = true
+}

@@ -20,7 +20,8 @@ service.variables = { createQueryBuilder: () => ({ addSelect() { return this; },
 service.databaseTiers = { findOne: async () => ({ provider: "managed", engine: "postgres", attachedServiceId: apiId }) };
 service.crypto = { decrypt: (value: string) => value };
 const materializations: any[] = [];
-service.runtimeSecrets = { materialize: async (input: any) => { materializations.push(input); return { valueFromByName: Object.fromEntries(Object.keys(input.secretValues).map((key) => [key, `arn:aws:secretsmanager:us-east-1:123456789012:secret:${input.serviceId}:${key}::`])) }; } };
+service.runtimeSecrets = { materialize: async (input: any) => { materializations.push(input); const versionToken = "f".repeat(64); return Object.keys(input.secretValues).length ? { versionToken, secretNames: Object.keys(input.secretValues), valueFromByName: Object.fromEntries(Object.keys(input.secretValues).map((key) => [key, `arn:aws:secretsmanager:us-east-1:123456789012:secret:${input.serviceId}:${key}::${versionToken}`])) } : null; } };
+service.runtimeConfigRevisions = { create: (value: any) => value, save: async (value: any) => ({ ...value, id: value.serviceId === webId ? "55555555-5555-4555-8555-555555555555" : "66666666-6666-4666-8666-666666666666" }) };
 service.dataSource = { getRepository: () => ({ find: async () => [] }) };
 
 void (async () => {

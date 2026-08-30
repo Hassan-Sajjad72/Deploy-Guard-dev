@@ -7,9 +7,6 @@ export type StableReleaseProjectionInput = {
   environmentName: string;
   operationId: string;
   commitSha: string;
-  imageUri: string;
-  taskDefinitionArn: string;
-  ecsServiceArn: string;
   healthCheckPath: string;
   appPort: number;
   metadata: Record<string, unknown>;
@@ -65,9 +62,11 @@ export async function materializeStableRelease(
     environmentName: input.environmentName,
     commitSha: input.commitSha,
     shortCommitSha: input.commitSha.slice(0, 12),
-    imageUri: input.imageUri,
-    taskDefinitionArn: input.taskDefinitionArn,
-    ecsServiceArn: input.ecsServiceArn,
+    // Nullable legacy columns are intentionally not populated. A project
+    // release has no representative image/task/service scalar.
+    imageUri: null,
+    taskDefinitionArn: null,
+    ecsServiceArn: null,
     healthCheckPath: input.healthCheckPath,
     appPort: input.appPort,
     deployedByPipelineRunId: input.operationId,

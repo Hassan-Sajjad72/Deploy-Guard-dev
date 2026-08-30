@@ -100,7 +100,9 @@ export class RuntimeSecretMaterializer {
     return {
       secretArn: arn,
       secretNames,
-      valueFromByName: Object.fromEntries(secretNames.map((name) => [name, `${arn}:${name}::`])),
+      // ECS accepts ARN:json-key:version-stage:version-id. Leaving both
+      // version selectors empty would make rollback follow mutable AWSCURRENT.
+      valueFromByName: Object.fromEntries(secretNames.map((name) => [name, `${arn}:${name}::${versionToken}`])),
       versionToken,
     };
   }

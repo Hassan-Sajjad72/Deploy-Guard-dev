@@ -651,12 +651,11 @@ export class ProjectCurrentStateService {
     // Configuration merely permits a CloudWatch read.  It is not evidence
     // that this release has a resolvable runtime provider.  The metrics/log
     // endpoint resolves that evidence from this same persisted identity.
+    const monitoringServices = Array.isArray(runtimeIdentity?.services) ? runtimeIdentity.services as Array<Record<string, unknown>> : [];
     const monitoringIdentityComplete = Boolean(
       identityString("ecsClusterArn")
-      && identityString("ecsServiceArn")
-      && identityString("targetGroupArn")
-      && identityString("cloudWatchLogGroupName")
-      && identityString("applicationContainerName"),
+      && monitoringServices.length
+      && monitoringServices.every((service) => ["serviceId", "ecsServiceArn", "targetGroupArn", "cloudWatchLogGroupName", "applicationContainerName"].every((key) => typeof service[key] === "string" && Boolean(service[key]))),
     );
     const awsRuntimeMonitoringEnabled = getObservabilityConfig(this.config).awsRuntimeMonitoringEnabled;
     const destroyFailureMessage = runtimeRemovedByObservation
@@ -820,18 +819,15 @@ export class ProjectCurrentStateService {
     };
     const observedAt = new Date().toISOString();
     const environmentName = canonicalEnvironmentName(project);
-    const [generation, release] = await Promise.all([
-      this.generationRepository.findOne({ where: { id: generationId, projectId: project.id, environmentName } }),
-      this.releaseRepository.findOne({ where: { projectId: project.id, environmentName, generationId, status: StableReleaseStatus.STABLE }, order: { deployedAt: "DESC" } }),
-    ]);
+    const generation = await this.generationRepository.findOne({ where: { id: generationId, projectId: project.id, environmentName } });
     const identity = generation?.resourceManifest || {};
     const value = (key: string) => typeof identity[key] === "string" ? identity[key] as string : "";
     const region = value("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const cluster = value("ecsClusterArn") || value("ecsClusterName");
     const serviceIdentities = Array.isArray(identity.services) ? identity.services as Array<Record<string, unknown>> : [];
-    const serviceArns = serviceIdentities.length ? serviceIdentities.map((item) => String(item.ecsServiceArn || "")).filter(Boolean) : [release?.ecsServiceArn || value("ecsServiceArn")].filter(Boolean);
-    const targetGroupArns = serviceIdentities.length ? serviceIdentities.map((item) => String(item.targetGroupArn || "")).filter(Boolean) : [value("targetGroupArn")].filter(Boolean);
-    const logGroups = serviceIdentities.length ? serviceIdentities.map((item) => String(item.cloudWatchLogGroupName || "")).filter(Boolean) : [value("cloudWatchLogGroupName")].filter(Boolean);
+    const serviceArns = serviceIdentities.map((item) => String(item.ecsServiceArn || "")).filter(Boolean);
+    const targetGroupArns = serviceIdentities.map((item) => String(item.targetGroupArn || "")).filter(Boolean);
+    const logGroups = serviceIdentities.map((item) => String(item.cloudWatchLogGroupName || "")).filter(Boolean);
     const unavailable = { runtime: "unknown" as const, resources: { ecs: "unknown" as const, alb: "unknown" as const, cloudWatch: "unknown" as const }, evidence: null };
     if (!generation || !cluster || !serviceArns.length || !targetGroupArns.length) return { observedAt, ...unavailable };
     const absentError = (error: unknown) => /notfound|not found|does not exist|missing/i.test(`${(error as { name?: string })?.name || ""} ${error instanceof Error ? error.message : ""}`);
@@ -862,9 +858,8 @@ export class ProjectCurrentStateService {
     const string = (key: string) => typeof identity[key] === "string" ? identity[key] : "";
     const region = string("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const cluster = string("ecsClusterArn") || string("ecsClusterName");
-    const persistedServices = Array.isArray(identity.services) ? identity.services as Array<Record<string, unknown>> : [];
-    const services = persistedServices.length ? persistedServices : [{ serviceId: "legacy", serviceName: "Web", imageUri: string("imageUri"), imageDigest: string("imageDigest"), ecsServiceArn: release?.ecsServiceArn, taskDefinitionArn: release?.taskDefinitionArn, targetGroupArn: string("targetGroupArn"), albName: string("albName"), publicUrl: stableUrl }];
-    if (!generation || !release || !cluster || services.some((service) => !service.ecsServiceArn || !service.taskDefinitionArn || !service.targetGroupArn || !service.imageUri || !service.imageDigest)) return null;
+    const services = Array.isArray(identity.services) ? (identity.services as Array<Record<string, unknown>>).slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId))) : [];
+    if (!generation || !release || !cluster || !services.length || services.some((service) => !service.ecsServiceArn || !service.taskDefinitionArn || !service.targetGroupArn || !service.imageUri || !service.imageDigest || !service.runtimeConfigRevisionId)) return null;
     try {
       const ecs = new ECSClient({ region });
       const ecr = new ECRClient({ region });
@@ -876,7 +871,7 @@ export class ProjectCurrentStateService {
         return values.ManagedBy === "DeployGuard"
           && values.DeployGuardProjectId === projectId
           && values.DeployGuardOperationId === release.deployedByPipelineRunId
-          && (serviceId === "legacy" || values.DeployGuardServiceId === serviceId);
+          && values.DeployGuardServiceId === serviceId;
       };
       const observations = [] as LiveAwsEvidence["services"];
       for (const item of services) {
@@ -897,10 +892,12 @@ export class ProjectCurrentStateService {
         observations.push({ serviceId, serviceName: String(item.serviceName || runtimeService.serviceName), publicUrl: typeof item.publicUrl === "string" ? item.publicUrl : null, imageDigest, ecs: { service: runtimeService.serviceName, desiredCount: runtimeService.desiredCount || 0, runningCount: runtimeService.runningCount || 0, pendingCount: runtimeService.pendingCount || 0 }, alb: { targetHealth: (targetHealth.TargetHealthDescriptions || []).map((target) => target.TargetHealth?.State || "unknown") } });
       }
       ecs.destroy(); ecr.destroy(); elb.destroy();
-      const first = observations[0];
+      const canonicalService = services.reduce((selected, service) => String(service.serviceId).localeCompare(String(selected.serviceId)) < 0 ? service : selected);
+      const canonicalObservation = observations.find((item) => item.serviceId === String(canonicalService.serviceId));
+      if (!canonicalObservation) return null;
       return {
         observedAt: new Date().toISOString(),
-        ecr: { repository: String(services[0].imageUri).replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, ""), imageTag: null, imageDigest: first.imageDigest },
+        ecr: { repository: String(canonicalService.imageUri).replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, ""), imageTag: null, imageDigest: canonicalObservation.imageDigest },
         ecs: { cluster, service: observations.map((item) => item.ecs.service).join(", "), taskDefinitionRevision: null, desiredCount: observations.reduce((sum, item) => sum + item.ecs.desiredCount, 0), runningCount: observations.reduce((sum, item) => sum + item.ecs.runningCount, 0), pendingCount: observations.reduce((sum, item) => sum + item.ecs.pendingCount, 0) },
         alb: {
           name: observations.map((item) => item.serviceName).join(", "),

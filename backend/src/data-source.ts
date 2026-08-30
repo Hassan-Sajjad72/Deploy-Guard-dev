@@ -65,6 +65,8 @@ import { ProjectServiceBinding } from "./projects/project-service-binding.entity
 import { ProjectConfigurationSnapshot } from "./projects/project-configuration-snapshot.entity";
 import { GithubAppInstallation } from "./projects/github-app-installation.entity";
 import { ProjectDeployableService } from "./projects/project-deployable-service.entity";
+import { ProjectServiceRuntimeConfigRevision } from "./projects/project-service-runtime-config-revision.entity";
+import { ProjectGenerationServiceRevision } from "./projects/project-generation-service-revision.entity";
 
 function loadBackendEnv() {
   const envPath = resolveBackendEnvFile();
@@ -127,6 +129,8 @@ export default new DataSource({
     AuditLog,
     Project,
     ProjectDeployableService,
+    ProjectServiceRuntimeConfigRevision,
+    ProjectGenerationServiceRevision,
     ProjectEnvironmentVariable,
     ProjectDatabaseTier,
     ProjectPipelineRun,

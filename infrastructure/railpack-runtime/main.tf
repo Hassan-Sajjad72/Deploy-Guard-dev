@@ -24,21 +24,27 @@ locals {
   database_port       = local.database_engine == "mysql" ? 3306 : local.database_engine == "mongodb" ? 27017 : 5432
   database_image      = local.database_engine == "mysql" ? "mysql:8" : local.database_engine == "mongodb" ? "mongo:8" : "postgres:16"
   database_path       = local.database_engine == "mysql" ? "/var/lib/mysql" : local.database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
+  database_host       = local.database_enabled ? "database.${local.project_name}.internal" : ""
   tags = {
     ManagedBy              = "DeployGuard"
     DeployGuardProjectId   = var.project_id
     DeployGuardOperationId = var.operation_id
+  }
+  database_tags = {
+    ManagedBy            = "DeployGuard"
+    DeployGuardProjectId = var.project_id
+    DeployGuardResource  = "managed-database"
   }
   runtime_secret_arns = distinct(concat(
     flatten([for service in values(var.services) : [for reference in values(service.secret_references) : join(":", slice(split(":", reference), 0, 7))]]),
     local.database_enabled ? [aws_secretsmanager_secret.database[0].arn] : [],
   ))
   database_environment = local.database_enabled ? {
-    for key in local.database_aliases : key => contains(["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "MYSQL_PORT", "MONGO_PORT", "MONGODB_PORT"], key) ? tostring(local.database_port) : contains(["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MONGO_HOST", "MONGODB_HOST"], key) ? "127.0.0.1" : contains(["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "MYSQL_USER", "MONGO_USER", "MONGODB_USER"], key) ? "deployguard" : "application"
+    for key in local.database_aliases : key => contains(["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "MYSQL_PORT", "MONGO_PORT", "MONGODB_PORT"], key) ? tostring(local.database_port) : contains(["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MONGO_HOST", "MONGODB_HOST"], key) ? local.database_host : contains(["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "MYSQL_USER", "MONGO_USER", "MONGODB_USER"], key) ? "deployguard" : "application"
     if !contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key)
   } : {}
   database_secrets = local.database_enabled ? {
-    for key in local.database_aliases : key => "${aws_secretsmanager_secret.database[0].arn}:${contains(["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key) ? "url" : "password"}::"
+    for key in local.database_aliases : key => "${aws_secretsmanager_secret.database[0].arn}:${contains(["DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key) ? "url" : "password"}::${aws_secretsmanager_secret_version.database[0].version_id}"
     if contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key)
   } : {}
 }
@@ -52,6 +58,12 @@ resource "aws_cloudwatch_log_group" "application" {
   name              = "/deployguard/${var.project_id}/services/${each.key}"
   retention_in_days = 14
   tags              = merge(local.tags, { DeployGuardServiceId = each.key })
+}
+resource "aws_cloudwatch_log_group" "database" {
+  count             = local.database_enabled ? 1 : 0
+  name              = "/deployguard/${var.project_id}/database"
+  retention_in_days = 14
+  tags              = local.database_tags
 }
 resource "aws_security_group" "load_balancer" {
   for_each    = var.services
@@ -90,23 +102,41 @@ resource "aws_security_group" "application" {
   tags = merge(local.tags, { DeployGuardServiceId = each.key })
 }
 
-resource "aws_security_group" "database" {
+resource "aws_security_group" "database_runtime" {
   count       = local.database_enabled ? 1 : 0
   name_prefix = "${local.project_name}-database-"
+  vpc_id      = var.vpc_id
+  ingress {
+    from_port       = local.database_port
+    to_port         = local.database_port
+    protocol        = "tcp"
+    security_groups = local.database_enabled ? [aws_security_group.application[local.database_service_id].id] : []
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = local.database_tags
+}
+resource "aws_security_group" "database_efs" {
+  count       = local.database_enabled ? 1 : 0
+  name_prefix = "${local.project_name}-database-efs-"
   vpc_id      = var.vpc_id
   ingress {
     from_port       = 2049
     to_port         = 2049
     protocol        = "tcp"
-    security_groups = local.database_enabled ? [aws_security_group.application[local.database_service_id].id] : []
+    security_groups = [aws_security_group.database_runtime[0].id]
   }
-  tags = local.tags
+  tags = local.database_tags
 }
 resource "aws_efs_file_system" "database" {
   count           = local.database_enabled ? 1 : 0
   encrypted       = true
   throughput_mode = "bursting"
-  tags            = local.tags
+  tags            = local.database_tags
 }
 resource "aws_efs_access_point" "database" {
   count          = local.database_enabled ? 1 : 0
@@ -123,13 +153,13 @@ resource "aws_efs_access_point" "database" {
       permissions = "0750"
     }
   }
-  tags = local.tags
+  tags = local.database_tags
 }
 resource "aws_efs_mount_target" "database" {
   for_each        = local.database_enabled ? toset(var.public_subnet_ids) : toset([])
   file_system_id  = aws_efs_file_system.database[0].id
   subnet_id       = each.value
-  security_groups = [aws_security_group.database[0].id]
+  security_groups = [aws_security_group.database_efs[0].id]
 }
 resource "random_password" "database" {
   count   = local.database_enabled ? 1 : 0
@@ -139,14 +169,14 @@ resource "random_password" "database" {
 resource "aws_secretsmanager_secret" "database" {
   count = local.database_enabled ? 1 : 0
   name  = "deployguard/${var.project_id}/database"
-  tags  = local.tags
+  tags  = local.database_tags
 }
 resource "aws_secretsmanager_secret_version" "database" {
   count     = local.database_enabled ? 1 : 0
   secret_id = aws_secretsmanager_secret.database[0].id
   secret_string = jsonencode({
     password = random_password.database[0].result
-    url      = "${local.database_engine == "mysql" ? "mysql" : local.database_engine == "mongodb" ? "mongodb" : "postgresql"}://deployguard:${random_password.database[0].result}@127.0.0.1:${local.database_port}/application${local.database_engine == "mongodb" ? "?authSource=admin" : ""}"
+    url      = "${local.database_engine == "mysql" ? "mysql" : local.database_engine == "mongodb" ? "mongodb" : "postgresql"}://deployguard:${random_password.database[0].result}@${local.database_host}:${local.database_port}/application${local.database_engine == "mongodb" ? "?authSource=admin" : ""}"
   })
 }
 
@@ -223,7 +253,7 @@ resource "aws_ecs_task_definition" "application" {
   cpu                      = "512"
   memory                   = "1024"
   execution_role_arn       = aws_iam_role.execution.arn
-  container_definitions = jsonencode(concat([{
+  container_definitions = jsonencode([{
     name             = "application"
     image            = each.value.image
     essential        = true
@@ -231,27 +261,75 @@ resource "aws_ecs_task_definition" "application" {
     environment      = [for key, value in merge(each.value.environment, each.value.database_attached ? local.database_environment : {}) : { name = key, value = value }]
     secrets          = [for key, value in merge(each.value.secret_references, each.value.database_attached ? local.database_secrets : {}) : { name = key, valueFrom = value }]
     logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.application[each.key].name, awslogs-region = var.region, awslogs-stream-prefix = "application" } }
-    }], each.value.database_attached ? [{
-    name         = "database", image = local.database_image, essential = true
-    portMappings = [{ containerPort = local.database_port, hostPort = local.database_port, protocol = "tcp" }]
-    mountPoints  = [{ sourceVolume = "database", containerPath = local.database_path, readOnly = false }]
-    environment  = local.database_engine == "mysql" ? [{ name = "MYSQL_DATABASE", value = "application" }, { name = "MYSQL_USER", value = "deployguard" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_DATABASE", value = "application" }, { name = "MONGO_INITDB_ROOT_USERNAME", value = "deployguard" }] : [{ name = "POSTGRES_DB", value = "application" }, { name = "POSTGRES_USER", value = "deployguard" }]
-    secrets      = local.database_engine == "mysql" ? [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::" }] : [{ name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::" }]
-  }] : []))
-  dynamic "volume" {
-    for_each = each.value.database_attached ? [1] : []
-    content {
-      name = "database"
-      efs_volume_configuration {
-        file_system_id     = aws_efs_file_system.database[0].id
-        transit_encryption = "ENABLED"
-        authorization_config {
-          access_point_id = aws_efs_access_point.database[0].id
-        }
-      }
+  }])
+  tags = merge(local.tags, { DeployGuardServiceId = each.key, DeployGuardRuntimeConfigRevisionId = each.value.runtime_config_revision_id })
+}
+
+resource "aws_service_discovery_private_dns_namespace" "database" {
+  count = local.database_enabled ? 1 : 0
+  name  = "${local.project_name}.internal"
+  vpc   = var.vpc_id
+  tags  = local.database_tags
+}
+resource "aws_service_discovery_service" "database" {
+  count = local.database_enabled ? 1 : 0
+  name  = "database"
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.database[0].id
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+    routing_policy = "MULTIVALUE"
+  }
+  health_check_custom_config { failure_threshold = 1 }
+  tags = local.database_tags
+}
+resource "aws_ecs_task_definition" "database" {
+  count                    = local.database_enabled ? 1 : 0
+  family                   = "${local.project_name}-database"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "512"
+  memory                   = "1024"
+  execution_role_arn       = aws_iam_role.execution.arn
+  container_definitions = jsonencode([{
+    name             = "database"
+    image            = local.database_image
+    essential        = true
+    portMappings     = [{ containerPort = local.database_port, hostPort = local.database_port, protocol = "tcp" }]
+    mountPoints      = [{ sourceVolume = "database", containerPath = local.database_path, readOnly = false }]
+    environment      = local.database_engine == "mysql" ? [{ name = "MYSQL_DATABASE", value = "application" }, { name = "MYSQL_USER", value = "deployguard" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_DATABASE", value = "application" }, { name = "MONGO_INITDB_ROOT_USERNAME", value = "deployguard" }] : [{ name = "POSTGRES_DB", value = "application" }, { name = "POSTGRES_USER", value = "deployguard" }]
+    secrets          = local.database_engine == "mysql" ? [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : [{ name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }]
+    logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.region, awslogs-stream-prefix = "database" } }
+  }])
+  volume {
+    name = "database"
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.database[0].id
+      transit_encryption = "ENABLED"
+      authorization_config { access_point_id = aws_efs_access_point.database[0].id }
     }
   }
-  tags = merge(local.tags, { DeployGuardServiceId = each.key })
+  tags = local.database_tags
+}
+resource "aws_ecs_service" "database" {
+  count           = local.database_enabled ? 1 : 0
+  name            = "${local.project_name}-database"
+  cluster         = aws_ecs_cluster.project.id
+  task_definition = aws_ecs_task_definition.database[0].arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+  network_configuration {
+    subnets         = var.public_subnet_ids
+    security_groups = [aws_security_group.database_runtime[0].id]
+    # The configured platform subnets are public; the database remains private
+    # because its security group accepts only the attached application SG.
+    assign_public_ip = true
+  }
+  service_registries { registry_arn = aws_service_discovery_service.database[0].arn }
+  depends_on = [aws_efs_mount_target.database, aws_iam_role_policy.runtime_secrets]
+  tags       = local.database_tags
 }
 resource "aws_ecs_service" "application" {
   for_each        = var.services
@@ -270,6 +348,6 @@ resource "aws_ecs_service" "application" {
     container_name   = "application"
     container_port   = var.platform_port
   }
-  depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets, aws_efs_mount_target.database]
+  depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets, aws_ecs_service.database]
   tags       = merge(local.tags, { DeployGuardServiceId = each.key })
 }
