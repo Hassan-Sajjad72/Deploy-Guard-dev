@@ -18,7 +18,7 @@
     "test:railpack-materialization-workspace": "ts-node scripts/verify-railpack-materialization-workspace.ts",
     "test:troubleshooting-boundaries": "ts-node scripts/verify-troubleshooting-boundaries.ts",
     "test:product-start-schema-integrity": "ts-node scripts/verify-product-start-schema-integrity.ts",
-    "test:developer-runtime-experience": "ts-node scripts/verify-developer-runtime-experience.ts && ts-node scripts/verify-github-actions-cost-evidence.ts",
+    "test:developer-runtime-experience": "ts-node scripts/verify-developer-runtime-experience.ts && ts-node scripts/verify-github-actions-cost-evidence.ts && ts-node scripts/verify-infracost-cli-diagnostics.ts",
     "test:destroy-confirmation-contract": "ts-node scripts/verify-destroy-confirmation-contract.ts",
     "test:destroy-lifecycle-authority": "ts-node scripts/verify-destroy-lifecycle-authority.ts",
     "test:product-maturity-certification": "ts-node scripts/verify-product-maturity-certification.ts",

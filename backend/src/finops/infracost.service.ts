@@ -19,6 +19,12 @@ export type NormalizedCostResource = {
   metadata?: Record<string, unknown>;
 };
 
+type InfracostProcessError = NodeJS.ErrnoException & {
+  killed?: boolean;
+  signal?: NodeJS.Signals | null;
+  stderr?: string | Buffer;
+};
+
 @Injectable()
 export class InfracostService {
   constructor(private readonly config: ConfigService) {}
@@ -48,14 +54,41 @@ export class InfracostService {
 
       return stdout;
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
+      const err = error as InfracostProcessError;
 
       if (err.code === "ENOENT") {
         throw new Error("The configured official Infracost CLI is not installed or executable.");
       }
 
-      throw new Error("Infracost cost breakdown failed.");
+      throw new Error(this.boundedProviderFailure(err, apiKey));
     }
+  }
+
+  private boundedProviderFailure(error: InfracostProcessError, apiKey: string) {
+    const exitCode = typeof error.code === "number" ? error.code : null;
+    const detail = String(error.stderr || "")
+      .replaceAll(apiKey, "[redacted]")
+      .replace(/(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi, "$1[redacted]")
+      .replace(/([?&](?:token|key|signature)=)[^&\s]+/gi, "$1[redacted]")
+      .replace(/https?:\/\/\S+/gi, "[provider endpoint]")
+      .replace(/[^\x20-\x7E]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const exit = exitCode === null ? "" : ` (exit ${exitCode})`;
+    if (/not logged in|CLI_AUTHENTICATION_TOKEN|failed to log in/i.test(detail)) {
+      return `INFRACOST_AUTHENTICATION_REQUIRED${exit}: the Infracost CLI requires a valid non-interactive authentication token.`;
+    }
+    if (/unauthorized|invalid (?:access |authentication )?token|authentication.*(?:failed|rejected)/i.test(detail)) {
+      return `INFRACOST_AUTHENTICATION_REJECTED${exit}: Infracost rejected the configured authentication credential.`;
+    }
+    if (/ENOTFOUND|EAI_AGAIN|connection refused|network is unreachable|TLS|certificate/i.test(detail)) {
+      return `INFRACOST_PROVIDER_CONNECTIVITY_FAILED${exit}: Infracost could not be reached over the configured network and TLS path.`;
+    }
+    if (error.killed || error.signal === "SIGTERM" || /timed?\s*out|deadline exceeded/i.test(detail)) {
+      return `INFRACOST_PROVIDER_TIMEOUT${exit}: the bounded Infracost operation did not complete in time.`;
+    }
+    const bounded = detail.slice(0, 300);
+    return `INFRACOST_PROVIDER_FAILED${exit}${bounded ? `: ${bounded}` : "."}`;
   }
 
   parseInfracostResponse(rawJson: string) {
