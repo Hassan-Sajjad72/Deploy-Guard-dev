@@ -58,14 +58,27 @@ export class LiveRuntimeIdentityRecoveryService {
         applicationContainerName: text("applicationContainerName"),
       };
     });
-    const first = services[0];
+    // Region and ECS cluster are project-generation facts emitted by the
+    // Terraform module, not properties selected from an arbitrary service.
+    // Only these explicit generation-level fields are read from the manifest;
+    // service identity always remains the immutable revision set above.
+    const shared = this.generationSharedRuntimeIdentity(generation);
     return this.mergeKnown({
-      region: first.region,
-      ecsClusterArn: first.ecsClusterArn,
-      ecsClusterName: first.ecsClusterName,
+      ...shared,
       terraformStateKey: generation.terraformStateKey,
       services,
     });
+  }
+
+  private generationSharedRuntimeIdentity(generation: ProjectDeploymentGeneration) {
+    const manifest = generation.resourceManifest || {};
+    const text = (key: "region" | "ecsClusterArn" | "ecsClusterName") =>
+      typeof manifest[key] === "string" ? manifest[key] : undefined;
+    return {
+      region: text("region"),
+      ecsClusterArn: text("ecsClusterArn"),
+      ecsClusterName: text("ecsClusterName"),
+    };
   }
 
   private runtimeMetadata(release: ProjectStableRelease) {

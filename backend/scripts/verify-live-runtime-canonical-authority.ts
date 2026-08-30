@@ -9,8 +9,9 @@ import { ProjectCurrentStateService } from "../src/projects/current-state/projec
 import { LiveRuntimeIdentityRecoveryService } from "../src/projects/current-state/live-runtime-identity-recovery.service";
 
 const project: any = { id: "11111111-1111-4111-8111-111111111111", environmentName: "dev" };
-const generation: any = { id: "22222222-2222-4222-8222-222222222222", projectId: project.id, environmentName: "dev", status: "live", terraformStateKey: "projects/test/dev/runtime/terraform.tfstate", resourceManifest: { region: "wrong-region", services: [{ serviceId: "wrong" }] } };
-const release: any = { id: "33333333-3333-4333-8333-333333333333", projectId: project.id, environmentName: "dev", generationId: generation.id, status: "stable", deployedByPipelineRunId: "44444444-4444-4444-8444-444444444444", metadata: { releaseEvidenceVerified: true, runtimeIdentity: { services: [{ serviceId: "wrong" }] } } };
+const sharedRuntime = { region: "us-east-1", ecsClusterArn: "arn:aws:ecs:us-east-1:123456789012:cluster/project", ecsClusterName: "project" };
+const generation: any = { id: "22222222-2222-4222-8222-222222222222", projectId: project.id, environmentName: "dev", status: "live", terraformStateKey: "projects/test/dev/runtime/terraform.tfstate", resourceManifest: { ...sharedRuntime, services: [{ serviceId: "wrong" }], imageUri: "wrong-image" } };
+const release: any = { id: "33333333-3333-4333-8333-333333333333", projectId: project.id, environmentName: "dev", generationId: generation.id, status: "stable", deployedByPipelineRunId: "44444444-4444-4444-8444-444444444444", metadata: { releaseEvidenceVerified: true, runtimeIdentity: { region: "wrong-region", ecsClusterArn: "wrong-cluster", services: [{ serviceId: "wrong" }] } } };
 const a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const arn = (suffix: string) => `arn:aws:ecs:us-east-1:123456789012:${suffix}`;
@@ -20,7 +21,9 @@ function revision(serviceId: string, name: string) {
     projectId: project.id, generationId: generation.id, serviceId, serviceName: name, serviceDirectory: name.toLowerCase(), sourceSha: "a".repeat(40),
     imageUri: "123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test", imageDigest: `sha256:${serviceId.startsWith("a") ? "a" : "b"}`.padEnd(71, serviceId.startsWith("a") ? "a" : "b"), runtimeConfigRevisionId: serviceId,
     runtimeIdentity: {
-      publicUrl: `https://${name.toLowerCase()}.example.test`, region: "us-east-1", ecsClusterArn: arn("cluster/project"), ecsClusterName: "project",
+      // Fresh service revisions contain service-local Terraform output; the
+      // generation owns the project-level region and cluster identity.
+      publicUrl: `https://${name.toLowerCase()}.example.test`,
       ecsServiceArn: arn(`service/project/${name.toLowerCase()}`), ecsServiceName: name.toLowerCase(), taskDefinitionArn: arn(`task-definition/${name.toLowerCase()}:1`),
       albArn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/${name.toLowerCase()}/1`, albName: name.toLowerCase(),
       targetGroupArn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/${name.toLowerCase()}/1`, targetGroupName: name.toLowerCase(),
@@ -29,18 +32,28 @@ function revision(serviceId: string, name: string) {
   };
 }
 
-async function canonicalRevisionRecovery() {
-  const recovery = new LiveRuntimeIdentityRecoveryService(
+function recoveryFor(revisions: any[]) {
+  return new LiveRuntimeIdentityRecoveryService(
     { findOne: async () => generation } as never,
     { findOne: async () => release } as never,
     { findOne: async () => ({ projectId: project.id, environmentName: "dev", liveGenerationId: generation.id }) } as never,
-    { find: async () => [revision(b, "API"), revision(a, "Web")] } as never,
+    { find: async () => revisions } as never,
   );
+}
+
+async function canonicalRevisionRecovery() {
+  const recovery = recoveryFor([revision(b, "API"), revision(a, "Web")]);
   const identity: any = await recovery.recover(project);
   assert.deepEqual(identity.services.map((service: any) => service.serviceId), [a, b], "canonical revisions define deterministic service order");
   assert.equal(identity.services[1].targetGroupArn, revision(b, "API").runtimeIdentity.targetGroupArn);
-  assert.equal(identity.region, "us-east-1");
-  assert.doesNotMatch(JSON.stringify(identity), /wrong-region|"wrong"/, "resource_manifest is not an authority when revisions exist");
+  assert.deepEqual({ region: identity.region, ecsClusterArn: identity.ecsClusterArn, ecsClusterName: identity.ecsClusterName }, sharedRuntime, "project-level region/cluster identity comes from the explicit LIVE generation, not a service revision");
+  assert.doesNotMatch(JSON.stringify(identity.services), /wrong-region|wrong-cluster|"wrong"/, "generation projections cannot override canonical service-local identities");
+  const permuted: any = await recoveryFor([revision(a, "Web"), revision(b, "API")]).recover(project);
+  assert.deepEqual(
+    { region: permuted.region, ecsClusterArn: permuted.ecsClusterArn, ecsClusterName: permuted.ecsClusterName, serviceIds: permuted.services.map((service: any) => service.serviceId) },
+    { region: identity.region, ecsClusterArn: identity.ecsClusterArn, ecsClusterName: identity.ecsClusterName, serviceIds: identity.services.map((service: any) => service.serviceId) },
+    "repository return order and deliberately different service-local fields cannot change project-level runtime identity",
+  );
 
   const resolver: any = Object.create(LiveRuntimeResolverService.prototype);
   resolver.projects = { findOne: async () => project };
