@@ -9,6 +9,7 @@ import { AppModule } from "../src/app.module";
 import { AuthService, SESSION_COOKIE_NAME } from "../src/auth/auth.service";
 import { ProjectEnvironmentCryptoService } from "../src/projects/project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "../src/projects/project-environment-variable.entity";
+import { ProjectDeployableService } from "../src/projects/project-deployable-service.entity";
 import {
   Project,
   ProjectStatus,
@@ -112,8 +113,6 @@ async function run() {
           repositoryFullName: `deployguard-fixtures/workspace-${userIndex + 1}-app-${projectIndex + 1}`,
           targetBranch: "main",
           environmentName: "dev",
-          appDirectory: ".",
-          deploymentOverrides: {},
           status: ProjectStatus.CONFIGURED,
           visibility: ProjectVisibility.PRIVATE,
           archivedAt: null,
@@ -122,10 +121,17 @@ async function run() {
           deletionStartedAt: null,
         })),
       );
+      await schema.getRepository(ProjectDeployableService).save(projects.map((project) => ({
+        projectId: project.id,
+        name: "Web",
+        serviceDirectory: ".",
+        position: 0,
+      })));
       projectsByUser.set(user.id, projects);
     }
 
     const secretProject = projectsByUser.get(users[0].id)![0];
+    const secretService = await schema.getRepository(ProjectDeployableService).findOneByOrFail({ projectId: secretProject.id, position: 0 });
     process.env.AUTH_SESSION_SECRET = sessionSecret;
     const crypto = new ProjectEnvironmentCryptoService(
       new ConfigService({ AUTH_SESSION_SECRET: sessionSecret }),
@@ -134,17 +140,18 @@ async function run() {
     assert.notEqual(ciphertext, plaintextSecret);
     await schema.getRepository(ProjectEnvironmentVariable).save({
       projectId: secretProject.id,
+      serviceId: secretService.id,
       key: "PRIVATE_APPLICATION_TOKEN",
       normalizedKey: "PRIVATE_APPLICATION_TOKEN",
       value: ciphertext,
       isSecret: true,
       scope: "runtime",
       isRequired: true,
-      environment: "production",
+      environment: "dev",
       detectedSource: "iteration-eight-fixture",
       owner: "user_required",
       source: "user",
-      protected: true,
+      protected: false,
       serviceBindingId: null,
       detectedReference: null,
       repositoryDefault: null,
@@ -250,14 +257,12 @@ async function run() {
     assert.equal(crypto.decrypt(stored.value), plaintextSecret);
     assert.notEqual(stored.value, plaintextSecret);
 
-    const [leases, owners, claims] = await Promise.all([
-      appDataSource.query(`SELECT count(*)::int AS count FROM project_operation_leases`),
-      appDataSource.query(`SELECT count(*)::int AS count FROM project_release_lane_ownerships`),
-      appDataSource.query(`SELECT count(*)::int AS count FROM orchestration_outbox WHERE claimed_by IS NOT NULL`),
-    ]);
-    assert.equal(leases[0].count, 0);
-    assert.equal(owners[0].count, 0);
-    assert.equal(claims[0].count, 0);
+    const retiredRuntimeTables = await appDataSource.query(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('project_operation_leases', 'project_release_lane_ownerships', 'orchestration_outbox')
+    `);
+    assert.deepEqual(retiredRuntimeTables, [], "retired orchestration tables must remain unreachable from the synchronized product model");
 
     console.log("Multi-user local launch PostgreSQL verification passed.");
     console.log("WORKSPACES=3");
@@ -265,7 +270,7 @@ async function run() {
     console.log("AUTHENTICATION=cookie_session");
     console.log("CROSS_WORKSPACE=denied");
     console.log("SECRET_ISOLATION=encrypted_at_rest,masked_in_response");
-    console.log("ACTIVE_LEASES=0 ACTIVE_OWNERS=0 OUTBOX_CLAIMS=0");
+    console.log("ACTIVE_RETIRED_RUNTIME_TABLES=0");
   } finally {
     await app?.close().catch(() => undefined);
     if (fixtureCreated) {

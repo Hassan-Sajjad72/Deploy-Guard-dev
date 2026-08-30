@@ -5,6 +5,7 @@ import {
   deleteProjectEnvVar,
   getProjectEnvVars,
   updateProjectEnvVar,
+  bulkUpsertProjectServiceEnvVars, createProjectServiceEnvVar, deleteProjectServiceEnvVar, getProjectServiceEnvVars, updateProjectServiceEnvVar,
 } from "../../api/projectApi.js";
 import { parseEnvText } from "../../utils/envFileParser.js";
 import EnvVarForm from "./EnvVarForm.jsx";
@@ -12,7 +13,7 @@ import EnvVarTable from "./EnvVarTable.jsx";
 
 const emptyForm = { id: "", key: "", value: "", isSecret: true, scope: "runtime", isRequired: false, environment: "production", detectedSource: "User supplied" };
 
-export default function EnvironmentVariablesPanel({ projectId, canManage, onSaved }) {
+export default function EnvironmentVariablesPanel({ projectId, serviceId, serviceName, canManage, onSaved }) {
   const [setup, setSetup] = useState({ variables: [], managedVariables: [], reservedVariables: [] });
   const [form, setForm] = useState(emptyForm);
   const [tab, setTab] = useState("paste");
@@ -29,7 +30,7 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
     setLoading(true);
     setError("");
     try {
-      const response = await getProjectEnvVars(projectId);
+      const response = serviceId ? await getProjectServiceEnvVars(projectId, serviceId) : await getProjectEnvVars(projectId);
       setSetup({ variables: response.variables || [], managedVariables: response.managedVariables || [], reservedVariables: response.reservedVariables || [] });
     } catch (caught) {
       setError(caught.message);
@@ -38,7 +39,7 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
     }
   }
 
-  useEffect(() => { void load(); }, [projectId]);
+  useEffect(() => { void load(); }, [projectId, serviceId]);
 
   async function saveBulk(entries, clientIgnored = []) {
     if (!entries.length) return;
@@ -48,7 +49,7 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
     }
     setBusy(true); setError(""); setSuccess("");
     try {
-      const response = await bulkUpsertProjectEnvVars(projectId, entries);
+      const response = serviceId ? await bulkUpsertProjectServiceEnvVars(projectId, serviceId, entries) : await bulkUpsertProjectEnvVars(projectId, entries);
       setIgnoredEnvironmentNames([...new Set([...clientIgnored, ...(response.ignoredVariableNames || [])])].sort());
       setPaste(""); setPasteResult({ entries: [], errors: [], warnings: [] }); setModalOpen(false);
       const savedCount = response.variables?.length || 0;
@@ -73,8 +74,8 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
     try {
       const payload = { key: form.key.trim().toUpperCase(), value: form.value || undefined, isSecret: form.isSecret, scope: form.scope, isRequired: form.isRequired, environment: form.environment, detectedSource: form.detectedSource };
       const response = form.id
-        ? await updateProjectEnvVar(projectId, form.id, payload)
-        : await createProjectEnvVar(projectId, payload);
+        ? serviceId ? await updateProjectServiceEnvVar(projectId, serviceId, form.id, payload) : await updateProjectEnvVar(projectId, form.id, payload)
+        : serviceId ? await createProjectServiceEnvVar(projectId, serviceId, payload) : await createProjectEnvVar(projectId, payload);
       setForm(emptyForm);
       setSuccess("Environment variable saved. Its value is now masked.");
       await load();
@@ -87,7 +88,7 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
   async function remove(id) {
     if (!window.confirm("Delete this environment variable?")) return;
     setBusy(true); setError("");
-    try { await deleteProjectEnvVar(projectId, id); await load(); setSuccess("Environment variable deleted."); }
+    try { serviceId ? await deleteProjectServiceEnvVar(projectId, serviceId, id) : await deleteProjectEnvVar(projectId, id); await load(); setSuccess("Environment variable deleted."); }
     catch (caught) { setError(caught.message); }
     finally { setBusy(false); }
   }
@@ -98,7 +99,7 @@ export default function EnvironmentVariablesPanel({ projectId, canManage, onSave
   }
 
   return <section className="environment-manager panel-flat">
-    <div className="environment-manager-header"><div><p className="eyebrow">Environment</p><h2>Additional variables</h2><p>Add optional application settings. Managed service aliases are protected, and saved secrets are never returned by the API.</p></div>{canManage ? <button className="button" onClick={() => setModalOpen(true)} type="button">Add variable</button> : null}</div>
+    <div className="environment-manager-header"><div><p className="eyebrow">Environment{serviceName ? ` · ${serviceName}` : ""}</p><h2>Additional variables</h2><p>These values are injected only into {serviceName || "this service"}. Managed aliases are protected, and saved secrets are never returned by the API.</p></div>{canManage ? <button className="button" onClick={() => setModalOpen(true)} type="button">Add variable</button> : null}</div>
     {error ? <div className="state error" role="alert">{error}</div> : null}
     {success ? <div className="state success">{success}</div> : null}
     {ignoredEnvironmentNames.map((key) => <div className="state warning" key={key}>{key} is managed by DeployGuard and was ignored.</div>)}

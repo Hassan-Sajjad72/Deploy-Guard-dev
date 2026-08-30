@@ -138,7 +138,7 @@ async function verifyReconcileUsesDestroyFinalizer() {
   service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
   service.actions = {
     getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }),
-    getResultArtifact: async () => JSON.stringify({ contractVersion: "deployguard.release-result/v2", action: "destroy", sourceSha: operation.commitSha, operationId, destroyed: true, destroyVerification: destroyEvidence() }),
+    getResultArtifact: async () => JSON.stringify({ contractVersion: "deployguard.release-result/v3", action: "destroy", sourceSha: operation.commitSha, operationId, destroyed: true, destroyVerification: destroyEvidence() }),
   };
   service.runs = { save: async (row: any) => row };
   service.sanitizer = new LogSanitizerService();
@@ -173,7 +173,7 @@ async function verifyAttemptFourContractFailureConverges() {
   assert.equal(operation.status, PipelineRunStatus.FAILED, "terminal GitHub success with stale Destroy evidence must converge to failure");
   assert.equal(operation.currentStage, "release_evidence_validation");
   assert.equal(operation.metadata.failureCategory, "release_contract_incompatible");
-  assert.match(operation.metadata.safeLog, /deployguard\.release-result\/v2/);
+  assert.match(operation.metadata.safeLog, /deployguard\.release-result\/v3/);
   assert.ok(operation.failedAt && operation.completedAt, "terminal reconciliation persists bounded terminal timestamps");
 }
 

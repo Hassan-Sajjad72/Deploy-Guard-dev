@@ -37,6 +37,7 @@ export class AiEvidencePreprocessorService {
     const safeFollowUp = followUp ? this.sanitizer.sanitize(this.clean(followUp)).slice(0, 1000) : null;
     return [
       "Treat the supplied DeployGuard evidence as the complete factual boundary. Do not infer that an AWS resource, release, secret, database generation, or workflow step exists unless an evidence item says so.",
+      "The persisted failureOwner, externalProvider, failureCode, and failureServiceId in Deployment context are authoritative. Explain them but never replace, upgrade, or contradict them. UNVERIFIED must remain uncertain unless new authoritative evidence is supplied outside this analysis.",
       "Return strict JSON with keys: summary, rootCause, technicalDetails, remediationSteps (array), confidence (0..1), limitations, evidenceReferences (array of {source,eventId,stage,lineReference}).",
       `Deployment context: ${JSON.stringify(context)}`,
       `Evidence: ${JSON.stringify(evidence.map((item) => ({ source: item.source, stage: item.stage, eventId: item.eventId, timestamp: item.timestamp, lineReference: item.lineReference, text: item.text, signals: item.signals })))}`,

@@ -229,7 +229,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       {rollbackLoading ? <p>Loading the previous immutable release…</p> : null}
       {rollbackError ? <ErrorState message={rollbackError} /> : null}
       {!rollbackLoading && !rollbackError && !rollbackCandidates.length ? <p>No previous successful release is available.</p> : null}
-      {rollbackCandidates[0] ? <div className="state"><strong>Release {rollbackCandidates[0].releaseRevision}</strong><p>Commit {shortCommit(rollbackCandidates[0].commitSha)} · image {shortCommit(rollbackCandidates[0].imageDigest)} · port {rollbackCandidates[0].appPort} · health {rollbackCandidates[0].healthCheckPath}</p></div> : null}
+      {rollbackCandidates[0] ? <div className="state"><strong>Release {rollbackCandidates[0].releaseRevision}</strong><p>Commit {shortCommit(rollbackCandidates[0].commitSha)} · {rollbackCandidates[0].services?.length || 0} immutable service image{rollbackCandidates[0].services?.length === 1 ? "" : "s"} · port {rollbackCandidates[0].appPort} · health {rollbackCandidates[0].healthCheckPath}</p></div> : null}
       <p>The stored image digest, task definition, runtime configuration, port and health path will be reused. Repository code will not be rebuilt.</p>
       <div className="overview-modal-actions"><Button disabled={Boolean(busy)} onClick={() => setRollbackOpen(false)} tone="ghost">Cancel</Button><Button disabled={rollbackLoading || Boolean(rollbackError) || !rollbackCandidates.length || busy === "rollback"} onClick={() => void rollback()} tone="danger">{busy === "rollback" ? "Rolling back…" : "Confirm rollback"}</Button></div>
     </Modal> : null}

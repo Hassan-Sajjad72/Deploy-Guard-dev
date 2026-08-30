@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import {
@@ -26,6 +26,9 @@ export type LiveRuntimeIdentity = {
   generationId: string;
   releaseId: string;
   operationId: string | null;
+  serviceId: string;
+  serviceDisplayName: string;
+  publicUrl: string | null;
   region: string;
   cluster: string;
   clusterName: string;
@@ -54,20 +57,20 @@ export class LiveRuntimeResolverService {
     private readonly runtimeIdentityRecovery: LiveRuntimeIdentityRecoveryService,
   ) {}
 
-  async resolveForUser(user: User, projectId: string) {
+  async resolveForUser(user: User, projectId: string, serviceId?: string) {
     const project = await this.projects.findOne({ where: { id: projectId } });
     if (!project || project.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
     const canView = user.role === UserRole.ADMIN
       || project.ownerUserId === user.id
       || (user.role === UserRole.READONLY && project.visibility === "workspace");
     if (!canView) throw new NotFoundException("Project not found");
-    return this.resolveProject(project);
+    return this.resolveProject(project, serviceId);
   }
 
-  async resolveProjectId(projectId: string) {
+  async resolveProjectId(projectId: string, serviceId?: string) {
     const project = await this.projects.findOne({ where: { id: projectId } });
     if (!project || project.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
-    return this.resolveProject(project);
+    return this.resolveProject(project, serviceId);
   }
 
   async liveProjectIds() {
@@ -79,21 +82,19 @@ export class LiveRuntimeResolverService {
   }
 
   invalidate(projectId: string) {
-    this.cache.delete(projectId);
+    for (const key of this.cache.keys()) if (key === projectId || key.startsWith(`${projectId}:`)) this.cache.delete(key);
   }
 
-  private async resolveProject(project: Project): Promise<LiveRuntimeIdentity> {
+  private async resolveProject(project: Project, requestedServiceId?: string): Promise<LiveRuntimeIdentity> {
     await this.runtimeIdentityRecovery.recover(project);
     const environmentName = canonicalEnvironmentName(project);
     const release = await this.releases.findOne({
       where: { projectId: project.id, environmentName, status: StableReleaseStatus.STABLE },
       order: { deployedAt: "DESC" },
     });
-    if (!release?.generationId || !release.ecsServiceArn || !release.taskDefinitionArn) {
+    if (!release?.generationId) {
       throw new ServiceUnavailableException("No authoritative LIVE runtime is available for this project.");
     }
-    const cached = this.cache.get(project.id);
-    if (cached?.value.generationId === release.generationId && cached.expiresAt > Date.now()) return cached.value;
 
     const generation = await this.generations.findOne({
       where: {
@@ -105,11 +106,25 @@ export class LiveRuntimeResolverService {
     });
     const manifest = generation?.resourceManifest || {};
     const string = (key: string) => typeof manifest[key] === "string" ? manifest[key] : "";
+    const persistedServices = Array.isArray(manifest.services)
+      ? manifest.services.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object")
+      : [];
+    const selected = requestedServiceId
+      ? persistedServices.find((service) => service.serviceId === requestedServiceId)
+      : persistedServices[0];
+    if (requestedServiceId && !selected) throw new BadRequestException("The selected service is not part of the authoritative LIVE generation.");
+    const selectedString = (key: string) => typeof selected?.[key] === "string" ? String(selected[key]) : "";
+    const serviceId = selectedString("serviceId") || "legacy";
+    const cacheKey = `${project.id}:${serviceId}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached?.value.generationId === release.generationId && cached.expiresAt > Date.now()) return cached.value;
     const cluster = string("ecsClusterArn") || string("ecsClusterName");
-    const targetGroupArn = string("targetGroupArn");
-    const expectedLogGroup = string("cloudWatchLogGroupName");
-    const expectedContainerName = string("applicationContainerName");
-    if (!generation || !cluster || !targetGroupArn || !expectedLogGroup || !expectedContainerName) {
+    const serviceArn = selectedString("ecsServiceArn") || release.ecsServiceArn;
+    const taskDefinitionArn = selectedString("taskDefinitionArn") || release.taskDefinitionArn;
+    const targetGroupArn = selectedString("targetGroupArn") || string("targetGroupArn");
+    const expectedLogGroup = selectedString("cloudWatchLogGroupName") || string("cloudWatchLogGroupName");
+    const expectedContainerName = selectedString("applicationContainerName") || string("applicationContainerName");
+    if (!generation || !cluster || !serviceArn || !taskDefinitionArn || !targetGroupArn || !expectedLogGroup || !expectedContainerName) {
       throw new ServiceUnavailableException("The authoritative LIVE runtime identity is incomplete.");
     }
 
@@ -117,16 +132,16 @@ export class LiveRuntimeResolverService {
     const ecs = this.ecs(region);
     const elb = this.elb(region);
     const resolved = await Promise.allSettled([
-      ecs.send(new DescribeServicesCommand({ cluster, services: [release.ecsServiceArn] })),
-      ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: release.taskDefinitionArn })),
+      ecs.send(new DescribeServicesCommand({ cluster, services: [serviceArn] })),
+      ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: taskDefinitionArn })),
       elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [targetGroupArn] })),
-      ecs.send(new ListTasksCommand({ cluster, serviceName: release.ecsServiceArn, desiredStatus: "RUNNING" })),
+      ecs.send(new ListTasksCommand({ cluster, serviceName: serviceArn, desiredStatus: "RUNNING" })),
       elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: targetGroupArn })),
     ]);
     const unexpected = resolved.find((result) => result.status === "rejected" && !this.isExpectedRuntimeAbsence(result.reason));
     if (unexpected?.status === "rejected") throw unexpected.reason;
     if (resolved.some((result) => result.status === "rejected")) {
-      this.cache.delete(project.id);
+      this.cache.delete(cacheKey);
       throw new ServiceUnavailableException("The previously authoritative LIVE runtime is no longer present in AWS.");
     }
     const [serviceResult, taskDefinitionResult, targetGroupResult, taskResult, healthResult] = resolved.map(
@@ -138,7 +153,7 @@ export class LiveRuntimeResolverService {
     if (
       !service?.serviceArn
       || service.status !== "ACTIVE"
-      || service.taskDefinition !== release.taskDefinitionArn
+      || service.taskDefinition !== taskDefinitionArn
       || !targetGroup?.TargetGroupArn
       || targetGroup.TargetGroupArn !== targetGroupArn
       || !targetGroup.LoadBalancerArns?.[0]
@@ -157,12 +172,15 @@ export class LiveRuntimeResolverService {
       generationId: generation.id,
       releaseId: release.id,
       operationId: release.deployedByPipelineRunId || null,
+      serviceId,
+      serviceDisplayName: selectedString("serviceName") || service.serviceName || "Web",
+      publicUrl: selectedString("publicUrl") || null,
       region,
       cluster,
       clusterName: cluster.split("/").pop() || cluster,
       serviceArn: service.serviceArn,
-      serviceName: service.serviceName || release.ecsServiceArn.split("/").pop() || "",
-      taskDefinitionArn: release.taskDefinitionArn,
+      serviceName: service.serviceName || serviceArn.split("/").pop() || "",
+      taskDefinitionArn,
       taskArns: taskResult.taskArns || [],
       targetGroupArn,
       loadBalancerArn: targetGroup.LoadBalancerArns[0],
@@ -172,7 +190,7 @@ export class LiveRuntimeResolverService {
       resolvedAt: new Date().toISOString(),
       targetHealth: (healthResult.TargetHealthDescriptions || []).map((item) => item.TargetHealth?.State || "unknown"),
     };
-    this.cache.set(project.id, { value, expiresAt: Date.now() + 20_000 });
+    this.cache.set(cacheKey, { value, expiresAt: Date.now() + 20_000 });
     return value;
   }
 

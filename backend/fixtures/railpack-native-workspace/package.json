@@ -1,0 +1,6 @@
+{
+  "name": "deployguard-railpack-workspace-fixture",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": { "start": "npm --workspace @deployguard-fixture/web run start" }
+}

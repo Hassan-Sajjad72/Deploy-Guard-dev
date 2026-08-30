@@ -12,9 +12,10 @@ import {
 import { Project } from "./project.entity";
 import { ConfigurationOwner } from "./configuration-ownership";
 import { ProjectServiceBinding } from "./project-service-binding.entity";
+import { ProjectDeployableService } from "./project-deployable-service.entity";
 
 @Entity("project_environment_variables")
-@Unique(["projectId", "key"])
+@Unique("UQ_project_environment_service_key", ["projectId", "serviceId", "normalizedKey"])
 export class ProjectEnvironmentVariable {
   @PrimaryGeneratedColumn("uuid")
   id: string;
@@ -29,6 +30,14 @@ export class ProjectEnvironmentVariable {
   })
   @JoinColumn({ name: "project_id" })
   project: Project;
+
+  @Index()
+  @Column({ name: "service_id", type: "uuid" })
+  serviceId: string;
+
+  @ManyToOne(() => ProjectDeployableService, (service) => service.environmentVariables, { nullable: false, onDelete: "CASCADE" })
+  @JoinColumn({ name: "service_id" })
+  service: ProjectDeployableService;
 
   @Column()
   key: string;

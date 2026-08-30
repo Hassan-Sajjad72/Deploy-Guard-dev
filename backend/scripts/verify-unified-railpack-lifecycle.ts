@@ -18,6 +18,7 @@ const operationB = "7fcf0947-d66e-4d79-9cfc-9879d0022548";
 const sourceA = "610aba282a1b0000000000000000000000000000";
 const digestA = `sha256:${"a".repeat(64)}`;
 const imageUri = `123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-${projectId}`;
+const serviceId = "99999999-9999-4999-8999-999999999999";
 
 function releaseA(): any {
   return {
@@ -35,7 +36,7 @@ function releaseA(): any {
     appPort: 8080,
     healthCheckPath: "/",
     deployedAt: new Date("2026-08-29T08:00:00.000Z"),
-    metadata: { imageDigest: digestA, releaseEvidenceVerified: true, deployedUrl: "http://dg.example.test" },
+    metadata: { imageDigest: digestA, releaseEvidenceVerified: true, deployedUrl: "http://dg.example.test", services: [{ serviceId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest: digestA }] },
   };
 }
 
@@ -47,16 +48,16 @@ async function verifyRollbackAuthority() {
   service.releases = { findOne: async ({ where }: any) => where.status === StableReleaseStatus.ROLLBACK_TARGET ? target : null };
   const candidates = await service.rollbackCandidates({ id: 1 }, projectId);
   assert.equal(candidates.candidates.length, 1);
-  assert.deepEqual(Object.keys(candidates.candidates[0]).sort(), ["appPort", "commitSha", "deployedAt", "generationId", "healthCheckPath", "imageDigest", "imageUri", "releaseId", "releaseRevision", "targetOperationId"].sort());
+  assert.deepEqual(Object.keys(candidates.candidates[0]).sort(), ["appPort", "commitSha", "deployedAt", "generationId", "healthCheckPath", "services", "releaseId", "releaseRevision", "targetOperationId"].sort());
   assert.equal(candidates.candidates[0].targetOperationId, operationA);
   assert.equal(candidates.candidates[0].commitSha, sourceA);
-  assert.equal(candidates.candidates[0].imageUri, imageUri);
-  assert.equal(candidates.candidates[0].imageDigest, digestA);
+  assert.equal(candidates.candidates[0].services[0].imageUri, imageUri);
+  assert.equal(candidates.candidates[0].services[0].imageDigest, digestA);
   let dispatchArgs: any[] = [];
   service.dispatch = async (...args: any[]) => { dispatchArgs = args; return { deployment: { state: "accepted" } }; };
   await service.rollback({ id: 1 }, projectId, operationA);
   assert.equal(dispatchArgs[2], "rollback");
-  assert.equal(dispatchArgs[3].immutableImage, `${imageUri}@${digestA}`);
+  assert.equal(dispatchArgs[3].services[0].immutableImage, `${imageUri}@${digestA}`);
   assert.equal(dispatchArgs[3].sourceSha, sourceA);
 
   const failed: any = { projectId, metadata: { deploymentAction: "rollback", rollbackTarget: dispatchArgs[3] } };
@@ -66,7 +67,7 @@ async function verifyRollbackAuthority() {
   assert.deepEqual(dispatchArgs[3], failed.metadata.rollbackTarget, "failed rollback retry must preserve the exact immutable target");
   assert.equal(dispatchArgs[4], undefined === failed.id ? null : failed.id);
 
-  service.releases.findOne = async () => ({ ...target, imageUri: "docker.io/example/app" });
+  service.releases.findOne = async () => ({ ...target, metadata: { ...target.metadata, services: [{ ...target.metadata.services[0], imageUri: "docker.io/example/app" }] } });
   await assert.rejects(() => service.rollbackCandidates({ id: 1 }, projectId), /immutable ECR release evidence/);
 
   const completedAt = new Date("2026-08-29T09:00:00.000Z");
@@ -148,10 +149,10 @@ function verifyWorkflowAndUiContract() {
   const controller = readFileSync(join(root, "backend", "src", "projects", "projects.controller.ts"), "utf8");
   assert.match(frontend, /target\.targetOperationId/);
   assert.match(workflow, /Checkout exact application source[\s\S]*?if: inputs\.deployment_action == 'deploy'/);
-  assert.match(workflow, /Build immutable Railpack image[\s\S]*?inputs\.deployment_action == 'deploy'/);
-  assert.match(workflow, /Publish immutable image to ECR[\s\S]*?inputs\.deployment_action == 'deploy'/);
-  assert.match(workflow, /Select immutable rollback image[\s\S]*?inputs\.deployment_action == 'rollback'/);
-  assert.match(workflow, /ROLLBACK_IMAGE_DIGEST[\s\S]*?@sha256:\[0-9a-f\]\{64\}/);
+  assert.match(workflow, /Build immutable Railpack images[\s\S]*?inputs\.deployment_action == 'deploy'/);
+  assert.match(workflow, /Publish immutable images to ECR[\s\S]*?inputs\.deployment_action == 'deploy'/);
+  assert.match(workflow, /Select immutable rollback service images[\s\S]*?inputs\.deployment_action == 'rollback'/);
+  assert.match(workflow, /rollbackImage[\s\S]*?@sha256:\[0-9a-f\]\{64\}/);
   assert.match(workflow, /terraform -chdir=\.deployguard\/terraform apply/);
   assert.match(workflow, /aws ecs wait services-stable/);
   assert.match(workflow, /curl --fail/);

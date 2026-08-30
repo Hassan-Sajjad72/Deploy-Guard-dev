@@ -32,6 +32,9 @@ import {
   DatabaseServiceBindingService,
 } from "../infrastructure/database-service-binding.service";
 import { GithubAppService } from "./github-app.service";
+import { ProjectDeployableService } from "./project-deployable-service.entity";
+import { normalizeServiceDirectory } from "./deployable-service-path";
+import { DeployableServiceInputDto, UpdateDeployableServiceDto } from "./dto/deployable-service.dto";
 
 type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
@@ -44,6 +47,8 @@ export class ProjectsService {
     private readonly envVarRepository: Repository<ProjectEnvironmentVariable>,
     @InjectRepository(ProjectDatabaseTier)
     private readonly databaseTierRepository: Repository<ProjectDatabaseTier>,
+    @InjectRepository(ProjectDeployableService)
+    private readonly deployableServices: Repository<ProjectDeployableService>,
     private readonly auditLogService: AuditLogService,
     private readonly usersService: UsersService,
     private readonly dataSource: DataSource,
@@ -90,6 +95,22 @@ export class ProjectsService {
     return (await this.inspectGithubRepository(user, repositoryFullName)).branches;
   }
 
+  async listGithubRepositoryDirectories(user: User, repositoryIdentity: string, ref: string) {
+    const fullName = this.normalizeRepositoryFullName(repositoryIdentity);
+    const { token } = await this.githubApp.tokenForRepository(user.id, fullName);
+    const commitResponse = await fetch(`https://api.github.com/repos/${fullName}/commits/${encodeURIComponent(ref)}`, { headers: this.githubHeaders(token) });
+    if (!commitResponse.ok) this.throwGithubError(commitResponse, true);
+    const commit = await commitResponse.json() as { sha?: string; commit?: { tree?: { sha?: string } } };
+    const sourceSha = String(commit.sha || ""); const treeSha = String(commit.commit?.tree?.sha || "");
+    if (!/^[0-9a-f]{40}$/i.test(sourceSha) || !/^[0-9a-f]{40}$/i.test(treeSha)) throw new BadRequestException("GitHub did not return an exact repository tree identity.");
+    const treeResponse = await fetch(`https://api.github.com/repos/${fullName}/git/trees/${treeSha}?recursive=1`, { headers: this.githubHeaders(token) });
+    if (!treeResponse.ok) this.throwGithubError(treeResponse, true);
+    const tree = await treeResponse.json() as { truncated?: boolean; tree?: Array<{ path?: string; type?: string }> };
+    if (tree.truncated) throw new BadRequestException("Repository tree is too large to browse safely. Enter the repository-relative service directory explicitly.");
+    const directories = [".", ...(tree.tree || []).filter((item) => item.type === "tree" && item.path).map((item) => normalizeServiceDirectory(item.path!))];
+    return { sourceSha, directories: [...new Set(directories)].slice(0, 5_000) };
+  }
+
   async inspectGithubRepository(user: User, repositoryIdentity: string) {
     const fullName = this.normalizeRepositoryFullName(repositoryIdentity);
     const { token, installationId } = await this.githubApp.tokenForRepository(user.id, fullName);
@@ -131,7 +152,7 @@ export class ProjectsService {
             ];
 
     const [projects, activities] = await Promise.all([
-      this.projectRepository.find({ where }),
+      this.projectRepository.find({ where, relations: { services: true } }),
       this.projectActivity.forUser(user.id),
     ]);
     const byProject = new Map(activities.map((activity) => [activity.projectId, activity]));
@@ -177,6 +198,7 @@ export class ProjectsService {
           environmentName,
         });
       }
+      const configuredServices = this.normalizeServices(dto.services);
       const project = repository.create({
         ownerUserId: user.id,
         name: String(dto.name || metadata.name).trim(),
@@ -188,11 +210,19 @@ export class ProjectsService {
         repositoryFullName: metadata.fullName,
         targetBranch,
         environmentName,
-        appDirectory: this.normalizeAppDirectory(dto.appDirectory),
         visibility: dto.visibility || ProjectVisibility.PRIVATE,
         status: ProjectStatus.CREATED,
       });
-      return { project: await repository.save(project) };
+      const saved = await repository.save(project);
+      const services = configuredServices.map((service, position) => manager.getRepository(ProjectDeployableService).create({
+        projectId: saved.id,
+        name: service.name,
+        serviceDirectory: service.serviceDirectory,
+        position,
+      }));
+      await manager.getRepository(ProjectDeployableService).save(services);
+      saved.services = services;
+      return { project: saved };
     });
     const savedProject = creation.project;
 
@@ -225,6 +255,57 @@ export class ProjectsService {
     this.assertCanView(user, project);
 
     return this.toProjectResponse(project, user);
+  }
+
+  async listDeployableServices(user: User, projectId: string) {
+    const project = await this.findProject(projectId);
+    this.assertCanView(user, project);
+    return this.deployableServices.find({ where: { projectId }, order: { position: "ASC", createdAt: "ASC" } });
+  }
+
+  async createDeployableService(user: User, projectId: string, dto: DeployableServiceInputDto) {
+    const project = await this.findProject(projectId);
+    this.assertCanManage(user, project);
+    const services = await this.deployableServices.find({ where: { projectId }, order: { position: "ASC" } });
+    const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory })), dto]);
+    const service = this.deployableServices.create({ projectId, ...normalized[normalized.length - 1], position: services.length });
+    return this.deployableServices.save(service);
+  }
+
+  async updateDeployableService(user: User, projectId: string, serviceId: string, dto: UpdateDeployableServiceDto) {
+    const project = await this.findProject(projectId);
+    this.assertCanManage(user, project);
+    const service = await this.deployableServices.findOne({ where: { id: serviceId, projectId } });
+    if (!service) throw new NotFoundException("Deployable service not found");
+    const all = await this.deployableServices.find({ where: { projectId }, order: { position: "ASC" } });
+    if (dto.position !== undefined && dto.position >= all.length) throw new BadRequestException("Service position is outside the configured service set.");
+    const candidate = all.map((item) => ({
+      name: item.id === serviceId && dto.name !== undefined ? dto.name : item.name,
+      serviceDirectory: item.id === serviceId && dto.serviceDirectory !== undefined ? dto.serviceDirectory : item.serviceDirectory,
+    }));
+    const normalized = this.normalizeServices(candidate)[all.findIndex((item) => item.id === serviceId)];
+    service.name = normalized.name;
+    service.serviceDirectory = normalized.serviceDirectory;
+    if (dto.position !== undefined && dto.position !== service.position) {
+      const other = await this.deployableServices.findOne({ where: { projectId, position: dto.position } });
+      if (other) { const old = service.position; service.position = -1; await this.deployableServices.save(service); other.position = old; await this.deployableServices.save(other); }
+      service.position = dto.position;
+    }
+    return this.deployableServices.save(service);
+  }
+
+  async deleteDeployableService(user: User, projectId: string, serviceId: string) {
+    const project = await this.findProject(projectId);
+    this.assertCanManage(user, project);
+    const services = await this.deployableServices.find({ where: { projectId }, order: { position: "ASC" } });
+    if (services.length <= 1) throw new BadRequestException("A deployable project must retain at least one service.");
+    const service = services.find((item) => item.id === serviceId);
+    if (!service) throw new NotFoundException("Deployable service not found");
+    const attached = await this.databaseTierRepository.findOne({ where: { projectId, attachedServiceId: serviceId } });
+    if (attached) throw new BadRequestException("Move or disable the managed database before removing its attached service.");
+    await this.deployableServices.remove(service);
+    const remaining = services.filter((item) => item.id !== serviceId);
+    for (const [position, item] of remaining.entries()) { item.position = position; await this.deployableServices.save(item); }
   }
 
   async getProjectEntityForView(user: User, projectId: string) {
@@ -387,23 +468,24 @@ export class ProjectsService {
     return this.toProjectResponse(savedProject, user);
   }
 
-  async listEnvVars(user: User, projectId: string) {
+  async listEnvVars(user: User, projectId: string, requestedServiceId?: string) {
     const project = await this.findProject(projectId);
     this.assertCanView(user, project);
     await this.encryptLegacyEnvironmentValues(project.id);
+    const service = await this.requireService(project.id, requestedServiceId);
     const variables = await this.envVarRepository.find({
-      where: { projectId: project.id, environment: canonicalEnvironmentName(project), isActive: true },
+      where: { projectId: project.id, serviceId: service.id, environment: canonicalEnvironmentName(project), isActive: true },
       order: { key: "ASC" },
     });
 
     return variables.map((variable) => this.toEnvVarResponse(variable));
   }
 
-  async getEnvVarSetup(user: User, projectId: string) {
+  async getEnvVarSetup(user: User, projectId: string, serviceId?: string) {
     const project = await this.findProject(projectId);
     this.assertCanView(user, project);
     const [variables, tier] = await Promise.all([
-      this.listEnvVars(user, projectId),
+      this.listEnvVars(user, projectId, serviceId),
       this.databaseTierRepository.findOne({ where: { projectId } }),
     ]);
     const managedByKey = new Map<string, Record<string, unknown>>();
@@ -419,7 +501,7 @@ export class ProjectsService {
         ...SERVICE_ALIAS_GROUPS.flatMap((group) => group.aliases.map((key) => reservedVariable(key, group.service)!)),
       ].filter((item, index, items) => items.findIndex((candidate) => candidate.key === item.key) === index),
       missingVariables: [],
-      configuration: { databaseProvider: tier?.provider || DatabaseTierProvider.NONE },
+      configuration: { databaseProvider: tier?.provider || DatabaseTierProvider.NONE, attachedServiceId: tier?.attachedServiceId || null },
     };
   }
 
@@ -427,22 +509,25 @@ export class ProjectsService {
     user: User,
     projectId: string,
     dto: CreateEnvVarDto,
-    req?: RequestInfo
+    req?: RequestInfo,
+    requestedServiceId?: string,
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
     const key = normalizeConfigurationKey(dto.key);
     const environment = canonicalEnvironmentName(project);
+    const service = await this.requireService(project.id, requestedServiceId);
     const result = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, project.id, environment);
       const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [key], manager);
       if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
-      await this.assertEnvKeyAvailable(project.id, key, undefined, manager);
+      await this.assertEnvKeyAvailable(project.id, service.id, key, undefined, manager);
       const defaults = this.environmentDefaults(key);
       const repository = manager.getRepository(ProjectEnvironmentVariable);
       const encryptedValue = this.environmentCrypto.encrypt(dto.value);
       const variable = repository.create({
         projectId: project.id,
+        serviceId: service.id,
         key,
         normalizedKey: key,
         value: encryptedValue,
@@ -491,21 +576,23 @@ export class ProjectsService {
     projectId: string,
     envId: string,
     dto: UpdateEnvVarDto,
-    req?: RequestInfo
+    req?: RequestInfo,
+    requestedServiceId?: string,
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
     const environment = canonicalEnvironmentName(project);
+    const service = await this.requireService(project.id, requestedServiceId);
     const result = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, project.id, environment);
-      const variable = await this.findEnvVar(project.id, envId, manager);
+      const variable = await this.findEnvVar(project.id, service.id, envId, manager);
       this.assertVariableMutable(variable);
       const submittedKey = normalizeConfigurationKey(dto.key || variable.key);
       const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [submittedKey], manager);
       if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
       if (dto.key && submittedKey !== variable.key) {
         const key = submittedKey;
-        await this.assertEnvKeyAvailable(project.id, key, variable.id, manager);
+        await this.assertEnvKeyAvailable(project.id, service.id, key, variable.id, manager);
         variable.key = key;
         variable.normalizedKey = key;
       }
@@ -553,11 +640,13 @@ export class ProjectsService {
     user: User,
     projectId: string,
     dto: BulkEnvVarsDto,
-    req?: RequestInfo
+    req?: RequestInfo,
+    requestedServiceId?: string,
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
     const environment = canonicalEnvironmentName(project);
+    const service = await this.requireService(project.id, requestedServiceId);
     const normalized = dto.variables.map((item) => ({ ...item, key: item.key.trim().toUpperCase() }));
     const result = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, environment);
@@ -566,12 +655,12 @@ export class ProjectsService {
       const { accepted } = partitionSubmittedEnvironmentVariables(normalized, { repositoryOwnedKeys: new Set(ignoredVariableNames) });
       const duplicateKeys = accepted.map((item) => item.key).filter((key, index, keys) => keys.indexOf(key) !== index);
       if (duplicateKeys.length) throw new BadRequestException(`Duplicate environment variable keys: ${[...new Set(duplicateKeys)].join(", ")}`);
-      const existing = await repository.find({ where: { projectId, environment } });
+      const existing = await repository.find({ where: { projectId, serviceId: service.id, environment } });
       const byKey = new Map(existing.map((item) => [item.key, item]));
       const rows: ProjectEnvironmentVariable[] = [];
       for (const item of accepted) {
         const defaults = this.environmentDefaults(item.key);
-        const variable = byKey.get(item.key) || repository.create({ projectId, key: item.key });
+        const variable = byKey.get(item.key) || repository.create({ projectId, serviceId: service.id, key: item.key });
         const encryptedValue = this.environmentCrypto.encrypt(item.value);
         variable.key = item.key;
         variable.normalizedKey = item.key;
@@ -610,12 +699,13 @@ export class ProjectsService {
     return { variables: result.rows.map((item) => this.toEnvVarResponse(item)), ignoredVariableNames: result.ignoredVariableNames };
   }
 
-  async deleteEnvVar(user: User, projectId: string, envId: string, req?: RequestInfo) {
+  async deleteEnvVar(user: User, projectId: string, envId: string, req?: RequestInfo, requestedServiceId?: string) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
+    const service = await this.requireService(project.id, requestedServiceId);
     const variable = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, project.id, canonicalEnvironmentName(project));
-      const current = await this.findEnvVar(project.id, envId, manager);
+      const current = await this.findEnvVar(project.id, service.id, envId, manager);
       this.assertVariableMutable(current);
       await manager.getRepository(ProjectEnvironmentVariable).remove(current);
       return current;
@@ -638,7 +728,7 @@ export class ProjectsService {
   }
 
   private async findProject(projectId: string): Promise<Project> {
-    const project = await this.projectRepository.findOne({ where: { id: projectId } });
+    const project = await this.projectRepository.findOne({ where: { id: projectId }, relations: { services: true } });
 
     if (!project || project.status === ProjectStatus.ARCHIVED) {
       throw new NotFoundException("Project not found");
@@ -647,12 +737,13 @@ export class ProjectsService {
     return project;
   }
 
-  private async findEnvVar(projectId: string, envId: string, manager?: EntityManager) {
+  private async findEnvVar(projectId: string, serviceId: string, envId: string, manager?: EntityManager) {
     const variable = await (manager?.getRepository(ProjectEnvironmentVariable) || this.envVarRepository).findOne({
-      where: { id: envId, projectId },
+      where: { id: envId, projectId, serviceId },
       select: {
         id: true,
         projectId: true,
+        serviceId: true,
         key: true,
       value: true,
       isSecret: true,
@@ -715,11 +806,12 @@ export class ProjectsService {
 
   private async assertEnvKeyAvailable(
     projectId: string,
+    serviceId: string,
     key: string,
     currentEnvId?: string,
     manager?: EntityManager,
   ) {
-    const existing = await (manager?.getRepository(ProjectEnvironmentVariable) || this.envVarRepository).findOne({ where: { projectId, key } });
+    const existing = await (manager?.getRepository(ProjectEnvironmentVariable) || this.envVarRepository).findOne({ where: { projectId, serviceId, normalizedKey: key } });
 
     if (existing && existing.id !== currentEnvId) {
       throw new ConflictException("Environment variable key already exists");
@@ -800,15 +892,6 @@ export class ProjectsService {
     return repositoryUrl.trim().replace(/\/$/, "");
   }
 
-  private normalizeAppDirectory(value?: string): string | null {
-    const normalized = String(value || "")
-      .trim()
-      .replace(/\\/g, "/")
-      .replace(/^\.\//, "")
-      .replace(/^\/+|\/+$/g, "");
-    return normalized && normalized !== "." ? normalized : null;
-  }
-
   private toProjectResponse(project: Project, user: User, activity?: { lastViewedAt: Date | null; lastUserActionAt: Date | null; lastMeaningfulActivityAt: Date | null; lastPipelineActivityAt: Date | null; lastRoute: string | null; lastSection: string | null; lastActionType: string | null; pinned: boolean }) {
     return {
       id: project.id,
@@ -822,8 +905,7 @@ export class ProjectsService {
       repositoryFullName: project.repositoryFullName,
       targetBranch: project.targetBranch,
       environmentName: project.environmentName || "dev",
-      appDirectory: project.appDirectory,
-      deploymentOverrides: project.deploymentOverrides || {},
+      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, position: service.position })),
       status: project.status,
       visibility: project.visibility,
       canManage:
@@ -847,6 +929,7 @@ export class ProjectsService {
   private toEnvVarResponse(variable: ProjectEnvironmentVariable) {
     return {
       id: variable.id,
+      serviceId: variable.serviceId,
       key: variable.key,
       isSecret: variable.isSecret,
       scope: variable.scope || "runtime",
@@ -933,15 +1016,23 @@ export class ProjectsService {
     if (dto.name !== undefined) project.name = dto.name.trim();
     if (dto.description !== undefined) project.description = dto.description;
     if (dto.visibility !== undefined) project.visibility = dto.visibility;
-    if (dto.appDirectory !== undefined) project.appDirectory = this.normalizeAppDirectory(dto.appDirectory);
-    if (dto.deploymentOverrides !== undefined) {
-      const { requiredEnvironmentVariables: _legacyRawRequirements, ...safeOverrides } = dto.deploymentOverrides;
-      project.deploymentOverrides = {
-        ...Object.fromEntries(Object.entries(safeOverrides).filter(([, value]) => value !== "" && value !== undefined)),
-        ...(project.deploymentOverrides?.requiredEnvironmentVariables?.length
-          ? { requiredEnvironmentVariables: project.deploymentOverrides.requiredEnvironmentVariables }
-          : {}),
-      };
-    }
+  }
+
+  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "name" | "serviceDirectory">>) {
+    const values = input?.length ? input : [{ name: "Web", serviceDirectory: "." }];
+    if (values.length > 20) throw new BadRequestException("A project supports at most 20 explicitly configured services.");
+    const services = values.map((value) => ({ name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory) }));
+    if (services.some((service) => !service.name || service.name.length > 80)) throw new BadRequestException("Every service requires a bounded name.");
+    const names = services.map((service) => service.name.toLocaleLowerCase());
+    if (new Set(names).size !== names.length) throw new ConflictException("Service names must be unique within a project.");
+    return services;
+  }
+
+  private async requireService(projectId: string, serviceId?: string) {
+    const service = serviceId
+      ? await this.deployableServices.findOne({ where: { id: serviceId, projectId } })
+      : await this.deployableServices.findOne({ where: { projectId }, order: { position: "ASC" } });
+    if (!service) throw new NotFoundException("Deployable service not found");
+    return service;
   }
 }

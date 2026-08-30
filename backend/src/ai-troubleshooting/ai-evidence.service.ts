@@ -23,7 +23,7 @@ export class AiEvidenceService {
     if (typeof run?.metadata?.safeLog === "string" && run.metadata.safeLog.trim()) rows.push({ source: failedSource, stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.metadata.safeLog });
     if (run?.errorMessage) rows.push({ source: "github_actions_status", stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.errorMessage });
     if (run?.metadata?.terraformPlanSummary) rows.push({ source: "terraform", stage, eventId: run.id, timestamp: run.updatedAt, text: `Terraform plan summary: ${JSON.stringify(run.metadata.terraformPlanSummary)}` });
-    if (run) rows.push({ source: "deployguard_lifecycle", stage, eventId: run.id, timestamp: run.updatedAt, text: JSON.stringify({ operationId: run.id, generationId: run.generationId, commitSha: run.commitSha, deploymentAction: run.metadata?.deploymentAction, deploymentMode: run.metadata?.deploymentMode, failedStage: run.metadata?.failedStage, status: run.status }) });
+    if (run) rows.push({ source: "deployguard_lifecycle", stage, eventId: run.id, timestamp: run.updatedAt, text: JSON.stringify({ operationId: run.id, generationId: run.generationId, commitSha: run.commitSha, deploymentAction: run.metadata?.deploymentAction, failedStage: run.metadata?.failedStage, status: run.status, failureOwner: run.failureOwner, externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId }) });
     if (run) {
       const [events, runtimeEvents] = await Promise.all([
         this.pipelineEvents.find({ where: { projectId, pipelineRunId }, order: { sequenceNumber: "ASC", occurredAt: "ASC" }, take: 200 }),
@@ -47,6 +47,10 @@ export class AiEvidenceService {
         operationType: run?.metadata?.deploymentAction || null,
         commitSha: run?.commitSha || null,
         failedAt: run?.failedAt?.toISOString() || null,
+        failureOwner: run?.failureOwner || "UNVERIFIED",
+        externalProvider: run?.externalProvider || null,
+        failureCode: run?.failureCode || null,
+        failureServiceId: run?.failureServiceId || null,
         evidenceSources: Object.fromEntries([...new Set(evidence.map((row) => row.source))].map((source) => [source, evidence.filter((row) => row.source === source).length])),
       },
       evidence,

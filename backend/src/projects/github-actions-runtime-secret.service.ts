@@ -48,6 +48,7 @@ export class RuntimeSecretMaterializer {
 
   async materialize(input: {
     projectId: string;
+    serviceId?: string;
     generationId: string;
     environment: string;
     configurationFingerprint: string;
@@ -56,7 +57,9 @@ export class RuntimeSecretMaterializer {
     this.assertInput(input);
     const secretNames = Object.keys(input.secretValues).sort();
     if (!secretNames.length) return null;
-    const secretName = `deployguard/${input.projectId}/${input.environment}/application/runtime`;
+    const serviceScope = input.serviceId || "default";
+    if (input.serviceId && !PROJECT_ID.test(input.serviceId)) throw new Error("Runtime secret materialization requires a valid service UUID.");
+    const secretName = `deployguard/${input.projectId}/${input.environment}/services/${serviceScope}/runtime`;
     const secretString = JSON.stringify(Object.fromEntries(secretNames.map((name) => [name, input.secretValues[name]])));
     const versionToken = createHash("sha256")
       .update(`deployguard-runtime-secret:${input.projectId}:${input.environment}:${input.configurationFingerprint}`)
@@ -64,8 +67,9 @@ export class RuntimeSecretMaterializer {
     const tags = {
       ManagedBy: "DeployGuard",
       DeployGuardProjectId: input.projectId,
+      DeployGuardServiceId: serviceScope,
       Environment: input.environment,
-      DeployGuardScope: "project",
+      DeployGuardScope: "service",
       SecretPurpose: "application_runtime",
     };
 
@@ -143,6 +147,7 @@ export class GithubActionsRuntimeSecretService {
 
   async materialize(input: {
     projectId: string;
+    serviceId?: string;
     generationId: string;
     environment: string;
     configurationFingerprint: string;

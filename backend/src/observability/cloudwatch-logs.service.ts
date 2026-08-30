@@ -18,8 +18,8 @@ export class CloudWatchLogsService {
     private readonly sanitizer: LogSanitizerService,
   ) {}
 
-  async getRecentLogs(user: User, projectId: string, options: LogQueryOptions = {}) {
-    const identity = await this.liveRuntime.resolveForUser(user, projectId);
+  async getRecentLogs(user: User, projectId: string, options: LogQueryOptions = {}, serviceId?: string) {
+    const identity = await this.liveRuntime.resolveForUser(user, projectId, serviceId);
     const config = getObservabilityConfig(this.config);
     if (!config.awsRuntimeMonitoringEnabled || !config.cloudWatchLogsEnabled) {
       return this.unavailable(identity, "CloudWatch log monitoring is disabled.");
@@ -42,7 +42,7 @@ export class CloudWatchLogsService {
     }
   }
 
-  async stream(user: User, projectId: string, response: Response) {
+  async stream(user: User, projectId: string, response: Response, serviceId?: string) {
     const config = getObservabilityConfig(this.config);
     response.status(200);
     response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -68,19 +68,21 @@ export class CloudWatchLogsService {
     try {
       while (!closed) {
         try {
-          const resolved = await this.liveRuntime.resolveForUser(user, projectId);
-          const generationChanged = Boolean(identity && identity.generationId !== resolved.generationId);
-          if (!identity || generationChanged) {
+          const resolved = await this.liveRuntime.resolveForUser(user, projectId, serviceId);
+          const identityChanged = Boolean(identity && (identity.generationId !== resolved.generationId || identity.serviceId !== resolved.serviceId));
+          if (!identity || identityChanged) {
             identity = resolved;
             cursor = Date.now() - config.logHistoryMinutes * 60_000;
             const history = config.cloudWatchLogsEnabled
               ? await this.fetch(identity, cursor, config.logHistoryMaxEvents).catch((error) => this.isMissing(error) ? [] : Promise.reject(error))
               : [];
             if (history.length) cursor = Math.max(...history.map((event) => Date.parse(event.timestamp))) + 1;
-            send(generationChanged ? "generation_changed" : "connected", {
+            send(identityChanged ? "generation_changed" : "connected", {
               projectId,
               environmentName: identity.environmentName,
               generationId: identity.generationId,
+              serviceId: identity.serviceId,
+              serviceName: identity.serviceDisplayName,
               logGroupName: identity.logGroupName,
               taskCount: identity.taskArns.length,
               history,

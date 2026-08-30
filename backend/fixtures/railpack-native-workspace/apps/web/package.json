@@ -1,0 +1,6 @@
+{
+  "name": "@deployguard-fixture/web",
+  "private": true,
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "@deployguard-fixture/shared": "*" }
+}

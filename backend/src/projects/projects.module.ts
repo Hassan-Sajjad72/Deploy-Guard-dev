@@ -49,11 +49,12 @@ import { ProjectDeletionService } from "./project-deletion.service";
 import { SharedPlatformFoundationService } from "./shared-platform-foundation.service";
 import { ProductStartSchemaIntegrityService } from "./product-start-schema-integrity.service";
 import { LiveRuntimeIdentityRecoveryService } from "./current-state/live-runtime-identity-recovery.service";
+import { ProjectDeployableService } from "./project-deployable-service.entity";
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      Project, User, GithubAppInstallation, ProjectEnvironmentVariable,
+      Project, ProjectDeployableService, User, GithubAppInstallation, ProjectEnvironmentVariable,
       ProjectDatabaseTier, ProjectPipelineRun, ProjectPipelineEvent,
       ProjectServiceBinding, ProjectConfigurationSnapshot, ProjectUserActivity,
       // Historical infrastructure/storage records are not part of ordinary

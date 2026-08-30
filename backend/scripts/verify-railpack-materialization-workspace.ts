@@ -17,6 +17,6 @@ void (async () => {
     await rm(workspace, { recursive: true, force: true });
   }
   const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
-  assert.match(workflow, /mkdir -p \.deployguard\n\s+cp -R \/tmp\/deployguard-control-plane\/infrastructure\/railpack-runtime \.deployguard\/terraform/);
+  assert.match(workflow, /mkdir -p \.deployguard\/terraform; cp -R \/tmp\/deployguard-control-plane\/infrastructure\/railpack-runtime\/\. \.deployguard\/terraform\//);
   console.log("RAILPACK_MATERIALIZATION_WORKSPACE=PASS");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

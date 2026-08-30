@@ -1,5 +1,7 @@
-import { IsEnum, IsOptional, IsString, Matches } from "class-validator";
+import { Type } from "class-transformer";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsEnum, IsOptional, IsString, Matches, ValidateNested } from "class-validator";
 import { ProjectVisibility } from "../project.entity";
+import { DeployableServiceInputDto } from "./deployable-service.dto";
 
 export class CreateProjectDto {
   @IsString()
@@ -32,12 +34,10 @@ export class CreateProjectDto {
   @Matches(/^[a-z0-9][a-z0-9-]{0,39}$/, { message: "environmentName must use lowercase letters, numbers, and hyphens" })
   environmentName?: string;
 
-  @IsString()
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20)
+  @ValidateNested({ each: true }) @Type(() => DeployableServiceInputDto)
   @IsOptional()
-  @Matches(/^(?:|\.|(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+)$/, {
-    message: "appDirectory must be a repository-relative path",
-  })
-  appDirectory?: string;
+  services?: DeployableServiceInputDto[];
 
   @IsEnum(ProjectVisibility)
   @IsOptional()

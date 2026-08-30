@@ -1,6 +1,7 @@
-import { Column, CreateDateColumn, Entity, Index, JoinColumn, OneToOne, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, OneToOne, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
 import { Project } from "./project.entity";
 import { ManagedDatabaseEngine } from "./managed-database-engine";
+import { ProjectDeployableService } from "./project-deployable-service.entity";
 
 export enum DatabaseTierProvider {
   MANAGED = "managed",
@@ -22,6 +23,8 @@ export class ProjectDatabaseTier {
   @PrimaryGeneratedColumn("uuid") id: string;
   @Index({ unique: true }) @Column({ name: "project_id" }) projectId: string;
   @OneToOne(() => Project, { onDelete: "CASCADE" }) @JoinColumn({ name: "project_id" }) project: Project;
+  @Index() @Column({ nullable: true, name: "attached_service_id", type: "uuid" }) attachedServiceId: string | null;
+  @ManyToOne(() => ProjectDeployableService, { nullable: true, onDelete: "RESTRICT" }) @JoinColumn({ name: "attached_service_id" }) attachedService: ProjectDeployableService | null;
   @Index() @Column({ nullable: true, name: "active_generation_id", type: "uuid" }) activeGenerationId: string | null;
   @Column({ nullable: true }) engine: ManagedDatabaseEngine | null;
   @Column({ type: "enum", enum: DatabaseTierProvider, nullable: true }) provider: DatabaseTierProvider | null;

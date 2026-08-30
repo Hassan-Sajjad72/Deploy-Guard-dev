@@ -32,6 +32,7 @@ type LiveAwsEvidence = {
   ecr: { repository: string; imageTag: string | null; imageDigest: string | null };
   ecs: { cluster: string; service: string; taskDefinitionRevision: number | null; desiredCount: number; runningCount: number; pendingCount: number };
   alb: { name: string; status: string; targetHealth: string[]; endpoint: string | null };
+  services: Array<{ serviceId: string; serviceName: string; publicUrl: string | null; imageDigest: string; ecs: { service: string; desiredCount: number; runningCount: number; pendingCount: number }; alb: { targetHealth: string[] } }>;
 };
 
 type RuntimeObservation = {
@@ -763,6 +764,7 @@ export class ProjectCurrentStateService {
         ecr: awsEvidence?.ecr || null,
         ecs: awsEvidence?.ecs || null,
         alb: awsEvidence?.alb || null,
+        services: awsEvidence?.services || [],
         cloudWatch: { status: resourceStatusFor(runtimeObservation?.resources.cloudWatch) },
         terraformState: {
           status: runtimeRemovedByObservation ? "destroyed" : resourceStatus,
@@ -826,24 +828,25 @@ export class ProjectCurrentStateService {
     const value = (key: string) => typeof identity[key] === "string" ? identity[key] as string : "";
     const region = value("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const cluster = value("ecsClusterArn") || value("ecsClusterName");
-    const serviceArn = release?.ecsServiceArn || value("ecsServiceArn");
-    const targetGroupArn = value("targetGroupArn");
-    const logGroup = value("cloudWatchLogGroupName");
+    const serviceIdentities = Array.isArray(identity.services) ? identity.services as Array<Record<string, unknown>> : [];
+    const serviceArns = serviceIdentities.length ? serviceIdentities.map((item) => String(item.ecsServiceArn || "")).filter(Boolean) : [release?.ecsServiceArn || value("ecsServiceArn")].filter(Boolean);
+    const targetGroupArns = serviceIdentities.length ? serviceIdentities.map((item) => String(item.targetGroupArn || "")).filter(Boolean) : [value("targetGroupArn")].filter(Boolean);
+    const logGroups = serviceIdentities.length ? serviceIdentities.map((item) => String(item.cloudWatchLogGroupName || "")).filter(Boolean) : [value("cloudWatchLogGroupName")].filter(Boolean);
     const unavailable = { runtime: "unknown" as const, resources: { ecs: "unknown" as const, alb: "unknown" as const, cloudWatch: "unknown" as const }, evidence: null };
-    if (!generation || !cluster || !serviceArn || !targetGroupArn) return { observedAt, ...unavailable };
+    if (!generation || !cluster || !serviceArns.length || !targetGroupArns.length) return { observedAt, ...unavailable };
     const absentError = (error: unknown) => /notfound|not found|does not exist|missing/i.test(`${(error as { name?: string })?.name || ""} ${error instanceof Error ? error.message : ""}`);
     const ecs = new ECSClient({ region });
     const elb = new ElasticLoadBalancingV2Client({ region });
     const logs = new CloudWatchLogsClient({ region });
     const [ecsResult, albResult, logsResult] = await Promise.all([
-      ecs.send(new DescribeServicesCommand({ cluster, services: [serviceArn] })).then((result) => result.services?.[0] ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
-      elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [targetGroupArn] })).then((result) => result.TargetGroups?.[0] ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
-      logGroup
-        ? logs.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: logGroup })).then((result) => result.logGroups?.some((group) => group.logGroupName === logGroup) ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const)
+      ecs.send(new DescribeServicesCommand({ cluster, services: serviceArns })).then((result) => result.services?.length ? "present" as const : result.failures?.length === serviceArns.length ? "absent" as const : "unknown" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
+      elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: targetGroupArns })).then((result) => result.TargetGroups?.length ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
+      logGroups.length
+        ? Promise.all(logGroups.map((logGroup) => logs.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: logGroup })))).then((results) => results.some((result, index) => result.logGroups?.some((group) => group.logGroupName === logGroups[index])) ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const)
         : Promise.resolve("unknown" as const),
     ]);
     ecs.destroy(); elb.destroy(); logs.destroy();
-    const runtime = ecsResult === "absent" || albResult === "absent" ? "absent" as const : "unknown" as const;
+    const runtime = ecsResult === "present" || albResult === "present" ? "present" as const : ecsResult === "absent" && albResult === "absent" ? "absent" as const : "unknown" as const;
     return { observedAt, runtime, resources: { ecs: ecsResult, alb: albResult, cloudWatch: logsResult }, evidence: null };
   }
 
@@ -859,59 +862,53 @@ export class ProjectCurrentStateService {
     const string = (key: string) => typeof identity[key] === "string" ? identity[key] : "";
     const region = string("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const cluster = string("ecsClusterArn") || string("ecsClusterName");
-    const targetGroupArn = string("targetGroupArn");
-    const repository = string("imageUri").replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, "").split("@")[0];
-    if (!generation || !release?.imageUri || !release.taskDefinitionArn || !cluster || !targetGroupArn || !repository) return null;
+    const persistedServices = Array.isArray(identity.services) ? identity.services as Array<Record<string, unknown>> : [];
+    const services = persistedServices.length ? persistedServices : [{ serviceId: "legacy", serviceName: "Web", imageUri: string("imageUri"), imageDigest: string("imageDigest"), ecsServiceArn: release?.ecsServiceArn, taskDefinitionArn: release?.taskDefinitionArn, targetGroupArn: string("targetGroupArn"), albName: string("albName"), publicUrl: stableUrl }];
+    if (!generation || !release || !cluster || services.some((service) => !service.ecsServiceArn || !service.taskDefinitionArn || !service.targetGroupArn || !service.imageUri || !service.imageDigest)) return null;
     try {
       const ecs = new ECSClient({ region });
       const ecr = new ECRClient({ region });
       const elb = new ElasticLoadBalancingV2Client({ region });
-      const [serviceResult, repositoryResult, targetGroupsResult] = await Promise.all([
-        ecs.send(new DescribeServicesCommand({ cluster, services: [release.ecsServiceArn], include: ["TAGS"] })),
-        ecr.send(new DescribeRepositoriesCommand({ repositoryNames: [repository] })),
-        elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [targetGroupArn] })),
-      ]);
-      const service = serviceResult.services?.[0];
-      const repositoryEvidence = repositoryResult.repositories?.[0];
-      const targetGroup = targetGroupsResult.TargetGroups?.[0];
-      if (!service?.serviceName || service.status !== "ACTIVE" || service.taskDefinition !== release.taskDefinitionArn || !repositoryEvidence?.repositoryArn || !targetGroup?.TargetGroupArn) return null;
-      const imageDigest = string("imageDigest");
-      if (!/^sha256:[0-9a-f]{64}$/.test(imageDigest) || repositoryEvidence.repositoryUri !== string("imageUri")) return null;
-      const [taskDefinitionResult, imageResult, serviceTags, targetGroupTags, targetHealth] = await Promise.all([
-        ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: release.taskDefinitionArn, include: ["TAGS"] })),
-        ecr.send(new DescribeImagesCommand({ repositoryName: repository, imageIds: [{ imageDigest }] })),
-        ecs.send(new EcsListTagsForResourceCommand({ resourceArn: service.serviceArn! })),
-        elb.send(new DescribeTagsCommand({ ResourceArns: [targetGroupArn] })),
-        elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: targetGroupArn })),
-      ]);
       const tags = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined) =>
         Object.fromEntries((input || []).map((tag) => [tag.Key || tag.key || "", tag.Value || tag.value || ""]));
-      const ownsProjectRuntime = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined) => {
+      const ownsProjectRuntime = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined, serviceId: string) => {
         const values = tags(input);
         return values.ManagedBy === "DeployGuard"
           && values.DeployGuardProjectId === projectId
-          && values.DeployGuardOperationId === release.deployedByPipelineRunId;
+          && values.DeployGuardOperationId === release.deployedByPipelineRunId
+          && (serviceId === "legacy" || values.DeployGuardServiceId === serviceId);
       };
-      if (!ownsProjectRuntime(serviceTags.tags) || !ownsProjectRuntime(taskDefinitionResult.tags) || !ownsProjectRuntime(targetGroupTags.TagDescriptions?.[0]?.Tags)) return null;
-      const immutableImage = imageResult.imageDetails?.[0];
-      if (!immutableImage || immutableImage.imageDigest !== imageDigest) return null;
+      const observations = [] as LiveAwsEvidence["services"];
+      for (const item of services) {
+        const serviceId = String(item.serviceId); const imageUri = String(item.imageUri); const imageDigest = String(item.imageDigest);
+        const repository = imageUri.replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, "").split("@")[0];
+        if (!repository || !/^sha256:[0-9a-f]{64}$/.test(imageDigest)) return null;
+        const [serviceResult, repositoryResult, targetGroupsResult] = await Promise.all([
+          ecs.send(new DescribeServicesCommand({ cluster, services: [String(item.ecsServiceArn)], include: ["TAGS"] })),
+          ecr.send(new DescribeRepositoriesCommand({ repositoryNames: [repository] })),
+          elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [String(item.targetGroupArn)] })),
+        ]);
+        const runtimeService = serviceResult.services?.[0]; const repositoryEvidence = repositoryResult.repositories?.[0]; const targetGroup = targetGroupsResult.TargetGroups?.[0];
+        if (!runtimeService?.serviceName || runtimeService.status !== "ACTIVE" || runtimeService.taskDefinition !== item.taskDefinitionArn || repositoryEvidence?.repositoryUri !== imageUri || !targetGroup?.TargetGroupArn) return null;
+        const [taskDefinitionResult, imageResult, serviceTags, targetGroupTags, targetHealth] = await Promise.all([
+          ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: String(item.taskDefinitionArn), include: ["TAGS"] })), ecr.send(new DescribeImagesCommand({ repositoryName: repository, imageIds: [{ imageDigest }] })), ecs.send(new EcsListTagsForResourceCommand({ resourceArn: runtimeService.serviceArn! })), elb.send(new DescribeTagsCommand({ ResourceArns: [String(item.targetGroupArn)] })), elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: String(item.targetGroupArn) })),
+        ]);
+        if (!ownsProjectRuntime(serviceTags.tags, serviceId) || !ownsProjectRuntime(taskDefinitionResult.tags, serviceId) || !ownsProjectRuntime(targetGroupTags.TagDescriptions?.[0]?.Tags, serviceId) || imageResult.imageDetails?.[0]?.imageDigest !== imageDigest) return null;
+        observations.push({ serviceId, serviceName: String(item.serviceName || runtimeService.serviceName), publicUrl: typeof item.publicUrl === "string" ? item.publicUrl : null, imageDigest, ecs: { service: runtimeService.serviceName, desiredCount: runtimeService.desiredCount || 0, runningCount: runtimeService.runningCount || 0, pendingCount: runtimeService.pendingCount || 0 }, alb: { targetHealth: (targetHealth.TargetHealthDescriptions || []).map((target) => target.TargetHealth?.State || "unknown") } });
+      }
+      ecs.destroy(); ecr.destroy(); elb.destroy();
+      const first = observations[0];
       return {
         observedAt: new Date().toISOString(),
-        ecr: { repository, imageTag: immutableImage.imageTags?.[0] || null, imageDigest: immutableImage.imageDigest || null },
-        ecs: {
-          cluster,
-          service: service.serviceName,
-          taskDefinitionRevision: taskDefinitionResult?.taskDefinition?.revision ?? null,
-          desiredCount: service.desiredCount || 0,
-          runningCount: service.runningCount || 0,
-          pendingCount: service.pendingCount || 0,
-        },
+        ecr: { repository: String(services[0].imageUri).replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, ""), imageTag: null, imageDigest: first.imageDigest },
+        ecs: { cluster, service: observations.map((item) => item.ecs.service).join(", "), taskDefinitionRevision: null, desiredCount: observations.reduce((sum, item) => sum + item.ecs.desiredCount, 0), runningCount: observations.reduce((sum, item) => sum + item.ecs.runningCount, 0), pendingCount: observations.reduce((sum, item) => sum + item.ecs.pendingCount, 0) },
         alb: {
-          name: string("albName") || targetGroup.LoadBalancerArns?.[0] || "application-alb",
+          name: observations.map((item) => item.serviceName).join(", "),
           status: "active",
-          targetHealth: (targetHealth?.TargetHealthDescriptions || []).map((item) => item.TargetHealth?.State || "unknown"),
+          targetHealth: observations.flatMap((item) => item.alb.targetHealth),
           endpoint: /^https?:\/\//i.test(stableUrl) ? stableUrl : null,
         },
+        services: observations,
       };
     } catch {
       return null;

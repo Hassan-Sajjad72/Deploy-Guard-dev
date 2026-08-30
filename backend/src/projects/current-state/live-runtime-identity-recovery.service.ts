@@ -33,6 +33,10 @@ export class LiveRuntimeIdentityRecoveryService {
     if (!generation || !release?.deployedByPipelineRunId || release.metadata?.releaseEvidenceVerified !== true) return generation?.resourceManifest || null;
     const manifest = this.mergeKnown(generation.resourceManifest || {}, this.runtimeMetadata(release));
     if (this.complete(manifest)) return manifest;
+    // A multi-service release is indivisible. The historical scalar columns are
+    // compatibility projections of the first service and must never be used to
+    // reconstruct (and thereby silently truncate) a multi-service generation.
+    if (Array.isArray(manifest.services) && manifest.services.length > 1) return manifest;
     const recovered = await this.readVerifiedIdentity(project, release, manifest).catch(() => null);
     if (!recovered) return manifest;
     const identity = { ...manifest, ...recovered };
@@ -127,6 +131,17 @@ export class LiveRuntimeIdentityRecoveryService {
     return merged;
   }
   private complete(identity: Record<string, unknown>) {
+    if (Array.isArray(identity.services) && identity.services.length) {
+      const shared = ["region", "ecsClusterArn", "terraformStateKey"]
+        .every((key) => typeof identity[key] === "string" && Boolean(identity[key]));
+      const services = identity.services.every((value) => {
+        if (!value || typeof value !== "object") return false;
+        const service = value as Record<string, unknown>;
+        return ["serviceId", "serviceName", "serviceDirectory", "imageUri", "imageDigest", "ecsServiceArn", "taskDefinitionArn", "targetGroupArn", "publicUrl", "cloudWatchLogGroupName", "applicationContainerName"]
+          .every((key) => typeof service[key] === "string" && Boolean(service[key]));
+      });
+      return shared && services;
+    }
     return ["region", "ecsClusterArn", "ecsServiceArn", "taskDefinitionArn", "targetGroupArn", "albArn", "publicUrl", "cloudWatchLogGroupName", "applicationContainerName", "imageUri", "imageDigest", "terraformStateKey"]
       .every((key) => typeof identity[key] === "string" && Boolean(identity[key]));
   }

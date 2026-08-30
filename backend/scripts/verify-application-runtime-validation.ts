@@ -14,9 +14,9 @@ const orderedSteps = [
   "Configure AWS credentials through OIDC",
   "Validate immutable release input",
   "Install pinned Railpack",
-  "Build immutable Railpack image",
+  "Build immutable Railpack images",
   "Validate Application Runtime",
-  "Publish immutable image to ECR",
+  "Publish immutable images to ECR",
   "Install Terraform",
   "Materialize release runtime",
 ];
@@ -35,7 +35,7 @@ function runScript(block: string) {
   return block.slice(start + marker.length).split("\n").map((line) => line.startsWith("          ") ? line.slice(10) : line).join("\n").trim();
 }
 
-const validationBlock = stepBlock("Validate Application Runtime", "Publish immutable image to ECR");
+const validationBlock = stepBlock("Validate Application Runtime", "Publish immutable images to ECR");
 const validationScript = runScript(validationBlock);
 
 function executable(path: string, source: string) {
@@ -75,6 +75,9 @@ fi
 `);
   executable(join(directory, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
   const downstream = join(directory, "downstream");
+  const deployguard = join(directory, ".deployguard");
+  require("node:fs").mkdirSync(deployguard);
+  writeFileSync(join(deployguard, "build-artifacts.json"), JSON.stringify([{ serviceId: "11111111-1111-4111-8111-111111111111", localImage: "registry.example/app:exact-sha" }]), "utf8");
   const suffix = mode === "workflow_failure"
     ? "\nfalse\nprintf 'ECR\\nTerraform\\n' > \"$DOWNSTREAM_FILE\""
     : "\nprintf 'ECR\\nTerraform\\n' > \"$DOWNSTREAM_FILE\"";
@@ -84,11 +87,12 @@ fi
       ...process.env,
       PATH: `${directory}:${process.env.PATH}`,
       PROBE_IMAGE: "registry.example/app:exact-sha",
-      RUNTIME_PROBE_CONTAINER: "deployguard-runtime-probe-operation",
+      OPERATION_ID: "22222222-2222-4222-8222-222222222222",
       PROBE_MODE: mode,
       TRACE_FILE: trace,
       DOWNSTREAM_FILE: downstream,
     },
+    cwd: directory,
   });
   const observed = {
     status: result.status,
@@ -107,9 +111,9 @@ async function verifyStageProjection() {
     ["configure_aws_credentials_through_oidc", "Authenticate AWS"],
     ["validate_immutable_release_input", "Validate Release"],
     ["install_pinned_railpack", "Prepare Build"],
-    ["build_immutable_railpack_image", "Build Application"],
+    ["build_immutable_railpack_images", "Build Applications"],
     ["validate_application_runtime", "Validate Application Runtime"],
-    ["publish_immutable_image_to_ecr", "Publish Image"],
+    ["publish_immutable_images_to_ecr", "Publish Images"],
   ];
   const service = Object.create(GithubActionsService.prototype) as any;
   service.getWorkflowJobs = async () => ({ jobs: [{ steps: orderedSteps.slice(0, 7).map((name) => ({ name, status: "completed", conclusion: "success" })) }] });
@@ -135,8 +139,8 @@ void (async () => {
   assert.doesNotMatch(validationScript, /\bcurl\b|\bwget\b|https?:\/\//, "pre-publish validation must be TCP-only");
   assert.match(validationScript, /docker logs .*--tail 100[\s\S]*tail -c 12000/);
   assert.match(validationScript, /Application did not listen on PORT=8080 within 45 seconds\. Bind to 0\.0\.0\.0 and use the PORT environment variable\./);
-  assert.match(workflow, /name: Clean up application runtime validation[\s\S]*if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*docker rm --force "\$RUNTIME_PROBE_CONTAINER"/);
-  assert.match(stepBlock("Publish immutable image to ECR", "Select immutable rollback image"), /if: success\(\)/);
+  assert.match(workflow, /name: Clean up application runtime validation[\s\S]*if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*deployguard-runtime-probe-\$\{OPERATION_ID\}-/);
+  assert.match(stepBlock("Publish immutable images to ECR", "Select immutable rollback service images"), /if: success\(\)/);
   assert.match(stepBlock("Install Terraform", "Materialize release runtime"), /if: success\(\)/);
   assert.match(stepBlock("Materialize release runtime", "Publish verified release result"), /curl --fail --show-error --silent --retry 20/, "post-ALB HTTP verification remains unchanged");
 
@@ -144,13 +148,13 @@ void (async () => {
   assert.equal(success.status, 0);
   assert.equal(success.downstream, "ECR\nTerraform\n", "successful TCP validation continues to downstream stages");
   assert.match(success.trace, /docker run .*--env PORT=8080 --env HOST=0\.0\.0\.0 registry\.example\/app:exact-sha/);
-  assert.match(success.trace, /docker rm --force deployguard-runtime-probe-operation/);
+  assert.match(success.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/);
 
   for (const mode of ["timeout", "exited", "run_failure", "workflow_failure"] as const) {
     const result = executeProbe(mode);
     assert.notEqual(result.status, 0, `${mode} must fail the composed workflow path`);
     assert.equal(result.downstream, "", `${mode} must not reach ECR or Terraform`);
-    assert.match(result.trace, /docker rm --force deployguard-runtime-probe-operation/, `${mode} must clean up the probe container`);
+    assert.match(result.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/, `${mode} must clean up the probe container`);
     if (mode === "timeout" || mode === "exited") assert.match(result.stderr, /Application did not listen on PORT=8080 within 45 seconds/);
   }
   const timeout = executeProbe("timeout");

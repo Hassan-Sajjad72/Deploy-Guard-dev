@@ -34,6 +34,7 @@ import { rankWorkspaceSummaries } from "./project-recency";
 import { RailpackDeploymentService } from "./railpack-deployment.service";
 import { RollbackGithubActionsDto } from "./dto/rollback-github-actions.dto";
 import { DestroyGithubActionsDto } from "./dto/destroy-github-actions.dto";
+import { DeployableServiceInputDto, UpdateDeployableServiceDto } from "./dto/deployable-service.dto";
 
 @Controller("api/projects")
 @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER, UserRole.READONLY]))
@@ -57,6 +58,30 @@ export class ProjectsController {
     const database = await this.databaseTiers.update(req.user!, projectId, dto, req);
     await this.recordMeaningful(req, projectId, "database_settings_saved", "requirements");
     return { database };
+  }
+
+  @Get(":projectId/services")
+  async listDeployableServices(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string) {
+    return { services: await this.projectsService.listDeployableServices(req.user!, projectId) };
+  }
+
+  @Post(":projectId/services")
+  @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER]))
+  async createDeployableService(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Body() dto: DeployableServiceInputDto) {
+    return { service: await this.projectsService.createDeployableService(req.user!, projectId, dto) };
+  }
+
+  @Patch(":projectId/services/:serviceId")
+  @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER]))
+  async updateDeployableService(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Param("serviceId", ParseUUIDPipe) serviceId: string, @Body() dto: UpdateDeployableServiceDto) {
+    return { service: await this.projectsService.updateDeployableService(req.user!, projectId, serviceId, dto) };
+  }
+
+  @Delete(":projectId/services/:serviceId")
+  @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER]))
+  async deleteDeployableService(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Param("serviceId", ParseUUIDPipe) serviceId: string) {
+    await this.projectsService.deleteDeployableService(req.user!, projectId, serviceId);
+    return { removed: true };
   }
 
   @Get()
@@ -148,6 +173,12 @@ export class ProjectsController {
     @Param("repository") repository: string
   ) {
     return { branches: await this.projectsService.listGithubRepositoryBranches(req.user!, `${owner}/${repository}`) };
+  }
+
+  @Get("github/repositories/:owner/:repository/directories")
+  async listGithubRepositoryDirectories(@Req() req: Request, @Param("owner") owner: string, @Param("repository") repository: string, @Query("ref") ref: string) {
+    if (!ref?.trim()) throw new BadRequestException("A branch or exact source reference is required.");
+    return this.projectsService.listGithubRepositoryDirectories(req.user!, `${owner}/${repository}`, ref.trim());
   }
 
   @Post()
@@ -389,6 +420,32 @@ export class ProjectsController {
   @Get(":projectId/env")
   async listEnvVars(@Req() req: Request, @Param("projectId") projectId: string) {
     return this.projectsService.getEnvVarSetup(req.user!, projectId);
+  }
+
+  @Get(":projectId/services/:serviceId/env")
+  async listServiceEnvVars(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Param("serviceId", ParseUUIDPipe) serviceId: string) {
+    return this.projectsService.getEnvVarSetup(req.user!, projectId, serviceId);
+  }
+
+  @Post(":projectId/services/:serviceId/env")
+  async createServiceEnvVar(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Param("serviceId", ParseUUIDPipe) serviceId: string, @Body() dto: CreateEnvVarDto) {
+    return this.projectsService.createEnvVar(req.user!, projectId, dto, req, serviceId);
+  }
+
+  @Post(":projectId/services/:serviceId/env/bulk")
+  async bulkUpsertServiceEnvVars(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Param("serviceId", ParseUUIDPipe) serviceId: string, @Body() dto: BulkEnvVarsDto) {
+    return this.projectsService.bulkUpsertEnvVars(req.user!, projectId, dto, req, serviceId);
+  }
+
+  @Patch(":projectId/services/:serviceId/env/:envId")
+  async updateServiceEnvVar(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Param("serviceId", ParseUUIDPipe) serviceId: string, @Param("envId", ParseUUIDPipe) envId: string, @Body() dto: UpdateEnvVarDto) {
+    return this.projectsService.updateEnvVar(req.user!, projectId, envId, dto, req, serviceId);
+  }
+
+  @Delete(":projectId/services/:serviceId/env/:envId")
+  async deleteServiceEnvVar(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Param("serviceId", ParseUUIDPipe) serviceId: string, @Param("envId", ParseUUIDPipe) envId: string) {
+    await this.projectsService.deleteEnvVar(req.user!, projectId, envId, req, serviceId);
+    return { removed: true };
   }
 
   @Post(":projectId/env")

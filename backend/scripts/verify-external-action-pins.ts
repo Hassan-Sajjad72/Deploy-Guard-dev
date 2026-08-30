@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const APPROVED_ACTIONS = new Map<string, string>([
-  ["actions/checkout", "11d5960a326750d5838078e36cf38b85af677262"],
-  ["aws-actions/configure-aws-credentials", "7474bc4690e29a8392af63c5b98e7449536d5c3a"],
+  ["actions/checkout", "11bd71901bbe5b1630ceea73d27597364c9af683"],
+  ["aws-actions/configure-aws-credentials", "e3dd6a429d7300a6a4c196c26e071d42e0343502"],
   ["hashicorp/setup-terraform", "b9cd54a3c349d3f38e8881555d616ced269862dd"],
   ["actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"],
 ]);

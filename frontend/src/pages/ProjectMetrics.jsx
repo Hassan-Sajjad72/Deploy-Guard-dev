@@ -56,14 +56,14 @@ function mergeLogEvents(current, incoming) {
   return [...byId.values()].sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp))).slice(-400);
 }
 
-function RuntimeLogViewer({ projectId, live, onConnectionChange }) {
+function RuntimeLogViewer({ projectId, serviceId, live, onConnectionChange }) {
   const [connection, setConnection] = useState({ state: "connecting", message: "Connecting to the LIVE CloudWatch log group…", generationId: null });
   const [events, setEvents] = useState([]);
   const [reconnectKey, setReconnectKey] = useState(0);
   useEffect(() => {
     if (!live) return undefined;
     setConnection((value) => ({ ...value, state: "connecting", message: "Connecting to the LIVE CloudWatch log group…" }));
-    const source = new EventSource(getApplicationLogStreamUrl(projectId), { withCredentials: true });
+    const source = new EventSource(getApplicationLogStreamUrl(projectId, serviceId), { withCredentials: true });
     const receiveIdentity = (name) => (event) => {
       const payload = JSON.parse(event.data);
       setEvents((current) => mergeLogEvents(name === "generation_changed" ? [] : current, payload.history || []));
@@ -93,7 +93,7 @@ function RuntimeLogViewer({ projectId, live, onConnectionChange }) {
       onConnectionChange(next);
     };
     return () => source.close();
-  }, [live, projectId, reconnectKey]);
+  }, [live, projectId, serviceId, reconnectKey]);
   return <Card className="monitoring-log-card">
     <div className="monitoring-section-heading"><div><p className="eyebrow">Live runtime output</p><h2>ECS application logs</h2><p>Bounded recent history followed by new CloudWatch events from the authoritative LIVE generation.</p></div><div className="monitoring-log-actions"><StatusChip status={connection.state === "connected" ? "healthy" : connection.state}>{label(connection.state)}</StatusChip><button className="secondary-button" onClick={() => setReconnectKey((value) => value + 1)} type="button">Reconnect</button></div></div>
     <p className="monitoring-log-connection">{connection.message}</p>
@@ -106,6 +106,7 @@ function RuntimeLogViewer({ projectId, live, onConnectionChange }) {
 export default function ProjectMetrics() {
   const { projectId } = useParams();
   const [range, setRange] = useState("1h");
+  const [selectedServiceId, setSelectedServiceId] = useState("");
   const [runtime, setRuntime] = useState(null);
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -119,13 +120,18 @@ export default function ProjectMetrics() {
       // Infrastructure; opening either page cannot change the authority.
       const current = await getProjectDetailedCurrentState(projectId);
       setState(current);
+      const configuredServices = Array.isArray(current.infrastructureEvidence?.runtimeIdentity?.services) ? current.infrastructureEvidence.runtimeIdentity.services : [];
+      const effectiveServiceId = configuredServices.some((service) => service.serviceId === selectedServiceId)
+        ? selectedServiceId
+        : configuredServices[0]?.serviceId || "";
+      if (effectiveServiceId !== selectedServiceId) setSelectedServiceId(effectiveServiceId);
       setRuntime(null);
       if (current.stateAuthority?.runtime?.state === "present" && current.stateAuthority?.infrastructure?.exists) {
-        setRuntime(await getApplicationRuntimeMetrics(projectId, { range }));
+        setRuntime(await getApplicationRuntimeMetrics(projectId, { range, serviceId: effectiveServiceId }));
       }
       setError("");
     } catch (caught) { setError(caught.message); } finally { setLoading(false); }
-  }, [projectId, range]);
+  }, [projectId, range, selectedServiceId]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
   useEffect(() => {
@@ -137,6 +143,8 @@ export default function ProjectMetrics() {
   const presentation = projectStatePresentation(state);
   const authority = state?.stateAuthority;
   const evidence = state?.infrastructureEvidence;
+  const services = Array.isArray(evidence?.runtimeIdentity?.services) ? evidence.runtimeIdentity.services : [];
+  const selectedService = services.find((service) => service.serviceId === selectedServiceId) || services[0] || null;
   const liveInfrastructure = authority?.runtime?.state === "present" && authority?.infrastructure?.exists;
   const runtimeCharts = metricDefinitions.filter(({ key }) => (runtime?.[key]?.points || []).length > 0);
   const lastScrape = runtimeLastScrape(runtime);
@@ -161,6 +169,7 @@ export default function ProjectMetrics() {
     <PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} context={`Source: GitHub Actions and AWS · Last updated: ${date(evidence?.lastUpdatedAt)} · ${label(evidence?.freshness)}`} description="Deployed application and infrastructure health only. GitHub Actions execution timing remains on Pipeline." eyebrow="Application health" status={presentation.state} title="Monitoring" />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     {destroyOperation ? <Card><strong>{destroyOperation === "running" ? "Destroy is in progress." : "The latest Destroy failed."}</strong><p>The authoritative runtime is still present, so its ECS, ALB, logs, and metrics remain available.</p></Card> : null}
+    {services.length > 1 ? <Card><label className="field"><span>Runtime service</span><select aria-label="Runtime service" onChange={(event) => setSelectedServiceId(event.target.value)} value={selectedService?.serviceId || ""}>{services.map((service) => <option key={service.serviceId} value={service.serviceId}>{service.serviceName}</option>)}</select></label><p>Metrics and live logs are bound to the selected service in the authoritative LIVE generation.</p></Card> : null}
     <section aria-label="Deployment health summary" className="monitoring-summary-grid">
       <MetricCard detail={`Source: ${evidenceSourceLabel(authority?.applicationHealth?.source)}`} label="Application" tone={authority?.applicationHealth?.status === "healthy" ? "success" : "warning"} value={label(authority?.applicationHealth?.status)} />
       <MetricCard detail={ecs ? `${ecs.desiredCount} desired · ${ecs.pendingCount} pending` : "No current AWS observation"} label="ECS" tone={ecs?.runningCount === ecs?.desiredCount ? "success" : "neutral"} value={ecs ? `${ecs.runningCount}/${ecs.desiredCount}` : "Unavailable"} />
@@ -187,6 +196,6 @@ export default function ProjectMetrics() {
       {runtimeAvailable && runtimeCharts.length ? <section aria-label="Runtime metric charts" className="monitoring-chart-grid">{runtimeCharts.map(({ key, title, unit }) => <MetricChart key={key} metric={runtime[key]} title={title} unit={unit} />)}</section> : null}
       {metricsState === "no_samples_yet" || (runtimeAvailable && !runtimeCharts.length) ? <EmptyState icon="activity" message="CloudWatch is available, but this range has no timestamped samples yet." title="No samples yet" /> : null}
     </>
-    <RuntimeLogViewer live={liveInfrastructure} onConnectionChange={updateLogConnection} projectId={projectId} />
+    <RuntimeLogViewer live={liveInfrastructure} onConnectionChange={updateLogConnection} projectId={projectId} serviceId={selectedService?.serviceId || ""} />
   </div>;
 }

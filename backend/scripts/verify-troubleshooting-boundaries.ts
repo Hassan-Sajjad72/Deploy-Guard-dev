@@ -38,6 +38,7 @@ async function verifySessionOperationTimestamps() {
   assert.deepEqual(response.operation, {
     id: run.id, action: "deploy", commitSha: run.commitSha, generationId: null, failedStage: run.currentStage, failedStageLabel: "Build Application",
     failedAt, completedAt, startedAt, createdAt, summary: "sanitized failure",
+    failureOwner: "UNVERIFIED", externalProvider: undefined, failureCode: undefined, failureServiceId: undefined,
   });
 }
 

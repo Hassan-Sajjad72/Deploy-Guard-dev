@@ -64,6 +64,7 @@ import { ProjectStageCheckpoint } from "./projects/recovery/project-stage-checkp
 import { ProjectServiceBinding } from "./projects/project-service-binding.entity";
 import { ProjectConfigurationSnapshot } from "./projects/project-configuration-snapshot.entity";
 import { GithubAppInstallation } from "./projects/github-app-installation.entity";
+import { ProjectDeployableService } from "./projects/project-deployable-service.entity";
 
 function loadBackendEnv() {
   const envPath = resolveBackendEnvFile();
@@ -125,6 +126,7 @@ export default new DataSource({
     User,
     AuditLog,
     Project,
+    ProjectDeployableService,
     ProjectEnvironmentVariable,
     ProjectDatabaseTier,
     ProjectPipelineRun,
