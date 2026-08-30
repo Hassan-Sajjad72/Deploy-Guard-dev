@@ -7,7 +7,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY . .
-RUN {{INSTALL_COMMAND}}
+RUN if [ "{{REPOSITORY_INSTALL_ROOT}}" != "." ]; then cd "{{REPOSITORY_INSTALL_ROOT}}"; fi && {{INSTALL_COMMAND}}
 {{BUILD_STEP}}
 
 FROM {{RUNTIME_BASE_IMAGE}} AS runner

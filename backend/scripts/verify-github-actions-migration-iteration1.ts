@@ -3,7 +3,7 @@ import { strict as assert } from "assert";
 import { generateKeyPairSync } from "crypto";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
 import { GithubAppService, DEPLOYGUARD_WORKFLOW_PATH } from "../src/projects/github-app.service";
 import { authorizeGithubRepositoryInTrust, githubTrustAuthorizesRepository } from "../src/projects/github-actions-oidc-trust.service";
 import { githubActionsStagePresentation } from "../src/projects/pipeline/github-actions-stage-presentation";
@@ -53,11 +53,15 @@ async function run() {
     assert.equal(connected.ownerUserId, 42);
     const available = await service.availableInstallations({ id: 43, role: "admin", githubLogin: null } as never);
     assert.equal(available[0].installationId, "9001");
-    await service.connectInstallation({ id: 43 } as never, "9001");
-    assert.deepEqual(rows.map((row) => row.ownerUserId).sort(), [42, 43]);
+    await assert.rejects(
+      service.connectInstallation({ id: 43 } as never, "9001"),
+      (error: unknown) => error instanceof BadRequestException && /different DeployGuard user/.test((error as BadRequestException).message),
+      "a second DeployGuard user must not take over an already-connected GitHub App installation",
+    );
+    assert.deepEqual(rows.map((row) => row.ownerUserId).sort(), [42]);
     const listed = await service.listRepositories(42);
     assert.equal(listed[0].installationId, "9001");
-    assert.equal(await service.oidcTrustSubject(42, "sample-owner/sample-app", "9001"), "repo:sample-owner@77/*:*");
+    assert.equal(await service.oidcTrustSubject(42, "sample-owner/sample-app", "9001"), "repo:sample-owner@77/sample-app@10:*");
     const generated = await service.ensureWorkflow(42, "sample-owner/sample-app", "main", "9001");
     assert.deepEqual({ verified: generated.verified, generated: generated.generated, path: generated.path }, { verified: true, generated: true, path: DEPLOYGUARD_WORKFLOW_PATH });
     const put = calls.find((call) => call.method === "PUT");

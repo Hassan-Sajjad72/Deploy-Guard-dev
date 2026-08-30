@@ -273,6 +273,13 @@ try {
   assert.equal(profile.rawProfile.appDirectory, "services/api");
   assert.equal(profile.rawProfile.repositoryInstallRoot, "services/api");
   assert.match(String(profile.rawProfile.installCommand), /gunicorn==23\.0\.0/);
+  // A nested Python monorepo's install step must change directory to the
+  // install root before running pip, because requirements.txt only lives
+  // there.  This is the symmetric regression to the workspace case above.
+  const nestedPlan = asPlan(fixtures.find((item) => item.name === "Flask direct")!, resolver.resolve(join(nestedPythonRoot, "services", "api"), new Set(readdirSync(join(nestedPythonRoot, "services", "api")))).result!);
+  const nestedRendered = docker.renderDockerfile(registry.getTemplate("flask-wsgi")!, { ...nestedPlan, appRoot: "services/api", repositoryInstallRoot: "services/api", installCommand: "pip install --no-cache-dir -r requirements.txt" });
+  assert.ok(nestedRendered, "nested Python plan renders a Dockerfile");
+  assert.match(nestedRendered!, /cd "services\/api"[^\n]*&& pip install/);
 } finally { rmSync(nestedPythonRoot, { recursive: true, force: true }); }
 
 const unresolvedPythonRoot = writeFixture({ "requirements.txt": "fastapi==0.116.0\n", "main.py": "from fastapi import FastAPI\n" }, false);
@@ -299,6 +306,15 @@ try {
   const profile = new StackDetectionService(new TemplateMatchingService(), scanner, resolver).detect(workspaceRoot, "e".repeat(40));
   assert.equal(profile.rawProfile.appDirectory, "apps/web");
   assert.equal(profile.rawProfile.repositoryInstallRoot, ".");
+  // The install step in the rendered Dockerfile must execute from the
+  // repository install root (here the workspace root) rather than from the
+  // application's build-context folder.  This is the monorepo / app-root
+  // regression: a workspace manifest cannot be resolved from inside the
+  // app folder, and `npm ci` would fail there.
+  const workspacePlan = asPlan(fixtures.find((item) => item.name === "React Vite")!, resolver.resolve(join(workspaceRoot, "apps", "web"), new Set(readdirSync(join(workspaceRoot, "apps", "web")))).result!);
+  const workspaceRendered = docker.renderDockerfile(registry.getTemplate("vite-static")!, { ...workspacePlan, appRoot: "apps/web", repositoryInstallRoot: ".", outputDirectory: "dist", buildCommand: "vite build" });
+  assert.ok(workspaceRendered, "workspace plan renders a Dockerfile");
+  assert.match(workspaceRendered!, /if \[ "\." != "\." \]/, "monorepo install root must not change directory when it equals '.'");
 } finally { rmSync(workspaceRoot, { recursive: true, force: true }); }
 
 console.log(`Mainstream detector verification passed for ${fixtures.length} framework/mode fixtures plus custom Dockerfile, missing lockfile, unsupported adapter, and localhost binding policies.`);

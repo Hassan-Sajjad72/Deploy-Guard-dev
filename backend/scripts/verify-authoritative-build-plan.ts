@@ -35,7 +35,7 @@ assert.equal(evaluateBuildPlanReadiness({ ...plan, blockers: ["A safe production
 
 const template = new TemplateRegistryService().getTemplate("express-server")!;
 const dockerfile = new DockerTemplateEngineService().renderDockerfile(template, plan)!;
-assert.match(dockerfile, /RUN npm install/);
+assert.match(dockerfile, /RUN (?:if \[[^\n]*\][^\n]*&& )?npm install/);
 assert.doesNotMatch(dockerfile, /npm ci/);
 assert.match(dockerfile, /FROM node:22-alpine3\.21/);
 assert.throws(() => new DockerTemplateEngineService().renderDockerfile(template, { ...plan, installCommand: "npm ci" }), /forbidden/);
