@@ -9,10 +9,10 @@ import {
   SecretsManagerClient,
   UpdateSecretVersionStageCommand,
 } from "@aws-sdk/client-secrets-manager";
+import { isCanonicalEnvironmentName } from "./canonical-environment";
 
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GENERATION_ID = PROJECT_ID;
-const ENVIRONMENT = /^(?:dev|production)$/;
 const CONFIGURATION_FINGERPRINT = /^[0-9a-f]{64}$/;
 const SECRET_KEY = /^[A-Z][A-Z0-9_]{0,127}$/;
 
@@ -110,7 +110,7 @@ export class RuntimeSecretMaterializer {
   private assertInput(input: { projectId: string; generationId: string; environment: string; configurationFingerprint: string; secretValues: Record<string, string> }) {
     if (!PROJECT_ID.test(input.projectId)) throw new Error("Runtime secret materialization requires a valid project UUID.");
     if (!GENERATION_ID.test(input.generationId)) throw new Error("Runtime secret materialization requires a valid generation UUID.");
-    if (!ENVIRONMENT.test(input.environment)) throw new Error("Runtime secret materialization requires a supported environment.");
+    if (!isCanonicalEnvironmentName(input.environment)) throw new Error("Runtime secret materialization requires a supported environment.");
     if (!CONFIGURATION_FINGERPRINT.test(input.configurationFingerprint)) throw new Error("Runtime secret materialization requires an immutable configuration fingerprint.");
     if (!input.secretValues || typeof input.secretValues !== "object" || Array.isArray(input.secretValues)) throw new Error("Runtime secret materialization requires a secret map.");
     for (const [key, value] of Object.entries(input.secretValues)) {

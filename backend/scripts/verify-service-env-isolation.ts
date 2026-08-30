@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { strict as assert } from "node:assert";
+import { RuntimeSecretMaterializer } from "../src/projects/github-actions-runtime-secret.service";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
@@ -25,7 +26,7 @@ service.runtimeConfigRevisions = { create: (value: any) => value, save: async (v
 service.dataSource = { getRepository: () => ({ find: async () => [] }) };
 
 void (async () => {
-  const runtime = await service.runtimeConfiguration({ id: projectId }, "dev", operationId, "a".repeat(40), "deploy", null);
+  const runtime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", operationId, "a".repeat(40), "deploy", null);
   assert.equal(runtime.services.length, 2);
   const web = runtime.services.find((item: any) => item.serviceId === webId);
   const api = runtime.services.find((item: any) => item.serviceId === apiId);
@@ -41,5 +42,25 @@ void (async () => {
   assert.ok(api.managedDatabase.aliases.includes("DATABASE_URL"));
   assert.ok(api.managedDatabase.aliases.includes("POSTGRES_PASSWORD"));
   assert.deepEqual(materializations.map((item) => [item.serviceId, Object.keys(item.secretValues)]), [[webId, []], [apiId, ["API_TOKEN"]]]);
+  assert.deepEqual(materializations.map((item) => item.environment), ["cert-20260831", "cert-20260831"], "named project environments survive runtime configuration unchanged");
+
+  let providerCalls = 0;
+  const materializer = new RuntimeSecretMaterializer({
+    describe: async () => { providerCalls += 1; return null; },
+    create: async () => { providerCalls += 1; return "arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/test"; },
+    restore: async () => undefined,
+    put: async () => undefined,
+    activateVersion: async () => undefined,
+  });
+  const namedEnvironmentSecret = await materializer.materialize({
+    projectId,
+    serviceId: apiId,
+    generationId: operationId,
+    environment: "cert-20260831",
+    configurationFingerprint: "a".repeat(64),
+    secretValues: { API_TOKEN: "bounded-test-value" },
+  });
+  assert.equal(providerCalls, 2, "a valid named environment reaches secret-provider materialization");
+  assert.match(namedEnvironmentSecret?.valueFromByName.API_TOKEN || "", /:API_TOKEN::[0-9a-f]{64}$/);
   console.log("SERVICE_ENV_ISOLATION=PASS SERVICE_SECRET_LEAKS=0 DATABASE_ATTACHMENT_EXACT=1 PLATFORM_PORT_AUTHORITY=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
