@@ -321,7 +321,10 @@ export class RailpackDeploymentService {
       immutableImage: `${revision.imageUri}@${revision.imageDigest}`,
       runtimeConfigRevisionId: revision.runtimeConfigRevisionId,
       runtimeConfiguration: {
-        environment: revision.runtimeConfigRevision?.nonSecretEnvironment,
+        // Platform-owned PORT/HOST are immutable deployment contract values,
+        // persisted separately from user environment data. Retain them for a
+        // legacy destroy without inventing any historical user configuration.
+        environment: { ...(revision.runtimeConfigRevision?.nonSecretEnvironment || {}), ...(revision.runtimeConfigRevision?.platformValues || {}) },
         secretReferences: revision.runtimeConfigRevision?.secretReferences,
         databaseAttached: revision.runtimeConfigRevision?.databaseConfiguration?.attached === true,
         managedDatabase: {
@@ -331,7 +334,7 @@ export class RailpackDeploymentService {
         },
       },
     }));
-    if (release.metadata?.releaseEvidenceVerified !== true || !release.deployedByPipelineRunId || !/^[0-9a-f]{40}$/i.test(release.commitSha) || !services.length || services.some((service) => !service.runtimeConfiguration.environment || !service.runtimeConfiguration.secretReferences || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId) || !/^[0-9a-f-]{36}$/i.test(service.serviceId) || !service.serviceName || !service.serviceDirectory || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage))) {
+    if (release.metadata?.releaseEvidenceVerified !== true || !release.deployedByPipelineRunId || !/^[0-9a-f]{40}$/i.test(release.commitSha) || !services.length || services.some((service) => service.runtimeConfiguration.environment.PORT !== String(DEPLOYGUARD_PLATFORM_PORT) || service.runtimeConfiguration.environment.HOST !== "0.0.0.0" || !service.runtimeConfiguration.secretReferences || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId) || !/^[0-9a-f-]{36}$/i.test(service.serviceId) || !service.serviceName || !service.serviceDirectory || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage))) {
       throw new ServiceUnavailableException("Destroy requires the complete immutable deployed service revision set.");
     }
     return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, services };

@@ -209,7 +209,7 @@ async function verifyRollbackUnsafeReleaseRemainsDestroyable() {
       // This deliberately models an older verified release: it is unsafe to
       // roll back because secrets were not sealed, but Terraform still needs
       // its exact persisted runtime references to destroy it.
-      nonSecretEnvironment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {},
+      nonSecretEnvironment: {}, platformValues: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {},
       databaseConfiguration: { attached: false, aliases: [] }, isRollbackSafe: false, sealedAt: null,
     },
   };
@@ -217,6 +217,7 @@ async function verifyRollbackUnsafeReleaseRemainsDestroyable() {
   await assert.rejects(() => service.rollbackTarget(release), /complete immutable image and runtime-configuration revision set/);
   const target = await service.destroyTarget(release);
   assert.equal(target.services[0].immutableImage, `${revision.imageUri}@${revision.imageDigest}`);
+  assert.deepEqual(target.services[0].runtimeConfiguration.environment, { PORT: "8080", HOST: "0.0.0.0" }, "legacy destroy uses only persisted platform contract values");
   service.serviceRevisions = { find: async () => [] };
   await assert.rejects(() => service.destroyTarget(release), /complete immutable deployed service revision set/);
 }
