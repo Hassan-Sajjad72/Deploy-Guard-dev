@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
+import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
@@ -23,6 +24,13 @@ const invalidReference = structuredClone(contractFixture);
 invalidReference.services[0].secretReferences.TOKEN = "terraform://database/password";
 const invalidJqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(invalidReference), encoding: "utf8" });
 assert.notEqual(invalidJqResult.status, 0, "the workflow must reject non-ARN secret references before execution");
+for (const [field, key] of [["environment", "DATABASE_URL"], ["secretReferences", "MONGODB_URI"]] as const) {
+  const legacyDatabaseAlias: any = structuredClone(contractFixture);
+  legacyDatabaseAlias.services[0][field][key] = field === "environment"
+    ? "legacy-user-database-value"
+    : `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:${key}::${"c".repeat(64)}`;
+  assert.throws(() => servicesBase64(legacyDatabaseAlias), /runtime (?:environment|secret reference) is invalid/, `legacy ${key} must fail closed before workflow dispatch`);
+}
 const destroyFixture: any = structuredClone(contractFixture);
 destroyFixture.services[0].rollbackImage = `123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test@sha256:${"c".repeat(64)}`;
 destroyFixture.projectDeletion = { generationIds: ["55555555-5555-4555-8555-555555555555"] };

@@ -25,7 +25,7 @@ import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.se
 import { BulkEnvVarsDto } from "./dto/bulk-env-vars.dto";
 import { ProjectActivityService } from "./project-activity.service";
 import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
-import { classifyConfigurationVariable, isSecretConfigurationKey, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
+import { classifyConfigurationVariable, isDeployGuardManagedDatabaseAlias, isSecretConfigurationKey, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import {
   acquireProjectConfigurationAdvisoryLock,
@@ -521,6 +521,7 @@ export class ProjectsService {
     const key = normalizeConfigurationKey(dto.key);
     const environment = canonicalEnvironmentName(project);
     const service = await this.requireService(project.id, requestedServiceId);
+    this.assertDatabaseAliasNotUserWritable(key);
     const result = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, project.id, environment);
       const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [key], manager);
@@ -592,6 +593,7 @@ export class ProjectsService {
       const variable = await this.findEnvVar(project.id, service.id, envId, manager);
       this.assertVariableMutable(variable);
       const submittedKey = normalizeConfigurationKey(dto.key || variable.key);
+      this.assertDatabaseAliasNotUserWritable(submittedKey);
       const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [submittedKey], manager);
       if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
       if (dto.key && submittedKey !== variable.key) {
@@ -976,7 +978,12 @@ export class ProjectsService {
   private async ignoredEnvironmentVariableNames(projectId: string, keys: string[], manager?: EntityManager) {
     void projectId;
     void manager;
-    return keys.map(normalizeConfigurationKey).filter((key) => key === "PORT" || key === "HOST");
+    return [...new Set(keys.map(normalizeConfigurationKey).filter((key) => key === "PORT" || key === "HOST" || isDeployGuardManagedDatabaseAlias(key)))].sort();
+  }
+
+  private assertDatabaseAliasNotUserWritable(key: string) {
+    const normalized = normalizeConfigurationKey(key);
+    if (isDeployGuardManagedDatabaseAlias(normalized)) throw new BadRequestException(reservedVariableError(normalized));
   }
 
   private assertVariableMutable(variable: ProjectEnvironmentVariable) {

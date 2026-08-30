@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { normalizeServiceDirectory } from "./deployable-service-path";
+import { isDeployGuardManagedDatabaseAlias } from "./configuration-ownership";
 
 export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v3";
 export const RAILPACK_RESULT_CONTRACT_VERSION = "deployguard.release-result/v4";
@@ -45,9 +46,9 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     ids.add(service.serviceId); names.add(loweredName);
     if (normalizeServiceDirectory(service.serviceDirectory) !== service.serviceDirectory) throw new Error("Railpack service directory is not canonical.");
     if (!service.environment || typeof service.environment !== "object" || Array.isArray(service.environment) || !service.secretReferences || typeof service.secretReferences !== "object" || Array.isArray(service.secretReferences)) throw new Error("Railpack runtime references are invalid.");
-    for (const [key, item] of Object.entries(service.environment)) if (!KEY.test(key) || typeof item !== "string") throw new Error("Railpack runtime environment is invalid.");
+    for (const [key, item] of Object.entries(service.environment)) if (!KEY.test(key) || typeof item !== "string" || isDeployGuardManagedDatabaseAlias(key)) throw new Error("Railpack runtime environment is invalid.");
     if (service.environment.PORT !== "8080" || service.environment.HOST !== "0.0.0.0") throw new Error("Railpack platform runtime values are invalid.");
-    for (const [key, reference] of Object.entries(service.secretReferences)) if (!KEY.test(key) || !SECRET_VALUE_FROM.test(reference)) throw new Error("Railpack runtime secret reference is invalid.");
+    for (const [key, reference] of Object.entries(service.secretReferences)) if (!KEY.test(key) || !SECRET_VALUE_FROM.test(reference) || isDeployGuardManagedDatabaseAlias(key)) throw new Error("Railpack runtime secret reference is invalid.");
     if (typeof service.databaseAttached !== "boolean" || !service.managedDatabase || !Array.isArray(service.managedDatabase.aliases) || !service.managedDatabase.aliases.every((alias) => KEY.test(alias)) || ![null, "postgres", "mysql", "mongodb"].includes(service.managedDatabase.engine)) throw new Error("Railpack managed database configuration is invalid.");
     if (service.managedDatabase.secretVersionId != null && !/^[0-9a-f]{64}$/.test(service.managedDatabase.secretVersionId)) throw new Error("Railpack managed database secret-version identity is invalid.");
     if (service.databaseAttached) databaseAttachments += 1;

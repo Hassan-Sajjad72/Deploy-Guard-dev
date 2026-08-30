@@ -24,7 +24,7 @@
     "test:destroy-lifecycle-authority": "ts-node scripts/verify-destroy-lifecycle-authority.ts",
     "test:product-maturity-certification": "ts-node scripts/verify-product-maturity-certification.ts",
     "test:deployable-services": "ts-node scripts/verify-deployable-services.ts",
-    "test:service-env-isolation": "ts-node scripts/verify-service-env-isolation.ts",
+    "test:service-env-isolation": "ts-node scripts/verify-reserved-environment-boundary.ts && ts-node scripts/verify-service-env-isolation.ts",
     "test:multi-service-release": "ts-node scripts/verify-multi-service-release.ts",
     "test:multi-service-runtime": "ts-node scripts/verify-multi-service-runtime.ts",
     "test:failure-ownership": "ts-node scripts/verify-failure-ownership.ts",

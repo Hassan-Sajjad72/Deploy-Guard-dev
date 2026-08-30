@@ -18,7 +18,7 @@ import { Project } from "./project.entity";
 import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
 import { DEPLOYGUARD_PLATFORM_PORT } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
-import { aliasesFor } from "./configuration-ownership";
+import { aliasesFor, isDeployGuardManagedDatabaseAlias } from "./configuration-ownership";
 import { assertRailpackRuntimeConfiguration, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
@@ -444,7 +444,7 @@ export class RailpackDeploymentService {
       const environment: Record<string, string> = { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" };
       const secretValues: Record<string, string> = {};
       for (const row of rows.filter((variable) => variable.serviceId === service.id)) {
-        if (["PORT", "HOST"].includes(row.key)) continue;
+        if (["PORT", "HOST"].includes(row.key) || isDeployGuardManagedDatabaseAlias(row.key)) continue;
         const value = this.crypto.decrypt(row.value);
         if (row.isSecret) secretValues[row.key] = value; else environment[row.key] = value;
       }
