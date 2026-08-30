@@ -74,6 +74,8 @@ assert.match(terraform, /aws_ecs_task_definition/);
 assert.match(terraform, /aws_efs_file_system/);
 assert.match(terraform, /aws_efs_access_point/);
 assert.match(terraform, /aws_secretsmanager_secret/);
+assert.match(terraform, /runtime_secrets_enabled\s+=\s+local\.database_enabled\s+\|\|\s+anytrue/, "runtime-secret IAM cardinality must be derived from plan-known configuration");
+assert.doesNotMatch(terraform, /count\s+=\s+length\(local\.runtime_secret_arns\)/, "apply-time secret ARNs must never control Terraform cardinality");
 assert.match(terraform, /for_each\s+= var\.services/);
 assert.match(terraform, /database_services\s+= \{ for id, service in var\.services/);
 assert.doesNotMatch(terraform, /Resource\s*=\s*"\*"/);

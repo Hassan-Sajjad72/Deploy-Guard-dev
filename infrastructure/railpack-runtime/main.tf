@@ -39,6 +39,12 @@ locals {
     flatten([for service in values(var.services) : [for reference in values(service.secret_references) : join(":", slice(split(":", reference), 0, 7))]]),
     local.database_enabled ? [aws_secretsmanager_secret.database[0].arn] : [],
   ))
+  # Resource cardinality must be decided exclusively from configuration known
+  # during planning. The managed database secret ARN is intentionally allowed
+  # to remain unknown until apply inside the resulting policy document.
+  runtime_secrets_enabled = local.database_enabled || anytrue([
+    for service in values(var.services) : length(keys(service.secret_references)) > 0
+  ])
   database_environment = local.database_enabled ? {
     for key in local.database_aliases : key => contains(["DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "MYSQL_PORT", "MONGO_PORT", "MONGODB_PORT"], key) ? tostring(local.database_port) : contains(["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MONGO_HOST", "MONGODB_HOST"], key) ? local.database_host : contains(["DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "MYSQL_USER", "MONGO_USER", "MONGODB_USER"], key) ? "deployguard" : "application"
     if !contains(["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "MYSQL_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL", "MYSQL_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"], key)
@@ -199,14 +205,14 @@ resource "aws_iam_role_policy_attachment" "execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 data "aws_iam_policy_document" "runtime_secrets" {
-  count = length(local.runtime_secret_arns) > 0 ? 1 : 0
+  count = local.runtime_secrets_enabled ? 1 : 0
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
     resources = local.runtime_secret_arns
   }
 }
 resource "aws_iam_role_policy" "runtime_secrets" {
-  count  = length(local.runtime_secret_arns) > 0 ? 1 : 0
+  count  = local.runtime_secrets_enabled ? 1 : 0
   name   = "runtime-secrets"
   role   = aws_iam_role.execution.id
   policy = data.aws_iam_policy_document.runtime_secrets[0].json

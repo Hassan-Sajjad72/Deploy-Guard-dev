@@ -11,7 +11,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "test:no-legacy-architecture": "ts-node scripts/verify-no-legacy-architecture.ts",
-    "test:railpack-runtime-contract": "ts-node scripts/verify-railpack-runtime-contract.ts",
+    "test:railpack-runtime-contract": "ts-node scripts/verify-railpack-runtime-contract.ts && terraform -chdir=../infrastructure/railpack-runtime test -filter=tests/managed-mongodb-plan.tftest.hcl",
     "test:application-runtime-validation": "ts-node scripts/verify-application-runtime-validation.ts",
     "test:dispatch-state-projection": "ts-node scripts/verify-dispatch-state-projection.ts",
     "test:unified-railpack-lifecycle": "ts-node scripts/verify-unified-railpack-lifecycle.ts",
