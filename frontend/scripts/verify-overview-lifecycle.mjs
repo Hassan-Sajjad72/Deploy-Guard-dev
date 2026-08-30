@@ -8,6 +8,7 @@ const overview = readFileSync(new URL("../src/pages/ProjectDetails.jsx", import.
 const lifecycle = readFileSync(new URL("../src/components/projects/ProjectOverviewLifecycle.jsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../src/api/projectApi.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const designSystem = readFileSync(new URL("../src/components/common/DesignSystem.jsx", import.meta.url), "utf8");
 
 const actions = (state, canManage = true) => overviewLifecycleActions({ stateAuthority: { state }, canRetry: true, stableUrl: "https://example.test" }, canManage);
 assert.equal(canonicalOverviewState({ stateAuthority: { state: "LIVE" }, developerState: "failed_application" }), "LIVE", "canonical state authority wins over historical state");
@@ -127,4 +128,11 @@ for (const state of ["ready", "deploying", "failed", "live", "destroying", "dest
 }
 assert.doesNotMatch(styles, /overview-state-(?:deploying|destroying)[^}]*var\(--(?:cyan|amber)\)/);
 assert.match(styles, /@media\s*\(max-width:\s*560px\)[\s\S]*overview-summary-grid/);
+assert.match(styles, /\.ds-modal-backdrop\{[^}]*align-items:flex-start[^}]*overflow-y:auto[^}]*overscroll-behavior:contain/, "shared modal backdrop permits bounded viewport scrolling");
+assert.match(styles, /\.ds-modal\{[^}]*max-height:calc\(100dvh[^}]*overflow-y:auto[^}]*overscroll-behavior:contain/, "shared modal content scrolls within the dynamic viewport");
+assert.match(styles, /@media\(max-width:560px\),\(max-height:640px\)\{\.ds-modal-backdrop\{--modal-viewport-gutter:var\(--space-3\)/, "short and narrow viewports retain a reachable dialog gutter");
+assert.match(designSystem, /document\.body\.style\.overflow = "hidden"[\s\S]*document\.body\.style\.overflow = bodyOverflow/, "modal preserves and restores body scroll locking");
+assert.match(designSystem, /event\.key === "Escape"[\s\S]*event\.key !== "Tab"/, "Escape close and keyboard focus trapping remain active");
+assert.match(designSystem, /event\.target === event\.currentTarget && onClose\?\.\(\)/, "backdrop close remains scoped to backdrop interaction");
+assert.match(designSystem, /aria-labelledby=\{labelledBy\} aria-modal="true"[\s\S]*role="dialog"/, "shared modal accessibility contract remains intact");
 console.log("Overview canonical lifecycle action and responsive presentation verification passed.");
