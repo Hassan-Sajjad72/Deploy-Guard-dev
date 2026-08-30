@@ -23,6 +23,11 @@ const invalidReference = structuredClone(contractFixture);
 invalidReference.services[0].secretReferences.TOKEN = "terraform://database/password";
 const invalidJqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(invalidReference), encoding: "utf8" });
 assert.notEqual(invalidJqResult.status, 0, "the workflow must reject non-ARN secret references before execution");
+const destroyFixture: any = structuredClone(contractFixture);
+destroyFixture.services[0].rollbackImage = `123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test@sha256:${"c".repeat(64)}`;
+destroyFixture.projectDeletion = { generationIds: ["55555555-5555-4555-8555-555555555555"] };
+const destroyJqResult = spawnSync("jq", ["-e", "--arg", "project", destroyFixture.projectId, "--arg", "operation", destroyFixture.operationId, "--arg", "sha", destroyFixture.sourceSha, "--arg", "action", "destroy", jqContract], { input: JSON.stringify(destroyFixture), encoding: "utf8" });
+assert.equal(destroyJqResult.status, 0, `workflow must accept the exact canonical destroy runtime fixture: ${destroyJqResult.stderr}`);
 assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller)));
 const staleResultContract = workflow.replace(/^      result_contract_version:.*\n/m, "");
 assert.throws(
