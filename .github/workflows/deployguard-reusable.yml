@@ -181,6 +181,40 @@ jobs:
           terraform -chdir=.deployguard/terraform validate || { echo 'DG_FAILURE code=DG_TERRAFORM_VALIDATE_FAILED stage=terraform_validate' >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = destroy ]; then
             terraform -chdir=.deployguard/terraform destroy -input=false -auto-approve
+            compact_project="${PROJECT_ID//-/}"
+            # Runtime secrets are created by DeployGuard, outside Terraform,
+            # and are therefore removed only after Terraform has stopped every
+            # task that can reference them.  Never delete an arbitrary secret:
+            # every candidate must match the exact project/environment/service
+            # namespace and DeployGuard ownership tags from the immutable input.
+            while IFS= read -r service; do
+              service_id="$(jq -r '.serviceId' <<<"$service")"
+              service_secret="deployguard/${PROJECT_ID}/${ENVIRONMENT_NAME}/services/${service_id}/runtime"
+              legacy_secret="deployguard/${PROJECT_ID}/${ENVIRONMENT_NAME}/application/runtime"
+              while IFS= read -r secret_arn; do
+                [ -n "$secret_arn" ] || continue
+                metadata="$(aws secretsmanager describe-secret --secret-id "$secret_arn" --output json)"
+                jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg service "$service_id" --arg serviceSecret "$service_secret" --arg legacySecret "$legacy_secret" '
+                  def tag($key): ([.Tags[]? | select(.Key == $key) | .Value] | first);
+                  tag("ManagedBy") == "DeployGuard"
+                  and tag("DeployGuardProjectId") == $project
+                  and tag("Environment") == $environment
+                  and tag("SecretPurpose") == "application_runtime"
+                  and ((.Name == $serviceSecret and tag("DeployGuardScope") == "service" and tag("DeployGuardServiceId") == $service) or (.Name == $legacySecret and tag("DeployGuardScope") == "project"))
+                ' <<<"$metadata" >/dev/null || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
+                aws secretsmanager delete-secret --secret-id "$secret_arn" --force-delete-without-recovery
+              done < <(jq -r '.secretReferences[]? | split(":") | .[0:7] | join(":")' <<<"$service" | sort -u)
+              repository="$(jq -r '.rollbackImage | split("@")[0] | split("/")[1:] | join("/")' <<<"$service")"
+              compact_service="${service_id//-/}"
+              [ "$repository" = "deployguard-${PROJECT_ID}" ] || [ "$repository" = "deployguard-${compact_project:0:12}-${compact_service:0:8}" ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=terraform_materialization' >&2; exit 1; }
+              aws ecr delete-repository --repository-name "$repository" --force >/dev/null 2>&1 || aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1 || true
+            done < <(jq -c '.services[]' .deployguard/runtime.json)
+            state_key="projects/${PROJECT_ID}/${ENVIRONMENT_NAME}/runtime/terraform.tfstate"
+            aws s3api delete-object --bucket "$TERRAFORM_STATE_BUCKET" --key "$state_key" >/dev/null
+            if aws s3api head-object --bucket "$TERRAFORM_STATE_BUCKET" --key "$state_key" >/dev/null 2>&1; then
+              echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2
+              exit 1
+            fi
             jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" --slurpfile runtime .deployguard/runtime.json '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,destroyed:true,destroyVerification:{contractVersion:"deployguard.destroy-result/v2",deploymentOperationId:$operationId,projectId:$projectId,environmentName:$environmentName,generationIds:($runtime[0].projectDeletion.generationIds|sort),status:"project_delete_ready",generationResourcesRemoved:true,projectResourcesRemoved:true,terraformStateArtifactsRemoved:true,sharedPlatformUntouched:true,verifiedAt:(now|todateiso8601)}}' > .deployguard/release-runtime.json
           else
             terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan || { echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2; exit 1; }

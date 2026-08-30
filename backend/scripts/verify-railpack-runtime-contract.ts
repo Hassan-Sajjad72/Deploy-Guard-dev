@@ -28,6 +28,10 @@ destroyFixture.services[0].rollbackImage = `123456789012.dkr.ecr.us-east-1.amazo
 destroyFixture.projectDeletion = { generationIds: ["55555555-5555-4555-8555-555555555555"] };
 const destroyJqResult = spawnSync("jq", ["-e", "--arg", "project", destroyFixture.projectId, "--arg", "operation", destroyFixture.operationId, "--arg", "sha", destroyFixture.sourceSha, "--arg", "action", "destroy", jqContract], { input: JSON.stringify(destroyFixture), encoding: "utf8" });
 assert.equal(destroyJqResult.status, 0, `workflow must accept the exact canonical destroy runtime fixture: ${destroyJqResult.stderr}`);
+const destroyRuntime = workflow.slice(workflow.indexOf('if [ "$DEPLOYMENT_ACTION" = destroy ]; then'), workflow.indexOf('else\n            terraform -chdir=.deployguard/terraform plan'));
+assert.match(destroyRuntime, /terraform -chdir=\.deployguard\/terraform destroy -input=false -auto-approve[\s\S]*?aws secretsmanager delete-secret --secret-id .*--force-delete-without-recovery[\s\S]*?aws ecr delete-repository --repository-name .* --force[\s\S]*?aws s3api delete-object --bucket "\$TERRAFORM_STATE_BUCKET" --key "\$state_key"[\s\S]*?aws s3api head-object/, "destroy must prove exact Terraform state, DeployGuard-owned runtime-secret, and immutable-image cleanup before it emits deletion evidence");
+assert.match(destroyRuntime, /\.Name == \$serviceSecret[\s\S]*?\.Name == \$legacySecret/, "destroy supports only exact owned service-scoped or historical project-scoped runtime secret namespaces");
+assert.match(destroyRuntime, /\[ "\$repository" = "deployguard-\$\{PROJECT_ID\}" \] \|\| \[ "\$repository" = "deployguard-\$\{compact_project:0:12\}-\$\{compact_service:0:8\}" \]/, "destroy must reject any ECR repository outside the exact legacy or service-scoped DeployGuard namespace");
 assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller)));
 const staleResultContract = workflow.replace(/^      result_contract_version:.*\n/m, "");
 assert.throws(
