@@ -237,7 +237,7 @@ export class RailpackDeploymentService {
       operation.currentStage = "oidc_authorization";
       await this.runs.save(operation);
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
-      const immutableTarget = action === "destroy" && destroyRelease ? await this.rollbackTarget(destroyRelease) : rollbackTarget;
+      const immutableTarget = action === "destroy" && destroyRelease ? await this.destroyTarget(destroyRelease) : rollbackTarget;
       const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget);
       const inputs: RailpackWorkflowInputs = {
         deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
@@ -302,6 +302,39 @@ export class RailpackDeploymentService {
       throw new ServiceUnavailableException("The rollback target does not contain a complete immutable image and runtime-configuration revision set.");
     }
     return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, services: services.map(({ rollbackSafe: _rollbackSafe, ...service }) => service) };
+  }
+
+  /**
+   * Destroy consumes the exact deployed service/revision set, but never needs
+   * to claim it is safe to roll back. Older verified releases may therefore
+   * be destroyable while correctly remaining unavailable as rollback targets.
+   */
+  private async destroyTarget(release: ProjectStableRelease): Promise<RollbackTargetIdentity> {
+    if (!release.generationId) throw new ServiceUnavailableException("Destroy requires a canonical deployed generation identity.");
+    const revisions = await this.serviceRevisions.find({ where: { generationId: release.generationId }, relations: { runtimeConfigRevision: true } });
+    const services = revisions.sort((a, b) => a.serviceId.localeCompare(b.serviceId)).map((revision) => ({
+      serviceId: revision.serviceId,
+      serviceName: revision.serviceName,
+      serviceDirectory: revision.serviceDirectory,
+      imageUri: revision.imageUri,
+      imageDigest: revision.imageDigest,
+      immutableImage: `${revision.imageUri}@${revision.imageDigest}`,
+      runtimeConfigRevisionId: revision.runtimeConfigRevisionId,
+      runtimeConfiguration: {
+        environment: revision.runtimeConfigRevision?.nonSecretEnvironment,
+        secretReferences: revision.runtimeConfigRevision?.secretReferences,
+        databaseAttached: revision.runtimeConfigRevision?.databaseConfiguration?.attached === true,
+        managedDatabase: {
+          engine: (revision.runtimeConfigRevision?.databaseConfiguration?.engine || null) as "postgres" | "mysql" | "mongodb" | null,
+          aliases: Array.isArray(revision.runtimeConfigRevision?.databaseConfiguration?.aliases) ? revision.runtimeConfigRevision.databaseConfiguration.aliases as string[] : [],
+          secretVersionId: typeof revision.runtimeConfigRevision?.databaseConfiguration?.secretVersionId === "string" ? revision.runtimeConfigRevision.databaseConfiguration.secretVersionId : null,
+        },
+      },
+    }));
+    if (release.metadata?.releaseEvidenceVerified !== true || !release.deployedByPipelineRunId || !/^[0-9a-f]{40}$/i.test(release.commitSha) || !services.length || services.some((service) => !service.runtimeConfiguration.environment || !service.runtimeConfiguration.secretReferences || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId) || !/^[0-9a-f-]{36}$/i.test(service.serviceId) || !service.serviceName || !service.serviceDirectory || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage))) {
+      throw new ServiceUnavailableException("Destroy requires the complete immutable deployed service revision set.");
+    }
+    return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, services };
   }
 
   private async authoritativeDestroyRelease(project: Project, environmentName: string, generationId: string | null) {
@@ -904,11 +937,20 @@ export class RailpackDeploymentService {
     const artifact = evidence.releaseArtifact as Record<string, unknown>;
     const terraform = artifact.terraform as Record<string, unknown>;
     const optional = (key: string) => typeof terraform?.[key] === "string" && terraform[key] ? terraform[key] : null;
-    const services = (evidence.services as Array<Record<string, unknown>>).slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId)));
+    const region = optional("aws_region");
+    const ecsClusterArn = optional("ecs_cluster_arn");
+    const ecsClusterName = optional("ecs_cluster_name");
+    const rawServices = evidence.services as Array<Record<string, unknown>>;
+    const services: Array<Record<string, unknown>> = rawServices.slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId))).map((service) => ({
+      ...service,
+      region,
+      ecsClusterArn,
+      ecsClusterName,
+    }));
     return {
-      region: optional("aws_region"),
-      ecsClusterArn: optional("ecs_cluster_arn"),
-      ecsClusterName: optional("ecs_cluster_name"),
+      region,
+      ecsClusterArn,
+      ecsClusterName,
       services,
       serviceIds: services.map((service) => service.serviceId),
       publicUrls: Object.fromEntries(services.map((service) => [String(service.serviceId), service.publicUrl])),

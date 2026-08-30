@@ -26,11 +26,18 @@ function failed(action: "deploy" | "rollback" | "destroy") {
 function authority(projected: any, runtime: "present" | "absent" | "unknown") {
   const service: any = Object.create(ProjectCurrentStateService.prototype);
   service.config = { get: (_key: string, fallback?: unknown) => fallback };
-  return service.withStateAuthority(projectId, "dev", projected, null, {
+  const evidence = runtime === "present" ? {
+    observedAt,
+    ecr: { repository: "deployguard-test", imageTag: null, imageDigest: `sha256:${"a".repeat(64)}` },
+    ecs: { cluster: "cluster", service: "service", taskDefinitionRevision: 1, desiredCount: 1, runningCount: 1, pendingCount: 0 },
+    alb: { name: "alb", status: "active", targetHealth: ["healthy"], endpoint: "https://application.example.test" },
+    services: [],
+  } : null;
+  return service.withStateAuthority(projectId, "dev", projected, evidence, {
     observedAt,
     runtime,
     resources: { ecs: runtime === "unknown" ? "unknown" : runtime, alb: runtime === "unknown" ? "unknown" : runtime, cloudWatch: runtime === "unknown" ? "unknown" : runtime },
-    evidence: null,
+    evidence,
   });
 }
 
@@ -188,6 +195,32 @@ async function verifyDestroyTargetsDeployedRelease() {
   await assert.rejects(() => service.authoritativeDestroyRelease(project, "dev", null), /authoritative verified deployed release identity/);
 }
 
+async function verifyRollbackUnsafeReleaseRemainsDestroyable() {
+  const service: any = Object.create(RailpackDeploymentService.prototype);
+  const release: any = {
+    id: "release", generationId, deployedByPipelineRunId: operationId, commitSha: "d".repeat(40),
+    metadata: { releaseEvidenceVerified: true },
+  };
+  const revision = {
+    serviceId: "99999999-9999-4999-8999-999999999999", serviceName: "Web", serviceDirectory: ".",
+    imageUri: "123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test", imageDigest: `sha256:${"a".repeat(64)}`,
+    runtimeConfigRevisionId: "88888888-8888-4888-8888-888888888888",
+    runtimeConfigRevision: {
+      // This deliberately models an older verified release: it is unsafe to
+      // roll back because secrets were not sealed, but Terraform still needs
+      // its exact persisted runtime references to destroy it.
+      nonSecretEnvironment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {},
+      databaseConfiguration: { attached: false, aliases: [] }, isRollbackSafe: false, sealedAt: null,
+    },
+  };
+  service.serviceRevisions = { find: async () => [revision] };
+  await assert.rejects(() => service.rollbackTarget(release), /complete immutable image and runtime-configuration revision set/);
+  const target = await service.destroyTarget(release);
+  assert.equal(target.services[0].immutableImage, `${revision.imageUri}@${revision.imageDigest}`);
+  service.serviceRevisions = { find: async () => [] };
+  await assert.rejects(() => service.destroyTarget(release), /complete immutable deployed service revision set/);
+}
+
 function verifyDestroyPipelinePresentation() {
   const service: any = Object.create(RailpackDeploymentService.prototype);
   const presented = service.presentOperation({
@@ -222,6 +255,7 @@ void (async () => {
   await verifyReconcileUsesDestroyFinalizer();
   await verifyAttemptFourContractFailureConverges();
   await verifyDestroyTargetsDeployedRelease();
+  await verifyRollbackUnsafeReleaseRemainsDestroyable();
   verifyDestroyPipelinePresentation();
   verifySharedPageAuthority();
   console.log("DESTROY_LIFECYCLE_AUTHORITY=PASS");

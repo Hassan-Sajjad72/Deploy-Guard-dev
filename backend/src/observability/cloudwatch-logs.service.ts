@@ -4,7 +4,7 @@ import { CloudWatchLogsClient, FilterLogEventsCommand } from "@aws-sdk/client-cl
 import { Response } from "express";
 import { User } from "../users/user.entity";
 import { getObservabilityConfig } from "./observability.config";
-import { LiveRuntimeIdentity, LiveRuntimeResolverService } from "./live-runtime-resolver.service";
+import { AwsRuntimeUnavailableException, LiveRuntimeIdentity, LiveRuntimeResolverService, RuntimeIdentityUnavailableException } from "./live-runtime-resolver.service";
 import { LogSanitizerService } from "./log-sanitizer.service";
 
 export type LogQueryOptions = { since?: string; limit?: number };
@@ -143,6 +143,8 @@ export class CloudWatchLogsService {
   private sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   private isMissing(error: unknown) { return ["ResourceNotFoundException", "ResourceNotFound"].includes(String((error as { name?: string })?.name || "")); }
   private safeError(error: unknown) {
+    if (error instanceof RuntimeIdentityUnavailableException) return "The authoritative runtime identity is unavailable; CloudWatch Logs was not queried.";
+    if (error instanceof AwsRuntimeUnavailableException) return "AWS ECS/ALB runtime observation is temporarily unavailable; CloudWatch Logs was not queried.";
     const name = String((error as { name?: string })?.name || "CloudWatchLogsUnavailable");
     return this.sanitizer.sanitize(`CloudWatch log streaming is temporarily unavailable (${name}).`);
   }

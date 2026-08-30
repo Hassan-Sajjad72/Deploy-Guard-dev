@@ -161,6 +161,8 @@ export default function ProjectMetrics() {
     available: "Available",
     disabled_by_configuration: "Disabled by configuration",
     temporarily_unavailable: "Temporarily unavailable",
+    runtime_identity_unavailable: "Runtime identity unavailable",
+    runtime_unavailable: "Runtime unavailable",
     no_samples_yet: "No samples yet",
   }[metricsState] || "Temporarily unavailable";
   const grafanaConfigured = runtime?.grafana?.configured === true && Boolean(runtime?.grafana?.url);

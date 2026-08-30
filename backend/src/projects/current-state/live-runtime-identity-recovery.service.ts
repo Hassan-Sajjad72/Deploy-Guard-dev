@@ -5,6 +5,7 @@ import { ProjectStableRelease, StableReleaseStatus } from "../../orchestration/p
 import { canonicalEnvironmentName } from "../canonical-environment";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "../project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "../project-environment-route.entity";
+import { ProjectGenerationServiceRevision } from "../project-generation-service-revision.entity";
 import { Project } from "../project.entity";
 
 @Injectable()
@@ -13,6 +14,7 @@ export class LiveRuntimeIdentityRecoveryService {
     @InjectRepository(ProjectDeploymentGeneration) private readonly generations: Repository<ProjectDeploymentGeneration>,
     @InjectRepository(ProjectStableRelease) private readonly releases: Repository<ProjectStableRelease>,
     @InjectRepository(ProjectEnvironmentRoute) private readonly routes: Repository<ProjectEnvironmentRoute>,
+    @InjectRepository(ProjectGenerationServiceRevision) private readonly serviceRevisions: Repository<ProjectGenerationServiceRevision>,
   ) {}
 
   async recover(project: Project): Promise<Record<string, unknown> | null> {
@@ -24,10 +26,46 @@ export class LiveRuntimeIdentityRecoveryService {
       this.releases.findOne({ where: { projectId: project.id, environmentName, generationId: route.liveGenerationId, status: StableReleaseStatus.STABLE } }),
     ]);
     if (!generation || !release?.deployedByPipelineRunId || release.metadata?.releaseEvidenceVerified !== true) return generation?.resourceManifest || null;
-    const manifest = this.mergeKnown(generation.resourceManifest || {}, this.runtimeMetadata(release));
-    // Recovery never reconstructs a generation from deprecated scalar release
-    // columns. The complete persisted service set is the only authority.
-    return manifest;
+    const revisions = await this.serviceRevisions.find({ where: { generationId: generation.id, projectId: project.id } });
+    if (!revisions.length) return this.mergeKnown(generation.resourceManifest || {}, this.runtimeMetadata(release));
+
+    // A revision is the immutable runtime authority. resource_manifest and
+    // release metadata may still cache a projection, but neither is consulted
+    // when canonical service revisions exist.
+    const services = revisions.slice().sort((left, right) => left.serviceId.localeCompare(right.serviceId)).map((revision) => {
+      const identity = revision.runtimeIdentity || {};
+      const text = (key: string) => typeof identity[key] === "string" ? identity[key] : undefined;
+      return {
+        serviceId: revision.serviceId,
+        serviceName: revision.serviceName,
+        serviceDirectory: revision.serviceDirectory,
+        sourceSha: revision.sourceSha,
+        imageUri: revision.imageUri,
+        imageDigest: revision.imageDigest,
+        runtimeConfigRevisionId: revision.runtimeConfigRevisionId,
+        publicUrl: text("publicUrl"),
+        region: text("region"),
+        ecsClusterArn: text("ecsClusterArn"),
+        ecsClusterName: text("ecsClusterName"),
+        ecsServiceArn: text("ecsServiceArn"),
+        ecsServiceName: text("ecsServiceName"),
+        taskDefinitionArn: text("taskDefinitionArn"),
+        albArn: text("albArn"),
+        albName: text("albName"),
+        targetGroupArn: text("targetGroupArn"),
+        targetGroupName: text("targetGroupName"),
+        cloudWatchLogGroupName: text("cloudWatchLogGroupName"),
+        applicationContainerName: text("applicationContainerName"),
+      };
+    });
+    const first = services[0];
+    return this.mergeKnown({
+      region: first.region,
+      ecsClusterArn: first.ecsClusterArn,
+      ecsClusterName: first.ecsClusterName,
+      terraformStateKey: generation.terraformStateKey,
+      services,
+    });
   }
 
   private runtimeMetadata(release: ProjectStableRelease) {

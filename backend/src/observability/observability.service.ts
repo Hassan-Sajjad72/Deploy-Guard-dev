@@ -4,7 +4,7 @@ import { User } from "../users/user.entity";
 import { CloudWatchLogsService, LogQueryOptions } from "./cloudwatch-logs.service";
 import { CloudWatchMetricsService } from "./cloudwatch-metrics.service";
 import { getObservabilityConfig } from "./observability.config";
-import { LiveRuntimeResolverService } from "./live-runtime-resolver.service";
+import { AwsRuntimeUnavailableException, LiveRuntimeResolverService, RuntimeIdentityUnavailableException } from "./live-runtime-resolver.service";
 
 @Injectable()
 export class ObservabilityService {
@@ -42,6 +42,12 @@ export class ObservabilityService {
     try {
       identity = await this.liveRuntime.resolveForUser(user, projectId, serviceId);
     } catch (error) {
+      if (error instanceof RuntimeIdentityUnavailableException) {
+        return { available: false, availabilityState: "runtime_identity_unavailable", message: error.message, generationId: null, grafana };
+      }
+      if (error instanceof AwsRuntimeUnavailableException) {
+        return { available: false, availabilityState: "runtime_unavailable", message: error.message, generationId: null, grafana };
+      }
       if (error instanceof ServiceUnavailableException) {
         return { available: false, availabilityState: "temporarily_unavailable", message: error.message, generationId: null, grafana };
       }

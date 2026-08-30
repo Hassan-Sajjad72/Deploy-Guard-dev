@@ -133,24 +133,32 @@ export class ProjectCurrentStateService {
           : [],
       } : null,
     };
-    const hasAuthoritativeLiveRelease = Boolean(projectedWithCost.stableRelease && projectedWithCost.stableUrl)
-      && !projectedWithCost.destroyCleanupIncomplete
-      && !["destroying", "destroyed"].includes(projectedWithCost.developerState);
+    const canonicalRuntimeIdentity = authoritativeGenerationId
+      ? await this.runtimeIdentityRecovery.recover(project)
+      : null;
+    // Every developer-facing surface receives the same canonical service
+    // revision projection. Stable-release metadata is only a historical cache.
+    const projectedWithCanonicalRuntime = canonicalRuntimeIdentity && projectedWithCost.stableRelease
+      ? { ...projectedWithCost, stableRelease: { ...projectedWithCost.stableRelease, runtimeIdentity: canonicalRuntimeIdentity } }
+      : projectedWithCost;
+    const hasAuthoritativeLiveRelease = Boolean(projectedWithCanonicalRuntime.stableRelease && projectedWithCanonicalRuntime.stableUrl)
+      && !projectedWithCanonicalRuntime.destroyCleanupIncomplete
+      && !["destroying", "destroyed"].includes(projectedWithCanonicalRuntime.developerState);
     // A failed Destroy is destructive: historical release records are not
     // sufficient evidence that the old runtime still exists. Reconcile one
     // bounded observation here so every page receives the same authority.
-    const failedDestroy = projectedWithCost.latestAttempt?.operationType === "destroy"
-      && projectedWithCost.latestAttempt?.outcome === "blocked";
-    const activeDestroy = projectedWithCost.latestAttempt?.operationType === "destroy"
-      && projectedWithCost.latestAttempt?.outcome === null;
+    const failedDestroy = projectedWithCanonicalRuntime.latestAttempt?.operationType === "destroy"
+      && projectedWithCanonicalRuntime.latestAttempt?.outcome === "blocked";
+    const activeDestroy = projectedWithCanonicalRuntime.latestAttempt?.operationType === "destroy"
+      && projectedWithCanonicalRuntime.latestAttempt?.outcome === null;
     const runtimeObservation = hasAuthoritativeLiveRelease && route?.liveGenerationId
       && (options.refreshCloudState || failedDestroy || activeDestroy)
-      ? await this.runtimeObservation(project, route.liveGenerationId, projectedWithCost.stableUrl!)
+      ? await this.runtimeObservation(project, route.liveGenerationId, projectedWithCanonicalRuntime.stableUrl!)
       : null;
     const awsEvidence = runtimeObservation?.evidence || null;
     const generations = await this.generationRepository.find({ where: { projectId, environmentName }, order: { ordinal: "ASC" } });
     return {
-      ...this.withStateAuthority(projectId, environmentName, projectedWithCost, awsEvidence, runtimeObservation),
+      ...this.withStateAuthority(projectId, environmentName, projectedWithCanonicalRuntime, awsEvidence, runtimeObservation),
       generationState: {
         liveGenerationId: route?.liveGenerationId || null,
         candidateGenerationId: route?.candidateGenerationId || null,
@@ -695,8 +703,10 @@ export class ProjectCurrentStateService {
         outcome: "failed",
       } : null,
       infrastructure: { ...infrastructureStatus, observedAt: runtimeObservation?.observedAt || (authoritativeLiveRelease ? awsEvidence?.observedAt || liveReleaseObservedAt : observedAt) },
-      applicationHealth: authoritativeLiveRelease
-        ? { status: "healthy", source: "github_actions_health_verification", observedAt: liveReleaseObservedAt }
+      applicationHealth: authoritativeLiveRelease && awsEvidence
+        ? { status: "healthy", source: "aws_observation", observedAt: runtimeObservation?.observedAt || liveReleaseObservedAt }
+        : authoritativeLiveRelease
+          ? { status: "unavailable", source: "unavailable", observedAt: null }
         : runtimeUnverifiedAfterDestroy
           ? { status: "unavailable", source: "aws_observation", observedAt: runtimeObservation?.observedAt || null }
         : projected.developerState === "failed_application" && projected.applicationError?.category === "health"
@@ -704,13 +714,15 @@ export class ProjectCurrentStateService {
           : isActive && !activeDestroy
             ? { status: "pending", source: "github_actions", observedAt }
             : { status: "unavailable", source: "unavailable", observedAt: null },
-      monitoring: authoritativeLiveRelease
+      monitoring: authoritativeLiveRelease && runtimeObservation?.runtime === "present"
         ? !awsRuntimeMonitoringEnabled
           ? { available: false, status: "unavailable", reason: "AWS runtime monitoring is disabled." }
           : !monitoringIdentityComplete
             ? { available: false, status: "unavailable", reason: "The authoritative LIVE release does not yet contain a complete CloudWatch runtime identity." }
             : { available: true, status: "available", reason: "AWS runtime monitoring is bound to the authoritative LIVE generation." }
-        : { available: false, status: "not_deployed", reason: "Monitoring is available only for an active live deployment." },
+        : authoritativeLiveRelease
+          ? { available: false, status: "unavailable", reason: "Current AWS runtime evidence is unavailable." }
+          : { available: false, status: "not_deployed", reason: "Monitoring is available only for an active live deployment." },
       reconciliation: {
         lastReconciledAt: observedAt,
         freshness,
@@ -820,7 +832,7 @@ export class ProjectCurrentStateService {
     const observedAt = new Date().toISOString();
     const environmentName = canonicalEnvironmentName(project);
     const generation = await this.generationRepository.findOne({ where: { id: generationId, projectId: project.id, environmentName } });
-    const identity = generation?.resourceManifest || {};
+    const identity = await this.runtimeIdentityRecovery.recover(project) || generation?.resourceManifest || {};
     const value = (key: string) => typeof identity[key] === "string" ? identity[key] as string : "";
     const region = value("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const cluster = value("ecsClusterArn") || value("ecsClusterName");
@@ -854,7 +866,7 @@ export class ProjectCurrentStateService {
       where: { projectId, environmentName: environment, generationId, status: StableReleaseStatus.STABLE },
       order: { deployedAt: "DESC" },
     });
-    const identity = generation?.resourceManifest || {};
+    const identity = await this.runtimeIdentityRecovery.recover(project) || generation?.resourceManifest || {};
     const string = (key: string) => typeof identity[key] === "string" ? identity[key] : "";
     const region = string("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const cluster = string("ecsClusterArn") || string("ecsClusterName");

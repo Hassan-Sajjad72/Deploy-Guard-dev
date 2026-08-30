@@ -45,6 +45,11 @@ export type LiveRuntimeIdentity = {
   targetHealth: string[];
 };
 
+/** The persisted LIVE release is valid, but lacks immutable runtime identity. */
+export class RuntimeIdentityUnavailableException extends ServiceUnavailableException {}
+/** The immutable identity exists, but ECS/ALB cannot currently verify it. */
+export class AwsRuntimeUnavailableException extends ServiceUnavailableException {}
+
 @Injectable()
 export class LiveRuntimeResolverService {
   private readonly cache = new Map<string, { expiresAt: number; value: LiveRuntimeIdentity }>();
@@ -86,14 +91,13 @@ export class LiveRuntimeResolverService {
   }
 
   private async resolveProject(project: Project, requestedServiceId?: string): Promise<LiveRuntimeIdentity> {
-    await this.runtimeIdentityRecovery.recover(project);
     const environmentName = canonicalEnvironmentName(project);
     const release = await this.releases.findOne({
       where: { projectId: project.id, environmentName, status: StableReleaseStatus.STABLE },
       order: { deployedAt: "DESC" },
     });
     if (!release?.generationId) {
-      throw new ServiceUnavailableException("No authoritative LIVE runtime is available for this project.");
+      throw new RuntimeIdentityUnavailableException("No authoritative LIVE runtime is available for this project.");
     }
 
     const generation = await this.generations.findOne({
@@ -104,7 +108,7 @@ export class LiveRuntimeResolverService {
         status: DeploymentGenerationStatus.LIVE,
       },
     });
-    const manifest = generation?.resourceManifest || {};
+    const manifest = await this.runtimeIdentityRecovery.recover(project) || {};
     const string = (key: string) => typeof manifest[key] === "string" ? manifest[key] : "";
     const persistedServices = Array.isArray(manifest.services)
       ? manifest.services.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object")
@@ -118,17 +122,17 @@ export class LiveRuntimeResolverService {
     const cacheKey = `${project.id}:${serviceId}`;
     const cached = this.cache.get(cacheKey);
     if (cached?.value.generationId === release.generationId && cached.expiresAt > Date.now()) return cached.value;
-    const cluster = string("ecsClusterArn") || string("ecsClusterName");
+    const cluster = selectedString("ecsClusterArn") || selectedString("ecsClusterName") || string("ecsClusterArn") || string("ecsClusterName");
     const serviceArn = selectedString("ecsServiceArn");
     const taskDefinitionArn = selectedString("taskDefinitionArn");
     const targetGroupArn = selectedString("targetGroupArn");
     const expectedLogGroup = selectedString("cloudWatchLogGroupName");
     const expectedContainerName = selectedString("applicationContainerName");
     if (!generation || !serviceId || !cluster || !serviceArn || !taskDefinitionArn || !targetGroupArn || !expectedLogGroup || !expectedContainerName) {
-      throw new ServiceUnavailableException("The authoritative LIVE runtime identity is incomplete.");
+      throw new RuntimeIdentityUnavailableException("The authoritative LIVE runtime identity is incomplete.");
     }
 
-    const region = string("region") || this.config.get<string>("AWS_REGION", "us-east-1");
+    const region = selectedString("region") || string("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const ecs = this.ecs(region);
     const elb = this.elb(region);
     const resolved = await Promise.allSettled([
@@ -139,10 +143,10 @@ export class LiveRuntimeResolverService {
       elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: targetGroupArn })),
     ]);
     const unexpected = resolved.find((result) => result.status === "rejected" && !this.isExpectedRuntimeAbsence(result.reason));
-    if (unexpected?.status === "rejected") throw unexpected.reason;
+    if (unexpected?.status === "rejected") throw new AwsRuntimeUnavailableException("AWS ECS/ALB runtime observation is temporarily unavailable.");
     if (resolved.some((result) => result.status === "rejected")) {
       this.cache.delete(cacheKey);
-      throw new ServiceUnavailableException("The previously authoritative LIVE runtime is no longer present in AWS.");
+      throw new AwsRuntimeUnavailableException("The previously authoritative LIVE runtime is no longer present in AWS.");
     }
     const [serviceResult, taskDefinitionResult, targetGroupResult, taskResult, healthResult] = resolved.map(
       (result) => (result as PromiseFulfilledResult<any>).value,
@@ -158,12 +162,12 @@ export class LiveRuntimeResolverService {
       || targetGroup.TargetGroupArn !== targetGroupArn
       || !targetGroup.LoadBalancerArns?.[0]
     ) {
-      throw new ServiceUnavailableException("AWS does not match the authoritative LIVE release identity.");
+      throw new AwsRuntimeUnavailableException("AWS does not match the authoritative LIVE release identity.");
     }
     const appContainer = taskDefinition?.containerDefinitions?.find((container) => container.name === expectedContainerName);
     const logOptions = appContainer?.logConfiguration?.options || {};
     if (appContainer?.name !== expectedContainerName || logOptions["awslogs-group"] !== expectedLogGroup) {
-      throw new ServiceUnavailableException("The LIVE task definition does not contain the verified Railpack log identity.");
+      throw new AwsRuntimeUnavailableException("The LIVE task definition does not contain the verified Railpack log identity.");
     }
     const value: LiveRuntimeIdentity = {
       projectId: project.id,
