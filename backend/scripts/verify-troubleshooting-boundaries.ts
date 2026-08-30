@@ -36,7 +36,7 @@ async function verifySessionOperationTimestamps() {
   service.projects = { findOne: async () => ({ name: "Example", repositoryFullName: "example/app" }) };
   const response = await service.get(user, projectId, sessionId);
   assert.deepEqual(response.operation, {
-    id: run.id, action: "deploy", commitSha: run.commitSha, generationId: null, failedStage: run.currentStage,
+    id: run.id, action: "deploy", commitSha: run.commitSha, generationId: null, failedStage: run.currentStage, failedStageLabel: "Build Application",
     failedAt, completedAt, startedAt, createdAt, summary: "sanitized failure",
   });
 }

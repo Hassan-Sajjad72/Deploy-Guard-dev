@@ -104,6 +104,7 @@ export type DeveloperProgressPhase =
   | "prepare"
   | "deploy"
   | "verify"
+  | "finalize"
   | null;
 
 /**
@@ -113,6 +114,11 @@ export type DeveloperProgressPhase =
 export type ProjectStateAuthority = {
   state: "READY" | "DEPLOYING" | "FAILED" | "LIVE" | "DESTROYING" | "DESTROYED" | "BLOCKED";
   reason: string;
+  runtime: {
+    state: "present" | "removed" | "unknown" | "not_deployed";
+    observedAt: string | null;
+    source: "aws_observation" | "verified_release" | "github_actions" | "unavailable";
+  };
   activeOperation: {
     id: string;
     type: "deploy" | "destroy" | "rollback";
@@ -130,12 +136,12 @@ export type ProjectStateAuthority = {
   infrastructure: {
     exists: boolean | null;
     status: "active" | "destroyed" | "not_provisioned" | "provisioning_failed" | "unknown";
-    source: "github_actions" | "infrastructure_record" | "unavailable";
+    source: "github_actions" | "infrastructure_record" | "aws_observation" | "unavailable";
     observedAt: string | null;
   };
   applicationHealth: {
     status: "healthy" | "pending" | "failed" | "unavailable";
-    source: "github_actions_health_verification" | "github_actions" | "unavailable";
+    source: "github_actions_health_verification" | "github_actions" | "aws_observation" | "unavailable";
     observedAt: string | null;
   };
   monitoring: {
@@ -154,7 +160,7 @@ export type DeveloperProjectCurrentState = {
   /** Single state contract consumed by all product views. */
   stateAuthority?: ProjectStateAuthority;
   infrastructureEvidence?: {
-    source: "github_actions" | "infrastructure_record" | "unavailable";
+    source: "github_actions" | "infrastructure_record" | "aws_observation" | "unavailable";
     lastUpdatedAt: string | null;
     freshness: "current" | "stale" | "unavailable";
     region: string;
@@ -163,6 +169,7 @@ export type DeveloperProjectCurrentState = {
     ecr: null | { repository: string; imageTag: string | null; imageDigest: string | null };
     ecs: null | { cluster: string; service: string; taskDefinitionRevision: number | null; desiredCount: number; runningCount: number; pendingCount: number };
     alb: null | { name: string; status: string; targetHealth: string[]; endpoint: string | null };
+    cloudWatch?: { status: "active" | "destroyed" | "unavailable" };
     terraformState: { status: "active" | "destroyed" | "unavailable"; storage: "encrypted_s3" | "unavailable"; key: string | null; lastApplyAt: string | null; lastDestroyAt: string | null };
     cost: { status: "estimated" | "approval_required" | "unavailable"; currency: string | null; monthly: number | null; source: "infracost" | "unavailable"; generationId: string | null; releaseId: string | null; operationId: string | null; estimatedAt?: string | null; unavailableReason?: string | null; breakdown?: Array<{ name: string; service: string | null; monthly: number }> };
     persistentStorage: null | { type: "EFS"; status: string; encrypted: boolean; backupEnabled: boolean; region: string | null };
@@ -215,7 +222,7 @@ export type DeveloperProjectCurrentState = {
     generationId: string | null;
     releaseId: string | null;
     operationId: string | null;
-    estimatedAt: string;
+    estimatedAt: string | null;
     unavailableReason: string | null;
     breakdown: Array<{ name: string; service: string | null; monthly: number }>;
   } | null;

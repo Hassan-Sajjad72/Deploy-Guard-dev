@@ -33,6 +33,7 @@ import { ProjectActivityService } from "./project-activity.service";
 import { rankWorkspaceSummaries } from "./project-recency";
 import { RailpackDeploymentService } from "./railpack-deployment.service";
 import { RollbackGithubActionsDto } from "./dto/rollback-github-actions.dto";
+import { DestroyGithubActionsDto } from "./dto/destroy-github-actions.dto";
 
 @Controller("api/projects")
 @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER, UserRole.READONLY]))
@@ -66,8 +67,9 @@ export class ProjectsController {
   @Get("workspace-summary")
   async getWorkspaceSummary(@Req() req: Request) {
     const projects = await this.projectsService.listProjects(req.user!);
+    await this.githubActionsDeployment.reconcileVisibleProjects(req.user!, projects.map((project) => project.id));
     const states = await Promise.all(
-      projects.map((project) => this.projectCurrentStateService.getCurrentState(req.user!, project.id)),
+      projects.map((project) => this.projectCurrentStateService.getCurrentState(req.user!, project.id, { skipReconciliation: true })),
     );
 
     const summaries = projects.map((project, index) => ({
@@ -306,8 +308,8 @@ export class ProjectsController {
 
   @Post(":projectId/deploy/destroy")
   @UseGuards(requireRole([UserRole.ADMIN, UserRole.DEVELOPER]))
-  async destroyGithubActionsDeployment(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Body() body: { confirmationPhrase?: string }) {
-    const result = await this.githubActionsDeployment.destroy(req.user!, projectId, String(body.confirmationPhrase || ""));
+  async destroyGithubActionsDeployment(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string, @Body() body: DestroyGithubActionsDto) {
+    const result = await this.githubActionsDeployment.destroy(req.user!, projectId, body.confirmationPhrase);
     if (result.deployment.state === "accepted") {
       await this.recordMeaningful(req, projectId, "github_actions_destroy_requested", "pipeline");
       await this.auditLogService.record({

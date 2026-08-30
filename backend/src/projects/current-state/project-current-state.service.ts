@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { DescribeImagesCommand, DescribeRepositoriesCommand, ECRClient } from "@aws-sdk/client-ecr";
 import { DescribeServicesCommand, DescribeTaskDefinitionCommand, ECSClient, ListTagsForResourceCommand as EcsListTagsForResourceCommand } from "@aws-sdk/client-ecs";
 import { DescribeTagsCommand, DescribeTargetGroupsCommand, DescribeTargetHealthCommand, ElasticLoadBalancingV2Client } from "@aws-sdk/client-elastic-load-balancing-v2";
+import { CloudWatchLogsClient, DescribeLogGroupsCommand } from "@aws-sdk/client-cloudwatch-logs";
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository } from "typeorm";
 import { CostEstimateSource, CostEstimateStatus, ProjectCostEstimate } from "../../finops/project-cost-estimate.entity";
@@ -33,8 +34,18 @@ type LiveAwsEvidence = {
   alb: { name: string; status: string; targetHealth: string[]; endpoint: string | null };
 };
 
+type RuntimeObservation = {
+  observedAt: string;
+  runtime: "present" | "absent" | "unknown";
+  resources: { ecs: "present" | "absent" | "unknown"; alb: "present" | "absent" | "unknown"; cloudWatch: "present" | "absent" | "unknown" };
+  evidence: LiveAwsEvidence | null;
+};
+
 @Injectable()
 export class ProjectCurrentStateService {
+  private runtimeObservationCache = new Map<string, { expiresAt: number; value: RuntimeObservation }>();
+  private runtimeObservationInFlight = new Map<string, Promise<RuntimeObservation>>();
+
   constructor(
     @InjectRepository(ProjectPipelineRun)
     private readonly runRepository: Repository<ProjectPipelineRun>,
@@ -54,12 +65,12 @@ export class ProjectCurrentStateService {
   async getCurrentState(
     user: User,
     projectId: string,
-    options: { refreshCloudState?: boolean } = {},
+    options: { refreshCloudState?: boolean; skipReconciliation?: boolean } = {},
   ): Promise<DeveloperProjectCurrentState> {
     // GitHub Actions release records are the deployment authority.  Railpack
     // interprets source only inside the build, never in this read model.
     const project = await this.projectsService.getProjectEntityForView(user, projectId);
-    await this.deploymentReconciliation.reconcileActive(user, projectId);
+    if (!options.skipReconciliation) await this.deploymentReconciliation.reconcileActive(user, projectId);
     const environmentName = canonicalEnvironmentName(project);
     const route = await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } });
     const authoritativeGenerationId = route?.liveGenerationId || null;
@@ -106,11 +117,11 @@ export class ProjectCurrentStateService {
             : "unavailable",
         source: estimate?.source === CostEstimateSource.INFRACOST ? "infracost" : "unavailable",
         currency: estimate?.currency || null,
-        monthly: estimate?.status === CostEstimateStatus.NO_APPROVAL_REQUIRED ? Number(estimate.totalMonthlyCost) : null,
+        monthly: estimate && [CostEstimateStatus.NO_APPROVAL_REQUIRED, CostEstimateStatus.APPROVAL_REQUIRED].includes(estimate.status) ? Number(estimate.totalMonthlyCost) : null,
         generationId: authoritativeGenerationId,
         releaseId: authoritativeRelease.id,
         operationId: authoritativeRelease.deployedByPipelineRunId || null,
-        estimatedAt: (estimate?.updatedAt || authoritativeRelease.deployedAt).toISOString(),
+        estimatedAt: estimate?.updatedAt?.toISOString() || null,
         unavailableReason,
         breakdown: Array.isArray((estimate?.normalizedBreakdown as Record<string, unknown> | null)?.resources)
           ? ((estimate.normalizedBreakdown as { resources: Array<Record<string, unknown>> }).resources).map((resource) => ({
@@ -124,15 +135,21 @@ export class ProjectCurrentStateService {
     const hasAuthoritativeLiveRelease = Boolean(projectedWithCost.stableRelease && projectedWithCost.stableUrl)
       && !projectedWithCost.destroyCleanupIncomplete
       && !["destroying", "destroyed"].includes(projectedWithCost.developerState);
-    // The product read-model must be sufficient to paint Overview and
-    // Pipeline. Live AWS inspection is deliberately opt-in: it can require
-    // multiple remote SDK calls and must never sit on the initial page path.
-    const awsEvidence = options.refreshCloudState && hasAuthoritativeLiveRelease && route?.liveGenerationId
-      ? await this.liveAwsEvidence(project, route.liveGenerationId, projectedWithCost.stableUrl!)
+    // A failed Destroy is destructive: historical release records are not
+    // sufficient evidence that the old runtime still exists. Reconcile one
+    // bounded observation here so every page receives the same authority.
+    const failedDestroy = projectedWithCost.latestAttempt?.operationType === "destroy"
+      && projectedWithCost.latestAttempt?.outcome === "blocked";
+    const activeDestroy = projectedWithCost.latestAttempt?.operationType === "destroy"
+      && projectedWithCost.latestAttempt?.outcome === null;
+    const runtimeObservation = hasAuthoritativeLiveRelease && route?.liveGenerationId
+      && (options.refreshCloudState || failedDestroy || activeDestroy)
+      ? await this.runtimeObservation(project, route.liveGenerationId, projectedWithCost.stableUrl!)
       : null;
+    const awsEvidence = runtimeObservation?.evidence || null;
     const generations = await this.generationRepository.find({ where: { projectId, environmentName }, order: { ordinal: "ASC" } });
     return {
-      ...this.withStateAuthority(projectId, environmentName, projectedWithCost, awsEvidence),
+      ...this.withStateAuthority(projectId, environmentName, projectedWithCost, awsEvidence, runtimeObservation),
       generationState: {
         liveGenerationId: route?.liveGenerationId || null,
         candidateGenerationId: route?.candidateGenerationId || null,
@@ -265,7 +282,7 @@ export class ProjectCurrentStateService {
         developerState: "platform_attention",
         developerAction: "none",
         developerMessage: "AWS project deletion was verified, but DeployGuard control-plane cleanup is incomplete. Retry Failed Destroy to resume cleanup.",
-        progress: { percentage: 90, phase: "verify", label: "Destroy cleanup needs attention" },
+        progress: { percentage: 95, phase: "finalize", label: "Destroy cleanup needs attention" },
         latestAttempt: {
           ...latestAttempt,
           status: "platform_attention",
@@ -364,7 +381,7 @@ export class ProjectCurrentStateService {
       }
       const failedStage = String(latestMetadata.failedStage || latest.currentStage || "github_actions");
       const failureMessage = githubActionsFailureMessage(this.conciseFailureMessage(latest.errorMessage), failedStage, action);
-      const failurePhase = githubActionsFailureLifecyclePhase(failedStage);
+      const failurePhase = githubActionsFailureLifecyclePhase(failedStage, action);
       const category = failurePhase === "source" ? "configuration"
         : failurePhase === "build" ? "build"
         : failurePhase === "verify" ? "health"
@@ -416,7 +433,7 @@ export class ProjectCurrentStateService {
     if (stableRelease && stableUrl) {
       const operationStatus = action === "destroy" ? "destroying" : state;
       const operationProgress: DeveloperProjectCurrentState["progress"] = action === "destroy"
-        ? { percentage: 70, phase: "deploy", label: "Destroying application" }
+        ? this.destroyProgress(stage)
         : { percentage: this.githubLifecycleProgress(phase), phase, label: action === "rollback" ? "Rolling back" : "Deploying" };
       return {
         ...projected,
@@ -437,7 +454,7 @@ export class ProjectCurrentStateService {
         developerState: "destroying",
         developerAction: "none",
         developerMessage: "DeployGuard is removing this project's infrastructure.",
-        progress: { percentage: 70, phase: "deploy", label: "Destroying application" },
+        progress: this.destroyProgress(stage),
         latestAttempt: { ...latestAttempt, status: "destroying" },
         applicationError: null,
         canRetry: false,
@@ -457,6 +474,14 @@ export class ProjectCurrentStateService {
       applicationError: null,
       canRetry: false,
     };
+  }
+
+  private destroyProgress(stage: string): DeveloperProjectCurrentState["progress"] {
+    const key = String(stage || "").toLowerCase();
+    if (key.includes("cleanup") || key.includes("finalization")) return { percentage: 95, phase: "finalize", label: "Finalizing cleanup" };
+    if (key.includes("evidence") || key.includes("verify") || key === "publish_verified_release_result") return { percentage: 85, phase: "verify", label: "Verifying deletion" };
+    if (key.includes("terraform") || key === "materialize_release_runtime") return { percentage: 60, phase: "deploy", label: "Destroying infrastructure" };
+    return { percentage: 20, phase: "prepare", label: "Preparing Destroy" };
   }
 
   private githubLifecycleProgress(phase: "source" | "prepare" | "build" | "deploy" | "verify") {
@@ -485,7 +510,7 @@ export class ProjectCurrentStateService {
   ): "prepare" | "build" | "deploy" | "verify" {
     const phaseForStage = (stage: unknown, recognizePromotion = false) => {
       const value = String(stage || "").toLowerCase();
-      if (value.includes("build") || value === "install_pinned_railpack" || value === "publish_immutable_image_to_ecr") return "build" as const;
+      if (value.includes("build") || value === "install_pinned_railpack" || value === "validate_application_runtime" || value === "publish_immutable_image_to_ecr") return "build" as const;
       if (value.includes("terraform") || value === "materialize_release_runtime" || (recognizePromotion && value.startsWith("promotion_"))) return "deploy" as const;
       if (value.includes("health") || value.includes("verify") || value === "publish_verified_release_result") return "verify" as const;
       return "prepare" as const;
@@ -562,6 +587,7 @@ export class ProjectCurrentStateService {
     environmentName: string,
     projected: DeveloperProjectCurrentState,
     awsEvidence: LiveAwsEvidence | null,
+    runtimeObservation: RuntimeObservation | null = null,
   ): DeveloperProjectCurrentState {
     const latest = projected.latestAttempt;
     // Runtime state and operation state are deliberately independent. A
@@ -576,10 +602,14 @@ export class ProjectCurrentStateService {
       : Number.isFinite(observedMs) && Date.now() - observedMs <= 10 * 60 * 1_000
         ? "current" as const
         : "stale" as const;
+    const failedDestroy = !isActive && operationType === "destroy" && latest?.outcome === "blocked";
+    const activeDestroy = isActive && operationType === "destroy";
     const destroyed = projected.developerState === "destroyed";
     const destroyCleanupIncomplete = projected.destroyCleanupIncomplete === true;
-    const runtimeDeleted = destroyed || destroyCleanupIncomplete;
-    const authoritativeLiveRelease = Boolean(projected.stableRelease && projected.stableUrl) && !runtimeDeleted;
+    const runtimeRemovedByObservation = (failedDestroy || activeDestroy) && runtimeObservation?.runtime === "absent";
+    const runtimeUnverifiedAfterDestroy = (failedDestroy || activeDestroy) && runtimeObservation?.runtime === "unknown";
+    const runtimeDeleted = destroyed || destroyCleanupIncomplete || runtimeRemovedByObservation;
+    const authoritativeLiveRelease = Boolean(projected.stableRelease && projected.stableUrl) && !runtimeDeleted && !runtimeUnverifiedAfterDestroy;
     const stoppedBeforeProvisioning = projected.developerState === "failed_application"
       && ["configuration", "build"].includes(String(projected.applicationError?.category || ""))
       && !authoritativeLiveRelease;
@@ -588,7 +618,9 @@ export class ProjectCurrentStateService {
       && !authoritativeLiveRelease;
     const liveReleaseObservedAt = projected.stableRelease?.promotedAt || observedAt;
     const infrastructureStatus = runtimeDeleted
-      ? { exists: false, status: "destroyed" as const, source: "github_actions" as const }
+      ? { exists: false, status: "destroyed" as const, source: runtimeRemovedByObservation ? "aws_observation" as const : "github_actions" as const }
+      : runtimeUnverifiedAfterDestroy
+        ? { exists: null, status: "unknown" as const, source: "aws_observation" as const }
       : authoritativeLiveRelease
         ? { exists: true, status: "active" as const, source: "github_actions" as const }
         : stoppedBeforeProvisioning
@@ -600,7 +632,7 @@ export class ProjectCurrentStateService {
       ? "READY" as const
       : projected.developerState === "destroyed"
           ? "DESTROYED" as const
-          : destroyCleanupIncomplete
+            : destroyCleanupIncomplete || runtimeUnverifiedAfterDestroy
             ? "BLOCKED" as const
             : isActive && operationType === "destroy"
             ? "DESTROYING" as const
@@ -626,9 +658,21 @@ export class ProjectCurrentStateService {
       && identityString("applicationContainerName"),
     );
     const awsRuntimeMonitoringEnabled = getObservabilityConfig(this.config).awsRuntimeMonitoringEnabled;
+    const destroyFailureMessage = runtimeRemovedByObservation
+      ? "Destroy failed after the authoritative runtime was removed. Cleanup is required before this project can continue."
+      : runtimeUnverifiedAfterDestroy
+        ? "Destroy failed and the previous runtime is not currently verified. DeployGuard will not present historical release evidence as LIVE."
+        : projected.developerMessage;
     const authority: ProjectStateAuthority = {
       state: canonical,
-      reason: projected.developerMessage,
+      reason: destroyFailureMessage,
+      runtime: runtimeRemovedByObservation || destroyed || destroyCleanupIncomplete
+        ? { state: "removed", observedAt: runtimeObservation?.observedAt || observedAt, source: runtimeObservation ? "aws_observation" : "github_actions" }
+        : runtimeUnverifiedAfterDestroy
+          ? { state: "unknown", observedAt: runtimeObservation?.observedAt || null, source: "aws_observation" }
+          : authoritativeLiveRelease
+            ? { state: "present", observedAt: runtimeObservation?.observedAt || liveReleaseObservedAt, source: runtimeObservation ? "aws_observation" : "verified_release" }
+            : { state: "not_deployed", observedAt: null, source: "unavailable" },
       activeOperation: isActive && latest ? {
         // The run id is intentionally the public operation identity; internal
         // queue detail never leaks to the UI.
@@ -650,12 +694,14 @@ export class ProjectCurrentStateService {
         completedAt: latest.occurredAt,
         outcome: "failed",
       } : null,
-      infrastructure: { ...infrastructureStatus, observedAt: authoritativeLiveRelease ? awsEvidence?.observedAt || liveReleaseObservedAt : observedAt },
+      infrastructure: { ...infrastructureStatus, observedAt: runtimeObservation?.observedAt || (authoritativeLiveRelease ? awsEvidence?.observedAt || liveReleaseObservedAt : observedAt) },
       applicationHealth: authoritativeLiveRelease
         ? { status: "healthy", source: "github_actions_health_verification", observedAt: liveReleaseObservedAt }
+        : runtimeUnverifiedAfterDestroy
+          ? { status: "unavailable", source: "aws_observation", observedAt: runtimeObservation?.observedAt || null }
         : projected.developerState === "failed_application" && projected.applicationError?.category === "health"
           ? { status: "failed", source: "github_actions", observedAt }
-          : isActive
+          : isActive && !activeDestroy
             ? { status: "pending", source: "github_actions", observedAt }
             : { status: "unavailable", source: "unavailable", observedAt: null },
       monitoring: authoritativeLiveRelease
@@ -676,8 +722,31 @@ export class ProjectCurrentStateService {
       : authority.infrastructure.status === "destroyed"
         ? "destroyed" as const
         : "unavailable" as const;
+    const resourceStatusFor = (presence: "present" | "absent" | "unknown" | undefined) => presence === "present"
+      ? "active" as const : presence === "absent" ? "destroyed" as const : "unavailable" as const;
     return {
       ...projected,
+      ...(failedDestroy && (runtimeRemovedByObservation || runtimeUnverifiedAfterDestroy) ? {
+        developerState: "platform_attention" as const,
+        developerAction: "none" as const,
+        developerMessage: destroyFailureMessage,
+        stableRelease: null,
+        stableUrl: null,
+        estimatedCost: null,
+        applicationError: { category: "runtime" as const, message: destroyFailureMessage },
+        canRetry: projected.canRetry,
+      } : activeDestroy && (runtimeRemovedByObservation || runtimeUnverifiedAfterDestroy) ? {
+        developerState: "destroying" as const,
+        developerAction: "none" as const,
+        developerMessage: runtimeRemovedByObservation
+          ? "Destroy is in progress and the authoritative runtime is now removed. DeployGuard is verifying deletion and finalizing cleanup."
+          : "Destroy is in progress and the authoritative runtime is temporarily unverified.",
+        stableRelease: null,
+        stableUrl: null,
+        estimatedCost: null,
+        applicationError: null,
+        canRetry: false,
+      } : {}),
       stateAuthority: authority,
       infrastructureEvidence: {
         source: authority.infrastructure.source,
@@ -685,12 +754,18 @@ export class ProjectCurrentStateService {
         freshness: awsEvidence ? "current" : freshness,
         region: typeof runtimeIdentity?.region === "string" ? runtimeIdentity.region : this.config.get<string>("AWS_REGION", "us-east-1"),
         executionEngine: "github_actions",
-        resources: (["ECR", "ECS Fargate", "ALB"] as const).map((type) => ({ type, status: resourceStatus === "active" && !awsEvidence ? "unavailable" : resourceStatus })),
+        resources: (["ECR", "ECS Fargate", "ALB"] as const).map((type) => ({
+          type,
+          status: type === "ECS Fargate" ? resourceStatusFor(runtimeObservation?.resources.ecs)
+            : type === "ALB" ? resourceStatusFor(runtimeObservation?.resources.alb)
+              : resourceStatus === "active" && !awsEvidence ? "unavailable" : resourceStatus,
+        })),
         ecr: awsEvidence?.ecr || null,
         ecs: awsEvidence?.ecs || null,
         alb: awsEvidence?.alb || null,
+        cloudWatch: { status: resourceStatusFor(runtimeObservation?.resources.cloudWatch) },
         terraformState: {
-          status: resourceStatus,
+          status: runtimeRemovedByObservation ? "destroyed" : resourceStatus,
           storage: this.config.get<string>("DEPLOYGUARD_TERRAFORM_STATE_BUCKET") ? "encrypted_s3" : "unavailable",
           key: typeof runtimeIdentity?.terraformStateKey === "string" ? runtimeIdentity.terraformStateKey : null,
           lastApplyAt: authoritativeLiveRelease ? liveReleaseObservedAt : null,
@@ -712,6 +787,64 @@ export class ProjectCurrentStateService {
         runtimeIdentity: projected.stableRelease?.runtimeIdentity || null,
       },
     };
+  }
+
+  private async runtimeObservation(project: Project, generationId: string, stableUrl: string): Promise<RuntimeObservation> {
+    this.runtimeObservationCache ||= new Map();
+    this.runtimeObservationInFlight ||= new Map();
+    const key = `${project.id}:${generationId}`;
+    const cached = this.runtimeObservationCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const inFlight = this.runtimeObservationInFlight.get(key);
+    if (inFlight) return inFlight;
+    const task = this.readRuntimeObservation(project, generationId, stableUrl);
+    this.runtimeObservationInFlight.set(key, task);
+    try {
+      const value = await task;
+      this.runtimeObservationCache.set(key, { expiresAt: Date.now() + 15_000, value });
+      return value;
+    } finally {
+      if (this.runtimeObservationInFlight.get(key) === task) this.runtimeObservationInFlight.delete(key);
+    }
+  }
+
+  private async readRuntimeObservation(project: Project, generationId: string, stableUrl: string): Promise<RuntimeObservation> {
+    const present = await this.liveAwsEvidence(project, generationId, stableUrl);
+    if (present) return {
+      observedAt: present.observedAt,
+      runtime: "present",
+      resources: { ecs: "present", alb: "present", cloudWatch: "present" },
+      evidence: present,
+    };
+    const observedAt = new Date().toISOString();
+    const environmentName = canonicalEnvironmentName(project);
+    const [generation, release] = await Promise.all([
+      this.generationRepository.findOne({ where: { id: generationId, projectId: project.id, environmentName } }),
+      this.releaseRepository.findOne({ where: { projectId: project.id, environmentName, generationId, status: StableReleaseStatus.STABLE }, order: { deployedAt: "DESC" } }),
+    ]);
+    const identity = generation?.resourceManifest || {};
+    const value = (key: string) => typeof identity[key] === "string" ? identity[key] as string : "";
+    const region = value("region") || this.config.get<string>("AWS_REGION", "us-east-1");
+    const cluster = value("ecsClusterArn") || value("ecsClusterName");
+    const serviceArn = release?.ecsServiceArn || value("ecsServiceArn");
+    const targetGroupArn = value("targetGroupArn");
+    const logGroup = value("cloudWatchLogGroupName");
+    const unavailable = { runtime: "unknown" as const, resources: { ecs: "unknown" as const, alb: "unknown" as const, cloudWatch: "unknown" as const }, evidence: null };
+    if (!generation || !cluster || !serviceArn || !targetGroupArn) return { observedAt, ...unavailable };
+    const absentError = (error: unknown) => /notfound|not found|does not exist|missing/i.test(`${(error as { name?: string })?.name || ""} ${error instanceof Error ? error.message : ""}`);
+    const ecs = new ECSClient({ region });
+    const elb = new ElasticLoadBalancingV2Client({ region });
+    const logs = new CloudWatchLogsClient({ region });
+    const [ecsResult, albResult, logsResult] = await Promise.all([
+      ecs.send(new DescribeServicesCommand({ cluster, services: [serviceArn] })).then((result) => result.services?.[0] ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
+      elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [targetGroupArn] })).then((result) => result.TargetGroups?.[0] ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
+      logGroup
+        ? logs.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: logGroup })).then((result) => result.logGroups?.some((group) => group.logGroupName === logGroup) ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const)
+        : Promise.resolve("unknown" as const),
+    ]);
+    ecs.destroy(); elb.destroy(); logs.destroy();
+    const runtime = ecsResult === "absent" || albResult === "absent" ? "absent" as const : "unknown" as const;
+    return { observedAt, runtime, resources: { ecs: ecsResult, alb: albResult, cloudWatch: logsResult }, evidence: null };
   }
 
   private async liveAwsEvidence(project: Project, generationId: string, stableUrl: string): Promise<LiveAwsEvidence | null> {
@@ -789,10 +922,8 @@ export class ProjectCurrentStateService {
     user: User,
     projectId: string,
   ) {
-    const project = await this.projectsService.getProjectEntityForView(user, projectId);
-    await this.runtimeIdentityRecovery.recover(project);
-    // Detailed infrastructure inspection enriches the same safe developer
-    // read model with bounded read-only AWS evidence.
+    // Detail is an enrichment of the canonical read model, never a second
+    // reconciliation path that can change lifecycle or runtime authority.
     return this.getCurrentState(user, projectId, { refreshCloudState: true });
   }
 }

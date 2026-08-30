@@ -32,6 +32,9 @@ export class GithubActionsCostEvidenceService {
     if (!this.config.get<string>("INFRACOST_API_KEY", "").trim() || !candidateWorkflowRunId || !operation.generationId || !["deploy", "rollback"].includes(deploymentAction)) return null;
     const existing = await this.estimates.findOne({ where: { pipelineRunId: operation.id } });
     if (existing?.source === CostEstimateSource.INFRACOST && existing.status !== CostEstimateStatus.FAILED) return existing;
+    if (existing?.status === CostEstimateStatus.FAILED
+      && existing.updatedAt
+      && Date.now() - existing.updatedAt.getTime() < 5 * 60_000) return existing;
     const directory = await mkdtemp(join(tmpdir(), "deployguard-infracost-evidence-"));
     let estimate = existing || this.estimates.create({
       projectId: operation.projectId,
@@ -53,8 +56,8 @@ export class GithubActionsCostEvidenceService {
     estimate = await this.estimates.save(estimate);
     try {
       const [generationPlan, projectPlan] = await Promise.all([
-        this.actions.getArtifactEntry(repository, candidateWorkflowRunId, operation.id, token, "terraform/deployguard-cost-plan.json", 10 * 1024 * 1024),
-        this.actions.getArtifactEntry(repository, candidateWorkflowRunId, operation.id, token, "project-terraform/deployguard-project-cost-plan.json", 10 * 1024 * 1024),
+        this.actions.getArtifactEntry(repository, candidateWorkflowRunId, operation.id, token, "deployguard-cost-plan.json", 10 * 1024 * 1024),
+        this.actions.getArtifactEntry(repository, candidateWorkflowRunId, operation.id, token, "deployguard-project-cost-plan.json", 10 * 1024 * 1024),
       ]);
       if (!generationPlan) throw new Error("The immutable generation Terraform cost-plan artifact is unavailable.");
       const plans = [

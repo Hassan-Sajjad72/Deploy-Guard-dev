@@ -34,10 +34,10 @@ export function latestOverviewOperationType(currentState) {
 
 function deploymentFailureCopy(phase, workflowRunId) {
   if (!workflowRunId) return ["Deployment could not start", "DeployGuard could not create a GitHub Actions run."];
-  if (phase === "source") return ["Source / Dispatch failed", "Deployment stopped before the application build started."];
-  if (phase === "build") return ["Railpack Build failed", "Build stopped before image publication. View Pipeline for technical evidence."];
+  if (phase === "source") return ["Prepare Source failed", "Deployment stopped before the application build started."];
+  if (phase === "build") return ["Build Application failed", "Build stopped before image publication. View Pipeline for technical evidence."];
   if (phase === "deploy") return ["Deploy Runtime failed", "Runtime deployment did not complete. View Pipeline for technical evidence."];
-  if (phase === "verify") return ["Verification failed", "Release verification did not complete. View Pipeline for technical evidence."];
+  if (phase === "verify") return ["Verify Application failed", "Release verification did not complete. View Pipeline for technical evidence."];
   return ["Deployment failed", "The deployment did not complete. View Pipeline for technical evidence."];
 }
 

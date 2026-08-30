@@ -5,6 +5,7 @@ import { createHash } from "crypto";
  * runtime configuration; it deliberately contains no repository analysis.
  */
 export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v1";
+export const RAILPACK_RESULT_CONTRACT_VERSION = "deployguard.release-result/v2";
 
 export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "deployment_action", required: true, type: "string" },
@@ -26,6 +27,7 @@ export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "platform_port", required: true, type: "string" },
   { name: "rollback_image_digest", required: false, type: "string" },
   { name: "control_plane_sha", required: true, type: "string" },
+  { name: "result_contract_version", required: true, type: "string" },
 ] as const;
 
 export type RailpackWorkflowInputName = typeof RAILPACK_WORKFLOW_INPUTS[number]["name"];
@@ -42,6 +44,8 @@ export type RailpackRuntimeConfiguration = {
   environment: Record<string, string>;
   secretReferences: Record<string, string>;
   managedDatabase: { enabled: boolean; engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[] };
+  /** Exact persisted generations the Destroy workflow is authorized to erase. */
+  projectDeletion?: { generationIds: string[] };
 };
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -77,5 +81,11 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     !value.managedDatabase.aliases.every((alias) => KEY.test(alias)) ||
     ![null, "postgres", "mysql", "mongodb"].includes(value.managedDatabase.engine)) {
     throw new Error("Railpack managed database configuration is invalid.");
+  }
+  if (value.projectDeletion && (!Array.isArray(value.projectDeletion.generationIds)
+    || !value.projectDeletion.generationIds.length
+    || value.projectDeletion.generationIds.some((id) => !UUID.test(id))
+    || new Set(value.projectDeletion.generationIds).size !== value.projectDeletion.generationIds.length)) {
+    throw new Error("Railpack destroy generation identity is invalid.");
   }
 }

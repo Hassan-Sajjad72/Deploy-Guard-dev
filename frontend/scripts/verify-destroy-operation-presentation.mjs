@@ -5,6 +5,7 @@ import {
   DEVELOPER_DEPLOYMENT_PHASES,
   deploymentPhasePresentation,
 } from "../src/utils/developerDeploymentPresentation.js";
+import { DESTROY_CONFIRMATION_PHRASE } from "../src/utils/deploymentConfirmation.js";
 
 const destroy = deploymentPhasePresentation({
   developerState: "destroying",
@@ -13,8 +14,9 @@ const destroy = deploymentPhasePresentation({
 });
 assert.deepEqual(destroy.map(({ key, label }) => [key, label]), [
   ["prepare", "Prepare"],
-  ["destroy", "Destroy"],
-  ["verify", "Verify"],
+  ["destroy", "Destroy Infrastructure"],
+  ["verify", "Verify Deletion"],
+  ["finalize", "Finalize Cleanup"],
 ]);
 assert.ok(!destroy.some((phase) => phase.label === "Deploy"));
 assert.equal(destroy.find((phase) => phase.key === "destroy")?.status, "running");
@@ -38,5 +40,8 @@ assert.match(pipeline, /Retry failed \$\{operationType\(latest\)\.toLowerCase\(\
 assert.match(recovery, /operation\.stageLabel/);
 assert.match(recovery, /operation\.aiAnalysisEligible/, "AI analysis must use backend-certified evidence eligibility");
 assert.match(overview, /deploymentPhasePresentation/);
+assert.equal(DESTROY_CONFIRMATION_PHRASE, "DESTROY");
+assert.match(overview, /DESTROY_CONFIRMATION_PHRASE/);
+assert.doesNotMatch(overview, /destroyPhrase !== "DESTROY"/);
 
-console.log("Destroy UI presentation checks passed: Prepare/Destroy/Verify rail, unchanged deploy rail, completed destroy rail, and shared action-aware presentation consumers.");
+console.log("Destroy UI presentation checks passed: canonical four-label rail, unchanged deploy rail, completed destroy rail, and shared action-aware presentation consumers.");

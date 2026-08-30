@@ -40,7 +40,7 @@ function storedZipEntry(name: string, value: string) {
 }
 
 async function verifyReleaseArtifactEvidenceReconciliation() {
-  const valid = { action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, terraform: { image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123:cluster/dg", ecs_cluster_name: "dg", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/dg/a", alb_target_group_name: "dg", alb_url: "http://example.test", cloudwatch_log_group_name: "/deployguard/11111111-1111-4111-8111-111111111111/application", application_container_name: "application", task_definition_arn: "arn:aws:ecs:us-east-1:123:task-definition/dg:1", ecs_service_arn: "arn:aws:ecs:us-east-1:123:service/dg/dg", ecs_service_name: "dg" } };
+  const valid = { contractVersion: "deployguard.release-result/v2", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, terraform: { image: `123.dkr.ecr.us-east-1.amazonaws.com/repo@sha256:${"a".repeat(64)}`, aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123:cluster/dg", ecs_cluster_name: "dg", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/dg/a", alb_target_group_name: "dg", alb_url: "http://example.test", cloudwatch_log_group_name: "/deployguard/11111111-1111-4111-8111-111111111111/application", application_container_name: "application", task_definition_arn: "arn:aws:ecs:us-east-1:123:task-definition/dg:1", ecs_service_arn: "arn:aws:ecs:us-east-1:123:service/dg/dg", ecs_service_name: "dg" } };
   assert.equal(DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, "deployguard-result.json");
   const archive = storedZipEntry("deployguard-result.json", JSON.stringify(valid));
   assert.equal(exactZipEntry(archive, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY), JSON.stringify(valid));
@@ -64,6 +64,7 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   const routes: any[] = [];
   const releases: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.sanitizer = new LogSanitizerService();
   service.projects = { findOne: async () => project }; service.users = { findOne: async () => user };
   service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
   service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
@@ -148,11 +149,20 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
     await assert.rejects(() => service.releaseEvidence(project.repositoryFullName, operation, "ignored"));
   }
 
-  const pendingOperation = { ...operation, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending" };
+  const pendingOperation = { ...operation, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: { deploymentAction: "deploy" } };
   service.actions.getResultArtifact = async () => null;
   await service.reconcile(pendingOperation);
   assert.equal(saved.at(-1).status, PipelineRunStatus.RUNNING, "missing evidence must not complete a successful workflow");
   assert.equal(saved.at(-1).currentStage, "release_evidence_pending");
+  pendingOperation.metadata.releaseEvidencePendingSince = new Date(Date.now() - 3 * 60_000).toISOString();
+  await service.reconcile(pendingOperation);
+  await service.reconcile(pendingOperation);
+  assert.equal(pendingOperation.status, PipelineRunStatus.FAILED, "bounded missing terminal evidence cannot remain Running forever");
+  assert.equal(pendingOperation.metadata.failureCategory, "release_contract_incompatible");
+  const transientEvidence: any = { ...operation, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: { deploymentAction: "deploy" } };
+  service.actions.getResultArtifact = async () => { throw new Error("artifact API temporarily unavailable"); };
+  await service.reconcile(transientEvidence);
+  assert.equal(transientEvidence.status, PipelineRunStatus.RUNNING, "transient artifact API failures remain retryable polling failures");
   service.actions.getResultArtifact = async () => "not-json";
   await assert.rejects(() => service.releaseEvidence(project.repositoryFullName, operation, "ignored"));
 }
@@ -278,7 +288,7 @@ async function verifyPerActionCapabilitySimulation() {
   assert.equal(attach.Condition.StringEquals["iam:PolicyARN"], "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy");
 }
 
-function verifyProviderContractAndConditionalDatabaseScope() {
+async function verifyProviderContractAndConditionalDatabaseScope() {
   const scope: any = { accountId: "000000000000", region: "us-east-1", projectId: project.id, environmentName: "dev", generationId: "22222222-2222-4222-8222-222222222222", terraformStateBucket: "deployguard-state", vpcId: "vpc-00000000000000000" };
   const allActions = new Set(WORKFLOW_AWS_CAPABILITIES.flatMap((capability) => capability.actions));
   for (const [resource, actions] of Object.entries(RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS)) {
@@ -302,6 +312,11 @@ function verifyProviderContractAndConditionalDatabaseScope() {
     assert.ok(allActions.has(expected.action), `independent provider expectation missing from capability contract: ${expected.action} (${expected.providerFunction})`);
   }
   assert.ok(capabilitiesFor("destroy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
+  const destroyCapabilities = capabilitiesFor("destroy", { ...scope, managedDatabaseEnabled: false });
+  const destroyActions = destroyCapabilities.flatMap((capability) => capability.actions);
+  assert.ok(destroyActions.includes("iam:ListInstanceProfilesForRole"), "Terraform Destroy must preflight the provider's IAM role-deletion helper call");
+  const denyInstanceProfiles = { send: async (command: any) => ({ EvaluationResults: command.input.ActionNames.map((action: string) => ({ EvalActionName: action, EvalDecision: action === "iam:ListInstanceProfilesForRole" ? "implicitDeny" : "allowed" })) }) };
+  assert.deepEqual(await verifyEffectiveWorkflowCapabilities(denyInstanceProfiles, "arn:aws:iam::000000000000:role/deployguard", scope, "destroy", destroyCapabilities), ["iam:ListInstanceProfilesForRole"], "missing IAM role-delete helper permission fails before Terraform Destroy");
   assert.ok(!capabilitiesFor("deploy", { ...scope, managedDatabaseEnabled: false }).flatMap((capability) => capability.actions).includes("ec2:DescribeNetworkInterfaces"));
 }
 
@@ -516,7 +531,7 @@ async function verifyCurrentStateReconcilesWithoutPipeline() {
     assert.equal(operation.status, PipelineRunStatus.FAILED, "Overview current-state refresh must reconcile terminal GitHub failure before projection");
     return {
       developerState: "failed_application", developerAction: "deploy_again", developerMessage: operation.errorMessage,
-      progress: { percentage: 40, phase: "build", label: "Railpack Build failed" }, repository: project.repositoryFullName, branch: project.targetBranch,
+      progress: { percentage: 40, phase: "build", label: "Build Application failed" }, repository: project.repositoryFullName, branch: project.targetBranch,
       latestAttempt: {
         operationId: operation.id, workflowRunId: operation.githubWorkflowRunId, operationType: "deploy", status: "failed_application", outcome: "blocked", attempt: "4",
         generationId: null, releaseRevision: null, commit: operation.commitSha, message: operation.errorMessage,
@@ -554,7 +569,7 @@ void (async () => {
   await verifyPerActionCapabilitySimulation();
   await verifyReleaseArtifactEvidenceReconciliation();
   await verifyTerminalFinalizationFailureIsRetryable();
-  verifyProviderContractAndConditionalDatabaseScope();
+  await verifyProviderContractAndConditionalDatabaseScope();
   await verifyCurrentStateProjection(failed);
   await verifyVerifiedReleaseProjectsLive();
   const terminalFailure = await verifyTerminalGithubFailure();
@@ -575,7 +590,7 @@ void (async () => {
   const runtimeResolver = readFileSync(join(root, "backend", "src", "observability", "live-runtime-resolver.service.ts"), "utf8");
   const migration = readFileSync(join(root, "backend", "src", "migrations", "1787356812000-DropLegacyGenerationStateKeyIndex.ts"), "utf8");
   assert.doesNotMatch(phases, /key: "analyze"/);
-  assert.match(phases, /Source \/ Dispatch/);
+  assert.match(phases, /Prepare Source/);
   assert.match(routes, /ProjectInfrastructure/);
   assert.match(workflow, /tmpdir="\$\(mktemp -d\)"/);
   assert.match(workflow, /test ! -f \/tmp\/railpack/);

@@ -24,6 +24,7 @@ export function projectStatePresentation(currentState) {
     active: Boolean(operation),
     headline: currentState?.stateAuthority?.reason || currentState?.developerMessage || "Project state is unavailable.",
     operation,
+    runtime: currentState?.stateAuthority?.runtime || null,
     infrastructure: currentState?.stateAuthority?.infrastructure || null,
     health: currentState?.stateAuthority?.applicationHealth || null,
     monitoring: currentState?.stateAuthority?.monitoring || null,

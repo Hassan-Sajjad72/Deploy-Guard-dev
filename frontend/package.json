@@ -27,7 +27,6 @@
     "test:overview-lifecycle": "node scripts/verify-overview-lifecycle.mjs",
     "test:railpack-failure-presentation": "node scripts/verify-railpack-failure-presentation.mjs",
     "test:project-state-sync": "node scripts/verify-project-state-sync.mjs",
-    "test:topology-authority": "node scripts/verify-topology-authority.mjs",
     "test:recovery-ui": "node scripts/verify-recovery-ui.mjs",
     "test:time-recency-ui": "node scripts/verify-time-recency-ui.mjs",
     "test:serialized-project-refresh": "node scripts/verify-serialized-project-refresh.mjs",

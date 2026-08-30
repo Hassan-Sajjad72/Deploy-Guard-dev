@@ -13,6 +13,7 @@ import { AiEvidenceService } from "./ai-evidence.service";
 import { AiProviderAdapter } from "./ai-provider.adapter";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { presentPipelineStage } from "../projects/pipeline/pipeline-stage-presenter";
+import { deployguardOperationStagePresentation } from "../projects/pipeline/github-actions-stage-presentation";
 
 export const TROUBLESHOOTING_QUESTIONS = [
   "What is the first proven failure and which evidence supports it?",
@@ -104,12 +105,14 @@ export class AiTroubleshootingService {
       this.provider.availability(),
       this.projects.findOne({ where: { id: projectId } }),
     ]);
+    const operationAction = (run?.metadata?.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
+    const failedStage = run?.metadata?.failedStage || run?.currentStage;
     return {
       session,
       messages,
       results,
       provider,
-      operation: run ? { id: run.id, action: run.metadata?.deploymentAction || "deploy", commitSha: run.commitSha, generationId: run.generationId, failedStage: run.metadata?.failedStage || run.currentStage, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage } : null,
+      operation: run ? { id: run.id, action: operationAction, commitSha: run.commitSha, generationId: run.generationId, failedStage, failedStageLabel: deployguardOperationStagePresentation(failedStage, operationAction).label, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage } : null,
       evidence: { context: { ...collected.context, project: project ? { name: project.name, repository: project.repositoryFullName } : null }, groups: collected.groups },
       suggestedQuestions: TROUBLESHOOTING_QUESTIONS,
     };

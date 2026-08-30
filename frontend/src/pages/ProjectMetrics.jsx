@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
-import { getApplicationLogStreamUrl, getApplicationRuntimeMetrics, getProjectCurrentState } from "../api/projectApi.js";
+import { Link, useParams } from "react-router-dom";
+import { getApplicationLogStreamUrl, getApplicationRuntimeMetrics, getProjectDetailedCurrentState } from "../api/projectApi.js";
 import {
   Card,
   ChartCard,
@@ -56,7 +56,7 @@ function mergeLogEvents(current, incoming) {
   return [...byId.values()].sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp))).slice(-400);
 }
 
-function RuntimeLogViewer({ projectId, live }) {
+function RuntimeLogViewer({ projectId, live, onConnectionChange }) {
   const [connection, setConnection] = useState({ state: "connecting", message: "Connecting to the LIVE CloudWatch log group…", generationId: null });
   const [events, setEvents] = useState([]);
   const [reconnectKey, setReconnectKey] = useState(0);
@@ -67,7 +67,9 @@ function RuntimeLogViewer({ projectId, live }) {
     const receiveIdentity = (name) => (event) => {
       const payload = JSON.parse(event.data);
       setEvents((current) => mergeLogEvents(name === "generation_changed" ? [] : current, payload.history || []));
-      setConnection({ state: "connected", message: name === "generation_changed" ? "Switched to the new authoritative LIVE generation." : "Streaming the authoritative LIVE application logs.", generationId: payload.generationId });
+      const next = { state: "connected", message: name === "generation_changed" ? "Switched to the new authoritative LIVE generation." : "Streaming the authoritative LIVE application logs.", generationId: payload.generationId };
+      setConnection(next);
+      onConnectionChange(next);
     };
     const connected = receiveIdentity("connected");
     const generationChanged = receiveIdentity("generation_changed");
@@ -77,18 +79,24 @@ function RuntimeLogViewer({ projectId, live }) {
     };
     const warning = (event) => {
       const payload = JSON.parse(event.data);
-      setConnection((value) => ({ ...value, state: "reconnecting", message: payload.message || "CloudWatch is temporarily unavailable; retrying." }));
+      const next = { state: "reconnecting", message: payload.message || "CloudWatch is temporarily unavailable; retrying.", generationId: connection.generationId };
+      setConnection(next);
+      onConnectionChange(next);
     };
     source.addEventListener("connected", connected);
     source.addEventListener("generation_changed", generationChanged);
     source.addEventListener("log", log);
     source.addEventListener("warning", warning);
-    source.onerror = () => setConnection((value) => ({ ...value, state: "reconnecting", message: "The log connection was interrupted. Reconnecting automatically…" }));
+    source.onerror = () => {
+      const next = { state: "reconnecting", message: "The log connection was interrupted. Reconnecting automatically…", generationId: connection.generationId };
+      setConnection(next);
+      onConnectionChange(next);
+    };
     return () => source.close();
   }, [live, projectId, reconnectKey]);
   return <Card className="monitoring-log-card">
     <div className="monitoring-section-heading"><div><p className="eyebrow">Live runtime output</p><h2>ECS application logs</h2><p>Bounded recent history followed by new CloudWatch events from the authoritative LIVE generation.</p></div><div className="monitoring-log-actions"><StatusChip status={connection.state === "connected" ? "healthy" : connection.state}>{label(connection.state)}</StatusChip><button className="secondary-button" onClick={() => setReconnectKey((value) => value + 1)} type="button">Reconnect</button></div></div>
-    <p className="monitoring-log-connection">{connection.message}{connection.generationId ? ` Generation ${connection.generationId.slice(0, 12)}.` : ""}</p>
+    <p className="monitoring-log-connection">{connection.message}</p>
     <div aria-label="Live ECS application logs" aria-live="polite" className="monitoring-log-viewer" role="log">
       {events.length ? events.map((entry, index) => <div className="monitoring-log-line" key={entry.id || `${entry.timestamp}-${index}`}><time>{new Date(entry.timestamp).toLocaleTimeString()}</time><span title={entry.source}>{entry.source || "ecs/app"}</span><code>{entry.message}</code></div>) : <p className="monitoring-log-empty">No application log events are available in the bounded history window yet.</p>}
     </div>
@@ -102,13 +110,17 @@ export default function ProjectMetrics() {
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [logs, setLogs] = useState({ state: "connecting", message: "Connecting to CloudWatch logs…" });
+  const updateLogConnection = useCallback((next) => setLogs(next), []);
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const current = await getProjectCurrentState(projectId);
+      // Monitoring consumes the same bounded AWS observation as
+      // Infrastructure; opening either page cannot change the authority.
+      const current = await getProjectDetailedCurrentState(projectId);
       setState(current);
       setRuntime(null);
-      if (current.stateAuthority?.state === "LIVE" && current.stateAuthority?.infrastructure?.exists) {
+      if (current.stateAuthority?.runtime?.state === "present" && current.stateAuthority?.infrastructure?.exists) {
         setRuntime(await getApplicationRuntimeMetrics(projectId, { range }));
       }
       setError("");
@@ -117,35 +129,45 @@ export default function ProjectMetrics() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
   useEffect(() => {
-    if (state?.stateAuthority?.state !== "LIVE" || !state?.stateAuthority?.infrastructure?.exists) return undefined;
+    if (state?.stateAuthority?.runtime?.state !== "present" || !state?.stateAuthority?.infrastructure?.exists) return undefined;
     const timer = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(timer);
-  }, [load, state?.stateAuthority?.state, state?.stateAuthority?.infrastructure?.exists]);
+  }, [load, state?.stateAuthority?.runtime?.state, state?.stateAuthority?.infrastructure?.exists]);
 
   const presentation = projectStatePresentation(state);
   const authority = state?.stateAuthority;
   const evidence = state?.infrastructureEvidence;
-  const liveInfrastructure = authority?.state === "LIVE" && authority?.infrastructure?.exists;
+  const liveInfrastructure = authority?.runtime?.state === "present" && authority?.infrastructure?.exists;
   const runtimeCharts = metricDefinitions.filter(({ key }) => (runtime?.[key]?.points || []).length > 0);
   const lastScrape = runtimeLastScrape(runtime);
 
   if (loading) return <LoadingState message="Loading deployment health…" />;
   if (error && !state) return <ErrorState message={error} onRetry={load} />;
-  if (state && !liveInfrastructure) return <Navigate replace to={`/projects/${projectId}`} />;
+  if (state && !liveInfrastructure) return <div className="monitoring-page page-stack" data-authoritative-state={presentation.state} data-monitoring-available="false"><PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} description="Runtime monitoring follows the same authoritative AWS observation as Infrastructure." eyebrow="Application health" status={presentation.state} title="Monitoring" /><section aria-label="Deployment health summary" className="monitoring-summary-grid"><MetricCard label="Application" value={label(authority?.runtime?.state)} /><MetricCard label="ECS" value={label(evidence?.resources?.find((resource) => resource.type === "ECS Fargate")?.status)} /><MetricCard label="Load Balancer" value={label(evidence?.resources?.find((resource) => resource.type === "ALB")?.status)} /><MetricCard label="Logs" value="Unavailable" /><MetricCard label="Metrics" value="Unavailable" /><MetricCard label="Grafana" value="Not applicable" /></section><EmptyState icon="activity" message={authority?.monitoring?.reason || "The authoritative runtime is not currently present."} title="Runtime monitoring unavailable" /></div>;
 
   const ecs = evidence?.ecs;
   const albHealth = evidence?.alb?.targetHealth || [];
-  const runtimeAvailable = runtime?.available === true;
-  const runtimeUnavailable = runtime?.available === false;
-  const monitoringConfigured = authority?.monitoring?.status === "available";
+  const metricsState = runtime?.availabilityState || (authority?.monitoring?.available ? "temporarily_unavailable" : "disabled_by_configuration");
+  const runtimeAvailable = metricsState === "available";
+  const metricsLabel = {
+    available: "Available",
+    disabled_by_configuration: "Disabled by configuration",
+    temporarily_unavailable: "Temporarily unavailable",
+    no_samples_yet: "No samples yet",
+  }[metricsState] || "Temporarily unavailable";
+  const grafanaConfigured = runtime?.grafana?.configured === true && Boolean(runtime?.grafana?.url);
+  const destroyOperation = authority?.activeOperation?.type === "destroy" ? "running" : authority?.latestCompletedOperation?.type === "destroy" && authority?.latestCompletedOperation?.outcome === "failed" ? "failed" : null;
   return <div className="monitoring-page page-stack" data-authoritative-state={presentation.state} data-monitoring-available={authority?.monitoring?.available ? "true" : "false"}>
     <PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} context={`Source: GitHub Actions and AWS · Last updated: ${date(evidence?.lastUpdatedAt)} · ${label(evidence?.freshness)}`} description="Deployed application and infrastructure health only. GitHub Actions execution timing remains on Pipeline." eyebrow="Application health" status={presentation.state} title="Monitoring" />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
+    {destroyOperation ? <Card><strong>{destroyOperation === "running" ? "Destroy is in progress." : "The latest Destroy failed."}</strong><p>The authoritative runtime is still present, so its ECS, ALB, logs, and metrics remain available.</p></Card> : null}
     <section aria-label="Deployment health summary" className="monitoring-summary-grid">
-      <MetricCard detail={`Source: ${evidenceSourceLabel(authority?.applicationHealth?.source)}`} label="Application status" tone={authority?.applicationHealth?.status === "healthy" ? "success" : "warning"} value={label(authority?.applicationHealth?.status)} />
-      <MetricCard detail={runtimeAvailable ? "Fresh provider samples are shown below." : runtimeUnavailable ? (runtime.message || "The runtime provider is temporarily unavailable.") : (authority?.monitoring?.reason || "No LIVE runtime telemetry is available.")} label="Runtime metrics" tone={runtimeAvailable ? "success" : "neutral"} value={runtimeAvailable ? "Available" : runtimeUnavailable ? "Temporarily unavailable" : monitoringConfigured ? "Resolving" : "Unavailable"} />
-      <MetricCard detail={ecs ? `${ecs.desiredCount} desired · ${ecs.pendingCount} pending` : "No current ECS task evidence"} label="Running ECS tasks" tone={ecs?.runningCount ? "success" : "neutral"} value={ecs ? `${ecs.runningCount}/${ecs.desiredCount}` : "Unavailable"} />
-      <MetricCard detail={albHealth.length ? "Live AWS target-health evidence" : "No current load-balancer evidence"} label="ALB target health" tone={albHealth.includes("healthy") ? "success" : "neutral"} value={albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"} />
+      <MetricCard detail={`Source: ${evidenceSourceLabel(authority?.applicationHealth?.source)}`} label="Application" tone={authority?.applicationHealth?.status === "healthy" ? "success" : "warning"} value={label(authority?.applicationHealth?.status)} />
+      <MetricCard detail={ecs ? `${ecs.desiredCount} desired · ${ecs.pendingCount} pending` : "No current AWS observation"} label="ECS" tone={ecs?.runningCount === ecs?.desiredCount ? "success" : "neutral"} value={ecs ? `${ecs.runningCount}/${ecs.desiredCount}` : "Unavailable"} />
+      <MetricCard detail={albHealth.length ? "Same bounded AWS observation as Infrastructure" : "No current AWS observation"} label="Load Balancer" tone={albHealth.includes("healthy") ? "success" : "neutral"} value={albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"} />
+      <MetricCard detail={logs.message} label="Logs" tone={logs.state === "connected" ? "success" : "neutral"} value={label(logs.state)} />
+      <MetricCard detail={runtime?.message || "CloudWatch provider state"} label="Metrics" tone={runtimeAvailable ? "success" : "neutral"} value={metricsLabel} />
+      <MetricCard detail={grafanaConfigured ? "Configured independently from CloudWatch metrics" : "No GRAFANA_BASE_URL is configured"} label="Grafana" tone={grafanaConfigured ? "success" : "neutral"} value={grafanaConfigured ? <a href={runtime.grafana.url} rel="noreferrer" target="_blank">Open Grafana</a> : "Not configured"} />
     </section>
     <Card className="monitoring-health-card"><div className="monitoring-section-heading"><div><p className="eyebrow">Health details</p><h2>Current deployment evidence</h2><p>Runtime provider data is separate from GitHub Actions and AWS deployment-health verification.</p></div><StatusChip status={evidence?.freshness}>{label(evidence?.freshness)}</StatusChip></div>
       <div className="monitoring-health-grid">
@@ -155,17 +177,16 @@ export default function ProjectMetrics() {
         <article><span>Evidence freshness</span><strong>{label(evidence?.freshness)}</strong></article>
         <article><span>ALB health</span><strong>{albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"}</strong></article>
         <article><span>ECS task health</span><strong>{ecs ? `${ecs.runningCount} running / ${ecs.desiredCount} desired / ${ecs.pendingCount} pending` : "Unavailable"}</strong></article>
-        <article><span>LIVE generation</span><strong>{runtime?.generationId ? runtime.generationId.slice(0, 12) : "Unavailable"}</strong></article>
-        <article><span>Grafana</span><strong>{runtime?.grafanaUrl ? <a href={runtime.grafanaUrl} rel="noreferrer" target="_blank">Open DeployGuard Runtime</a> : "Not configured"}</strong></article>
+        <article><span>Grafana</span><strong>{grafanaConfigured ? <a href={runtime.grafana.url} rel="noreferrer" target="_blank">Open Grafana</a> : "Not configured"}</strong></article>
       </div>
     </Card>
-    {!authority?.monitoring?.available ? <EmptyState icon="activity" message={authority?.monitoring?.reason || "Deployment health is still verified through ECS and ALB."} title="Runtime metrics unavailable" /> : null}
-    {authority?.monitoring?.available ? <>
+    <>
       <section aria-label="Metrics time range" className="monitoring-range-controls">{["1h", "6h", "24h"].map((item) => <button aria-pressed={range === item} className={range === item ? "button" : "secondary-button"} key={item} onClick={() => setRange(item)} type="button">{item}</button>)}</section>
-      {runtime?.available === false ? <EmptyState icon="activity" message={runtime.message || "Fresh metrics are unavailable."} title="Runtime metrics unavailable" /> : null}
-      {runtime?.available && runtimeCharts.length ? <section aria-label="Runtime metric charts" className="monitoring-chart-grid">{runtimeCharts.map(({ key, title, unit }) => <MetricChart key={key} metric={runtime[key]} title={title} unit={unit} />)}</section> : null}
-      {runtime?.available && !runtimeCharts.length ? <EmptyState icon="activity" message="The configured runtime provider returned no timestamped samples for this range." title="No runtime samples yet" /> : null}
-    </> : null}
-    <RuntimeLogViewer live={liveInfrastructure} projectId={projectId} />
+      {metricsState === "disabled_by_configuration" ? <EmptyState icon="activity" message={runtime?.message || "CloudWatch metrics are disabled by configuration."} title="Metrics disabled" /> : null}
+      {metricsState === "temporarily_unavailable" ? <EmptyState icon="activity" message={runtime?.message || "CloudWatch metrics are temporarily unavailable."} title="Metrics temporarily unavailable" /> : null}
+      {runtimeAvailable && runtimeCharts.length ? <section aria-label="Runtime metric charts" className="monitoring-chart-grid">{runtimeCharts.map(({ key, title, unit }) => <MetricChart key={key} metric={runtime[key]} title={title} unit={unit} />)}</section> : null}
+      {metricsState === "no_samples_yet" || (runtimeAvailable && !runtimeCharts.length) ? <EmptyState icon="activity" message="CloudWatch is available, but this range has no timestamped samples yet." title="No samples yet" /> : null}
+    </>
+    <RuntimeLogViewer live={liveInfrastructure} onConnectionChange={updateLogConnection} projectId={projectId} />
   </div>;
 }

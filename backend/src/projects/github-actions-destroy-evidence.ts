@@ -25,44 +25,52 @@ export function extractGithubActionsDestroyEvidence(log: string): GithubActionsD
     const marker = line.indexOf("DEPLOYGUARD_DESTROY_RESULT=");
     try {
       const value = JSON.parse(line.slice(marker + "DEPLOYGUARD_DESTROY_RESULT=".length).trim()) as Record<string, unknown>;
-      const generationIds = Array.isArray(value.generationIds)
-        ? value.generationIds.filter((id): id is string => typeof id === "string")
-        : [];
-      if (
-        value.contractVersion !== "deployguard.destroy-result/v2"
-        || typeof value.deploymentOperationId !== "string"
-        || !UUID.test(value.deploymentOperationId)
-        || typeof value.projectId !== "string"
-        || !UUID.test(value.projectId)
-        || typeof value.environmentName !== "string"
-        || !value.environmentName
-        || !generationIds.length
-        || generationIds.some((id) => !UUID.test(id))
-        || new Set(generationIds).size !== generationIds.length
-        || value.status !== "project_delete_ready"
-        || value.generationResourcesRemoved !== true
-        || value.projectResourcesRemoved !== true
-        || value.terraformStateArtifactsRemoved !== true
-        || value.sharedPlatformUntouched !== true
-        || typeof value.verifiedAt !== "string"
-        || Number.isNaN(Date.parse(value.verifiedAt))
-      ) continue;
-      return {
-        contractVersion: "deployguard.destroy-result/v2",
-        deploymentOperationId: value.deploymentOperationId,
-        projectId: value.projectId,
-        environmentName: value.environmentName,
-        generationIds: [...generationIds].sort(),
-        status: "project_delete_ready",
-        generationResourcesRemoved: true,
-        projectResourcesRemoved: true,
-        terraformStateArtifactsRemoved: true,
-        sharedPlatformUntouched: true,
-        verifiedAt: value.verifiedAt,
-      };
+      const evidence = githubActionsDestroyEvidenceFromValue(value);
+      if (evidence) return evidence;
     } catch {
       // Malformed and unrelated output cannot advance deletion authority.
     }
   }
   return null;
+}
+
+/** Validate an artifact payload before it can erase project runtime authority. */
+export function githubActionsDestroyEvidenceFromValue(value: unknown): GithubActionsDestroyEvidence | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const generationIds = Array.isArray(candidate.generationIds)
+    ? candidate.generationIds.filter((id): id is string => typeof id === "string")
+    : [];
+  if (
+    candidate.contractVersion !== "deployguard.destroy-result/v2"
+    || typeof candidate.deploymentOperationId !== "string"
+    || !UUID.test(candidate.deploymentOperationId)
+    || typeof candidate.projectId !== "string"
+    || !UUID.test(candidate.projectId)
+    || typeof candidate.environmentName !== "string"
+    || !candidate.environmentName
+    || !generationIds.length
+    || generationIds.some((id) => !UUID.test(id))
+    || new Set(generationIds).size !== generationIds.length
+    || candidate.status !== "project_delete_ready"
+    || candidate.generationResourcesRemoved !== true
+    || candidate.projectResourcesRemoved !== true
+    || candidate.terraformStateArtifactsRemoved !== true
+    || candidate.sharedPlatformUntouched !== true
+    || typeof candidate.verifiedAt !== "string"
+    || Number.isNaN(Date.parse(candidate.verifiedAt))
+  ) return null;
+  return {
+    contractVersion: "deployguard.destroy-result/v2",
+    deploymentOperationId: candidate.deploymentOperationId,
+    projectId: candidate.projectId,
+    environmentName: candidate.environmentName,
+    generationIds: [...generationIds].sort(),
+    status: "project_delete_ready",
+    generationResourcesRemoved: true,
+    projectResourcesRemoved: true,
+    terraformStateArtifactsRemoved: true,
+    sharedPlatformUntouched: true,
+    verifiedAt: candidate.verifiedAt,
+  };
 }

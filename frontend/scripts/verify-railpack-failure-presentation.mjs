@@ -29,8 +29,24 @@ assert.deepEqual(deploymentPhasePresentation(failure).map(({ key, status }) => [
   ["deploy", "waiting"],
   ["verify", "waiting"],
 ]);
+const destroy = {
+  developerState: "destroying",
+  progress: { phase: "deploy" },
+  latestAttempt: { operationType: "destroy", outcome: null, workflowStages: [
+    { key: "install_terraform", status: "passed" },
+    { key: "materialize_release_runtime", status: "running" },
+    { key: "build_immutable_railpack_image", status: "skipped" },
+  ] },
+  stateAuthority: { state: "DESTROYING", activeOperation: { type: "destroy" } },
+};
+assert.deepEqual(deploymentPhasePresentation(destroy).map(({ label, status }) => [label, status]), [
+  ["Prepare", "waiting"],
+  ["Destroy Infrastructure", "running"],
+  ["Verify Deletion", "waiting"],
+  ["Finalize Cleanup", "waiting"],
+]);
 const overview = overviewLifecycleCopy(failure);
-assert.equal(overview.title, "Railpack Build failed");
+assert.equal(overview.title, "Build Application failed");
 assert.equal(overview.message, "Build stopped before image publication. View Pipeline for technical evidence.");
 assert.ok(overview.message.length < 320);
 const rawEvidence = "GitHub Actions job: release\nERRO BUILDKIT_HOST environment variable is not set.\nsecret-like-safe-log-payload";
@@ -41,7 +57,7 @@ const overviewComponent = readFileSync(new URL("../src/components/projects/Proje
 const troubleshooting = readFileSync(new URL("../src/pages/ProjectTroubleshooting.jsx", import.meta.url), "utf8");
 const dashboard = readFileSync(new URL("../src/pages/Dashboard.jsx", import.meta.url), "utf8");
 assert.match(infrastructure, /Runtime infrastructure not provisioned/);
-assert.match(infrastructure, /Railpack Build/);
+assert.match(infrastructure, /Build Application/);
 assert.match(pipeline, /Not created — deployment failed before runtime generation\./);
 assert.match(pipeline, /details\.createdAt \|\| details\.startedAt \|\| details\.failedAt/);
 assert.match(overviewComponent, /detail=\{copy\.message\}/, "Overview must use the concise canonical message, never raw evidence.");

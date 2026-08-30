@@ -1,4 +1,5 @@
 name: DeployGuard Railpack release
+# deployguard-result-contract: deployguard.release-result/v2
 
 on:
   workflow_call:
@@ -22,6 +23,7 @@ on:
       platform_port: { required: true, type: string }
       rollback_image_digest: { required: false, type: string, default: "" }
       control_plane_sha: { required: true, type: string }
+      result_contract_version: { required: true, type: string }
 
 permissions:
   contents: read
@@ -46,11 +48,13 @@ jobs:
       PLATFORM_PORT: ${{ inputs.platform_port }}
       ENVIRONMENT_REFERENCES_BASE64: ${{ inputs.environment_references_base64 }}
       CONTROL_PLANE_SHA: ${{ inputs.control_plane_sha }}
+      RESULT_CONTRACT_VERSION: ${{ inputs.result_contract_version }}
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
       ROLLBACK_IMAGE_DIGEST: ${{ inputs.rollback_image_digest }}
       BUILDKIT_CONTAINER: deployguard-buildkit-${{ inputs.deployment_operation_id }}
+      RUNTIME_PROBE_CONTAINER: deployguard-runtime-probe-${{ inputs.deployment_operation_id }}
       BUILDKIT_IMAGE: moby/buildkit:v0.16.0@sha256:bc1fe18224dbcb92599139db0c745696c48ba9fd4ac24038d1fa81fdd7dcac27
     steps:
       - name: Checkout exact application source
@@ -71,10 +75,14 @@ jobs:
           [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'Invalid deployment action.' >&2; exit 1; }
           [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid project identity.' >&2; exit 1; }
           [[ "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid operation identity.' >&2; exit 1; }
+          [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v2 ] || { echo 'Incompatible DeployGuard result contract.' >&2; exit 1; }
           [[ "$PLATFORM_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PLATFORM_PORT" -le 65535 ] || { echo 'Invalid platform port.' >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = deploy ]; then [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo 'Exact source SHA mismatch.' >&2; exit 1; }; fi
           if [ "$DEPLOYMENT_ACTION" = rollback ]; then [[ "$ROLLBACK_IMAGE_DIGEST" =~ @sha256:[0-9a-f]{64}$ ]] || { echo 'Rollback requires an immutable ECR image digest.' >&2; exit 1; }; fi
-          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" '.schemaVersion == 1 and .projectId == $project and .operationId == $operation and .sourceSha == $sha' >/dev/null
+          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" --arg action "$DEPLOYMENT_ACTION" '
+            .schemaVersion == 1 and .projectId == $project and .operationId == $operation and .sourceSha == $sha
+            and (if $action == "destroy" then (.projectDeletion.generationIds | type == "array" and length > 0) else true end)
+          ' >/dev/null
       - name: Install pinned Railpack
         if: success() && inputs.deployment_action == 'deploy'
         shell: bash
@@ -112,6 +120,35 @@ jobs:
           fi
           BUILDKIT_HOST="docker-container://${BUILDKIT_CONTAINER}" railpack build --name "$image" .
           printf 'image=%s\nrepository=%s\nregistry=%s\n' "$image" "$repository" "$registry" >> "$GITHUB_OUTPUT"
+      - name: Validate Application Runtime
+        if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.image != ''
+        shell: bash
+        env:
+          PROBE_IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          image="$PROBE_IMAGE"
+          cleanup_probe() {
+            docker rm --force "$RUNTIME_PROBE_CONTAINER" >/dev/null 2>&1 || true
+          }
+          trap cleanup_probe EXIT INT TERM
+          cleanup_probe
+          docker run --detach --name "$RUNTIME_PROBE_CONTAINER" --env PORT=8080 --env HOST=0.0.0.0 "$image" >/dev/null
+          ready=false
+          if timeout --signal=TERM 45 bash -c '
+            while true; do
+              running="$(docker inspect --format "{{.State.Running}}" "$RUNTIME_PROBE_CONTAINER" 2>/dev/null || true)"
+              [ "$running" = true ] || exit 1
+              container_ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" "$RUNTIME_PROBE_CONTAINER" 2>/dev/null || true)"
+              if [ -n "$container_ip" ] && timeout 1 bash -c "exec 3<>/dev/tcp/\$1/8080" _ "$container_ip" 2>/dev/null; then exit 0; fi
+              sleep 1
+            done
+          '; then ready=true; fi
+          if [ "$ready" != true ]; then
+            docker logs "$RUNTIME_PROBE_CONTAINER" --tail 100 2>&1 | tail -c 12000 >&2 || true
+            echo 'Application did not listen on PORT=8080 within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable.' >&2
+            exit 1
+          fi
       - name: Publish immutable image to ECR
         if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.image != ''
         id: image
@@ -173,25 +210,69 @@ jobs:
           terraform -chdir=.deployguard/terraform validate
           if [ "$DEPLOYMENT_ACTION" = destroy ]; then
             terraform -chdir=.deployguard/terraform destroy -input=false -auto-approve
-            jq -n --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" '{action:$action,sourceSha:$sourceSha,operationId:$operationId,destroyed:true}' > .deployguard/release-runtime.json
+            jq -n \
+              --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" \
+              --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" \
+              --slurpfile runtime .deployguard/runtime.json \
+              '{
+                action:$action,
+                contractVersion:$contractVersion,
+                sourceSha:$sourceSha,
+                operationId:$operationId,
+                destroyed:true,
+                destroyVerification:{
+                  contractVersion:"deployguard.destroy-result/v2",
+                  deploymentOperationId:$operationId,
+                  projectId:$projectId,
+                  environmentName:$environmentName,
+                  generationIds:($runtime[0].projectDeletion.generationIds | sort),
+                  status:"project_delete_ready",
+                  generationResourcesRemoved:true,
+                  projectResourcesRemoved:true,
+                  terraformStateArtifactsRemoved:true,
+                  sharedPlatformUntouched:true,
+                  verifiedAt:(now | todateiso8601)
+                }
+              }' > .deployguard/release-runtime.json
           else
-            terraform -chdir=.deployguard/terraform apply -input=false -auto-approve
+            terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan
+            terraform -chdir=.deployguard/terraform show -json deployguard.tfplan \
+              | jq '
+                  def redact($value; $mask):
+                    if $mask == true then null
+                    elif (($mask | type) == "object" and ($value | type) == "object") then
+                      reduce ($value | keys_unsorted[]) as $key ({}; .[$key] = redact($value[$key]; ($mask[$key] // false)))
+                    elif (($mask | type) == "array" and ($value | type) == "array") then
+                      [range(0; $value | length) as $index | redact($value[$index]; ($mask[$index] // false))]
+                    else $value end;
+                  .resource_changes = ((.resource_changes // []) | map(
+                    .change.before = redact(.change.before; (.change.before_sensitive // false))
+                    | .change.after = redact(.change.after; (.change.after_sensitive // false))
+                    | del(.change.before_sensitive, .change.after_sensitive)
+                  ))
+                ' > .deployguard/terraform/deployguard-cost-plan.json
+            terraform -chdir=.deployguard/terraform apply -input=false -auto-approve deployguard.tfplan
             compact_project_id="${PROJECT_ID//-/}"
             service="dg-${compact_project_id:0:12}"
             aws ecs wait services-stable --cluster "$service" --services "$service"
             terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value = .value.value)' > .deployguard/terraform-outputs.json
             alb_url="$(jq -r '.alb_url' .deployguard/terraform-outputs.json)"
             curl --fail --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused "$alb_url" >/dev/null
-            jq -n --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg image "$IMAGE" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" '{action:$action,sourceSha:$sourceSha,operationId:$operationId,image:$image,terraform:$terraform}' > .deployguard/release-runtime.json
+            jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg image "$IMAGE" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,image:$image,terraform:$terraform}' > .deployguard/release-runtime.json
           fi
           mkdir -p terraform
           cp .deployguard/release-runtime.json terraform/deployguard-result.json
+          if [ -f .deployguard/terraform/deployguard-cost-plan.json ]; then
+            cp .deployguard/terraform/deployguard-cost-plan.json terraform/deployguard-cost-plan.json
+          fi
       - name: Publish verified release result
         if: success() && hashFiles('terraform/deployguard-result.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: deployguard-result-${{ inputs.deployment_operation_id }}
-          path: terraform/deployguard-result.json
+          path: |
+            terraform/deployguard-result.json
+            terraform/deployguard-cost-plan.json
           if-no-files-found: error
           retention-days: 30
       - name: Clean up Railpack BuildKit daemon
@@ -200,3 +281,9 @@ jobs:
         run: |
           set -euo pipefail
           docker rm --force "$BUILDKIT_CONTAINER" >/dev/null 2>&1 || true
+      - name: Clean up application runtime validation
+        if: always() && inputs.deployment_action == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker rm --force "$RUNTIME_PROBE_CONTAINER" >/dev/null 2>&1 || true

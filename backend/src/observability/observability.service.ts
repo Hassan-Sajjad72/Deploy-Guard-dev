@@ -33,20 +33,40 @@ export class ObservabilityService {
   }
 
   async getApplicationMetrics(user: User, projectId: string, range = "1h") {
+    const config = getObservabilityConfig(this.config);
+    const grafana = { configured: Boolean(config.grafanaBaseUrl), url: config.grafanaBaseUrl || null };
     let identity;
     try {
       identity = await this.liveRuntime.resolveForUser(user, projectId);
     } catch (error) {
       if (error instanceof ServiceUnavailableException) {
-        return { available: false, message: error.message, generationId: null };
+        return { available: false, availabilityState: "temporarily_unavailable", message: error.message, generationId: null, grafana };
       }
       throw error;
     }
-    if (!getObservabilityConfig(this.config).cloudWatchMetricsEnabled) {
-      return { available: false, message: "CloudWatch runtime metrics are disabled.", generationId: identity.generationId };
+    if (!config.awsRuntimeMonitoringEnabled || !config.cloudWatchMetricsEnabled) {
+      return { available: false, availabilityState: "disabled_by_configuration", message: "CloudWatch runtime metrics are disabled by configuration.", generationId: identity.generationId, grafana };
     }
-    const telemetry = await this.metrics.collect(identity, range);
-    return { ...telemetry, grafanaUrl: getObservabilityConfig(this.config).grafanaBaseUrl || null };
+    try {
+      const telemetry = await this.metrics.collect(identity, range);
+      const sampledSeries = [telemetry.cpu, telemetry.memory, telemetry.httpLatency, telemetry.healthyHosts, telemetry.unhealthyHosts];
+      const hasSamples = sampledSeries.some((series) => series.points.length > 0);
+      return {
+        ...telemetry,
+        available: hasSamples,
+        availabilityState: hasSamples ? "available" : "no_samples_yet",
+        message: hasSamples ? null : "CloudWatch is available, but no metric samples exist in this time range yet.",
+        grafana,
+      };
+    } catch (error) {
+      return {
+        available: false,
+        availabilityState: "temporarily_unavailable",
+        message: error instanceof Error ? error.message : "CloudWatch metrics are temporarily unavailable.",
+        generationId: identity.generationId,
+        grafana,
+      };
+    }
   }
 
   getApplicationLogs(user: User, projectId: string, options: LogQueryOptions) {
@@ -59,7 +79,7 @@ export class ObservabilityService {
       source: summary.source,
       generationId: summary.generationId,
       cloudWatchLogs: summary.logs.enabled ? "available" : "disabled",
-      cloudWatchMetrics: summary.available ? "available" : "disabled",
+      cloudWatchMetrics: getObservabilityConfig(this.config).cloudWatchMetricsEnabled && summary.available ? "available" : "disabled",
       targetHealth: summary.alb.targetHealth,
       prometheus: summary.prometheus.enabled ? "configured" : "not_configured",
       grafanaUrl: summary.grafana.url,

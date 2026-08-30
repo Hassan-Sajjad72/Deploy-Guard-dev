@@ -67,7 +67,7 @@ assert.deepEqual(
 assert.equal(overviewLifecycleCopy({
   developerState: "failed_application", progress: { phase: "build" }, latestAttempt: { workflowRunId: "33212514809" },
   stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } },
-}).title, "Railpack Build failed");
+}).title, "Build Application failed");
 const failedDestroyWithStableRuntime = {
   developerState: "live",
   developerMessage: "The latest destroy operation failed. The verified stable release remains live.",

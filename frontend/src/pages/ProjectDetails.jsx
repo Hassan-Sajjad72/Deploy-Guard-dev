@@ -46,14 +46,10 @@ export default function ProjectDetails() {
     return <div className="workspace-page">{error ? <ErrorState message={error} onRetry={load} /> : <LoadingState message="Loading project…" />}</div>;
   }
 
-  const reconciliation = currentState.stateAuthority?.reconciliation || {};
   const state = projectStatePresentation(currentState);
-  const lastUpdated = reconciliation.lastReconciledAt
-    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(reconciliation.lastReconciledAt))
-    : "Unavailable";
 
   return <div className="workspace-page project-overview-page" data-authoritative-state={projectStatePresentation(currentState).state}>
-    <PageHeader context={`${currentState.repository || project.repositoryFullName} · ${currentState.branch || project.targetBranch} · Source: ${reconciliation.source?.replaceAll("_", " ") || "unavailable"} · Last updated: ${lastUpdated} · ${reconciliation.freshness || "unavailable"}`} eyebrow="Project overview" status={state.state} title={project.name} />
+    <PageHeader context={`${currentState.repository || project.repositoryFullName} · ${currentState.branch || project.targetBranch}`} eyebrow="Project overview" status={state.state} title={project.name} />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     <ProjectOverviewLifecycle canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} projectId={projectId} />
     <NotificationSettingsPanel canManage={Boolean(project.canManage)} projectId={projectId} />

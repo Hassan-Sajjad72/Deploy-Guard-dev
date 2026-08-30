@@ -19,13 +19,19 @@ import { RepositorySourceService } from "./repository-source.service";
 import { DEPLOYGUARD_PLATFORM_PORT } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
 import { aliasesFor } from "./configuration-ownership";
-import { immutableRailpackDispatchFingerprint, immutableRailpackImageTag, RailpackRuntimeConfiguration, RailpackWorkflowInputs, runtimeReferencesBase64 } from "./railpack-workflow-contract";
+import { immutableRailpackDispatchFingerprint, immutableRailpackImageTag, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, runtimeReferencesBase64 } from "./railpack-workflow-contract";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
 import { materializeStableRelease } from "./stable-release-projection";
+import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
+import { DESTROY_CONFIRMATION_PHRASE } from "./destroy-confirmation";
+import { githubActionsDestroyEvidenceFromValue } from "./github-actions-destroy-evidence";
+import { ProjectDeletionService } from "./project-deletion.service";
+import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
+class TerminalReleaseEvidenceError extends Error {}
 
 type RollbackTargetIdentity = {
   releaseId: string;
@@ -41,6 +47,7 @@ type RollbackTargetIdentity = {
 @Injectable()
 export class RailpackDeploymentService {
   private readonly reconciliationInFlight = new Map<string, Promise<void>>();
+  private completedReconciliationAfter = new Map<string, number>();
 
   constructor(
     @InjectRepository(Project) private readonly projects: Repository<Project>,
@@ -59,14 +66,26 @@ export class RailpackDeploymentService {
     private readonly config: ConfigService,
     private readonly sanitizer: LogSanitizerService,
     private readonly dataSource: DataSource,
+    private readonly costEvidence: GithubActionsCostEvidenceService,
+    private readonly projectDeletion: ProjectDeletionService,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy"); }
   async retry(user: User, projectId: string) {
-    await this.project(user, projectId);
+    const project = await this.project(user, projectId);
     const previous = await this.runs.findOne({ where: { projectId, status: PipelineRunStatus.FAILED }, order: { createdAt: "DESC" } });
     const action = previous?.metadata?.deploymentAction === "destroy" ? "destroy"
       : previous?.metadata?.deploymentAction === "rollback" ? "rollback" : "deploy";
+    const destroyVerification = action === "destroy" && previous ? this.verifiedDestroyEvidence(previous, project) : null;
+    if (previous && destroyVerification) {
+      try {
+        await this.projectDeletion.finalize(project, previous);
+        return { deployment: { state: "no_op", message: "Verified AWS deletion was already complete; DeployGuard control-plane cleanup completed without redispatching Terraform.", operation: previous } };
+      } catch (error) {
+        await this.persistDestroyCleanupFailure(previous, destroyVerification, error);
+        return { deployment: { state: "no_op", message: "Verified AWS deletion remains complete; DeployGuard control-plane cleanup still needs attention and can be retried.", operation: previous } };
+      }
+    }
     const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
     return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null);
   }
@@ -76,8 +95,8 @@ export class RailpackDeploymentService {
     return this.dispatch(user, projectId, "deploy");
   }
   async destroy(user: User, projectId: string, confirmationPhrase: string) {
-    const project = await this.project(user, projectId);
-    if (confirmationPhrase !== project.name) throw new ForbiddenException("Type the project name to confirm destroy.");
+    await this.project(user, projectId);
+    if (confirmationPhrase !== DESTROY_CONFIRMATION_PHRASE) throw new ForbiddenException(`Type ${DESTROY_CONFIRMATION_PHRASE} to confirm destroy.`);
     return this.dispatch(user, projectId, "destroy");
   }
   async rollbackCandidates(user: User, projectId: string) {
@@ -130,19 +149,38 @@ export class RailpackDeploymentService {
     const existing = this.reconciliationInFlight.get(projectId);
     if (existing) return existing;
     const task = (async () => {
-      const [active, completed] = await Promise.all([
-        this.runs.find({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" }, take: 50 }),
-        this.runs.find({ where: { projectId, status: PipelineRunStatus.COMPLETED }, order: { createdAt: "DESC" }, take: 50 }),
-      ]);
+      const active = await this.runs.find({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" }, take: 50 });
       await Promise.all(active.map((operation) => this.reconcile(operation)));
       // Earlier Railpack releases can have valid, persisted evidence but no
       // control-plane release projection. Reconcile that local state without
       // contacting GitHub or changing AWS.
-      await Promise.all(completed.map((operation) => this.reconcileCompletedRelease(operation)));
+      this.completedReconciliationAfter ||= new Map<string, number>();
+      if ((this.completedReconciliationAfter.get(projectId) || 0) <= Date.now()) {
+        const completed = await this.runs.find({ where: { projectId, status: PipelineRunStatus.COMPLETED }, order: { createdAt: "DESC" }, take: 50 });
+        await Promise.all(completed.map(async (operation) => {
+          await this.reconcileCompletedRelease(operation);
+          await this.reconcileCostEvidence(operation);
+        }));
+        this.completedReconciliationAfter.set(projectId, Date.now() + 60_000);
+      }
     })();
     this.reconciliationInFlight.set(projectId, task);
     try { await task; }
     finally { if (this.reconciliationInFlight.get(projectId) === task) this.reconciliationInFlight.delete(projectId); }
+  }
+
+  /** Reconcile active operations for projects already filtered by the
+   * workspace authorization boundary, using one bounded database query. */
+  async reconcileVisibleProjects(user: User, projectIds: string[]) {
+    void user;
+    const ids = [...new Set(projectIds)].filter(Boolean);
+    if (!ids.length) return;
+    const active = await this.runs.find({
+      where: { projectId: In(ids), status: In(ACTIVE) },
+      order: { createdAt: "DESC" },
+      take: Math.max(50, ids.length * 5),
+    });
+    await Promise.all(active.map((operation) => this.reconcile(operation)));
   }
 
   private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null) {
@@ -152,12 +190,15 @@ export class RailpackDeploymentService {
     const environmentName = canonicalEnvironmentName(project);
     const operationId = randomUUID();
     const attempt = await this.runs.count({ where: { projectId } }) + 1;
+    const destroyRoute = action === "destroy"
+      ? await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } })
+      : null;
     // Persist before every external boundary. A rejected caller reconciliation
     // or GitHub API request is a real DeployGuard operation, even though it
     // never acquired a GitHub run id.
     const operation = await this.runs.save(this.runs.create({
       id: operationId, projectId, triggeredByUserId: user.id, repositoryUrl: project.repositoryUrl, repositoryFullName: project.repositoryFullName,
-      targetBranch: project.targetBranch, status: PipelineRunStatus.QUEUED,
+      targetBranch: project.targetBranch, generationId: destroyRoute?.liveGenerationId || null, status: PipelineRunStatus.QUEUED,
       currentStage: "dispatching", startedAt: new Date(), githubWorkflowStatus: "dispatching",
       metadata: { executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt, ...(rollbackTarget ? { rollbackTarget } : {}), ...(retryOfOperationId ? { retryOfOperationId } : {}) },
     }));
@@ -178,9 +219,12 @@ export class RailpackDeploymentService {
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
       operation.currentStage = "source_resolution";
       await this.runs.save(operation);
-      const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || "" : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
+      const destroyRelease = action === "destroy" ? await this.authoritativeDestroyRelease(project, environmentName, destroyRoute?.liveGenerationId || null) : null;
+      const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || ""
+        : action === "destroy" ? destroyRelease?.commitSha || ""
+          : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
-      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha);
+      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action);
       const inputs: RailpackWorkflowInputs = {
         deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
         repository_full_name: project.repositoryFullName, repository_branch: project.targetBranch, commit_sha: sourceSha,
@@ -189,7 +233,7 @@ export class RailpackDeploymentService {
         aws_region: this.config.get<string>("AWS_REGION", "us-east-1"), aws_role_arn: this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"),
         vpc_id: this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
         terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"), platform_port: String(DEPLOYGUARD_PLATFORM_PORT), rollback_image_digest: rollbackTarget?.immutableImage || "",
-        control_plane_sha: controlPlaneSha,
+        control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
       };
       operation.commitSha = sourceSha;
       operation.imageTag = inputs.image_tag;
@@ -231,6 +275,15 @@ export class RailpackDeploymentService {
     return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, imageUri, imageDigest, immutableImage };
   }
 
+  private async authoritativeDestroyRelease(project: Project, environmentName: string, generationId: string | null) {
+    if (!generationId) throw new ServiceUnavailableException("Destroy requires the authoritative verified deployed release identity.");
+    const release = await this.releases.findOne({ where: { projectId: project.id, environmentName, generationId, status: StableReleaseStatus.STABLE } });
+    if (!release || release.metadata?.releaseEvidenceVerified !== true || !/^[0-9a-f]{40}$/i.test(release.commitSha)) {
+      throw new ServiceUnavailableException("Destroy requires the authoritative verified deployed release identity.");
+    }
+    return release;
+  }
+
   private persistedRollbackTarget(operation: ProjectPipelineRun | null): RollbackTargetIdentity {
     const value = operation?.metadata?.rollbackTarget;
     if (!value || typeof value !== "object") throw new ServiceUnavailableException("The failed rollback does not retain a canonical immutable target.");
@@ -257,23 +310,30 @@ export class RailpackDeploymentService {
 
   private presentOperation(operation: ProjectPipelineRun) {
     const metadata = operation.metadata || {};
+    const action = (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
     const dispatchFailed = metadata.dispatchState === "failed" && !operation.githubWorkflowRunId;
     return {
       id: operation.id, attempt: String(metadata.attempt || 1), retryOfOperationId: typeof metadata.retryOfOperationId === "string" ? metadata.retryOfOperationId : null,
-      deploymentAction: metadata.deploymentAction || "deploy", status: dispatchFailed ? "dispatch_failed" : operation.status,
+      deploymentAction: action, status: dispatchFailed ? "dispatch_failed" : operation.status,
       commitSha: operation.commitSha || null, generationId: operation.generationId || null, createdAt: operation.createdAt, startedAt: operation.startedAt,
       completedAt: operation.completedAt, failedAt: operation.failedAt, workflowRunId: operation.githubWorkflowRunId || null,
       workflowUrl: typeof metadata.workflowRunUrl === "string" ? metadata.workflowRunUrl : null, workflowStatus: operation.githubWorkflowStatus || null,
-      stageLabel: dispatchFailed ? "Deployment could not start" : operation.currentStage || null,
-      failedStageLabel: dispatchFailed ? String(metadata.failedStage || "dispatch") : null,
+      stageLabel: dispatchFailed ? "Deployment could not start" : deployguardOperationStagePresentation(operation.currentStage, action).label,
+      failedStageLabel: dispatchFailed ? deployguardOperationStagePresentation(metadata.failedStage || "dispatch", action).label : operation.status === PipelineRunStatus.FAILED ? deployguardOperationStagePresentation(metadata.failedStage || operation.currentStage, action).label : null,
       errorMessage: operation.errorMessage || null, githubRunCreated: Boolean(operation.githubWorkflowRunId),
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
-      workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages : [],
+      workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages
+        .filter((stage) => stage && typeof stage === "object" && githubActionsWorkflowStageRelevant((stage as Record<string, unknown>).key, action))
+        .map((stage) => {
+          const value = stage as Record<string, unknown>;
+          const presentation = githubActionsWorkflowStepPresentation(value.key, action);
+          return { ...value, label: presentation?.label || deployguardOperationStagePresentation(value.key, action).label };
+        }) : [],
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string): Promise<RailpackRuntimeConfiguration> {
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy"): Promise<RailpackRuntimeConfiguration> {
     const rows = await this.variables.createQueryBuilder("variable").addSelect("variable.value").where({ projectId: project.id, environment: environmentName, isActive: true }).getMany();
     const environment: Record<string, string> = { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" };
     const secretValues: Record<string, string> = {};
@@ -291,7 +351,11 @@ export class RailpackDeploymentService {
       ...aliasesFor(engine, "username"), ...aliasesFor(engine, "password"),
       ...aliasesFor(engine, "database"), ...aliasesFor(engine, "url"),
     ] : [];
-    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedDatabase: { enabled: Boolean(tier), engine: tier?.engine || null, aliases: [...new Set(managedAliases)].sort() } };
+    const projectDeletion = action === "destroy"
+      ? { generationIds: (await this.dataSource.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName } })).map((generation) => generation.id).sort() }
+      : undefined;
+    if (action === "destroy" && !projectDeletion?.generationIds.length) throw new ServiceUnavailableException("Destroy requires an exact persisted runtime generation.");
+    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedDatabase: { enabled: Boolean(tier), engine: tier?.engine || null, aliases: [...new Set(managedAliases)].sort() }, ...(projectDeletion ? { projectDeletion } : {}) };
   }
 
   private async reconcile(operation: ProjectPipelineRun) {
@@ -310,10 +374,26 @@ export class RailpackDeploymentService {
       if (status === "completed") {
         operation.completedAt = new Date();
         if (conclusion === "success") {
-          const evidence = await this.releaseEvidence(project.repositoryFullName, operation, credential.token);
+          let evidence: Record<string, unknown> | null;
+          try {
+            evidence = await this.releaseEvidence(project.repositoryFullName, operation, credential.token);
+          } catch (error) {
+            if (error instanceof TerminalReleaseEvidenceError) {
+              await this.persistTerminalEvidenceFailure(operation, error);
+              return operation;
+            }
+            throw error;
+          }
           if (!evidence) {
+            const pendingAttempts = Number(operation.metadata?.releaseEvidencePendingAttempts || 0) + 1;
+            const persistedPendingSince = typeof operation.metadata?.releaseEvidencePendingSince === "string" ? operation.metadata.releaseEvidencePendingSince : new Date().toISOString();
+            const pendingSinceMs = Date.parse(persistedPendingSince);
+            if (pendingAttempts >= 3 && Number.isFinite(pendingSinceMs) && Date.now() - pendingSinceMs >= 2 * 60_000) {
+              await this.persistTerminalEvidenceFailure(operation, new TerminalReleaseEvidenceError("The successful terminal workflow did not publish the required release result artifact after bounded reconciliation."));
+              return operation;
+            }
             operation.currentStage = "release_evidence_pending";
-            operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString() };
+            operation.metadata = { ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(), releaseEvidencePendingAttempts: pendingAttempts, releaseEvidencePendingSince: persistedPendingSince };
             await this.runs.save(operation);
             return operation;
           }
@@ -327,8 +407,15 @@ export class RailpackDeploymentService {
             await this.persistFinalizationFailure(operation, evidence, error);
             return operation;
           }
+          // Successful exact-scope project deletion removes the project and
+          // its operation records transactionally. Do not re-save a deleted
+          // historical operation after that terminal lifecycle result.
+          if (operation.metadata?.deploymentAction === "destroy" && operation.status === PipelineRunStatus.COMPLETED) return operation;
+          if (operation.metadata?.deploymentAction !== "destroy") {
+            await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project)).catch(() => null);
+          }
         } else {
-          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
+          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy");
           operation.status = PipelineRunStatus.FAILED;
           operation.currentStage = failureEvidence?.failedStage || "release_failed";
           operation.errorMessage = failureEvidence?.safeLog || `GitHub Actions concluded: ${conclusion || "failure"}.`;
@@ -340,7 +427,7 @@ export class RailpackDeploymentService {
       } else {
         // Job metadata is available while the workflow runs; logs remain
         // terminal-only. Do not erase persisted stages on an empty response.
-        const stages = await this.actions.getWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
+        const stages = await this.actions.getWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy");
         if (stages.length) {
           const activeStage = stages.find((item) => item.status === "running") || stages.find((item) => item.status === "failed");
           operation.currentStage = activeStage?.key || operation.currentStage;
@@ -378,9 +465,25 @@ export class RailpackDeploymentService {
     await this.runs.save(operation);
   }
 
-  private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, token: string) {
+  private async persistTerminalEvidenceFailure(operation: ProjectPipelineRun, error: unknown) {
+    const detail = this.sanitizer.sanitize(error instanceof Error ? error.message : "Incompatible terminal release evidence.")
+      .replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 2_000);
+    operation.status = PipelineRunStatus.FAILED;
+    operation.currentStage = "release_evidence_validation";
+    operation.failedAt = new Date();
+    operation.completedAt = operation.completedAt || operation.failedAt;
+    operation.errorMessage = "DeployGuard rejected incompatible terminal release evidence.";
+    operation.metadata = {
+      ...(operation.metadata || {}), workflowConclusion: "success", workflowUpdatedAt: new Date().toISOString(),
+      failedStage: "release_evidence_validation", failureSource: "deployguard_reconciliation",
+      failureCategory: "release_contract_incompatible", safeLog: detail || "The terminal result did not match the expected immutable release contract.",
+    };
+    await this.runs.save(operation);
+  }
+
+  private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, token: string, action: "deploy" | "rollback" | "destroy") {
     try {
-      const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, token);
+      const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, token, action);
       if (!evidence) return null;
       const safeLog = this.sanitizer.sanitize(evidence.rawEvidence).replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 12_000);
       if (!safeLog) return null;
@@ -396,8 +499,12 @@ export class RailpackDeploymentService {
     const raw = await this.actions.getResultArtifact(repositoryFullName, operation.githubWorkflowRunId, operation.id, token);
     if (!raw) return null;
     let artifact: Record<string, unknown>;
-    try { artifact = JSON.parse(raw) as Record<string, unknown>; } catch { throw new Error("The release result artifact is not valid JSON."); }
-    return this.validatedReleaseEvidence(operation, artifact);
+    try {
+      artifact = JSON.parse(raw) as Record<string, unknown>;
+      return this.validatedReleaseEvidence(operation, artifact);
+    } catch (error) {
+      throw new TerminalReleaseEvidenceError(error instanceof Error ? error.message : "The release result artifact is invalid.");
+    }
   }
 
   private validatedReleaseEvidence(operation: ProjectPipelineRun, artifact: Record<string, unknown>): Record<string, unknown> {
@@ -405,10 +512,13 @@ export class RailpackDeploymentService {
     const sourceSha = String(artifact.sourceSha || "");
     const operationId = String(artifact.operationId || "");
     const expectedAction = String(operation.metadata?.deploymentAction || "");
+    if (artifact.contractVersion !== RAILPACK_RESULT_CONTRACT_VERSION) throw new Error(`The release result artifact does not implement ${RAILPACK_RESULT_CONTRACT_VERSION}.`);
     if (action !== expectedAction || sourceSha !== operation.commitSha || operationId !== operation.id) throw new Error("The release result artifact does not match its immutable operation identity.");
     if (action === "destroy") {
       if (artifact.destroyed !== true) throw new Error("The destroy result artifact does not prove deletion.");
-      return { releaseArtifact: artifact, destroyed: true };
+      const destroyVerification = githubActionsDestroyEvidenceFromValue(artifact.destroyVerification);
+      if (!destroyVerification) throw new Error("The destroy result artifact does not contain exact-scope deletion evidence.");
+      return { releaseArtifact: artifact, destroyed: true, destroyVerification };
     }
     const image = String(artifact.image || "");
     const match = image.match(/^(.*)@(sha256:[0-9a-f]{64})$/);
@@ -436,6 +546,30 @@ export class RailpackDeploymentService {
   }
 
   /**
+   * Cost evidence is a read-only, retryable projection of an already verified
+   * release. It can backfill a LIVE release after a control-plane upgrade and
+   * can never promote or fail the deployment itself.
+   */
+  private async reconcileCostEvidence(operation: ProjectPipelineRun) {
+    const action = String(operation.metadata?.deploymentAction || "");
+    if (!operation.generationId
+      || operation.metadata?.releaseEvidenceVerified !== true
+      || !["deploy", "rollback"].includes(action)) return;
+    const [project, user] = await Promise.all([
+      this.projects.findOne({ where: { id: operation.projectId } }),
+      this.users.findOne({ where: { id: operation.triggeredByUserId } }),
+    ]);
+    if (!project?.repositoryFullName || !user) return;
+    try {
+      const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
+      await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project));
+    } catch {
+      // Pricing failure is persisted by the cost evidence service when it can
+      // be classified. It must never invalidate the authoritative LIVE release.
+    }
+  }
+
+  /**
    * A release is LIVE only after one validated immutable artifact atomically
    * establishes the operation, runtime generation, route, and stable-release
    * projection. The workflow's curl verification is represented by the
@@ -443,6 +577,7 @@ export class RailpackDeploymentService {
    */
   private async finalizeVerifiedRelease(project: Project, operation: ProjectPipelineRun, evidence: Record<string, unknown>, workflowConclusion: string) {
     const action = String(operation.metadata?.deploymentAction || "");
+    if (action === "destroy") return this.finalizeVerifiedDestroy(project, operation, evidence, workflowConclusion);
     if (!["deploy", "rollback"].includes(action)) return operation;
     const artifact = evidence.releaseArtifact;
     if (!artifact || typeof artifact !== "object") throw new Error("Validated release evidence is missing its immutable artifact.");
@@ -539,6 +674,70 @@ export class RailpackDeploymentService {
       Object.assign(operation, current);
     });
     return operation;
+  }
+
+  /** Destroy has its own exact-scope finalizer; it never promotes a release. */
+  private async finalizeVerifiedDestroy(project: Project, operation: ProjectPipelineRun, evidence: Record<string, unknown>, workflowConclusion: string) {
+    const verification = githubActionsDestroyEvidenceFromValue(evidence.destroyVerification);
+    if (!verification
+      || verification.deploymentOperationId !== operation.id
+      || verification.projectId !== project.id
+      || verification.environmentName !== canonicalEnvironmentName(project)
+      || !operation.generationId
+      || !verification.generationIds.includes(operation.generationId)) {
+      throw new Error("Validated destroy evidence does not match the exact project, environment, and generation scope.");
+    }
+    operation.status = PipelineRunStatus.COMPLETED;
+    operation.currentStage = "project_delete_cleanup";
+    operation.completedAt = operation.completedAt || new Date();
+    operation.errorMessage = null;
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      ...evidence,
+      destroyVerification: verification,
+      workflowConclusion,
+      workflowUpdatedAt: new Date().toISOString(),
+      destroyEvidenceValidated: true,
+    };
+    await this.runs.save(operation);
+    try {
+      await this.projectDeletion.finalize(project, operation);
+    } catch (error) {
+      await this.persistDestroyCleanupFailure(operation, verification, error);
+    }
+    return operation;
+  }
+
+  private verifiedDestroyEvidence(operation: ProjectPipelineRun, project: Project) {
+    const verification = githubActionsDestroyEvidenceFromValue(operation.metadata?.destroyVerification);
+    return verification
+      && verification.deploymentOperationId === operation.id
+      && verification.projectId === project.id
+      && verification.environmentName === canonicalEnvironmentName(project)
+      && Boolean(operation.generationId)
+      && verification.generationIds.includes(operation.generationId!)
+      ? verification
+      : null;
+  }
+
+  private async persistDestroyCleanupFailure(operation: ProjectPipelineRun, verification: Record<string, unknown>, error: unknown) {
+    const detail = this.sanitizer.sanitize(error instanceof Error ? error.message : "Unknown project deletion cleanup error")
+      .replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 2_000);
+    operation.status = PipelineRunStatus.FAILED;
+    operation.currentStage = "project_delete_cleanup";
+    operation.failedAt = new Date();
+    operation.errorMessage = "DeployGuard could not complete verified project deletion cleanup.";
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      destroyVerification: verification,
+      destroyEvidenceValidated: true,
+      workflowConclusion: "success",
+      failedStage: "project_delete_cleanup",
+      failureSource: "deployguard_reconciliation",
+      failureCategory: "project_delete_incomplete",
+      safeLog: detail || "DeployGuard could not complete verified project deletion cleanup.",
+    };
+    await this.runs.save(operation);
   }
 
   private runtimeIdentity(project: Project, environmentName: string, evidence: Record<string, unknown>) {

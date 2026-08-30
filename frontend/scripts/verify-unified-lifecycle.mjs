@@ -18,11 +18,9 @@ assert.match(recovery, /safeLog/);
 assert.match(currentState, /latest\.currentStage === "release_complete"[\s\S]*latestMetadata\.releaseEvidenceVerified === true[\s\S]*Boolean\(stableRelease && stableUrl\)/, "LIVE needs validated release evidence plus an authoritative stable endpoint");
 assert.match(currentState, /Verification needs attention/, "unverified completed workflows remain truthful");
 assert.match(currentState, /this\.githubLifecycleProgress\(phase\)/, "active progress derives from lifecycle milestones");
-assert.match(sidebar, /getProjectCurrentState/);
+assert.doesNotMatch(sidebar, /getProjectCurrentState|setInterval/, "navigation must not own reconciliation or polling");
 assert.match(layout, /<Sidebar isOpen=\{navigationOpen\} onClose=\{\(\) => setNavigationOpen\(false\)\} projectId=\{selectedProjectId\} \/>/, "the shell passes the selected project and responsive-drawer controls to navigation");
-assert.match(sidebar, /state\?\.state === "LIVE"/);
-assert.match(sidebar, /\["DEPLOYING", "FAILED", "LIVE", "DESTROYING"\]/);
-assert.doesNotMatch(sidebar, /"DESTROYED"\]\.?includes\(state\?\.state\)/, "destroyed projects retain Pipeline history but not active Infrastructure navigation");
+for (const path of ["pipeline", "infrastructure", "monitoring", "settings", "troubleshooting"]) assert.match(sidebar, new RegExp(`path: "${path}"`));
 
 assert.deepEqual(
   deploymentPhasePresentation({ developerState: "building", progress: { phase: "build" } }).map((item) => [item.key, item.status]),

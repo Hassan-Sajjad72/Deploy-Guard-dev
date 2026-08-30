@@ -1,5 +1,6 @@
 import {
   RAILPACK_WORKFLOW_CONTRACT_VERSION,
+  RAILPACK_RESULT_CONTRACT_VERSION,
   RAILPACK_WORKFLOW_INPUTS,
 } from "./railpack-workflow-contract";
 
@@ -37,6 +38,10 @@ export function generatedCallerWithKeys(workflow: string) {
 }
 
 export function assertReusableWorkflowCompatibility(workflow: string, pinned: PinnedReusableWorkflow, callerWithKeys?: readonly string[]) {
+  const resultContract = workflow.match(/^# deployguard-result-contract: ([a-z0-9./_-]+)$/m)?.[1] || null;
+  if (resultContract !== RAILPACK_RESULT_CONTRACT_VERSION) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not produce ${RAILPACK_RESULT_CONTRACT_VERSION} evidence.`);
+  }
   const declared = reusableWorkflowInputDeclarations(workflow);
   const byName = new Map(declared.map((input) => [input.name, input]));
   for (const expected of RAILPACK_WORKFLOW_INPUTS) {
