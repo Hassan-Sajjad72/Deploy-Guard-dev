@@ -39,12 +39,20 @@ rollbackDatabaseFixture.services[0].managedDatabase = {
   aliases: ["MONGODB_URI"],
   secretVersionId: historicalDatabaseVersionId,
 };
+rollbackDatabaseFixture.services[0].rollbackImage = `123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test@sha256:${"d".repeat(64)}`;
 const encodedRollbackDatabase = servicesBase64(rollbackDatabaseFixture);
+const serializedRollbackDatabase = Buffer.from(encodedRollbackDatabase, "base64").toString("utf8");
 assert.equal(
-  JSON.parse(Buffer.from(encodedRollbackDatabase, "base64").toString("utf8")).services[0].managedDatabase.secretVersionId,
+  JSON.parse(serializedRollbackDatabase).services[0].managedDatabase.secretVersionId,
   historicalDatabaseVersionId,
   "a legitimate historical Secrets Manager VersionId must survive the rollback contract unchanged",
 );
+const historicalRollbackJqResult = spawnSync(
+  "jq",
+  ["-e", "--arg", "project", rollbackDatabaseFixture.projectId, "--arg", "operation", rollbackDatabaseFixture.operationId, "--arg", "sha", rollbackDatabaseFixture.sourceSha, "--arg", "action", "rollback", jqContract],
+  { input: serializedRollbackDatabase, encoding: "utf8" },
+);
+assert.equal(historicalRollbackJqResult.status, 0, `the backend-serialized historical VersionId must pass the executable workflow jq contract unchanged: ${historicalRollbackJqResult.stderr}`);
 for (const invalidVersionId of ["a".repeat(31), "a".repeat(65), `${"a".repeat(31)}_`]) {
   const invalidDatabaseVersion: any = structuredClone(rollbackDatabaseFixture);
   invalidDatabaseVersion.services[0].managedDatabase.secretVersionId = invalidVersionId;
