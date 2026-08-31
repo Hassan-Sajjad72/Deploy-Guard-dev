@@ -8,6 +8,20 @@ assert.deepEqual(classifyStructuredFailure("railpack_build", `DG_FAILURE service
 assert.deepEqual(classifyStructuredFailure("service_directory_validation", `DG_FAILURE serviceId=${serviceId} code=DG_SERVICE_DIRECTORY_MISSING stage=service_directory_validation`), { failureOwner: "REPOSITORY_APPLICATION", externalProvider: null, failureCode: "DG_SERVICE_DIRECTORY_MISSING", failureServiceId: serviceId });
 assert.equal(classifyStructuredFailure("terraform_validate", "DG_FAILURE code=DG_TERRAFORM_VALIDATE_FAILED stage=terraform_validate").failureOwner, "DEPLOYGUARD_PLATFORM");
 assert.deepEqual(classifyStructuredFailure("ecs_stability", `DG_FAILURE serviceId=${serviceId} code=DG_ECS_STABILITY_FAILED stage=ecs_stability`), { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", failureCode: "DG_ECS_STABILITY_FAILED", failureServiceId: serviceId });
+const echoedWorkflowSource = `
+  echo "DG_FAILURE serviceId=${serviceId} code=DG_SERVICE_DIRECTORY_MISSING stage=service_directory_validation" >&2
+  echo "DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release" >&2
+`;
+assert.deepEqual(
+  classifyStructuredFailure("validate_immutable_release_input", `${echoedWorkflowSource}\nDG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release`),
+  { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: "DG_WORKFLOW_CONTRACT_INVALID", failureServiceId: null },
+  "the terminal marker, not an echoed non-executed shell branch, controls failure ownership",
+);
+assert.equal(
+  classifyStructuredFailure("validate_immutable_release_input", "echo 'DG_WORKFLOW_CONTRACT_INVALID: contract invalid' >&2").failureOwner,
+  "UNVERIFIED",
+  "unstructured code text must not become authoritative workflow evidence",
+);
 assert.equal(classifyStructuredFailure("workflow_dispatch", "provider unavailable").externalProvider, "github");
 assert.equal(classifyStructuredFailure("railpack_build", "Railpack said something ambiguous").failureOwner, "UNVERIFIED");
 const root = join(__dirname, "..", "..");

@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
 import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
+import { SERVICE_ALIAS_GROUPS } from "../src/projects/configuration-ownership";
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
@@ -30,6 +31,18 @@ for (const [field, key] of [["environment", "DATABASE_URL"], ["secretReferences"
     ? "legacy-user-database-value"
     : `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:${key}::${"c".repeat(64)}`;
   assert.throws(() => servicesBase64(legacyDatabaseAlias), /runtime (?:environment|secret reference) is invalid/, `legacy ${key} must fail closed before workflow dispatch`);
+}
+const managedDatabaseAliases = [...new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service !== "storage").flatMap((group) => group.aliases))].sort();
+for (const key of managedDatabaseAliases) {
+  assert.match(workflow, new RegExp(`"${key}"`), `the workflow validator must include the canonical managed database alias ${key}`);
+  for (const field of ["environment", "secretReferences"] as const) {
+    const legacyDatabaseAlias: any = structuredClone(contractFixture);
+    legacyDatabaseAlias.services[0][field][key] = field === "environment"
+      ? "legacy-user-database-value"
+      : `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:${key}::${"c".repeat(64)}`;
+    const result = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(legacyDatabaseAlias), encoding: "utf8" });
+    assert.notEqual(result.status, 0, `the workflow must reject ${key} from generic ${field} at the execution boundary`);
+  }
 }
 const historicalDatabaseVersionId = "terraform-20260830234105178100000005";
 const rollbackDatabaseFixture: any = structuredClone(contractFixture);
@@ -130,6 +143,9 @@ assert.match(workflow, /control_plane_sha/);
 assert.match(workflow, /result_contract_version: \{ required: true, type: string \}/);
 assert.match(workflow, /RESULT_CONTRACT_VERSION.*inputs\.result_contract_version/);
 assert.match(workflow, /deployguard\.release-result\/v4/);
+for (const message of ["invalid_deployment_action", "invalid_immutable_release_identity", "incompatible_result_contract", "invalid_platform_port", "exact_source_sha_mismatch"]) {
+  assert.match(workflow, new RegExp(`DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=${message}`), `Validate Release must emit structured platform failure evidence for ${message}`);
+}
 assert.match(workflow, /services_base64/);
 assert.match(workflow, /\.services \| to_entries\[\]/);
 assert.doesNotMatch(workflow, /rollback_image_uri|runtime_environment_base64|runtime_secret_references_base64/);
@@ -142,7 +158,7 @@ assert.match(workflow, /docker version --format/);
 assert.match(workflow, /docker run --rm --privileged --detach --name "\$BUILDKIT_CONTAINER" "\$BUILDKIT_IMAGE"/);
 assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
 assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build --name "\$image" "\$directory"/);
-assert.match(workflow, /DG_RAILPACK_PREREQUISITE_FAILED: BuildKit worker did not become ready\./);
+assert.match(workflow, /DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build/);
 assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*?docker rm --force "\$BUILDKIT_CONTAINER"/);
 assert.doesNotMatch(workflow, /moby\/buildkit:latest/);
 assert.match(workflow, /\^\(deploy\|rollback\|destroy\)\$/);
