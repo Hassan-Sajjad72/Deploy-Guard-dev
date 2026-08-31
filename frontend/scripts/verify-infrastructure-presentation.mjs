@@ -23,7 +23,7 @@ assert.match(page, /Pricing unavailable/);
 assert.match(page, /cost\?\.source === "infracost"/);
 assert.match(page, /Service breakdown/);
 const currentState = read("../../backend/src/projects/current-state/project-current-state.service.ts");
-assert.match(currentState, /failedDestroy[\s\S]*runtimeObservation\(project, route\.liveGenerationId, projectedWithCost\.stableUrl!\)/, "a failed Destroy must reconcile one bounded runtime observation before presenting historical release data as LIVE");
+assert.match(currentState, /failedDestroy[\s\S]*runtimeObservation\(project, route\.liveGenerationId, projectedWithCanonicalRuntime\.stableUrl!\)/, "a failed Destroy must reconcile one bounded runtime observation before presenting historical release data as LIVE");
 assert.match(currentState, /runtimeUnverifiedAfterDestroy[\s\S]*stableRelease: null[\s\S]*stableUrl: null/, "an absent or unverified runtime after Destroy must remove historical LIVE authority");
 assert.ok(currentState.includes("endpoint: /^https?:\\/\\//i.test(stableUrl) ? stableUrl : null"), "the application link must use the verified project host route, never the shared ALB default URL");
 assert.match(currentState, /lastApplyAt: authoritativeLiveRelease \? liveReleaseObservedAt : null/, "a failed Destroy must not be presented as a newer Terraform apply");

@@ -30,7 +30,9 @@ assert.match(sidebar, /Monitoring/, "canonical project navigation has Monitoring
 assert.doesNotMatch(sidebar, /Environment|Detection|Pre-flight/);
 
 assert.match(newProject, /getGithubRepositories/);
-assert.match(newProject, /bulkUpsertProjectEnvVars/);
+assert.match(newProject, /bulkUpsertProjectServiceEnvVars/);
+assert.match(newProject, /services: services\.map/);
+assert.match(newProject, /\+ Add Service/);
 assert.match(newProject, /deployGithubActionsDeployment/);
 assert.doesNotMatch(newProject, /Repository URL|\/requirements/);
 assert.match(api, /github\/repositories/);

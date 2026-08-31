@@ -20,6 +20,7 @@ import { canonicalEnvironmentName } from "../canonical-environment";
 import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from "../pipeline/github-actions-stage-presentation";
 import { RailpackDeploymentService } from "../railpack-deployment.service";
 import { LiveRuntimeIdentityRecoveryService } from "./live-runtime-identity-recovery.service";
+import { resolveApplicationEntrypointServiceId, resolveProjectApplicationUrl } from "../application-entrypoint";
 
 function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" | "commitSha">) {
   return operation.metadata?.executionEngine === "railpack"
@@ -32,6 +33,7 @@ type LiveAwsEvidence = {
   ecr: { repository: string; imageTag: string | null; imageDigest: string | null };
   ecs: { cluster: string; service: string; taskDefinitionRevision: number | null; desiredCount: number; runningCount: number; pendingCount: number };
   alb: { name: string; status: string; targetHealth: string[]; endpoint: string | null };
+  services: Array<{ serviceId: string; serviceName: string; publicUrl: string | null; imageDigest: string; ecs: { service: string; desiredCount: number; runningCount: number; pendingCount: number }; alb: { targetHealth: string[] } }>;
 };
 
 type RuntimeObservation = {
@@ -79,12 +81,27 @@ export class ProjectCurrentStateService {
         where: { projectId, environmentName, generationId: authoritativeGenerationId, status: StableReleaseStatus.STABLE },
       })
       : null;
+    const canonicalRuntimeIdentity = authoritativeGenerationId
+      ? await this.runtimeIdentityRecovery.recover(project)
+      : null;
+    const canonicalServices = Array.isArray(canonicalRuntimeIdentity?.services)
+      ? canonicalRuntimeIdentity.services as Array<Record<string, unknown>>
+      : [];
+    const historicalDeployedUrl = typeof authoritativeRelease?.metadata?.deployedUrl === "string"
+      ? authoritativeRelease.metadata.deployedUrl
+      : null;
+    const applicationUrl = resolveProjectApplicationUrl(
+      project.applicationEntryPointServiceId,
+      canonicalServices,
+      historicalDeployedUrl,
+    );
     const projected = await this.withGithubActionsState(
       projectId,
       environmentName,
       this.githubActionsReadinessState(project),
       authoritativeGenerationId,
       authoritativeRelease,
+      applicationUrl,
     );
     const estimate = authoritativeRelease?.deployedByPipelineRunId
       ? await this.estimateRepository.findOne({
@@ -132,24 +149,29 @@ export class ProjectCurrentStateService {
           : [],
       } : null,
     };
-    const hasAuthoritativeLiveRelease = Boolean(projectedWithCost.stableRelease && projectedWithCost.stableUrl)
-      && !projectedWithCost.destroyCleanupIncomplete
-      && !["destroying", "destroyed"].includes(projectedWithCost.developerState);
+    // Every developer-facing surface receives the same canonical service
+    // revision projection. Stable-release metadata is only a historical cache.
+    const projectedWithCanonicalRuntime = canonicalRuntimeIdentity && projectedWithCost.stableRelease
+      ? { ...projectedWithCost, stableRelease: { ...projectedWithCost.stableRelease, runtimeIdentity: canonicalRuntimeIdentity } }
+      : projectedWithCost;
+    const hasAuthoritativeLiveRelease = Boolean(projectedWithCanonicalRuntime.stableRelease && projectedWithCanonicalRuntime.stableUrl)
+      && !projectedWithCanonicalRuntime.destroyCleanupIncomplete
+      && !["destroying", "destroyed"].includes(projectedWithCanonicalRuntime.developerState);
     // A failed Destroy is destructive: historical release records are not
     // sufficient evidence that the old runtime still exists. Reconcile one
     // bounded observation here so every page receives the same authority.
-    const failedDestroy = projectedWithCost.latestAttempt?.operationType === "destroy"
-      && projectedWithCost.latestAttempt?.outcome === "blocked";
-    const activeDestroy = projectedWithCost.latestAttempt?.operationType === "destroy"
-      && projectedWithCost.latestAttempt?.outcome === null;
+    const failedDestroy = projectedWithCanonicalRuntime.latestAttempt?.operationType === "destroy"
+      && projectedWithCanonicalRuntime.latestAttempt?.outcome === "blocked";
+    const activeDestroy = projectedWithCanonicalRuntime.latestAttempt?.operationType === "destroy"
+      && projectedWithCanonicalRuntime.latestAttempt?.outcome === null;
     const runtimeObservation = hasAuthoritativeLiveRelease && route?.liveGenerationId
       && (options.refreshCloudState || failedDestroy || activeDestroy)
-      ? await this.runtimeObservation(project, route.liveGenerationId, projectedWithCost.stableUrl!)
+      ? await this.runtimeObservation(project, route.liveGenerationId, projectedWithCanonicalRuntime.stableUrl!)
       : null;
     const awsEvidence = runtimeObservation?.evidence || null;
     const generations = await this.generationRepository.find({ where: { projectId, environmentName }, order: { ordinal: "ASC" } });
     return {
-      ...this.withStateAuthority(projectId, environmentName, projectedWithCost, awsEvidence, runtimeObservation),
+      ...this.withStateAuthority(projectId, environmentName, projectedWithCanonicalRuntime, awsEvidence, runtimeObservation),
       generationState: {
         liveGenerationId: route?.liveGenerationId || null,
         candidateGenerationId: route?.candidateGenerationId || null,
@@ -192,6 +214,17 @@ export class ProjectCurrentStateService {
         applicationError: { category: "repository", message: "Choose an accessible repository and branch to continue." },
       };
     }
+    if (!resolveApplicationEntrypointServiceId(project.applicationEntryPointServiceId, project.services || [])) {
+      return {
+        ...base,
+        developerState: "configuration_required",
+        developerAction: "provide_configuration",
+        developerMessage: "Select which service Open Application should open before deploying.",
+        progress: { percentage: 0, phase: null, label: "Choose application service" },
+        missingConfiguration: ["applicationEntryPointServiceId"],
+        applicationError: { category: "runtime", message: "Select an application service in Project Settings." },
+      };
+    }
     return {
       ...base,
       developerState: "ready",
@@ -207,6 +240,7 @@ export class ProjectCurrentStateService {
     projected: DeveloperProjectCurrentState,
     liveGenerationId: string | null,
     authoritativeRelease: ProjectStableRelease | null = null,
+    applicationUrl?: string | null,
   ): Promise<DeveloperProjectCurrentState> {
     const githubRuns = this.runRepository.createQueryBuilder("run")
       .where("run.projectId = :projectId", { projectId })
@@ -231,9 +265,9 @@ export class ProjectCurrentStateService {
       where: { projectId, environmentName, status: StableReleaseStatus.ROLLBACK_TARGET },
       order: { deployedAt: "DESC" },
     }) : null;
-    const stableUrl = typeof stableReleaseMetadata.deployedUrl === "string"
-      ? stableReleaseMetadata.deployedUrl
-      : null;
+    const stableUrl = applicationUrl === undefined
+      ? typeof stableReleaseMetadata.deployedUrl === "string" ? stableReleaseMetadata.deployedUrl : null
+      : applicationUrl;
     const stableRelease = stable && authoritativeRelease && stableUrl
       ? {
           id: authoritativeRelease.id,
@@ -650,12 +684,11 @@ export class ProjectCurrentStateService {
     // Configuration merely permits a CloudWatch read.  It is not evidence
     // that this release has a resolvable runtime provider.  The metrics/log
     // endpoint resolves that evidence from this same persisted identity.
+    const monitoringServices = Array.isArray(runtimeIdentity?.services) ? runtimeIdentity.services as Array<Record<string, unknown>> : [];
     const monitoringIdentityComplete = Boolean(
       identityString("ecsClusterArn")
-      && identityString("ecsServiceArn")
-      && identityString("targetGroupArn")
-      && identityString("cloudWatchLogGroupName")
-      && identityString("applicationContainerName"),
+      && monitoringServices.length
+      && monitoringServices.every((service) => ["serviceId", "ecsServiceArn", "targetGroupArn", "cloudWatchLogGroupName", "applicationContainerName"].every((key) => typeof service[key] === "string" && Boolean(service[key]))),
     );
     const awsRuntimeMonitoringEnabled = getObservabilityConfig(this.config).awsRuntimeMonitoringEnabled;
     const destroyFailureMessage = runtimeRemovedByObservation
@@ -695,8 +728,10 @@ export class ProjectCurrentStateService {
         outcome: "failed",
       } : null,
       infrastructure: { ...infrastructureStatus, observedAt: runtimeObservation?.observedAt || (authoritativeLiveRelease ? awsEvidence?.observedAt || liveReleaseObservedAt : observedAt) },
-      applicationHealth: authoritativeLiveRelease
-        ? { status: "healthy", source: "github_actions_health_verification", observedAt: liveReleaseObservedAt }
+      applicationHealth: authoritativeLiveRelease && awsEvidence
+        ? { status: "healthy", source: "aws_observation", observedAt: runtimeObservation?.observedAt || liveReleaseObservedAt }
+        : authoritativeLiveRelease
+          ? { status: "unavailable", source: "unavailable", observedAt: null }
         : runtimeUnverifiedAfterDestroy
           ? { status: "unavailable", source: "aws_observation", observedAt: runtimeObservation?.observedAt || null }
         : projected.developerState === "failed_application" && projected.applicationError?.category === "health"
@@ -704,13 +739,15 @@ export class ProjectCurrentStateService {
           : isActive && !activeDestroy
             ? { status: "pending", source: "github_actions", observedAt }
             : { status: "unavailable", source: "unavailable", observedAt: null },
-      monitoring: authoritativeLiveRelease
+      monitoring: authoritativeLiveRelease && runtimeObservation?.runtime === "present"
         ? !awsRuntimeMonitoringEnabled
           ? { available: false, status: "unavailable", reason: "AWS runtime monitoring is disabled." }
           : !monitoringIdentityComplete
             ? { available: false, status: "unavailable", reason: "The authoritative LIVE release does not yet contain a complete CloudWatch runtime identity." }
             : { available: true, status: "available", reason: "AWS runtime monitoring is bound to the authoritative LIVE generation." }
-        : { available: false, status: "not_deployed", reason: "Monitoring is available only for an active live deployment." },
+        : authoritativeLiveRelease
+          ? { available: false, status: "unavailable", reason: "Current AWS runtime evidence is unavailable." }
+          : { available: false, status: "not_deployed", reason: "Monitoring is available only for an active live deployment." },
       reconciliation: {
         lastReconciledAt: observedAt,
         freshness,
@@ -763,6 +800,7 @@ export class ProjectCurrentStateService {
         ecr: awsEvidence?.ecr || null,
         ecs: awsEvidence?.ecs || null,
         alb: awsEvidence?.alb || null,
+        services: awsEvidence?.services || [],
         cloudWatch: { status: resourceStatusFor(runtimeObservation?.resources.cloudWatch) },
         terraformState: {
           status: runtimeRemovedByObservation ? "destroyed" : resourceStatus,
@@ -818,32 +856,30 @@ export class ProjectCurrentStateService {
     };
     const observedAt = new Date().toISOString();
     const environmentName = canonicalEnvironmentName(project);
-    const [generation, release] = await Promise.all([
-      this.generationRepository.findOne({ where: { id: generationId, projectId: project.id, environmentName } }),
-      this.releaseRepository.findOne({ where: { projectId: project.id, environmentName, generationId, status: StableReleaseStatus.STABLE }, order: { deployedAt: "DESC" } }),
-    ]);
-    const identity = generation?.resourceManifest || {};
+    const generation = await this.generationRepository.findOne({ where: { id: generationId, projectId: project.id, environmentName } });
+    const identity = await this.runtimeIdentityRecovery.recover(project) || generation?.resourceManifest || {};
     const value = (key: string) => typeof identity[key] === "string" ? identity[key] as string : "";
     const region = value("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const cluster = value("ecsClusterArn") || value("ecsClusterName");
-    const serviceArn = release?.ecsServiceArn || value("ecsServiceArn");
-    const targetGroupArn = value("targetGroupArn");
-    const logGroup = value("cloudWatchLogGroupName");
+    const serviceIdentities = Array.isArray(identity.services) ? identity.services as Array<Record<string, unknown>> : [];
+    const serviceArns = serviceIdentities.map((item) => String(item.ecsServiceArn || "")).filter(Boolean);
+    const targetGroupArns = serviceIdentities.map((item) => String(item.targetGroupArn || "")).filter(Boolean);
+    const logGroups = serviceIdentities.map((item) => String(item.cloudWatchLogGroupName || "")).filter(Boolean);
     const unavailable = { runtime: "unknown" as const, resources: { ecs: "unknown" as const, alb: "unknown" as const, cloudWatch: "unknown" as const }, evidence: null };
-    if (!generation || !cluster || !serviceArn || !targetGroupArn) return { observedAt, ...unavailable };
+    if (!generation || !cluster || !serviceArns.length || !targetGroupArns.length) return { observedAt, ...unavailable };
     const absentError = (error: unknown) => /notfound|not found|does not exist|missing/i.test(`${(error as { name?: string })?.name || ""} ${error instanceof Error ? error.message : ""}`);
     const ecs = new ECSClient({ region });
     const elb = new ElasticLoadBalancingV2Client({ region });
     const logs = new CloudWatchLogsClient({ region });
     const [ecsResult, albResult, logsResult] = await Promise.all([
-      ecs.send(new DescribeServicesCommand({ cluster, services: [serviceArn] })).then((result) => result.services?.[0] ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
-      elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [targetGroupArn] })).then((result) => result.TargetGroups?.[0] ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
-      logGroup
-        ? logs.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: logGroup })).then((result) => result.logGroups?.some((group) => group.logGroupName === logGroup) ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const)
+      ecs.send(new DescribeServicesCommand({ cluster, services: serviceArns })).then((result) => result.services?.length ? "present" as const : result.failures?.length === serviceArns.length ? "absent" as const : "unknown" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
+      elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: targetGroupArns })).then((result) => result.TargetGroups?.length ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const),
+      logGroups.length
+        ? Promise.all(logGroups.map((logGroup) => logs.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: logGroup })))).then((results) => results.some((result, index) => result.logGroups?.some((group) => group.logGroupName === logGroups[index])) ? "present" as const : "absent" as const).catch((error) => absentError(error) ? "absent" as const : "unknown" as const)
         : Promise.resolve("unknown" as const),
     ]);
     ecs.destroy(); elb.destroy(); logs.destroy();
-    const runtime = ecsResult === "absent" || albResult === "absent" ? "absent" as const : "unknown" as const;
+    const runtime = ecsResult === "present" || albResult === "present" ? "present" as const : ecsResult === "absent" && albResult === "absent" ? "absent" as const : "unknown" as const;
     return { observedAt, runtime, resources: { ecs: ecsResult, alb: albResult, cloudWatch: logsResult }, evidence: null };
   }
 
@@ -855,63 +891,65 @@ export class ProjectCurrentStateService {
       where: { projectId, environmentName: environment, generationId, status: StableReleaseStatus.STABLE },
       order: { deployedAt: "DESC" },
     });
-    const identity = generation?.resourceManifest || {};
+    const identity = await this.runtimeIdentityRecovery.recover(project) || generation?.resourceManifest || {};
     const string = (key: string) => typeof identity[key] === "string" ? identity[key] : "";
     const region = string("region") || this.config.get<string>("AWS_REGION", "us-east-1");
     const cluster = string("ecsClusterArn") || string("ecsClusterName");
-    const targetGroupArn = string("targetGroupArn");
-    const repository = string("imageUri").replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, "").split("@")[0];
-    if (!generation || !release?.imageUri || !release.taskDefinitionArn || !cluster || !targetGroupArn || !repository) return null;
+    const services = Array.isArray(identity.services) ? (identity.services as Array<Record<string, unknown>>).slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId))) : [];
+    if (!generation || !release || !cluster || !services.length || services.some((service) => !service.ecsServiceArn || !service.taskDefinitionArn || !service.targetGroupArn || !service.imageUri || !service.imageDigest || !service.runtimeConfigRevisionId)) return null;
     try {
       const ecs = new ECSClient({ region });
       const ecr = new ECRClient({ region });
       const elb = new ElasticLoadBalancingV2Client({ region });
-      const [serviceResult, repositoryResult, targetGroupsResult] = await Promise.all([
-        ecs.send(new DescribeServicesCommand({ cluster, services: [release.ecsServiceArn], include: ["TAGS"] })),
-        ecr.send(new DescribeRepositoriesCommand({ repositoryNames: [repository] })),
-        elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [targetGroupArn] })),
-      ]);
-      const service = serviceResult.services?.[0];
-      const repositoryEvidence = repositoryResult.repositories?.[0];
-      const targetGroup = targetGroupsResult.TargetGroups?.[0];
-      if (!service?.serviceName || service.status !== "ACTIVE" || service.taskDefinition !== release.taskDefinitionArn || !repositoryEvidence?.repositoryArn || !targetGroup?.TargetGroupArn) return null;
-      const imageDigest = string("imageDigest");
-      if (!/^sha256:[0-9a-f]{64}$/.test(imageDigest) || repositoryEvidence.repositoryUri !== string("imageUri")) return null;
-      const [taskDefinitionResult, imageResult, serviceTags, targetGroupTags, targetHealth] = await Promise.all([
-        ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: release.taskDefinitionArn, include: ["TAGS"] })),
-        ecr.send(new DescribeImagesCommand({ repositoryName: repository, imageIds: [{ imageDigest }] })),
-        ecs.send(new EcsListTagsForResourceCommand({ resourceArn: service.serviceArn! })),
-        elb.send(new DescribeTagsCommand({ ResourceArns: [targetGroupArn] })),
-        elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: targetGroupArn })),
-      ]);
       const tags = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined) =>
         Object.fromEntries((input || []).map((tag) => [tag.Key || tag.key || "", tag.Value || tag.value || ""]));
-      const ownsProjectRuntime = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined) => {
+      const ownsProjectRuntime = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined, serviceId: string) => {
         const values = tags(input);
         return values.ManagedBy === "DeployGuard"
           && values.DeployGuardProjectId === projectId
-          && values.DeployGuardOperationId === release.deployedByPipelineRunId;
+          && values.DeployGuardOperationId === release.deployedByPipelineRunId
+          && values.DeployGuardServiceId === serviceId;
       };
-      if (!ownsProjectRuntime(serviceTags.tags) || !ownsProjectRuntime(taskDefinitionResult.tags) || !ownsProjectRuntime(targetGroupTags.TagDescriptions?.[0]?.Tags)) return null;
-      const immutableImage = imageResult.imageDetails?.[0];
-      if (!immutableImage || immutableImage.imageDigest !== imageDigest) return null;
+      const observations = [] as LiveAwsEvidence["services"];
+      for (const item of services) {
+        const serviceId = String(item.serviceId); const imageUri = String(item.imageUri); const imageDigest = String(item.imageDigest);
+        const repository = imageUri.replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, "").split("@")[0];
+        if (!repository || !/^sha256:[0-9a-f]{64}$/.test(imageDigest)) return null;
+        const [serviceResult, repositoryResult, targetGroupsResult] = await Promise.all([
+          ecs.send(new DescribeServicesCommand({ cluster, services: [String(item.ecsServiceArn)], include: ["TAGS"] })),
+          ecr.send(new DescribeRepositoriesCommand({ repositoryNames: [repository] })),
+          elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [String(item.targetGroupArn)] })),
+        ]);
+        const runtimeService = serviceResult.services?.[0]; const repositoryEvidence = repositoryResult.repositories?.[0]; const targetGroup = targetGroupsResult.TargetGroups?.[0];
+        if (!runtimeService?.serviceName || runtimeService.status !== "ACTIVE" || runtimeService.taskDefinition !== item.taskDefinitionArn || repositoryEvidence?.repositoryUri !== imageUri || !targetGroup?.TargetGroupArn) return null;
+        const [taskDefinitionResult, imageResult, serviceTags, targetGroupTags, targetHealth] = await Promise.all([
+          ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: String(item.taskDefinitionArn), include: ["TAGS"] })), ecr.send(new DescribeImagesCommand({ repositoryName: repository, imageIds: [{ imageDigest }] })), ecs.send(new EcsListTagsForResourceCommand({ resourceArn: runtimeService.serviceArn! })), elb.send(new DescribeTagsCommand({ ResourceArns: [String(item.targetGroupArn)] })), elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: String(item.targetGroupArn) })),
+        ]);
+        if (!ownsProjectRuntime(serviceTags.tags, serviceId) || !ownsProjectRuntime(taskDefinitionResult.tags, serviceId) || !ownsProjectRuntime(targetGroupTags.TagDescriptions?.[0]?.Tags, serviceId) || imageResult.imageDetails?.[0]?.imageDigest !== imageDigest) return null;
+        observations.push({ serviceId, serviceName: String(item.serviceName || runtimeService.serviceName), publicUrl: typeof item.publicUrl === "string" ? item.publicUrl : null, imageDigest, ecs: { service: runtimeService.serviceName, desiredCount: runtimeService.desiredCount || 0, runningCount: runtimeService.runningCount || 0, pendingCount: runtimeService.pendingCount || 0 }, alb: { targetHealth: (targetHealth.TargetHealthDescriptions || []).map((target) => target.TargetHealth?.State || "unknown") } });
+      }
+      ecs.destroy(); ecr.destroy(); elb.destroy();
+      const applicationServiceId = resolveApplicationEntrypointServiceId(project.applicationEntryPointServiceId, services);
+      // A legacy multi-service project without an explicit selection retains
+      // only its historical deployedUrl for reads until the user selects one.
+      const applicationService = applicationServiceId
+        ? services.find((service) => String(service.serviceId) === applicationServiceId)
+        : !project.applicationEntryPointServiceId
+          ? services.find((service) => service.publicUrl === stableUrl)
+          : undefined;
+      const applicationObservation = observations.find((item) => item.serviceId === String(applicationService?.serviceId || ""));
+      if (!applicationService || !applicationObservation) return null;
       return {
         observedAt: new Date().toISOString(),
-        ecr: { repository, imageTag: immutableImage.imageTags?.[0] || null, imageDigest: immutableImage.imageDigest || null },
-        ecs: {
-          cluster,
-          service: service.serviceName,
-          taskDefinitionRevision: taskDefinitionResult?.taskDefinition?.revision ?? null,
-          desiredCount: service.desiredCount || 0,
-          runningCount: service.runningCount || 0,
-          pendingCount: service.pendingCount || 0,
-        },
+        ecr: { repository: String(applicationService.imageUri).replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, ""), imageTag: null, imageDigest: applicationObservation.imageDigest },
+        ecs: { cluster, service: observations.map((item) => item.ecs.service).join(", "), taskDefinitionRevision: null, desiredCount: observations.reduce((sum, item) => sum + item.ecs.desiredCount, 0), runningCount: observations.reduce((sum, item) => sum + item.ecs.runningCount, 0), pendingCount: observations.reduce((sum, item) => sum + item.ecs.pendingCount, 0) },
         alb: {
-          name: string("albName") || targetGroup.LoadBalancerArns?.[0] || "application-alb",
+          name: observations.map((item) => item.serviceName).join(", "),
           status: "active",
-          targetHealth: (targetHealth?.TargetHealthDescriptions || []).map((item) => item.TargetHealth?.State || "unknown"),
+          targetHealth: observations.flatMap((item) => item.alb.targetHealth),
           endpoint: /^https?:\/\//i.test(stableUrl) ? stableUrl : null,
         },
+        services: observations,
       };
     } catch {
       return null;

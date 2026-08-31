@@ -1,5 +1,5 @@
 name: DeployGuard Railpack release
-# deployguard-result-contract: deployguard.release-result/v2
+# deployguard-result-contract: deployguard.release-result/v4
 
 on:
   workflow_call:
@@ -11,9 +11,7 @@ on:
       repository_full_name: { required: true, type: string }
       repository_branch: { required: true, type: string }
       commit_sha: { required: true, type: string }
-      image_tag: { required: true, type: string }
-      environment_references_base64: { required: true, type: string }
-      managed_database_enabled: { required: true, type: string }
+      services_base64: { required: true, type: string }
       infrastructure_namespace: { required: true, type: string }
       aws_region: { required: true, type: string }
       aws_role_arn: { required: true, type: string }
@@ -21,14 +19,12 @@ on:
       public_subnet_ids: { required: true, type: string }
       terraform_state_bucket: { required: true, type: string }
       platform_port: { required: true, type: string }
-      rollback_image_digest: { required: false, type: string, default: "" }
       control_plane_sha: { required: true, type: string }
       result_contract_version: { required: true, type: string }
 
 permissions:
   contents: read
   id-token: write
-
 concurrency:
   group: deployguard-${{ inputs.project_id }}
   cancel-in-progress: false
@@ -36,7 +32,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       AWS_REGION: ${{ inputs.aws_region }}
       DEPLOYMENT_ACTION: ${{ inputs.deployment_action }}
@@ -44,198 +40,198 @@ jobs:
       ENVIRONMENT_NAME: ${{ inputs.environment_name }}
       OPERATION_ID: ${{ inputs.deployment_operation_id }}
       SOURCE_SHA: ${{ inputs.commit_sha }}
-      IMAGE_TAG: ${{ inputs.image_tag }}
       PLATFORM_PORT: ${{ inputs.platform_port }}
-      ENVIRONMENT_REFERENCES_BASE64: ${{ inputs.environment_references_base64 }}
+      SERVICES_BASE64: ${{ inputs.services_base64 }}
       CONTROL_PLANE_SHA: ${{ inputs.control_plane_sha }}
       RESULT_CONTRACT_VERSION: ${{ inputs.result_contract_version }}
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
-      ROLLBACK_IMAGE_DIGEST: ${{ inputs.rollback_image_digest }}
       BUILDKIT_CONTAINER: deployguard-buildkit-${{ inputs.deployment_operation_id }}
-      RUNTIME_PROBE_CONTAINER: deployguard-runtime-probe-${{ inputs.deployment_operation_id }}
       BUILDKIT_IMAGE: moby/buildkit:v0.16.0@sha256:bc1fe18224dbcb92599139db0c745696c48ba9fd4ac24038d1fa81fdd7dcac27
     steps:
       - name: Checkout exact application source
         if: inputs.deployment_action == 'deploy'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: ${{ inputs.commit_sha }}
-          fetch-depth: 1
+        with: { ref: "${{ inputs.commit_sha }}", fetch-depth: 1 }
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
-        with:
-          role-to-assume: ${{ inputs.aws_role_arn }}
-          aws-region: ${{ inputs.aws_region }}
+        with: { role-to-assume: "${{ inputs.aws_role_arn }}", aws-region: "${{ inputs.aws_region }}" }
       - name: Validate immutable release input
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'Invalid deployment action.' >&2; exit 1; }
-          [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid project identity.' >&2; exit 1; }
-          [[ "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Invalid operation identity.' >&2; exit 1; }
-          [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v2 ] || { echo 'Incompatible DeployGuard result contract.' >&2; exit 1; }
-          [[ "$PLATFORM_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PLATFORM_PORT" -le 65535 ] || { echo 'Invalid platform port.' >&2; exit 1; }
-          if [ "$DEPLOYMENT_ACTION" = deploy ]; then [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo 'Exact source SHA mismatch.' >&2; exit 1; }; fi
-          if [ "$DEPLOYMENT_ACTION" = rollback ]; then [[ "$ROLLBACK_IMAGE_DIGEST" =~ @sha256:[0-9a-f]{64}$ ]] || { echo 'Rollback requires an immutable ECR image digest.' >&2; exit 1; }; fi
-          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode | jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" --arg action "$DEPLOYMENT_ACTION" '
-            .schemaVersion == 1 and .projectId == $project and .operationId == $operation and .sourceSha == $sha
+          [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_deployment_action' >&2; exit 1; }
+          [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ && "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_immutable_release_identity' >&2; exit 1; }
+          [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v4 ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=incompatible_result_contract' >&2; exit 1; }
+          [[ "$PLATFORM_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PLATFORM_PORT" -le 65535 ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_platform_port' >&2; exit 1; }
+          mkdir -p .deployguard
+          printf '%s' "$SERVICES_BASE64" | base64 --decode > .deployguard/runtime.json
+          jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" --arg action "$DEPLOYMENT_ACTION" '
+            def managed_database_alias:
+              . as $key | ["DATABASE_HOST","DATABASE_NAME","DATABASE_PASSWORD","DATABASE_PORT","DATABASE_URL","DATABASE_USER","DB_HOST","DB_NAME","DB_PASSWORD","DB_PORT","DB_USER","MONGODB_DATABASE","MONGODB_HOST","MONGODB_PASSWORD","MONGODB_PORT","MONGODB_URI","MONGODB_USER","MONGO_DB","MONGO_HOST","MONGO_PASSWORD","MONGO_PORT","MONGO_URI","MONGO_URL","MONGO_USER","MYSQL_DATABASE","MYSQL_HOST","MYSQL_PASSWORD","MYSQL_PORT","MYSQL_URL","MYSQL_USER","PGDATABASE","PGHOST","PGPASSWORD","PGPORT","PGUSER","POSTGRES_DB","POSTGRES_HOST","POSTGRES_PASSWORD","POSTGRES_PORT","POSTGRES_URL","POSTGRES_USER","POSTGRESQL_URL","REDIS_HOST","REDIS_PASSWORD","REDIS_PORT","REDIS_URL"] | index($key) != null;
+            .schemaVersion == 2 and .projectId == $project and .operationId == $operation and .sourceSha == $sha
+            and (.environmentName | test("^[a-z0-9][a-z0-9-]{0,39}$"))
+            and (.services | type == "array" and length > 0 and length <= 20)
+            and ([.services[].serviceId] | length == (unique | length))
+            and ([.services[].serviceName | ascii_downcase] | length == (unique | length))
+            and ([.services[] | select((.serviceId | type) != "string" or (.serviceId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not) or (.runtimeConfigRevisionId | type) != "string" or (.runtimeConfigRevisionId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not))] | length == 0)
+            and ([.services[] | select((.serviceName | type) != "string" or (.serviceName | length) == 0 or (.serviceName | length) > 80 or .serviceName != (.serviceName | gsub("^\\s+|\\s+$"; "")))] | length == 0)
+            and ([.services[] | select((.serviceDirectory | type) != "string" or .serviceDirectory == "" or (.serviceDirectory | startswith("/")) or (.serviceDirectory | test("(^|/)\\.\\.(/|$)")))] | length == 0)
+            and ([.services[] | select((.environment | type) != "object" or .environment.PORT != "8080" or .environment.HOST != "0.0.0.0" or ([.environment | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.value | type) != "string")] | length > 0))] | length == 0)
+            and ([.services[] | select((.environment | type) == "object" and ([.environment | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
+            and ([.services[] | select((.secretReferences | type) != "object" or ([.secretReferences | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$") | not))] | length > 0))] | length == 0)
+            and ([.services[] | select((.secretReferences | type) == "object" and ([.secretReferences | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
+            and ([.services[] | select((.databaseAttached | type) != "boolean" or (.managedDatabase | type) != "object" or (.managedDatabase.aliases | type) != "array" or ([.managedDatabase.aliases[] | select((type) != "string" or (test("^[A-Z][A-Z0-9_]{0,127}$") | not))] | length > 0) or (.managedDatabase.engine as $engine | ([null,"postgres","mysql","mongodb"] | index($engine)) == null) or (.managedDatabase.secretVersionId != null and ((.managedDatabase.secretVersionId | type) != "string" or (.managedDatabase.secretVersionId | test("^[A-Za-z0-9-]{32,64}$") | not))))] | length == 0)
+            and ([.services[] | select((.databaseAttached == true and (.managedDatabase.engine == null or (.managedDatabase.aliases | length) == 0)) or (.databaseAttached == false and (.managedDatabase.engine != null or (.managedDatabase.aliases | length) != 0)))] | length == 0)
+            and ([.services[] | select(.databaseAttached == true)] | length <= 1)
+            and (if $action == "rollback" or $action == "destroy" then (([.services[].rollbackImage | select(test("@sha256:[0-9a-f]{64}$"))] | length) == (.services | length)) else true end)
+            and (if $action == "rollback" or $action == "destroy" then [.services[] | select(.databaseAttached == true and ((.managedDatabase.secretVersionId // "") | test("^[A-Za-z0-9-]{32,64}$") | not))] | length == 0 else true end)
             and (if $action == "destroy" then (.projectDeletion.generationIds | type == "array" and length > 0) else true end)
-          ' >/dev/null
+          ' .deployguard/runtime.json >/dev/null || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release' >&2; exit 1; }
+          if [ "$DEPLOYMENT_ACTION" = deploy ]; then
+            [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=exact_source_sha_mismatch' >&2; exit 1; }
+            root="$(realpath .)"
+            while IFS= read -r service; do
+              service_id="$(jq -r '.serviceId' <<<"$service")"; directory="$(jq -r '.serviceDirectory' <<<"$service")"
+              [ -d "$directory" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_SERVICE_DIRECTORY_MISSING stage=service_directory_validation" >&2; exit 1; }
+              resolved="$(realpath "$directory")"
+              [ "$resolved" = "$root" ] || [[ "$resolved" == "$root/"* ]] || { echo "DG_FAILURE serviceId=$service_id code=DG_SERVICE_DIRECTORY_INVALID stage=service_directory_validation" >&2; exit 1; }
+            done < <(jq -c '.services[]' .deployguard/runtime.json)
+          fi
       - name: Install pinned Railpack
         if: success() && inputs.deployment_action == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
-          tmpdir="$(mktemp -d)"
-          trap 'rm -rf "$tmpdir"' EXIT
+          tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
           curl --fail --location --retry 3 --proto '=https' --tlsv1.2 'https://github.com/railwayapp/railpack/releases/download/v0.38.0/railpack-v0.38.0-x86_64-unknown-linux-musl.tar.gz' -o "$tmpdir/railpack.tgz"
           printf '%s  %s\n' '7c3f0e70ca8bf80bde87e8c30cb0171414c2b6bbd794d6f60a19cc3b71772950' "$tmpdir/railpack.tgz" | sha256sum --check --status
-          tar -xzf "$tmpdir/railpack.tgz" -C "$tmpdir"
-          install -m 0755 "$tmpdir/railpack" /usr/local/bin/railpack
-          test ! -f /tmp/railpack
-          railpack --version
-      - name: Build immutable Railpack image
+          tar -xzf "$tmpdir/railpack.tgz" -C "$tmpdir"; install -m 0755 "$tmpdir/railpack" /usr/local/bin/railpack; railpack --version
+      - name: Build immutable Railpack images
         if: success() && inputs.deployment_action == 'deploy'
         id: build
         shell: bash
         run: |
           set -euo pipefail
-          account="$(aws sts get-caller-identity --query Account --output text)"
-          repository="deployguard-${PROJECT_ID}"
-          registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          image="${registry}/${repository}:${IMAGE_TAG}"
-          docker version --format '{{.Server.Version}}' >/dev/null || { echo 'Railpack Build prerequisite failed: Docker is unavailable.' >&2; exit 1; }
-          docker run --rm --privileged --detach --name "$BUILDKIT_CONTAINER" "$BUILDKIT_IMAGE" >/dev/null || { echo 'Railpack Build prerequisite failed: BuildKit could not start.' >&2; exit 1; }
-          ready=false
-          for attempt in {1..30}; do
-            if docker exec "$BUILDKIT_CONTAINER" buildctl debug workers >/dev/null 2>&1; then ready=true; break; fi
-            sleep 1
-          done
-          if [ "$ready" != true ]; then
-            echo 'Railpack Build prerequisite failed: BuildKit worker did not become ready.' >&2
-            docker logs "$BUILDKIT_CONTAINER" --tail 100 >&2 || true
-            exit 1
-          fi
-          BUILDKIT_HOST="docker-container://${BUILDKIT_CONTAINER}" railpack build --name "$image" .
-          printf 'image=%s\nrepository=%s\nregistry=%s\n' "$image" "$repository" "$registry" >> "$GITHUB_OUTPUT"
+          account="$(aws sts get-caller-identity --query Account --output text)"; registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          docker version --format '{{.Server.Version}}' >/dev/null || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build' >&2; exit 1; }
+          docker run --rm --privileged --detach --name "$BUILDKIT_CONTAINER" "$BUILDKIT_IMAGE" >/dev/null || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build' >&2; exit 1; }
+          for attempt in {1..30}; do docker exec "$BUILDKIT_CONTAINER" buildctl debug workers >/dev/null 2>&1 && break; [ "$attempt" -lt 30 ] || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build' >&2; exit 1; }; sleep 1; done
+          printf '[]' > .deployguard/build-artifacts.json
+          while IFS= read -r service; do
+            service_id="$(jq -r '.serviceId' <<<"$service")"; service_name="$(jq -r '.serviceName' <<<"$service")"; directory="$(jq -r '.serviceDirectory' <<<"$service")"
+            compact_project="${PROJECT_ID//-/}"; compact_operation="${OPERATION_ID//-/}"; compact_service="${service_id//-/}"
+            repository="deployguard-${compact_project:0:12}-${compact_service:0:8}"; tag="sha-${SOURCE_SHA:0:10}-${compact_operation:0:8}-${compact_service:0:8}"; image="${registry}/${repository}:${tag}"
+            echo "DG_SERVICE_STAGE serviceId=$service_id stage=railpack_build"
+            BUILDKIT_HOST="docker-container://${BUILDKIT_CONTAINER}" railpack build --name "$image" "$directory" || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_BUILD_FAILED stage=railpack_build" >&2; exit 1; }
+            runtime_config_revision_id="$(jq -r '.runtimeConfigRevisionId' <<<"$service")"
+            jq --arg id "$service_id" --arg name "$service_name" --arg directory "$directory" --arg runtimeConfigRevisionId "$runtime_config_revision_id" --arg image "$image" --arg repository "$repository" --arg registry "$registry" '. + [{serviceId:$id,serviceName:$name,serviceDirectory:$directory,runtimeConfigRevisionId:$runtimeConfigRevisionId,localImage:$image,repository:$repository,registry:$registry}]' .deployguard/build-artifacts.json > .deployguard/build-artifacts.next
+            mv .deployguard/build-artifacts.next .deployguard/build-artifacts.json
+          done < <(jq -c '.services[]' .deployguard/runtime.json)
+          echo 'built=true' >> "$GITHUB_OUTPUT"
       - name: Validate Application Runtime
-        if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.image != ''
+        if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.built == 'true'
         shell: bash
-        env:
-          PROBE_IMAGE: ${{ steps.build.outputs.image }}
         run: |
           set -euo pipefail
-          image="$PROBE_IMAGE"
-          cleanup_probe() {
-            docker rm --force "$RUNTIME_PROBE_CONTAINER" >/dev/null 2>&1 || true
-          }
-          trap cleanup_probe EXIT INT TERM
-          cleanup_probe
-          docker run --detach --name "$RUNTIME_PROBE_CONTAINER" --env PORT=8080 --env HOST=0.0.0.0 "$image" >/dev/null
-          ready=false
-          if timeout --signal=TERM 45 bash -c '
-            while true; do
-              running="$(docker inspect --format "{{.State.Running}}" "$RUNTIME_PROBE_CONTAINER" 2>/dev/null || true)"
-              [ "$running" = true ] || exit 1
-              container_ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" "$RUNTIME_PROBE_CONTAINER" 2>/dev/null || true)"
-              if [ -n "$container_ip" ] && timeout 1 bash -c "exec 3<>/dev/tcp/\$1/8080" _ "$container_ip" 2>/dev/null; then exit 0; fi
-              sleep 1
-            done
-          '; then ready=true; fi
-          if [ "$ready" != true ]; then
-            docker logs "$RUNTIME_PROBE_CONTAINER" --tail 100 2>&1 | tail -c 12000 >&2 || true
-            echo 'Application did not listen on PORT=8080 within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable.' >&2
-            exit 1
-          fi
-      - name: Publish immutable image to ECR
-        if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.image != ''
+          containers=(); cleanup_probes() { for container in "${containers[@]:-}"; do docker rm --force "$container" >/dev/null 2>&1 || true; done; }; trap cleanup_probes EXIT INT TERM
+          while IFS= read -r artifact; do
+            service_id="$(jq -r '.serviceId' <<<"$artifact")"; image="$(jq -r '.localImage' <<<"$artifact")"; compact_service="${service_id//-/}"; container="deployguard-runtime-probe-${OPERATION_ID}-${compact_service:0:8}"; containers+=("$container")
+            docker run --detach --name "$container" --env PORT=8080 --env HOST=0.0.0.0 "$image" >/dev/null
+            ready=false
+            # The inner Bash receives the container/IP as positional parameters; expansion here would be wrong.
+            # shellcheck disable=SC2016
+            if timeout --signal=TERM 45 bash -c 'while true; do running="$(docker inspect --format "{{.State.Running}}" "$1" 2>/dev/null || true)"; [ "$running" = true ] || exit 1; ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" "$1" 2>/dev/null || true)"; if [ -n "$ip" ] && timeout 1 bash -c "exec 3<>/dev/tcp/\$1/8080" _ "$ip" 2>/dev/null; then exit 0; fi; sleep 1; done' _ "$container"; then ready=true; fi
+            if [ "$ready" != true ]; then docker logs "$container" --tail 100 2>&1 | sed -E 's/((password|passwd|token|secret|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/Ig' | tr -cd '\11\12\15\40-\176' | tail -c 12000 >&2 || true; echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime" >&2; echo 'Application did not listen on PORT=8080 within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable.' >&2; exit 1; fi
+            docker rm --force "$container" >/dev/null
+            unset 'containers[${#containers[@]}-1]'
+          done < <(jq -c '.[]' .deployguard/build-artifacts.json)
+      - name: Publish immutable images to ECR
+        if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.built == 'true'
         id: image
         shell: bash
         run: |
           set -euo pipefail
-          repository="${{ steps.build.outputs.repository }}"
-          registry="${{ steps.build.outputs.registry }}"
-          aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1 || aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE >/dev/null
-          image="${{ steps.build.outputs.image }}"
-          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
-          docker push "$image"
-          digest="$(aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$IMAGE_TAG" --query 'imageDetails[0].imageDigest' --output text)"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'ECR did not return an immutable image digest.' >&2; exit 1; }
-          immutable_image="${registry}/${repository}@${digest}"
-          printf 'image=%s\n' "$immutable_image" >> "$GITHUB_OUTPUT"
-          printf 'image_uri=%s\nimage_digest=%s\n' "${registry}/${repository}" "$digest" >> "$GITHUB_OUTPUT"
-      - name: Select immutable rollback image
-        if: success() && inputs.deployment_action == 'rollback'
-        id: rollback
+          printf '[]' > .deployguard/service-artifacts.json; logged_in=false
+          while IFS= read -r artifact; do
+            service_id="$(jq -r '.serviceId' <<<"$artifact")"; repository="$(jq -r '.repository' <<<"$artifact")"; registry="$(jq -r '.registry' <<<"$artifact")"; image="$(jq -r '.localImage' <<<"$artifact")"; tag="${image##*:}"
+            aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1 || aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE >/dev/null
+            if [ "$logged_in" = false ]; then aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"; logged_in=true; fi
+            docker push "$image" || { echo "DG_FAILURE serviceId=$service_id code=DG_ECR_PUBLISH_FAILED stage=ecr_publish" >&2; exit 1; }
+            digest="$(aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$tag" --query 'imageDetails[0].imageDigest' --output text)"; [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+            jq --arg uri "${registry}/${repository}" --arg digest "$digest" '. + {imageUri:$uri,imageDigest:$digest,image:($uri+"@"+$digest)}' <<<"$artifact" > .deployguard/one-artifact.json
+            jq --slurpfile item .deployguard/one-artifact.json '. + $item' .deployguard/service-artifacts.json > .deployguard/service-artifacts.next; mv .deployguard/service-artifacts.next .deployguard/service-artifacts.json
+          done < <(jq -c '.[]' .deployguard/build-artifacts.json)
+          echo 'published=true' >> "$GITHUB_OUTPUT"
+      - name: Select immutable rollback service images
+        if: success() && (inputs.deployment_action == 'rollback' || inputs.deployment_action == 'destroy')
         shell: bash
-        run: |
-          set -euo pipefail
-          printf 'image=%s\n' "$ROLLBACK_IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+        run: jq '[.services[] | {serviceId,serviceName,serviceDirectory,runtimeConfigRevisionId,imageUri:(.rollbackImage|split("@")|.[0]),imageDigest:(.rollbackImage|split("@")|.[1]),image:.rollbackImage}]' .deployguard/runtime.json > .deployguard/service-artifacts.json
       - name: Install Terraform
-        # Every valid lifecycle action can reach Materialize release runtime.
-        # Keep setup unconditional after validation so a new runtime action
-        # cannot reach `terraform` without this pinned installation.
         if: success()
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
-        with:
-          terraform_version: 1.10.5
-          terraform_wrapper: false
+        with: { terraform_version: 1.10.5, terraform_wrapper: false }
       - name: Materialize release runtime
-        if: success() && (inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || (inputs.deployment_action == 'deploy' && steps.image.outputs.image != ''))
+        if: success() && (inputs.deployment_action == 'destroy' || inputs.deployment_action == 'rollback' || (inputs.deployment_action == 'deploy' && steps.image.outputs.published == 'true'))
         id: runtime
         shell: bash
-        env:
-          IMAGE: ${{ steps.image.outputs.image || steps.rollback.outputs.image || 'public.ecr.aws/docker/library/alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1' }}
         run: |
           set -euo pipefail
-          [[ "$CONTROL_PLANE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid control-plane SHA.' >&2; exit 1; }
-          git init /tmp/deployguard-control-plane
-          git -C /tmp/deployguard-control-plane remote add origin https://github.com/Hassan-Sajjad72/Deploy-Guard-dev.git
-          git -C /tmp/deployguard-control-plane fetch --depth 1 origin "$CONTROL_PLANE_SHA"
-          git -C /tmp/deployguard-control-plane checkout --detach "$CONTROL_PLANE_SHA"
-          [ "$(git -C /tmp/deployguard-control-plane rev-parse HEAD)" = "$CONTROL_PLANE_SHA" ]
-          mkdir -p .deployguard
-          cp -R /tmp/deployguard-control-plane/infrastructure/railpack-runtime .deployguard/terraform
-          printf '%s' "$ENVIRONMENT_REFERENCES_BASE64" | base64 --decode > .deployguard/runtime.json
-          jq -n \
-            --arg region "$AWS_REGION" --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" \
-            --arg vpc "$VPC_ID" --arg image "$IMAGE" --argjson port "$PLATFORM_PORT" \
-            --argjson subnets "$(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')" \
-            --slurpfile runtime .deployguard/runtime.json \
-            '{region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,image:$image,platform_port:$port,environment:($runtime[0].environment + {PORT:($port|tostring),HOST:"0.0.0.0"}),secret_references:$runtime[0].secretReferences,managed_database_enabled:$runtime[0].managedDatabase.enabled,managed_database_aliases:$runtime[0].managedDatabase.aliases,managed_database_engine:($runtime[0].managedDatabase.engine // "postgres")}' > .deployguard/terraform/terraform.tfvars.json
-          terraform -chdir=.deployguard/terraform fmt -check
-          terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/runtime/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true"
-          terraform -chdir=.deployguard/terraform validate
+          git init /tmp/deployguard-control-plane; git -C /tmp/deployguard-control-plane remote add origin https://github.com/Hassan-Sajjad72/Deploy-Guard-dev.git; git -C /tmp/deployguard-control-plane fetch --depth 1 origin "$CONTROL_PLANE_SHA"; git -C /tmp/deployguard-control-plane checkout --detach "$CONTROL_PLANE_SHA"; [ "$(git -C /tmp/deployguard-control-plane rev-parse HEAD)" = "$CONTROL_PLANE_SHA" ]
+          mkdir -p .deployguard/terraform; cp -R /tmp/deployguard-control-plane/infrastructure/railpack-runtime/. .deployguard/terraform/
+          jq -n --arg region "$AWS_REGION" --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg vpc "$VPC_ID" --argjson port "$PLATFORM_PORT" --argjson subnets "$(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')" --slurpfile runtime .deployguard/runtime.json --slurpfile artifacts .deployguard/service-artifacts.json '
+            ($artifacts[0] | map({key:.serviceId,value:.}) | from_entries) as $images |
+            {region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,platform_port:$port,services:($runtime[0].services | map({key:.serviceId,value:{name:.serviceName,image:$images[.serviceId].image,runtime_config_revision_id:.runtimeConfigRevisionId,environment:(.environment+{PORT:($port|tostring),HOST:"0.0.0.0"}),secret_references:.secretReferences,database_attached:.databaseAttached,managed_database_aliases:.managedDatabase.aliases,managed_database_engine:(.managedDatabase.engine//"postgres")}})|from_entries)}' > .deployguard/terraform/terraform.tfvars.json
+          terraform -chdir=.deployguard/terraform fmt -check || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
+          terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/runtime/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
+          terraform -chdir=.deployguard/terraform validate || { echo 'DG_FAILURE code=DG_TERRAFORM_VALIDATE_FAILED stage=terraform_validate' >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = destroy ]; then
             terraform -chdir=.deployguard/terraform destroy -input=false -auto-approve
-            jq -n \
-              --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" \
-              --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" \
-              --slurpfile runtime .deployguard/runtime.json \
-              '{
-                action:$action,
-                contractVersion:$contractVersion,
-                sourceSha:$sourceSha,
-                operationId:$operationId,
-                destroyed:true,
-                destroyVerification:{
-                  contractVersion:"deployguard.destroy-result/v2",
-                  deploymentOperationId:$operationId,
-                  projectId:$projectId,
-                  environmentName:$environmentName,
-                  generationIds:($runtime[0].projectDeletion.generationIds | sort),
-                  status:"project_delete_ready",
-                  generationResourcesRemoved:true,
-                  projectResourcesRemoved:true,
-                  terraformStateArtifactsRemoved:true,
-                  sharedPlatformUntouched:true,
-                  verifiedAt:(now | todateiso8601)
-                }
-              }' > .deployguard/release-runtime.json
+            compact_project="${PROJECT_ID//-/}"
+            # Runtime secrets are created by DeployGuard, outside Terraform,
+            # and are therefore removed only after Terraform has stopped every
+            # task that can reference them.  Never delete an arbitrary secret:
+            # every candidate must match the exact project/environment/service
+            # namespace and DeployGuard ownership tags from the immutable input.
+            while IFS= read -r service; do
+              service_id="$(jq -r '.serviceId' <<<"$service")"
+              service_secret="deployguard/${PROJECT_ID}/${ENVIRONMENT_NAME}/services/${service_id}/runtime"
+              legacy_secret="deployguard/${PROJECT_ID}/${ENVIRONMENT_NAME}/application/runtime"
+              while IFS= read -r secret_arn; do
+                [ -n "$secret_arn" ] || continue
+                metadata="$(aws secretsmanager describe-secret --secret-id "$secret_arn" --output json)"
+                jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg service "$service_id" --arg serviceSecret "$service_secret" --arg legacySecret "$legacy_secret" '
+                  def tag($key): ([.Tags[]? | select(.Key == $key) | .Value] | first);
+                  tag("ManagedBy") == "DeployGuard"
+                  and tag("DeployGuardProjectId") == $project
+                  and tag("Environment") == $environment
+                  and tag("SecretPurpose") == "application_runtime"
+                  and ((.Name == $serviceSecret and tag("DeployGuardScope") == "service" and tag("DeployGuardServiceId") == $service) or (.Name == $legacySecret and tag("DeployGuardScope") == "project"))
+                ' <<<"$metadata" >/dev/null || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
+                aws secretsmanager delete-secret --secret-id "$secret_arn" --force-delete-without-recovery
+              done < <(jq -r '.secretReferences[]? | split(":") | .[0:7] | join(":")' <<<"$service" | sort -u)
+              repository="$(jq -r '.rollbackImage | split("@")[0] | split("/")[1:] | join("/")' <<<"$service")"
+              compact_service="${service_id//-/}"
+              [ "$repository" = "deployguard-${PROJECT_ID}" ] || [ "$repository" = "deployguard-${compact_project:0:12}-${compact_service:0:8}" ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=terraform_materialization' >&2; exit 1; }
+              if ! aws ecr delete-repository --repository-name "$repository" --force >/dev/null; then
+                echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
+                exit 1
+              fi
+              if aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1; then
+                echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
+                exit 1
+              fi
+            done < <(jq -c '.services[]' .deployguard/runtime.json)
+            state_key="projects/${PROJECT_ID}/${ENVIRONMENT_NAME}/runtime/terraform.tfstate"
+            aws s3api delete-object --bucket "$TERRAFORM_STATE_BUCKET" --key "$state_key" >/dev/null
+            if aws s3api head-object --bucket "$TERRAFORM_STATE_BUCKET" --key "$state_key" >/dev/null 2>&1; then
+              echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2
+              exit 1
+            fi
+            jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" --slurpfile runtime .deployguard/runtime.json '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,destroyed:true,destroyVerification:{contractVersion:"deployguard.destroy-result/v2",deploymentOperationId:$operationId,projectId:$projectId,environmentName:$environmentName,generationIds:($runtime[0].projectDeletion.generationIds|sort),status:"project_delete_ready",generationResourcesRemoved:true,projectResourcesRemoved:true,terraformStateArtifactsRemoved:true,sharedPlatformUntouched:true,verifiedAt:(now|todateiso8601)}}' > .deployguard/release-runtime.json
           else
-            terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan
+            terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan || { echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2; exit 1; }
             terraform -chdir=.deployguard/terraform show -json deployguard.tfplan \
               | jq '
                   def redact($value; $mask):
@@ -251,17 +247,20 @@ jobs:
                     | del(.change.before_sensitive, .change.after_sensitive)
                   ))
                 ' > .deployguard/terraform/deployguard-cost-plan.json
-            terraform -chdir=.deployguard/terraform apply -input=false -auto-approve deployguard.tfplan
-            compact_project_id="${PROJECT_ID//-/}"
-            service="dg-${compact_project_id:0:12}"
-            aws ecs wait services-stable --cluster "$service" --services "$service"
-            terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value = .value.value)' > .deployguard/terraform-outputs.json
-            alb_url="$(jq -r '.alb_url' .deployguard/terraform-outputs.json)"
-            curl --fail --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused "$alb_url" >/dev/null
-            jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg image "$IMAGE" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,image:$image,terraform:$terraform}' > .deployguard/release-runtime.json
+            terraform -chdir=.deployguard/terraform apply -input=false -auto-approve deployguard.tfplan || { echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2; exit 1; }
+            terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value=.value.value)' > .deployguard/terraform-outputs.json
+            if [ "$DEPLOYMENT_ACTION" = rollback ]; then
+              expected_database_version="$(jq -r '[.services[] | select(.databaseAttached == true) | .managedDatabase.secretVersionId // empty] | first // empty' .deployguard/runtime.json)"
+              actual_database_version="$(jq -r '.database.secret_version_id // empty' .deployguard/terraform-outputs.json)"
+              [ -z "$expected_database_version" ] || [ "$actual_database_version" = "$expected_database_version" ] || { echo 'DG_FAILURE code=DG_DATABASE_SECRET_VERSION_MISMATCH stage=terraform_apply' >&2; exit 1; }
+            fi
+            cluster="$(jq -r '.ecs_cluster_name' .deployguard/terraform-outputs.json)"
+            database_service="$(jq -r '.database.ecs_service_name // empty' .deployguard/terraform-outputs.json)"
+            [ -z "$database_service" ] || aws ecs wait services-stable --cluster "$cluster" --services "$database_service" || { echo 'DG_FAILURE code=DG_DATABASE_STABILITY_FAILED stage=ecs_stability' >&2; exit 1; }
+            while IFS= read -r service; do service_id="$(jq -r '.key' <<<"$service")"; runtime="$(jq -c '.value' <<<"$service")"; aws ecs wait services-stable --cluster "$cluster" --services "$(jq -r '.ecs_service_name' <<<"$runtime")" || { echo "DG_FAILURE serviceId=$service_id code=DG_ECS_STABILITY_FAILED stage=ecs_stability" >&2; exit 1; }; curl --fail --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused "$(jq -r '.public_url' <<<"$runtime")" >/dev/null || { echo "DG_FAILURE serviceId=$service_id code=DG_PUBLIC_HEALTH_FAILED stage=public_health" >&2; exit 1; }; done < <(jq -c '.services | to_entries[]' .deployguard/terraform-outputs.json)
+            jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --argjson artifacts "$(cat .deployguard/service-artifacts.json)" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,services:($artifacts|map(. as $artifact|. + ($terraform.services[.serviceId] // {}))),terraform:$terraform}' > .deployguard/release-runtime.json
           fi
-          mkdir -p terraform
-          cp .deployguard/release-runtime.json terraform/deployguard-result.json
+          mkdir -p terraform; cp .deployguard/release-runtime.json terraform/deployguard-result.json
           if [ -f .deployguard/terraform/deployguard-cost-plan.json ]; then
             cp .deployguard/terraform/deployguard-cost-plan.json terraform/deployguard-cost-plan.json
           fi
@@ -278,12 +277,8 @@ jobs:
       - name: Clean up Railpack BuildKit daemon
         if: always() && inputs.deployment_action == 'deploy'
         shell: bash
-        run: |
-          set -euo pipefail
-          docker rm --force "$BUILDKIT_CONTAINER" >/dev/null 2>&1 || true
+        run: docker rm --force "$BUILDKIT_CONTAINER" >/dev/null 2>&1 || true
       - name: Clean up application runtime validation
         if: always() && inputs.deployment_action == 'deploy'
         shell: bash
-        run: |
-          set -euo pipefail
-          docker rm --force "$RUNTIME_PROBE_CONTAINER" >/dev/null 2>&1 || true
+        run: docker ps -aq --filter "name=deployguard-runtime-probe-${OPERATION_ID}-" | xargs -r docker rm --force >/dev/null 2>&1 || true

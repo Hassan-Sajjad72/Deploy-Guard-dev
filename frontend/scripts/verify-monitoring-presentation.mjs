@@ -7,6 +7,9 @@ const sidebar = read("../src/components/layout/Sidebar.jsx");
 const styles = read("../src/styles.css");
 const routes = read("../src/routes/AppRoutes.jsx");
 const currentState = read("../../backend/src/projects/current-state/project-current-state.service.ts");
+const api = read("../src/api/projectApi.js");
+const resolver = read("../../backend/src/observability/live-runtime-resolver.service.ts");
+const logs = read("../../backend/src/observability/cloudwatch-logs.service.ts");
 
 assert.match(routes, /element=\{<ProjectMetrics \/>\} path="\/projects\/:projectId\/monitoring"/);
 assert.match(sidebar, /label: "Monitoring", path: "monitoring"/);
@@ -29,6 +32,12 @@ for (const metric of ["cpu", "memory", "httpLatency", "healthyHosts", "unhealthy
 assert.match(page, /points\.length > 0/);
 assert.doesNotMatch(page, /CpuMemoryChart|AlbLatencyCard|RuntimeMetricsChart|duration chart/i);
 assert.match(page, /LIVE CloudWatch log group/);
+assert.match(page, /aria-label="Runtime service"/, "multi-service Monitoring exposes an explicit runtime selector");
+assert.match(page, /getApplicationRuntimeMetrics\(projectId, \{ range, serviceId: effectiveServiceId \}\)/);
+assert.match(page, /getApplicationLogStreamUrl\(projectId, serviceId\)/);
+assert.match(api, /params\.set\("serviceId", options\.serviceId\)/);
+assert.match(resolver, /selectedServiceId|requestedServiceId/);
+assert.match(logs, /serviceId !== resolved\.serviceId/, "log identity changes when the selected service changes");
 assert.match(page, /metricsState === "no_samples_yet"/);
 for (const item of ["Runtime telemetry", "Last scrape", "AWS observation", "Evidence freshness", "ALB health", "ECS task health", "Grafana"]) assert.match(page, new RegExp(item));
 assert.doesNotMatch(page, /<span>LIVE generation<\/span>/, "generation identity belongs in technical Infrastructure details");

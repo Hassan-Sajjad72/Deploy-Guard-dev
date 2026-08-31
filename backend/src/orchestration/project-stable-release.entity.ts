@@ -53,14 +53,17 @@ export class ProjectStableRelease {
   @Column({ name: "short_commit_sha" })
   shortCommitSha: string;
 
-  @Column({ name: "image_uri" })
-  imageUri: string;
+  /** @deprecated Migration-only compatibility column; service revisions are authoritative. */
+  @Column({ nullable: true, name: "image_uri" })
+  imageUri: string | null;
 
-  @Column({ name: "task_definition_arn" })
-  taskDefinitionArn: string;
+  /** @deprecated Migration-only compatibility column; service revisions are authoritative. */
+  @Column({ nullable: true, name: "task_definition_arn" })
+  taskDefinitionArn: string | null;
 
+  /** @deprecated Migration-only compatibility column; service revisions are authoritative. */
   @Column({ nullable: true, name: "ecs_service_arn" })
-  ecsServiceArn: string;
+  ecsServiceArn: string | null;
 
   @Column({ default: "/health", name: "health_check_path" })
   healthCheckPath: string;

@@ -6,7 +6,7 @@ import { DataSource, In, Repository } from "typeorm";
 import { ProjectStableRelease, StableReleaseStatus } from "../orchestration/project-stable-release.entity";
 import { User } from "../users/user.entity";
 import { canonicalEnvironmentName } from "./canonical-environment";
-import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
+import { ProjectDatabaseTier, DatabaseTierProvider, DatabaseTierStatus } from "./project-database-tier.entity";
 import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { GithubAppService } from "./github-app.service";
@@ -15,11 +15,11 @@ import { GithubActionsAwsCapabilityService, WorkflowAwsCapabilityError } from ".
 import { GithubActionsDispatchError, GithubActionsService } from "./pipeline/github-actions.service";
 import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
 import { Project } from "./project.entity";
-import { RepositorySourceService } from "./repository-source.service";
+import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
 import { DEPLOYGUARD_PLATFORM_PORT } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
-import { aliasesFor } from "./configuration-ownership";
-import { immutableRailpackDispatchFingerprint, immutableRailpackImageTag, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, runtimeReferencesBase64 } from "./railpack-workflow-contract";
+import { aliasesFor, isDeployGuardManagedDatabaseAlias } from "./configuration-ownership";
+import { assertRailpackRuntimeConfiguration, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
@@ -29,6 +29,11 @@ import { DESTROY_CONFIRMATION_PHRASE } from "./destroy-confirmation";
 import { githubActionsDestroyEvidenceFromValue } from "./github-actions-destroy-evidence";
 import { ProjectDeletionService } from "./project-deletion.service";
 import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
+import { ProjectDeployableService } from "./project-deployable-service.entity";
+import { classifyStructuredFailure } from "./failure-ownership";
+import { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
+import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
+import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -38,12 +43,10 @@ type RollbackTargetIdentity = {
   targetOperationId: string;
   generationId: string | null;
   sourceSha: string;
-  imageUri: string;
-  imageDigest: string;
-  immutableImage: string;
+  services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; runtimeConfigRevisionId: string; runtimeConfiguration: { environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null } } }>;
 };
 
-/** Single-service Railpack deployment admission; it does not inspect source. */
+/** Explicit-service Railpack deployment admission; it does not inspect application source. */
 @Injectable()
 export class RailpackDeploymentService {
   private readonly reconciliationInFlight = new Map<string, Promise<void>>();
@@ -56,6 +59,9 @@ export class RailpackDeploymentService {
     @InjectRepository(ProjectStableRelease) private readonly releases: Repository<ProjectStableRelease>,
     @InjectRepository(ProjectEnvironmentVariable) private readonly variables: Repository<ProjectEnvironmentVariable>,
     @InjectRepository(ProjectDatabaseTier) private readonly databaseTiers: Repository<ProjectDatabaseTier>,
+    @InjectRepository(ProjectDeployableService) private readonly deployableServices: Repository<ProjectDeployableService>,
+    @InjectRepository(ProjectServiceRuntimeConfigRevision) private readonly runtimeConfigRevisions: Repository<ProjectServiceRuntimeConfigRevision>,
+    @InjectRepository(ProjectGenerationServiceRevision) private readonly serviceRevisions: Repository<ProjectGenerationServiceRevision>,
     private readonly githubApp: GithubAppService,
     private readonly actions: GithubActionsService,
     private readonly oidcTrust: GithubActionsOidcTrustService,
@@ -107,15 +113,16 @@ export class RailpackDeploymentService {
       order: { deployedAt: "DESC" },
     });
     if (!target) return { candidates: [] };
-    const immutable = this.rollbackTarget(target);
+    let immutable: RollbackTargetIdentity;
+    try { immutable = await this.rollbackTarget(target); }
+    catch { return { candidates: [], unavailableReason: "The historical release predates immutable runtime-configuration revisions and cannot be rolled back safely." }; }
     return { candidates: [{
       releaseId: target.id,
       targetOperationId: target.deployedByPipelineRunId,
       generationId: target.generationId,
       releaseRevision: target.shortCommitSha,
       commitSha: target.commitSha,
-      imageUri: immutable.imageUri,
-      imageDigest: immutable.imageDigest,
+      services: immutable.services,
       appPort: target.appPort,
       healthCheckPath: target.healthCheckPath,
       deployedAt: target.deployedAt,
@@ -130,7 +137,7 @@ export class RailpackDeploymentService {
       status: StableReleaseStatus.ROLLBACK_TARGET,
     } });
     if (!target) throw new NotFoundException("The selected rollback release is no longer the immediate rollback target.");
-    return this.dispatch(user, projectId, "rollback", this.rollbackTarget(target));
+    return this.dispatch(user, projectId, "rollback", await this.rollbackTarget(target));
   }
   async latest(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
@@ -188,6 +195,15 @@ export class RailpackDeploymentService {
     const active = await this.runs.findOne({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
     if (active) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: active } };
     const environmentName = canonicalEnvironmentName(project);
+    const admittedServiceRows = action === "destroy" ? [] : await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } });
+    if (action !== "destroy") {
+      if (!admittedServiceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
+      try {
+        requireApplicationEntrypointServiceId(project.applicationEntryPointServiceId, action === "rollback" ? rollbackTarget?.services || [] : admittedServiceRows);
+      } catch (error) {
+        throw new ServiceUnavailableException(error instanceof Error ? error.message : "Select an application service before deploying this project.");
+      }
+    }
     const operationId = randomUUID();
     const attempt = await this.runs.count({ where: { projectId } }) + 1;
     const destroyRoute = action === "destroy"
@@ -211,12 +227,6 @@ export class RailpackDeploymentService {
       operation.currentStage = "github_authentication";
       await this.runs.save(operation);
       const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
-      operation.currentStage = "caller_reconciliation";
-      await this.runs.save(operation);
-      await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
-      operation.currentStage = "oidc_authorization";
-      await this.runs.save(operation);
-      await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
       operation.currentStage = "source_resolution";
       await this.runs.save(operation);
       const destroyRelease = action === "destroy" ? await this.authoritativeDestroyRelease(project, environmentName, destroyRoute?.liveGenerationId || null) : null;
@@ -224,22 +234,35 @@ export class RailpackDeploymentService {
         : action === "destroy" ? destroyRelease?.commitSha || ""
           : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
-      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action);
+      const serviceRows = action === "destroy" ? await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } }) : admittedServiceRows;
+      if (!serviceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
+      if (action === "deploy") {
+        operation.currentStage = "service_directory_validation";
+        await this.runs.save(operation);
+        await this.source.assertDirectoriesAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, services: serviceRows.map((service) => ({ serviceId: service.id, serviceDirectory: service.serviceDirectory })), accessToken: credential.token });
+      }
+      operation.currentStage = "caller_reconciliation";
+      await this.runs.save(operation);
+      await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
+      operation.currentStage = "oidc_authorization";
+      await this.runs.save(operation);
+      await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
+      const immutableTarget = action === "destroy" && destroyRelease ? await this.destroyTarget(destroyRelease) : rollbackTarget;
+      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget);
       const inputs: RailpackWorkflowInputs = {
         deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
         repository_full_name: project.repositoryFullName, repository_branch: project.targetBranch, commit_sha: sourceSha,
-        image_tag: immutableRailpackImageTag(sourceSha, operationId), environment_references_base64: runtimeReferencesBase64(runtime),
-        managed_database_enabled: String(runtime.managedDatabase.enabled), infrastructure_namespace: `/deployguard/${project.id}/${environmentName}`,
+        services_base64: servicesBase64(runtime), infrastructure_namespace: `/deployguard/${project.id}/${environmentName}`,
         aws_region: this.config.get<string>("AWS_REGION", "us-east-1"), aws_role_arn: this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"),
         vpc_id: this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
-        terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"), platform_port: String(DEPLOYGUARD_PLATFORM_PORT), rollback_image_digest: rollbackTarget?.immutableImage || "",
+        terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"), platform_port: String(DEPLOYGUARD_PLATFORM_PORT),
         control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
       };
       operation.commitSha = sourceSha;
-      operation.imageTag = inputs.image_tag;
+      operation.imageTag = null;
       operation.currentStage = "aws_capability_verification";
       await this.runs.save(operation);
-      await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled: runtime.managedDatabase.enabled });
+      await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled: runtime.services.some((service) => service.databaseAttached) });
       operation.currentStage = "workflow_dispatch";
       operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", configuredControlPlaneSha: inputs.control_plane_sha, immutableDispatchInputs: inputs, immutableDispatchFingerprint: immutableRailpackDispatchFingerprint(inputs) };
       await this.runs.save(operation);
@@ -253,6 +276,8 @@ export class RailpackDeploymentService {
     } catch (error) {
       const failure = this.dispatchFailure(error, operation.currentStage);
       operation.status = PipelineRunStatus.FAILED; operation.currentStage = "dispatch_failed"; operation.githubWorkflowStatus = "not_dispatched"; operation.failedAt = new Date(); operation.errorMessage = failure.message;
+      const ownership = classifyStructuredFailure(failure.stage, `${failure.message} ${JSON.stringify(failure.evidence)}`);
+      operation.failureOwner = ownership.failureOwner; operation.externalProvider = ownership.externalProvider; operation.failureCode = ownership.failureCode; operation.failureServiceId = ownership.failureServiceId;
       operation.metadata = { ...(operation.metadata || {}), dispatchState: "failed", failureSource: "deployguard_dispatch", failedStage: failure.stage, safeLog: failure.message, dispatchFailure: failure.evidence };
       await this.runs.save(operation);
       return { deployment: { state: "dispatch_failed", message: "Deployment could not start. DeployGuard failed while starting the GitHub Actions deployment.", operation } };
@@ -260,19 +285,69 @@ export class RailpackDeploymentService {
     return { deployment: { state: "accepted", message: "Railpack deployment dispatched to GitHub Actions.", operation } };
   }
 
-  private rollbackTarget(release: ProjectStableRelease): RollbackTargetIdentity {
-    const imageDigest = typeof release.metadata?.imageDigest === "string" ? release.metadata.imageDigest : "";
-    const imageUri = release.imageUri;
-    const immutableImage = `${imageUri}@${imageDigest}`;
+  private async rollbackTarget(release: ProjectStableRelease): Promise<RollbackTargetIdentity> {
+    if (!release.generationId) throw new ServiceUnavailableException("The rollback target has no canonical generation identity.");
+    const revisions = await this.serviceRevisions.find({ where: { generationId: release.generationId }, relations: { runtimeConfigRevision: true } });
+    const services = revisions.sort((a, b) => a.serviceId.localeCompare(b.serviceId)).map((revision) => ({
+      serviceId: revision.serviceId, serviceName: revision.serviceName, serviceDirectory: revision.serviceDirectory,
+      imageUri: revision.imageUri, imageDigest: revision.imageDigest, immutableImage: `${revision.imageUri}@${revision.imageDigest}`,
+      runtimeConfigRevisionId: revision.runtimeConfigRevisionId,
+      runtimeConfiguration: {
+        environment: revision.runtimeConfigRevision.nonSecretEnvironment,
+        secretReferences: revision.runtimeConfigRevision.secretReferences,
+        databaseAttached: revision.runtimeConfigRevision.databaseConfiguration.attached === true,
+        managedDatabase: {
+          engine: (revision.runtimeConfigRevision.databaseConfiguration.engine || null) as "postgres" | "mysql" | "mongodb" | null,
+          aliases: Array.isArray(revision.runtimeConfigRevision.databaseConfiguration.aliases) ? revision.runtimeConfigRevision.databaseConfiguration.aliases as string[] : [],
+          secretVersionId: typeof revision.runtimeConfigRevision.databaseConfiguration.secretVersionId === "string" ? revision.runtimeConfigRevision.databaseConfiguration.secretVersionId : null,
+        },
+      },
+      rollbackSafe: revision.runtimeConfigRevision.isRollbackSafe && Boolean(revision.runtimeConfigRevision.sealedAt),
+    }));
     if (release.metadata?.releaseEvidenceVerified !== true
       || !release.deployedByPipelineRunId
       || !/^[0-9a-f]{40}$/i.test(release.commitSha)
-      || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*$/i.test(imageUri)
-      || !/^sha256:[0-9a-f]{64}$/.test(imageDigest)
-      || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(immutableImage)) {
-      throw new ServiceUnavailableException("The rollback target does not contain valid immutable ECR release evidence.");
+      || !services.length
+      || services.some((service) => !service.rollbackSafe || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId) || !/^[0-9a-f-]{36}$/i.test(service.serviceId) || !service.serviceName || !service.serviceDirectory || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage))) {
+      throw new ServiceUnavailableException("The rollback target does not contain a complete immutable image and runtime-configuration revision set.");
     }
-    return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, imageUri, imageDigest, immutableImage };
+    return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, services: services.map(({ rollbackSafe: _rollbackSafe, ...service }) => service) };
+  }
+
+  /**
+   * Destroy consumes the exact deployed service/revision set, but never needs
+   * to claim it is safe to roll back. Older verified releases may therefore
+   * be destroyable while correctly remaining unavailable as rollback targets.
+   */
+  private async destroyTarget(release: ProjectStableRelease): Promise<RollbackTargetIdentity> {
+    if (!release.generationId) throw new ServiceUnavailableException("Destroy requires a canonical deployed generation identity.");
+    const revisions = await this.serviceRevisions.find({ where: { generationId: release.generationId }, relations: { runtimeConfigRevision: true } });
+    const services = revisions.sort((a, b) => a.serviceId.localeCompare(b.serviceId)).map((revision) => ({
+      serviceId: revision.serviceId,
+      serviceName: revision.serviceName,
+      serviceDirectory: revision.serviceDirectory,
+      imageUri: revision.imageUri,
+      imageDigest: revision.imageDigest,
+      immutableImage: `${revision.imageUri}@${revision.imageDigest}`,
+      runtimeConfigRevisionId: revision.runtimeConfigRevisionId,
+      runtimeConfiguration: {
+        // Platform-owned PORT/HOST are immutable deployment contract values,
+        // persisted separately from user environment data. Retain them for a
+        // legacy destroy without inventing any historical user configuration.
+        environment: { ...(revision.runtimeConfigRevision?.nonSecretEnvironment || {}), ...(revision.runtimeConfigRevision?.platformValues || {}) },
+        secretReferences: revision.runtimeConfigRevision?.secretReferences,
+        databaseAttached: revision.runtimeConfigRevision?.databaseConfiguration?.attached === true,
+        managedDatabase: {
+          engine: (revision.runtimeConfigRevision?.databaseConfiguration?.engine || null) as "postgres" | "mysql" | "mongodb" | null,
+          aliases: Array.isArray(revision.runtimeConfigRevision?.databaseConfiguration?.aliases) ? revision.runtimeConfigRevision.databaseConfiguration.aliases as string[] : [],
+          secretVersionId: typeof revision.runtimeConfigRevision?.databaseConfiguration?.secretVersionId === "string" ? revision.runtimeConfigRevision.databaseConfiguration.secretVersionId : null,
+        },
+      },
+    }));
+    if (release.metadata?.releaseEvidenceVerified !== true || !release.deployedByPipelineRunId || !/^[0-9a-f]{40}$/i.test(release.commitSha) || !services.length || services.some((service) => service.runtimeConfiguration.environment.PORT !== String(DEPLOYGUARD_PLATFORM_PORT) || service.runtimeConfiguration.environment.HOST !== "0.0.0.0" || !service.runtimeConfiguration.secretReferences || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId) || !/^[0-9a-f-]{36}$/i.test(service.serviceId) || !service.serviceName || !service.serviceDirectory || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage))) {
+      throw new ServiceUnavailableException("Destroy requires the complete immutable deployed service revision set.");
+    }
+    return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, services };
   }
 
   private async authoritativeDestroyRelease(project: Project, environmentName: string, generationId: string | null) {
@@ -288,10 +363,10 @@ export class RailpackDeploymentService {
     const value = operation?.metadata?.rollbackTarget;
     if (!value || typeof value !== "object") throw new ServiceUnavailableException("The failed rollback does not retain a canonical immutable target.");
     const target = value as Record<string, unknown>;
-    const immutableImage = String(target.immutableImage || "");
+    const services = Array.isArray(target.services) ? target.services as Array<Record<string, unknown>> : [];
     if (!/^[0-9a-f]{40}$/i.test(String(target.sourceSha || ""))
-      || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(immutableImage)
-      || immutableImage !== `${String(target.imageUri || "")}@${String(target.imageDigest || "")}`) {
+      || !services.length
+      || services.some((service) => !/^[0-9a-f-]{36}$/i.test(String(service.runtimeConfigRevisionId || "")) || !service.runtimeConfiguration || String(service.immutableImage || "") !== `${String(service.imageUri || "")}@${String(service.imageDigest || "")}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(String(service.immutableImage || "")))) {
       throw new ServiceUnavailableException("The failed rollback target identity is invalid.");
     }
     return target as unknown as RollbackTargetIdentity;
@@ -304,6 +379,9 @@ export class RailpackDeploymentService {
     if (error instanceof GithubActionsDispatchError) {
       return { stage: stage || "workflow_dispatch", message: error.safeDetail || "DeployGuard could not dispatch the GitHub Actions workflow.", evidence: error.evidence || { classification: error.diagnosticCode } };
     }
+    if (error instanceof RepositorySourceError) {
+      return { stage: stage || "source_resolution", message: error.message.slice(0, 500), evidence: { classification: "repository_configuration", safeDetail: error.safeDetail } };
+    }
     const message = error instanceof Error ? error.message : "DeployGuard could not start the deployment.";
     return { stage: stage || "dispatching", message: message.slice(0, 500), evidence: { classification: "deployguard_dispatch_failure" } };
   }
@@ -312,6 +390,12 @@ export class RailpackDeploymentService {
     const metadata = operation.metadata || {};
     const action = (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
     const dispatchFailed = metadata.dispatchState === "failed" && !operation.githubWorkflowRunId;
+    let failureServiceName: string | null = null;
+    try {
+      const encoded = (metadata.immutableDispatchInputs as Record<string, unknown> | undefined)?.services_base64;
+      const contract = typeof encoded === "string" ? JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as RailpackRuntimeConfiguration : null;
+      failureServiceName = contract?.services.find((service) => service.serviceId === operation.failureServiceId)?.serviceName || null;
+    } catch { failureServiceName = null; }
     return {
       id: operation.id, attempt: String(metadata.attempt || 1), retryOfOperationId: typeof metadata.retryOfOperationId === "string" ? metadata.retryOfOperationId : null,
       deploymentAction: action, status: dispatchFailed ? "dispatch_failed" : operation.status,
@@ -321,6 +405,7 @@ export class RailpackDeploymentService {
       stageLabel: dispatchFailed ? "Deployment could not start" : deployguardOperationStagePresentation(operation.currentStage, action).label,
       failedStageLabel: dispatchFailed ? deployguardOperationStagePresentation(metadata.failedStage || "dispatch", action).label : operation.status === PipelineRunStatus.FAILED ? deployguardOperationStagePresentation(metadata.failedStage || operation.currentStage, action).label : null,
       errorMessage: operation.errorMessage || null, githubRunCreated: Boolean(operation.githubWorkflowRunId),
+      failureOwner: operation.failureOwner || null, externalProvider: operation.externalProvider || null, failureCode: operation.failureCode || null, failureServiceId: operation.failureServiceId || null, failureServiceName,
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
       workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages
@@ -333,29 +418,69 @@ export class RailpackDeploymentService {
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy"): Promise<RailpackRuntimeConfiguration> {
-    const rows = await this.variables.createQueryBuilder("variable").addSelect("variable.value").where({ projectId: project.id, environment: environmentName, isActive: true }).getMany();
-    const environment: Record<string, string> = { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" };
-    const secretValues: Record<string, string> = {};
-    for (const row of rows) {
-      if (["PORT", "HOST"].includes(row.key)) continue;
-      const value = this.crypto.decrypt(row.value);
-      if (row.isSecret) secretValues[row.key] = value; else environment[row.key] = value;
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null): Promise<RailpackRuntimeConfiguration> {
+    if (action !== "deploy") {
+      if (!target?.services.length) throw new ServiceUnavailableException("The lifecycle target does not contain canonical service revisions.");
+      const services = target.services.map((service) => ({
+        serviceId: service.serviceId,
+        serviceName: service.serviceName,
+        serviceDirectory: service.serviceDirectory,
+        runtimeConfigRevisionId: service.runtimeConfigRevisionId,
+        environment: { ...service.runtimeConfiguration.environment },
+        secretReferences: { ...service.runtimeConfiguration.secretReferences },
+        databaseAttached: service.runtimeConfiguration.databaseAttached,
+        managedDatabase: { ...service.runtimeConfiguration.managedDatabase, aliases: [...service.runtimeConfiguration.managedDatabase.aliases] },
+        rollbackImage: service.immutableImage,
+      })).sort((a, b) => a.serviceId.localeCompare(b.serviceId));
+      const projectDeletion = action === "destroy"
+        ? { generationIds: (await this.dataSource.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName } })).map((generation) => generation.id).sort() }
+        : undefined;
+      if (action === "destroy" && !projectDeletion?.generationIds.length) throw new ServiceUnavailableException("Destroy requires an exact persisted runtime generation.");
+      return { schemaVersion: 2, projectId: project.id, environmentName, operationId, sourceSha, services, ...(projectDeletion ? { projectDeletion } : {}) };
     }
-    const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, environmentName, operationId, environment, secretNames: Object.keys(secretValues).sort() })).digest("hex");
-    const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues });
+    const serviceRows = await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } });
+    if (!serviceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
+    const rows = await this.variables.createQueryBuilder("variable").addSelect("variable.value").where({ projectId: project.id, environment: environmentName, isActive: true }).getMany();
     const tier = await this.databaseTiers.findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } });
+    if (tier && (!tier.attachedServiceId || !serviceRows.some((service) => service.id === tier.attachedServiceId))) throw new ServiceUnavailableException("Managed database attachment does not reference a configured service.");
     const engine = tier?.engine || "postgres";
     const managedAliases = tier ? [
       ...aliasesFor(engine, "host"), ...aliasesFor(engine, "port"),
       ...aliasesFor(engine, "username"), ...aliasesFor(engine, "password"),
       ...aliasesFor(engine, "database"), ...aliasesFor(engine, "url"),
     ] : [];
-    const projectDeletion = action === "destroy"
-      ? { generationIds: (await this.dataSource.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName } })).map((generation) => generation.id).sort() }
-      : undefined;
-    if (action === "destroy" && !projectDeletion?.generationIds.length) throw new ServiceUnavailableException("Destroy requires an exact persisted runtime generation.");
-    return { schemaVersion: 1, projectId: project.id, environmentName, operationId, sourceSha, environment, secretReferences: materialized?.valueFromByName || {}, managedDatabase: { enabled: Boolean(tier), engine: tier?.engine || null, aliases: [...new Set(managedAliases)].sort() }, ...(projectDeletion ? { projectDeletion } : {}) };
+    const services = [] as RailpackRuntimeConfiguration["services"];
+    for (const service of serviceRows) {
+      const environment: Record<string, string> = { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" };
+      const secretValues: Record<string, string> = {};
+      for (const row of rows.filter((variable) => variable.serviceId === service.id)) {
+        if (["PORT", "HOST"].includes(row.key) || isDeployGuardManagedDatabaseAlias(row.key)) continue;
+        const value = this.crypto.decrypt(row.value);
+        if (row.isSecret) secretValues[row.key] = value; else environment[row.key] = value;
+      }
+      const secretValueDigests = Object.fromEntries(Object.keys(secretValues).sort().map((key) => [key, createHash("sha256").update(secretValues[key]).digest("hex")]));
+      const databaseAttached = Boolean(tier && tier.attachedServiceId === service.id);
+      const databaseConfiguration = { attached: databaseAttached, engine: databaseAttached ? tier?.engine || null : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] };
+      const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" } })).digest("hex");
+      const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues });
+      const revision = await this.runtimeConfigRevisions.save(this.runtimeConfigRevisions.create({
+        projectId: project.id,
+        serviceId: service.id,
+        createdByOperationId: operationId,
+        environmentName,
+        configurationFingerprint,
+        nonSecretEnvironment: environment,
+        secretReferences: materialized?.valueFromByName || {},
+        secretVersionIds: materialized ? Object.fromEntries(materialized.secretNames.map((name) => [name, materialized.versionToken])) : {},
+        databaseConfiguration,
+        platformValues: { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" },
+        isRollbackSafe: true,
+        legacyBackfill: false,
+        sealedAt: null,
+      }));
+      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, runtimeConfigRevisionId: revision.id, environment, secretReferences: materialized?.valueFromByName || {}, databaseAttached, managedDatabase: { engine: databaseAttached ? tier?.engine || null : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
+    }
+    return { schemaVersion: 2, projectId: project.id, environmentName, operationId, sourceSha, services: services.sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
   }
 
   private async reconcile(operation: ProjectPipelineRun) {
@@ -419,6 +544,8 @@ export class RailpackDeploymentService {
           operation.status = PipelineRunStatus.FAILED;
           operation.currentStage = failureEvidence?.failedStage || "release_failed";
           operation.errorMessage = failureEvidence?.safeLog || `GitHub Actions concluded: ${conclusion || "failure"}.`;
+          const ownership = classifyStructuredFailure(failureEvidence?.failedStage || "release_failed", failureEvidence?.safeLog || "");
+          operation.failureOwner = ownership.failureOwner; operation.externalProvider = ownership.externalProvider; operation.failureCode = ownership.failureCode; operation.failureServiceId = ownership.failureServiceId;
           operation.metadata = {
             ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
             ...(failureEvidence ? { failedStage: failureEvidence.failedStage, safeLog: failureEvidence.safeLog, workflowStages: failureEvidence.workflowStages, failureSource: "github_actions" } : {}),
@@ -451,6 +578,7 @@ export class RailpackDeploymentService {
     operation.currentStage = "release_finalization";
     operation.failedAt = new Date();
     operation.errorMessage = "DeployGuard could not finalize the verified release.";
+    operation.failureOwner = "DEPLOYGUARD_PLATFORM"; operation.externalProvider = null; operation.failureCode = "DG_RELEASE_FINALIZATION_FAILED"; operation.failureServiceId = null;
     operation.metadata = {
       ...(operation.metadata || {}),
       ...evidence,
@@ -473,6 +601,7 @@ export class RailpackDeploymentService {
     operation.failedAt = new Date();
     operation.completedAt = operation.completedAt || operation.failedAt;
     operation.errorMessage = "DeployGuard rejected incompatible terminal release evidence.";
+    operation.failureOwner = "DEPLOYGUARD_PLATFORM"; operation.externalProvider = null; operation.failureCode = "DG_WORKFLOW_CONTRACT_INVALID"; operation.failureServiceId = null;
     operation.metadata = {
       ...(operation.metadata || {}), workflowConclusion: "success", workflowUpdatedAt: new Date().toISOString(),
       failedStage: "release_evidence_validation", failureSource: "deployguard_reconciliation",
@@ -520,14 +649,31 @@ export class RailpackDeploymentService {
       if (!destroyVerification) throw new Error("The destroy result artifact does not contain exact-scope deletion evidence.");
       return { releaseArtifact: artifact, destroyed: true, destroyVerification };
     }
-    const image = String(artifact.image || "");
-    const match = image.match(/^(.*)@(sha256:[0-9a-f]{64})$/);
-    if (!match || !artifact.terraform || typeof artifact.terraform !== "object") throw new Error("The release result artifact does not prove an immutable runtime image.");
+    if (!artifact.terraform || typeof artifact.terraform !== "object" || !Array.isArray(artifact.services) || !artifact.services.length) throw new Error("The release result artifact does not prove the complete service runtime.");
     const terraform = artifact.terraform as Record<string, unknown>;
-    if (terraform.image !== image || typeof terraform.alb_url !== "string" || typeof terraform.task_definition_arn !== "string" || typeof terraform.ecs_service_arn !== "string") {
-      throw new Error("The release result artifact does not prove ECS and ALB materialization.");
+    const terraformServices = terraform.services && typeof terraform.services === "object" ? terraform.services as Record<string, Record<string, unknown>> : {};
+    const encoded = (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.services_base64;
+    if (typeof encoded !== "string") throw new Error("The operation does not retain its immutable service contract.");
+    const expected = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as RailpackRuntimeConfiguration;
+    assertRailpackRuntimeConfiguration(expected);
+    const expectedById = new Map(expected.services.map((service) => [service.serviceId, service]));
+    const services = artifact.services.map((value) => {
+      if (!value || typeof value !== "object") throw new Error("Release service evidence is malformed.");
+      const item = value as Record<string, unknown>; const expectedService = expectedById.get(String(item.serviceId || ""));
+      const imageUri = String(item.imageUri || ""); const imageDigest = String(item.imageDigest || ""); const image = String(item.image || "");
+      const runtime = terraformServices[String(item.serviceId || "")];
+      if (!expectedService || String(item.runtimeConfigRevisionId || "") !== expectedService.runtimeConfigRevisionId || String(item.serviceName || "") !== expectedService.serviceName || String(item.serviceDirectory || "") !== expectedService.serviceDirectory || image !== `${imageUri}@${imageDigest}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*$/i.test(imageUri) || !/^sha256:[0-9a-f]{64}$/.test(imageDigest) || !runtime || runtime.image !== image || runtime.runtime_config_revision_id !== expectedService.runtimeConfigRevisionId || typeof runtime.public_url !== "string" || typeof runtime.task_definition_arn !== "string" || typeof runtime.ecs_service_arn !== "string") throw new Error("Release service evidence does not match its immutable service contract and Terraform runtime.");
+      return { serviceId: expectedService.serviceId, serviceName: expectedService.serviceName, serviceDirectory: expectedService.serviceDirectory, sourceSha, runtimeConfigRevisionId: expectedService.runtimeConfigRevisionId, imageUri, imageDigest, image, publicUrl: runtime.public_url, taskDefinitionArn: runtime.task_definition_arn, ecsServiceArn: runtime.ecs_service_arn, ecsServiceName: runtime.ecs_service_name, albArn: runtime.alb_arn, albName: runtime.alb_name, targetGroupArn: runtime.alb_target_group_arn, targetGroupName: runtime.alb_target_group_name, cloudWatchLogGroupName: runtime.cloudwatch_log_group_name, applicationContainerName: runtime.application_container_name };
+    });
+    if (services.length !== expected.services.length || new Set(services.map((service) => service.serviceId)).size !== expected.services.length) {
+      throw new Error("Release result does not contain the complete immutable service set.");
     }
-    return { releaseArtifact: artifact, imageUri: match[1], imageDigest: match[2], albUrl: terraform.alb_url, taskDefinitionArn: terraform.task_definition_arn, ecsServiceArn: terraform.ecs_service_arn };
+    const database = terraform.database && typeof terraform.database === "object" ? terraform.database as Record<string, unknown> : null;
+    const attached = expected.services.find((service) => service.databaseAttached);
+    if ((attached && (!database || database.attached_service_id !== attached.serviceId || database.engine !== attached.managedDatabase.engine || typeof database.secret_version_id !== "string" || !database.secret_version_id)) || (!attached && database !== null)) {
+      throw new Error("Release result does not match the independent managed database runtime contract.");
+    }
+    return { releaseArtifact: artifact, services, terraform };
   }
 
   private async reconcileCompletedRelease(operation: ProjectPipelineRun) {
@@ -619,13 +765,13 @@ export class RailpackDeploymentService {
           retiredAt: null,
           failedAt: null,
           cleanedAt: null,
-          metadata: { executionEngine: "railpack", immutableImageDigest: immutable.imageDigest, releaseOperationId: current.id },
+          metadata: { executionEngine: "railpack", serviceImageDigests: (immutable.services as Array<Record<string, unknown>>).map((service) => ({ serviceId: service.serviceId, imageDigest: service.imageDigest })), releaseOperationId: current.id },
         });
       } else {
         generation.status = DeploymentGenerationStatus.LIVE;
         generation.activatedAt = generation.activatedAt || new Date();
         generation.resourceManifest = { ...generation.resourceManifest, ...runtimeIdentity };
-        generation.metadata = { ...generation.metadata, executionEngine: "railpack", immutableImageDigest: immutable.imageDigest, releaseOperationId: current.id };
+        generation.metadata = { ...generation.metadata, executionEngine: "railpack", serviceImageDigests: (immutable.services as Array<Record<string, unknown>>).map((service) => ({ serviceId: service.serviceId, imageDigest: service.imageDigest })), releaseOperationId: current.id };
       }
       const previous = await generations.find({ where: { projectId: project.id, environmentName, status: DeploymentGenerationStatus.LIVE } });
       for (const existing of previous) {
@@ -635,6 +781,74 @@ export class RailpackDeploymentService {
         existing.retiredAt = new Date();
         await generations.save(existing);
       }
+      await generations.save(generation);
+
+      const immutableServices = (immutable.services as Array<Record<string, unknown>>)
+        .slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId)));
+      const endpointProject = await manager.getRepository(Project).findOne({ where: { id: project.id } });
+      if (!endpointProject) throw new Error("Project application-entrypoint authority disappeared before release finalization.");
+      const applicationEntryPointServiceId = requireApplicationEntrypointServiceId(endpointProject.applicationEntryPointServiceId, immutableServices);
+      const applicationEndpoint = immutableServices.find((service) => String(service.serviceId) === applicationEntryPointServiceId);
+      if (!applicationEndpoint || typeof applicationEndpoint.publicUrl !== "string" || !/^https?:\/\//i.test(applicationEndpoint.publicUrl)) {
+        throw new Error("The selected application service has no verified public URL in the complete release evidence.");
+      }
+      const runtimeConfigIds = immutableServices.map((service) => String(service.runtimeConfigRevisionId));
+      const runtimeConfigs = await manager.getRepository(ProjectServiceRuntimeConfigRevision).find({ where: { id: In(runtimeConfigIds) } });
+      const runtimeConfigById = new Map(runtimeConfigs.map((revision) => [revision.id, revision]));
+      const databaseRuntime = (immutable.terraform as Record<string, unknown>)?.database as Record<string, unknown> | null;
+      if (runtimeConfigs.length !== immutableServices.length) throw new Error("Release runtime-configuration revision set is incomplete.");
+      for (const service of immutableServices) {
+        const revision = runtimeConfigById.get(String(service.runtimeConfigRevisionId));
+        if (!revision || revision.projectId !== project.id || revision.serviceId !== service.serviceId || !revision.isRollbackSafe || (action === "deploy" && revision.createdByOperationId !== current.id) || (action === "rollback" && !revision.sealedAt)) throw new Error("Release runtime-configuration ownership is invalid.");
+        if (revision.databaseConfiguration.attached === true) {
+          if (!databaseRuntime || databaseRuntime.attached_service_id !== revision.serviceId || typeof databaseRuntime.secret_version_id !== "string") throw new Error("Independent database runtime identity is incomplete.");
+          revision.databaseConfiguration = { ...revision.databaseConfiguration, secretArn: databaseRuntime.credentials_secret_arn, secretVersionId: databaseRuntime.secret_version_id, runtimeIdentity: databaseRuntime };
+        }
+        revision.sealedAt = revision.sealedAt || new Date();
+        await manager.getRepository(ProjectServiceRuntimeConfigRevision).save(revision);
+      }
+      if (databaseRuntime) {
+        const tier = await manager.getRepository(ProjectDatabaseTier).findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } });
+        if (!tier || tier.engine !== databaseRuntime.engine) throw new Error("Persisted managed database ownership does not match the verified independent runtime.");
+        tier.attachedServiceId = String(databaseRuntime.attached_service_id);
+        tier.activeGenerationId = generation.id;
+        tier.status = DatabaseTierStatus.READY;
+        tier.internalHost = String(databaseRuntime.host || "");
+        tier.efsFileSystemId = String(databaseRuntime.efs_file_system_id || "");
+        tier.efsAccessPointId = String(databaseRuntime.efs_access_point_id || "");
+        tier.credentialsSecretArn = String(databaseRuntime.credentials_secret_arn || "");
+        tier.databaseUrlSecretArn = String(databaseRuntime.credentials_secret_arn || "");
+        tier.lastError = null;
+        await manager.getRepository(ProjectDatabaseTier).save(tier);
+      }
+      const generationRevisions = manager.getRepository(ProjectGenerationServiceRevision);
+      const existingGenerationRevisions = await generationRevisions.find({ where: { generationId: generation.id } });
+      if (existingGenerationRevisions.length) {
+        const expectedByService = new Map(immutableServices.map((service) => [String(service.serviceId), service]));
+        if (existingGenerationRevisions.length !== immutableServices.length || existingGenerationRevisions.some((revision) => {
+          const expected = expectedByService.get(revision.serviceId);
+          return !expected || revision.projectId !== project.id || revision.sourceSha !== current.commitSha || revision.imageUri !== expected.imageUri || revision.imageDigest !== expected.imageDigest || revision.runtimeConfigRevisionId !== expected.runtimeConfigRevisionId;
+        })) throw new Error("Generation service revision set conflicts with immutable release evidence.");
+      }
+      if (!existingGenerationRevisions.length) {
+        await generationRevisions.save(immutableServices.map((service) => generationRevisions.create({
+          projectId: project.id,
+          generationId: generation.id,
+          serviceId: String(service.serviceId),
+          serviceName: String(service.serviceName),
+          serviceDirectory: String(service.serviceDirectory),
+          sourceSha: current.commitSha || "",
+          imageUri: String(service.imageUri),
+          imageDigest: String(service.imageDigest),
+          runtimeConfigRevisionId: String(service.runtimeConfigRevisionId),
+          runtimeIdentity: service,
+        })));
+      }
+      generation.metadata = {
+        ...generation.metadata,
+        serviceRevisionIds: (await generationRevisions.find({ where: { generationId: generation.id } })).map((revision) => revision.id).sort(),
+        runtimeConfigRevisionIds: [...runtimeConfigIds].sort(),
+      };
       await generations.save(generation);
 
       const routes = manager.getRepository(ProjectEnvironmentRoute);
@@ -657,19 +871,17 @@ export class RailpackDeploymentService {
         environmentName,
         operationId: current.id,
         commitSha: current.commitSha || "",
-        imageUri: String(immutable.imageUri),
-        taskDefinitionArn: String(immutable.taskDefinitionArn),
-        ecsServiceArn: String(immutable.ecsServiceArn),
         healthCheckPath: "/",
         appPort: DEPLOYGUARD_PLATFORM_PORT,
-        metadata: { deployedUrl: immutable.albUrl, imageDigest: immutable.imageDigest, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
+        metadata: { deployedUrl: applicationEndpoint.publicUrl, publicUrls: Object.fromEntries(immutableServices.map((service) => [String(service.serviceId), service.publicUrl])), services: immutableServices, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
       });
       current.generationId = generation.id;
       current.status = PipelineRunStatus.COMPLETED;
       current.currentStage = "release_complete";
       current.errorMessage = null;
+      current.failureOwner = null; current.externalProvider = null; current.failureCode = null; current.failureServiceId = null;
       current.completedAt = current.completedAt || new Date();
-      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl: immutable.albUrl, releaseEvidenceVerified: true, runtimeIdentity };
+      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl: applicationEndpoint.publicUrl, publicUrls: Object.fromEntries(immutableServices.map((service) => [String(service.serviceId), service.publicUrl])), releaseEvidenceVerified: true, runtimeIdentity };
       await operations.save(current);
       Object.assign(operation, current);
     });
@@ -744,25 +956,27 @@ export class RailpackDeploymentService {
     const artifact = evidence.releaseArtifact as Record<string, unknown>;
     const terraform = artifact.terraform as Record<string, unknown>;
     const optional = (key: string) => typeof terraform?.[key] === "string" && terraform[key] ? terraform[key] : null;
+    const region = optional("aws_region");
+    const ecsClusterArn = optional("ecs_cluster_arn");
+    const ecsClusterName = optional("ecs_cluster_name");
+    const rawServices = evidence.services as Array<Record<string, unknown>>;
+    const services: Array<Record<string, unknown>> = rawServices.slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId))).map((service) => ({
+      ...service,
+      region,
+      ecsClusterArn,
+      ecsClusterName,
+    }));
     return {
-      region: optional("aws_region"),
-      ecsClusterArn: optional("ecs_cluster_arn"),
-      ecsClusterName: optional("ecs_cluster_name"),
-      ecsServiceArn: evidence.ecsServiceArn,
-      ecsServiceName: optional("ecs_service_name"),
-      taskDefinitionArn: evidence.taskDefinitionArn,
-      albArn: optional("alb_arn"),
-      albName: optional("alb_name"),
-      targetGroupArn: optional("alb_target_group_arn"),
-      targetGroupName: optional("alb_target_group_name"),
-      publicUrl: evidence.albUrl,
-      cloudWatchLogGroupName: optional("cloudwatch_log_group_name"),
-      applicationContainerName: optional("application_container_name"),
-      imageUri: evidence.imageUri,
-      imageDigest: evidence.imageDigest,
+      region,
+      ecsClusterArn,
+      ecsClusterName,
+      services,
+      serviceIds: services.map((service) => service.serviceId),
+      publicUrls: Object.fromEntries(services.map((service) => [String(service.serviceId), service.publicUrl])),
       terraformStateKey: `projects/${project.id}/${environmentName}/runtime/terraform.tfstate`,
       databaseEfsFileSystemId: optional("database_efs_file_system_id"),
       databaseEfsAccessPointId: optional("database_efs_access_point_id"),
+      database: terraform?.database && typeof terraform.database === "object" ? terraform.database : null,
     };
   }
 

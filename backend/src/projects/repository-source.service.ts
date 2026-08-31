@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { execFile } from "child_process";
-import { mkdtemp, rm } from "fs/promises";
+import { lstat, mkdtemp, realpath, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
@@ -46,6 +46,30 @@ export class RepositorySourceService {
     const sourceSha = stdout.trim().split(/\s+/)[0] || "";
     if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new RepositorySourceError("Selected branch was not found.", "branch could not be resolved");
     return sourceSha;
+  }
+
+  async assertDirectoriesAtExactSha(input: { repositoryUrl: string; branch: string; sourceSha: string; services: Array<{ serviceId: string; serviceDirectory: string }>; accessToken?: string | null }) {
+    if (!/^[0-9a-f]{40}$/i.test(input.sourceSha)) throw new RepositorySourceError("Exact source identity is invalid.", "source SHA was invalid");
+    const checkout = await this.checkout({ repositoryUrl: input.repositoryUrl, branch: input.branch, accessToken: input.accessToken });
+    try {
+      if (checkout.sourceSha.toLowerCase() !== input.sourceSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed while preparing deployment. Retry against the new exact SHA.", "source SHA changed before directory validation");
+      const root = await realpath(checkout.workspacePath);
+      for (const service of input.services) {
+        const directory = service.serviceDirectory;
+        const candidate = directory === "." ? root : join(root, ...directory.split("/"));
+        let resolved: string;
+        try {
+          const entry = await lstat(candidate);
+          if (!entry.isDirectory() && !entry.isSymbolicLink()) throw new Error("not-directory");
+          resolved = await realpath(candidate);
+        } catch {
+          throw new RepositorySourceError(`Configured service directory '${directory}' does not exist at source ${input.sourceSha.slice(0, 12)}.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_MISSING stage=service_directory_validation`);
+        }
+        if (resolved !== root && !resolved.startsWith(`${root}/`)) throw new RepositorySourceError(`Configured service directory '${directory}' escapes the repository.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_INVALID stage=service_directory_validation`);
+      }
+    } finally {
+      await this.cleanup(checkout.workspacePath);
+    }
   }
 
   async cleanup(workspacePath: string) { await rm(workspacePath, { recursive: true, force: true }); }

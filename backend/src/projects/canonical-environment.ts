@@ -2,6 +2,10 @@ export const DEFAULT_DEPLOYMENT_ENVIRONMENT = "dev";
 
 const ENVIRONMENT_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
+export function isCanonicalEnvironmentName(value: string): boolean {
+  return ENVIRONMENT_NAME.test(value);
+}
+
 export type EnvironmentIdentity = { environmentName?: string | null };
 
 /**
@@ -10,6 +14,6 @@ export type EnvironmentIdentity = { environmentName?: string | null };
  */
 export function canonicalEnvironmentName(project: EnvironmentIdentity): string {
   const value = String(project.environmentName || DEFAULT_DEPLOYMENT_ENVIRONMENT).trim();
-  if (!ENVIRONMENT_NAME.test(value)) throw new Error("Project has an invalid immutable environment identifier.");
+  if (!isCanonicalEnvironmentName(value)) throw new Error("Project has an invalid immutable environment identifier.");
   return value;
 }

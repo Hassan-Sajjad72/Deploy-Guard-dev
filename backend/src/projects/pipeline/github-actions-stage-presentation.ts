@@ -5,9 +5,11 @@ const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
   validate_immutable_release_input: "Validate Release",
   install_pinned_railpack: "Prepare Build",
   build_immutable_railpack_image: "Build Application",
+  build_immutable_railpack_images: "Build Applications",
   build_and_push_immutable_railpack_image: "Build Application",
   validate_application_runtime: "Validate Application Runtime",
   publish_immutable_image_to_ecr: "Publish Image",
+  publish_immutable_images_to_ecr: "Publish Images",
   workflow_dispatch: "Prepare Source",
   workflow_bootstrap: "Prepare Source",
   workflow_run_discovery: "GitHub Actions run was not created",
@@ -42,9 +44,12 @@ const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
   validate_immutable_release_input: { key: "validate_immutable_release_input", label: "Validate Release" },
   install_pinned_railpack: { key: "install_pinned_railpack", label: "Prepare Build" },
   build_immutable_railpack_image: { key: "build_immutable_railpack_image", label: "Build Application" },
+  build_immutable_railpack_images: { key: "build_immutable_railpack_images", label: "Build Applications" },
   validate_application_runtime: { key: "validate_application_runtime", label: "Validate Application Runtime" },
   publish_immutable_image_to_ecr: { key: "publish_immutable_image_to_ecr", label: "Publish Image" },
+  publish_immutable_images_to_ecr: { key: "publish_immutable_images_to_ecr", label: "Publish Images" },
   select_immutable_rollback_image: { key: "select_immutable_rollback_image", label: "Restore Release" },
+  select_immutable_rollback_service_images: { key: "select_immutable_rollback_service_images", label: "Restore Release" },
   install_terraform: { key: "install_terraform", label: "Deploy Runtime" },
   materialize_release_runtime: { key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application" },
   publish_verified_release_result: { key: "publish_verified_release_result", label: "Finalize Release" },
@@ -52,8 +57,8 @@ const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
 
 export type GithubActionsPresentationAction = "deploy" | "destroy" | "rollback";
 const ACTION_WORKFLOW_STAGES: Record<GithubActionsPresentationAction, Set<string>> = {
-  deploy: new Set(["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack", "build_immutable_railpack_image", "validate_application_runtime", "publish_immutable_image_to_ecr", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
-  rollback: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "select_immutable_rollback_image", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
+  deploy: new Set(["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack", "build_immutable_railpack_images", "validate_application_runtime", "publish_immutable_images_to_ecr", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
+  rollback: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "select_immutable_rollback_service_images", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
   destroy: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
 };
 export function githubActionsWorkflowStageRelevant(stage: unknown, action: GithubActionsPresentationAction) {
@@ -69,6 +74,7 @@ const BUILD_PHASE_FAILURE_STAGES = new Set([
   "generate_dockerfile_when_absent",
   "build_and_push_immutable_image",
   "build_immutable_railpack_image",
+  "build_immutable_railpack_images",
   "build_and_push_immutable_railpack_image",
   "validate_application_runtime",
 ]);
@@ -87,7 +93,7 @@ export function deployguardOperationStagePresentation(stage: unknown, action: Gi
   if (action === "rollback") {
     if (["release_evidence_pending", "release_evidence_validation", "release_finalization", "release_complete", "publish_verified_release_result"].includes(key)) return { key, label: "Finalize Rollback" };
     if (["install_terraform", "materialize_release_runtime", "terraform_apply", "terraform_plan_and_apply"].includes(key)) return { key, label: "Update Runtime and Verify Application" };
-    if (["select_immutable_rollback_image", "roll_back_to_immutable_application_release"].includes(key)) return { key, label: "Restore Release" };
+    if (["select_immutable_rollback_image", "select_immutable_rollback_service_images", "roll_back_to_immutable_application_release"].includes(key)) return { key, label: "Restore Release" };
     return { key, label: "Prepare Rollback" };
   }
   if (["release_evidence_pending", "release_evidence_validation", "verify_exact_project_deletion", "publish_verified_release_result"].includes(key)) return { key, label: "Verify Deletion" };
@@ -123,7 +129,7 @@ export function githubActionsWorkflowStepPresentation(step: unknown, action: Git
   const presentation = ACTION_WORKFLOW_STAGES[action].has(key) ? WORKFLOW_STEP_STAGES[key] || null : null;
   if (!presentation || action === "deploy") return presentation;
   if (action === "rollback") {
-    if (key === "select_immutable_rollback_image") return { ...presentation, label: "Restore Release" };
+    if (["select_immutable_rollback_image", "select_immutable_rollback_service_images"].includes(key)) return { ...presentation, label: "Restore Release" };
     if (key === "install_terraform" || key === "materialize_release_runtime") return { ...presentation, label: "Update Runtime and Verify Application" };
     if (key === "publish_verified_release_result") return { ...presentation, label: "Finalize Rollback" };
     return { ...presentation, label: "Prepare Rollback" };

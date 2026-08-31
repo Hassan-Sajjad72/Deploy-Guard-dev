@@ -15,6 +15,7 @@ import { Project } from "./project.entity";
 import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
 import { ProjectServiceBinding } from "./project-service-binding.entity";
 import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.entity";
+import { ExternalProvider, FailureOwner } from "./failure-ownership";
 
 export enum PipelineRunStatus {
   QUEUED = "queued",
@@ -184,6 +185,11 @@ export class ProjectPipelineRun {
 
   @Column({ nullable: true, name: "error_message", type: "text" })
   errorMessage: string;
+
+  @Column({ nullable: true, name: "failure_owner", type: "varchar", length: 40 }) failureOwner: FailureOwner | null;
+  @Column({ nullable: true, name: "external_provider", type: "varchar", length: 24 }) externalProvider: ExternalProvider | null;
+  @Column({ nullable: true, name: "failure_code", type: "varchar", length: 80 }) failureCode: string | null;
+  @Column({ nullable: true, name: "failure_service_id", type: "uuid" }) failureServiceId: string | null;
 
   @Column({ nullable: true, type: "jsonb" })
   metadata: Record<string, unknown> | null;

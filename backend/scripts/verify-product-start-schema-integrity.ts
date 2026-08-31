@@ -8,6 +8,8 @@ import { RepairDeploymentGenerationSchemaDrift1787356803000 } from "../src/migra
 import { RepairStableReleaseSchemaDrift1787356804000 } from "../src/migrations/1787356804000-RepairStableReleaseSchemaDrift";
 import { RepairNotificationSchemaDrift1787356809600 } from "../src/migrations/1787356809600-RepairNotificationSchemaDrift";
 import { RemoveRetiredRepositoryAnalysisSchema1787356810000 } from "../src/migrations/1787356810000-RemoveRetiredRepositoryAnalysisSchema";
+import { ProjectDeployableServices1787356813000 } from "../src/migrations/1787356813000-ProjectDeployableServices";
+import { RepairDeployableServiceUuidDefault1787356817000 } from "../src/migrations/1787356817000-RepairDeployableServiceUuidDefault";
 import { assertProductStartSchemaIntegrity } from "../src/projects/product-start-schema-integrity.service";
 
 const database = `deployguard_product_start_${randomUUID().replaceAll("-", "")}`;
@@ -44,7 +46,11 @@ void (async () => {
   await testDatabase.query(`CREATE TABLE migrations (id serial PRIMARY KEY, timestamp bigint NOT NULL, name varchar NOT NULL)`);
   await testDatabase.query(`INSERT INTO migrations (timestamp, name) VALUES (1760000000000, 'CreateProjectPipelineTables1760000000000')`);
   await testDatabase.query(`CREATE TABLE users (id integer PRIMARY KEY)`);
-  await testDatabase.query(`CREATE TABLE projects (id uuid PRIMARY KEY)`);
+  await testDatabase.query(`CREATE TABLE projects (
+    id uuid PRIMARY KEY,
+    app_directory varchar,
+    deployment_overrides jsonb NOT NULL DEFAULT '{}'::jsonb
+  )`);
   await testDatabase.query(`CREATE TABLE project_service_bindings (id uuid PRIMARY KEY)`);
   await testDatabase.query(`CREATE TABLE project_configuration_snapshots (id uuid PRIMARY KEY, pipeline_run_id uuid)`);
   const [detectionProfiles, preflightReports, deploymentContracts, deploymentRequirements] = retiredTables;
@@ -54,6 +60,8 @@ void (async () => {
   await testDatabase.query(`CREATE TABLE ${deploymentRequirements} (id uuid PRIMARY KEY, project_id uuid NOT NULL)`);
   await testDatabase.query(`CREATE TABLE project_database_tiers (
     id uuid PRIMARY KEY,
+    project_id uuid NOT NULL,
+    provider varchar NOT NULL DEFAULT 'none',
     active_generation_id uuid,
     external_host varchar,
     external_port integer,
@@ -63,6 +71,13 @@ void (async () => {
     credentials_secret_arn varchar,
     database_url_secret_arn varchar,
     ${retiredDetectorColumn} boolean NOT NULL DEFAULT false
+  )`);
+  await testDatabase.query(`CREATE TABLE project_environment_variables (
+    id uuid PRIMARY KEY,
+    project_id uuid NOT NULL,
+    key varchar NOT NULL,
+    normalized_key varchar NOT NULL,
+    encrypted_value text NOT NULL
   )`);
   await testDatabase.query(`CREATE TABLE project_persistent_storage (id uuid PRIMARY KEY, ${retiredDetectorColumn} boolean NOT NULL DEFAULT false)`);
   await testDatabase.query(`CREATE TABLE project_environment_routes (
@@ -87,9 +102,18 @@ void (async () => {
   await new RepairStableReleaseSchemaDrift1787356804000().up(runner);
   await new RepairNotificationSchemaDrift1787356809600().up(runner);
   await new RemoveRetiredRepositoryAnalysisSchema1787356810000().up(runner);
+  await new ProjectDeployableServices1787356813000().up(runner);
+  await new RepairDeployableServiceUuidDefault1787356817000().up(runner);
   await runner.release();
 
   await assertProductStartSchemaIntegrity(testDatabase);
+  const generatedProjectId = randomUUID();
+  await testDatabase.query(`INSERT INTO "projects" ("id") VALUES ($1)`, [generatedProjectId]);
+  const generatedServices = await testDatabase.query(
+    `INSERT INTO "project_deployable_services" ("project_id", "name") VALUES ($1, 'Web') RETURNING "id"`,
+    [generatedProjectId],
+  );
+  assert.match(generatedServices[0]?.id || "", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, "fresh project service insert must generate its UUID in PostgreSQL");
   const retired = await testDatabase.query(`
     SELECT table_name FROM information_schema.tables
     WHERE table_schema = 'public' AND table_name = ANY($1::text[])

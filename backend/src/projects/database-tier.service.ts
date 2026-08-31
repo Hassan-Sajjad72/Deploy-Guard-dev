@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository } from "typeorm";
 import { AuditLogService } from "../audit-log/audit-log.service";
-import { acquireProjectConfigurationAdvisoryLock } from "../infrastructure/database-service-binding.service";
+import { acquireProjectConfigurationAdvisoryLock } from "./project-configuration-lock";
 import { User } from "../users/user.entity";
 import { UpdateDatabaseTierDto } from "./dto/update-database-tier.dto";
 import { DatabaseTierProvider, DatabaseTierStatus, ProjectDatabaseTier } from "./project-database-tier.entity";
@@ -11,12 +11,14 @@ import { ProjectsService } from "./projects.service";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { ManagedDatabaseEngine, managedDatabaseProfile } from "./managed-database-engine";
 import { SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
+import { ProjectDeployableService } from "./project-deployable-service.entity";
 
 @Injectable()
 export class DatabaseTierService {
   constructor(
     @InjectRepository(ProjectDatabaseTier) private readonly tiers: Repository<ProjectDatabaseTier>,
     @InjectRepository(ProjectEnvironmentVariable) private readonly environmentVariables: Repository<ProjectEnvironmentVariable>,
+    @InjectRepository(ProjectDeployableService) private readonly deployableServices: Repository<ProjectDeployableService>,
     private readonly projects: ProjectsService,
     private readonly audit: AuditLogService,
     private readonly dataSource: DataSource,
@@ -38,6 +40,14 @@ export class DatabaseTierService {
       const engine: ManagedDatabaseEngine | null = dto.provider === DatabaseTierProvider.MANAGED ? (dto.engine || "postgres") : null;
       const tiers = manager.getRepository(ProjectDatabaseTier);
       const environmentVariables = manager.getRepository(ProjectEnvironmentVariable);
+      const services = manager.getRepository(ProjectDeployableService);
+      const configuredServices = await services.find({ where: { projectId }, order: { position: "ASC" } });
+      if (!configuredServices.length) throw new BadRequestException("A managed database requires a deployable service.");
+      const attachedServiceId = dto.provider === DatabaseTierProvider.MANAGED
+        ? (dto.attachedServiceId || (configuredServices.length === 1 ? configuredServices[0].id : null))
+        : null;
+      if (dto.provider === DatabaseTierProvider.MANAGED && !attachedServiceId) throw new BadRequestException("Select the service that receives managed database credentials.");
+      if (attachedServiceId && !configuredServices.some((service) => service.id === attachedServiceId)) throw new BadRequestException("The database attachment must reference a service in this project.");
       const existing = await tiers.findOne({ where: { projectId } });
       const established = existing?.provider === DatabaseTierProvider.MANAGED
         && Boolean(existing.efsFileSystemId || existing.credentialsSecretArn || existing.status === DatabaseTierStatus.READY);
@@ -49,6 +59,7 @@ export class DatabaseTierService {
       const managedDatabaseUser = `dg_${projectId.replace(/-/g, "").slice(0, 12)}`;
       const tier = tiers.create({
         ...(existing || {}), projectId,
+        attachedServiceId,
         provider: dto.provider,
         engine,
         status: dto.provider === DatabaseTierProvider.NONE ? DatabaseTierStatus.NOT_REQUIRED : DatabaseTierStatus.PENDING,
@@ -68,7 +79,7 @@ export class DatabaseTierService {
           isActive: false,
           supersededAt: new Date(),
           supersededReason: "Superseded by DeployGuard-managed database binding",
-        }).where("project_id = :projectId", { projectId }).andWhere("key IN (:...keys)", {
+        }).where("project_id = :projectId", { projectId }).andWhere("service_id = :attachedServiceId", { attachedServiceId }).andWhere("key IN (:...keys)", {
           keys: [...new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service === current.engine).flatMap((group) => [...group.aliases]))],
         }).execute();
       }
@@ -81,7 +92,7 @@ export class DatabaseTierService {
   private safe(tier: ProjectDatabaseTier | null) {
     if (!tier) return null;
     return {
-      id: tier.id, projectId: tier.projectId,
+      id: tier.id, projectId: tier.projectId, attachedServiceId: tier.attachedServiceId,
       provider: tier.provider, engine: tier.engine, status: tier.status,
       externalHost: tier.externalHost, externalPort: tier.externalPort,
       internalHost: tier.internalHost, databaseName: tier.databaseName, databaseUser: tier.databaseUser,

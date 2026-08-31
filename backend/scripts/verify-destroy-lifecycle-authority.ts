@@ -18,7 +18,7 @@ function failed(action: "deploy" | "rollback" | "destroy") {
     developerState: "live", developerAction: "open_application", developerMessage: `The latest ${action} operation failed. The verified stable release remains live.`,
     progress: { percentage: 60, phase: "deploy" as const, label: "Failed" }, repository: "owner/repository", branch: "main", commit: "a".repeat(40),
     latestAttempt: { operationId, generationId, workflowRunId: "33252955775", operationType: action, status: "failed_application", outcome: "blocked" as const, attempt: "2", message: "Terraform failed", releaseRevision: null, commit: "a".repeat(40), occurredAt: observedAt },
-    stableRelease: { id: "release", operationId: "previous", revision: "1", generationId, commit: "a".repeat(40), promotedAt: observedAt, rollbackAvailable: true, runtimeIdentity: { region: "us-east-1", ecsClusterArn: "cluster", ecsServiceArn: "service", targetGroupArn: "target", cloudWatchLogGroupName: "/deployguard/app", applicationContainerName: "application" } },
+    stableRelease: { id: "release", operationId: "previous", revision: "1", generationId, commit: "a".repeat(40), promotedAt: observedAt, rollbackAvailable: true, runtimeIdentity: { region: "us-east-1", ecsClusterArn: "cluster", services: [{ serviceId: "99999999-9999-4999-8999-999999999999", ecsServiceArn: "service", targetGroupArn: "target", cloudWatchLogGroupName: "/deployguard/app", applicationContainerName: "application" }] } },
     stableUrl: "https://application.example.test", estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null, canRetry: true, stateAuthority: null,
   } as any;
 }
@@ -26,11 +26,18 @@ function failed(action: "deploy" | "rollback" | "destroy") {
 function authority(projected: any, runtime: "present" | "absent" | "unknown") {
   const service: any = Object.create(ProjectCurrentStateService.prototype);
   service.config = { get: (_key: string, fallback?: unknown) => fallback };
-  return service.withStateAuthority(projectId, "dev", projected, null, {
+  const evidence = runtime === "present" ? {
+    observedAt,
+    ecr: { repository: "deployguard-test", imageTag: null, imageDigest: `sha256:${"a".repeat(64)}` },
+    ecs: { cluster: "cluster", service: "service", taskDefinitionRevision: 1, desiredCount: 1, runningCount: 1, pendingCount: 0 },
+    alb: { name: "alb", status: "active", targetHealth: ["healthy"], endpoint: "https://application.example.test" },
+    services: [],
+  } : null;
+  return service.withStateAuthority(projectId, "dev", projected, evidence, {
     observedAt,
     runtime,
     resources: { ecs: runtime === "unknown" ? "unknown" : runtime, alb: runtime === "unknown" ? "unknown" : runtime, cloudWatch: runtime === "unknown" ? "unknown" : runtime },
-    evidence: null,
+    evidence,
   });
 }
 
@@ -138,7 +145,7 @@ async function verifyReconcileUsesDestroyFinalizer() {
   service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
   service.actions = {
     getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }),
-    getResultArtifact: async () => JSON.stringify({ contractVersion: "deployguard.release-result/v2", action: "destroy", sourceSha: operation.commitSha, operationId, destroyed: true, destroyVerification: destroyEvidence() }),
+    getResultArtifact: async () => JSON.stringify({ contractVersion: "deployguard.release-result/v4", action: "destroy", sourceSha: operation.commitSha, operationId, destroyed: true, destroyVerification: destroyEvidence() }),
   };
   service.runs = { save: async (row: any) => row };
   service.sanitizer = new LogSanitizerService();
@@ -173,7 +180,7 @@ async function verifyAttemptFourContractFailureConverges() {
   assert.equal(operation.status, PipelineRunStatus.FAILED, "terminal GitHub success with stale Destroy evidence must converge to failure");
   assert.equal(operation.currentStage, "release_evidence_validation");
   assert.equal(operation.metadata.failureCategory, "release_contract_incompatible");
-  assert.match(operation.metadata.safeLog, /deployguard\.release-result\/v2/);
+  assert.match(operation.metadata.safeLog, /deployguard\.release-result\/v4/);
   assert.ok(operation.failedAt && operation.completedAt, "terminal reconciliation persists bounded terminal timestamps");
 }
 
@@ -186,6 +193,33 @@ async function verifyDestroyTargetsDeployedRelease() {
   service.releases.findOne = async () => null;
   await assert.rejects(() => service.authoritativeDestroyRelease(project, "dev", generationId), /authoritative verified deployed release identity/);
   await assert.rejects(() => service.authoritativeDestroyRelease(project, "dev", null), /authoritative verified deployed release identity/);
+}
+
+async function verifyRollbackUnsafeReleaseRemainsDestroyable() {
+  const service: any = Object.create(RailpackDeploymentService.prototype);
+  const release: any = {
+    id: "release", generationId, deployedByPipelineRunId: operationId, commitSha: "d".repeat(40),
+    metadata: { releaseEvidenceVerified: true },
+  };
+  const revision = {
+    serviceId: "99999999-9999-4999-8999-999999999999", serviceName: "Web", serviceDirectory: ".",
+    imageUri: "123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test", imageDigest: `sha256:${"a".repeat(64)}`,
+    runtimeConfigRevisionId: "88888888-8888-4888-8888-888888888888",
+    runtimeConfigRevision: {
+      // This deliberately models an older verified release: it is unsafe to
+      // roll back because secrets were not sealed, but Terraform still needs
+      // its exact persisted runtime references to destroy it.
+      nonSecretEnvironment: {}, platformValues: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {},
+      databaseConfiguration: { attached: false, aliases: [] }, isRollbackSafe: false, sealedAt: null,
+    },
+  };
+  service.serviceRevisions = { find: async () => [revision] };
+  await assert.rejects(() => service.rollbackTarget(release), /complete immutable image and runtime-configuration revision set/);
+  const target = await service.destroyTarget(release);
+  assert.equal(target.services[0].immutableImage, `${revision.imageUri}@${revision.imageDigest}`);
+  assert.deepEqual(target.services[0].runtimeConfiguration.environment, { PORT: "8080", HOST: "0.0.0.0" }, "legacy destroy uses only persisted platform contract values");
+  service.serviceRevisions = { find: async () => [] };
+  await assert.rejects(() => service.destroyTarget(release), /complete immutable deployed service revision set/);
 }
 
 function verifyDestroyPipelinePresentation() {
@@ -222,6 +256,7 @@ void (async () => {
   await verifyReconcileUsesDestroyFinalizer();
   await verifyAttemptFourContractFailureConverges();
   await verifyDestroyTargetsDeployedRelease();
+  await verifyRollbackUnsafeReleaseRemainsDestroyable();
   verifyDestroyPipelinePresentation();
   verifySharedPageAuthority();
   console.log("DESTROY_LIFECYCLE_AUTHORITY=PASS");

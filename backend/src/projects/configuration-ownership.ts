@@ -133,6 +133,13 @@ export function serviceAlias(key: string, service?: ManagedServiceKind | null) {
   return SERVICE_ALIAS_GROUPS.find((group) => (!service || group.service === service) && group.aliases.includes(normalized));
 }
 
+/** Database connection identity is platform-owned even before a managed
+ * database is attached. Storage paths are a separate ownership domain. */
+export function isDeployGuardManagedDatabaseAlias(key: string) {
+  const normalized = normalizeConfigurationKey(key);
+  return SERVICE_ALIAS_GROUPS.some((group) => group.service !== "storage" && group.aliases.includes(normalized));
+}
+
 export function aliasesFor(service: ManagedServiceKind, property: ServiceAliasDefinition["property"]) {
   return SERVICE_ALIAS_GROUPS.find((group) => group.service === service && group.property === property)?.aliases || [];
 }
@@ -172,6 +179,7 @@ export function ignoredSubmittedVariableNames(
 ) {
   return [...new Set(keys.map(normalizeConfigurationKey).filter((key) => {
     if (options.repositoryOwnedKeys?.has(key)) return true;
+    if (isDeployGuardManagedDatabaseAlias(key)) return true;
     const alias = serviceAlias(key, options.service);
     if (options.managedService && alias) return true;
     return Boolean(reservedVariable(key, options.service) && !alias);

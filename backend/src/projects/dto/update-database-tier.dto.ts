@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from "class-validator";
+import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from "class-validator";
 import { DatabaseTierProvider } from "../project-database-tier.entity";
 
 export class UpdateDatabaseTierDto {
@@ -10,4 +10,5 @@ export class UpdateDatabaseTierDto {
   @IsOptional() @IsString() @MaxLength(63) @Matches(/^[A-Za-z_][A-Za-z0-9_-]*$/) databaseUser?: string;
   @IsOptional() @IsBoolean() persistenceEnabled?: boolean;
   @IsOptional() @IsBoolean() backupEnabled?: boolean;
+  @IsOptional() @IsUUID() attachedServiceId?: string;
 }

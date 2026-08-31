@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigService } from "@nestjs/config";
+import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { ObservabilityService } from "../src/observability/observability.service";
 
 const root = join(__dirname, "..", "..");
@@ -64,7 +65,17 @@ function repositoryContracts() {
   assert.match(currentState, /unavailableReason/);
 }
 
+function applicationLogSecretSanitization() {
+  const sanitizer = new LogSanitizerService();
+  const plaintext = "841426246971158";
+  const line = sanitizer.sanitize(`Cloudinary API Key: ${plaintext}`);
+  assert.doesNotMatch(line, new RegExp(plaintext), "CloudWatch history and stream output must not expose a space-delimited API Key value");
+  assert.match(line, /API Key=\[REDACTED\]/i);
+  assert.doesNotMatch(sanitizer.sanitize(`{\"api key\":\"${plaintext}\"}`), new RegExp(plaintext), "JSON-form application log keys use the same secret boundary");
+}
+
 void metricsProjection().then(() => {
+  applicationLogSecretSanitization();
   repositoryContracts();
   console.log("DEVELOPER_RUNTIME_EXPERIENCE=PASS");
 }).catch((error) => { console.error(error); process.exitCode = 1; });

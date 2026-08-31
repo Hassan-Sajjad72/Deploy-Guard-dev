@@ -49,6 +49,11 @@ export function getGithubRepositoryBranches(repositoryFullName) {
   return apiRequest(`/api/projects/github/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/branches`);
 }
 
+export function getGithubRepositoryDirectories(repositoryFullName, ref) {
+  const [owner, repository] = repositoryFullName.split("/");
+  return apiRequest(`/api/projects/github/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/directories?ref=${encodeURIComponent(ref)}`);
+}
+
 export function createProject(data) {
   return apiRequest("/api/projects", {
     method: "POST",
@@ -165,6 +170,16 @@ export function updateProjectBranch(projectId, targetBranch) {
 export function getProjectEnvVars(projectId) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/env`);
 }
+
+export function getProjectServices(projectId) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services`); }
+export function createProjectService(projectId, service) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services`, { method: "POST", body: service }); }
+export function updateProjectService(projectId, serviceId, service) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`, { method: "PATCH", body: service }); }
+export function deleteProjectService(projectId, serviceId) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`, { method: "DELETE" }); }
+export function getProjectServiceEnvVars(projectId, serviceId) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/env`); }
+export function createProjectServiceEnvVar(projectId, serviceId, data) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/env`, { method: "POST", body: data }); }
+export function bulkUpsertProjectServiceEnvVars(projectId, serviceId, variables) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/env/bulk`, { method: "POST", body: { variables } }); }
+export function updateProjectServiceEnvVar(projectId, serviceId, envId, data) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/env/${encodeURIComponent(envId)}`, { method: "PATCH", body: data }); }
+export function deleteProjectServiceEnvVar(projectId, serviceId, envId) { return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}/env/${encodeURIComponent(envId)}`, { method: "DELETE" }); }
 
 export function createProjectEnvVar(projectId, data) {
   return apiRequest(`/api/projects/${encodeURIComponent(projectId)}/env`, {
@@ -409,6 +424,7 @@ export function getObservabilityRuntimeMetrics(projectId, options = {}) {
 export function getApplicationRuntimeMetrics(projectId, options = {}) {
   const params = new URLSearchParams();
   if (options.range) params.set("range", options.range);
+  if (options.serviceId) params.set("serviceId", options.serviceId);
   const query = params.toString();
   return apiRequest(
     `/api/projects/${encodeURIComponent(projectId)}/observability/application-metrics${query ? `?${query}` : ""}`
@@ -419,14 +435,16 @@ export function getApplicationLogs(projectId, options = {}) {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", options.limit);
   if (options.since) params.set("since", options.since);
+  if (options.serviceId) params.set("serviceId", options.serviceId);
   const query = params.toString();
   return apiRequest(
     `/api/projects/${encodeURIComponent(projectId)}/observability/application-logs${query ? `?${query}` : ""}`
   );
 }
 
-export function getApplicationLogStreamUrl(projectId) {
-  return `${getApiBaseUrl()}/api/projects/${encodeURIComponent(projectId)}/observability/application-logs/stream`;
+export function getApplicationLogStreamUrl(projectId, serviceId) {
+  const query = serviceId ? `?serviceId=${encodeURIComponent(serviceId)}` : "";
+  return `${getApiBaseUrl()}/api/projects/${encodeURIComponent(projectId)}/observability/application-logs/stream${query}`;
 }
 
 export function getObservabilityHealth(projectId) {

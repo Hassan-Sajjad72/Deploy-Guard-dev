@@ -11,6 +11,7 @@ import {
 } from "typeorm";
 import { User } from "../users/user.entity";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
+import { ProjectDeployableService } from "./project-deployable-service.entity";
 
 export enum ProjectStatus {
   CREATED = "created",
@@ -22,18 +23,6 @@ export enum ProjectVisibility {
   PRIVATE = "private",
   WORKSPACE = "workspace",
 }
-
-export type ProjectDeploymentOverrides = {
-  installCommand?: string;
-  buildCommand?: string;
-  startCommand?: string;
-  outputDirectory?: string;
-  port?: number;
-  healthCheckPath?: string;
-  runtimeType?: "static" | "server";
-  requiredEnvironmentVariables?: string[];
-  dockerfileMode?: "generated" | "custom";
-};
 
 @Entity("projects")
 export class Project {
@@ -78,12 +67,6 @@ export class Project {
   @Column({ default: "dev", name: "environment_name" })
   environmentName: string;
 
-  @Column({ nullable: true, name: "app_directory" })
-  appDirectory: string;
-
-  @Column({ type: "jsonb", default: {}, name: "deployment_overrides" })
-  deploymentOverrides: ProjectDeploymentOverrides;
-
   @Column({
     type: "enum",
     enum: ProjectStatus,
@@ -100,6 +83,12 @@ export class Project {
 
   @OneToMany(() => ProjectEnvironmentVariable, (variable) => variable.project)
   environmentVariables: ProjectEnvironmentVariable[];
+
+  @OneToMany(() => ProjectDeployableService, (service) => service.project)
+  services: ProjectDeployableService[];
+
+  @Column({ nullable: true, name: "application_entrypoint_service_id", type: "uuid" })
+  applicationEntryPointServiceId: string | null;
 
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;

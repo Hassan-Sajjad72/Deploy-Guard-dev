@@ -170,6 +170,14 @@ export type DeveloperProjectCurrentState = {
     ecs: null | { cluster: string; service: string; taskDefinitionRevision: number | null; desiredCount: number; runningCount: number; pendingCount: number };
     alb: null | { name: string; status: string; targetHealth: string[]; endpoint: string | null };
     cloudWatch?: { status: "active" | "destroyed" | "unavailable" };
+    services?: Array<{
+      serviceId: string;
+      serviceName: string;
+      publicUrl: string | null;
+      imageDigest: string;
+      ecs: { service: string; desiredCount: number; runningCount: number; pendingCount: number };
+      alb: { targetHealth: string[] };
+    }>;
     terraformState: { status: "active" | "destroyed" | "unavailable"; storage: "encrypted_s3" | "unavailable"; key: string | null; lastApplyAt: string | null; lastDestroyAt: string | null };
     cost: { status: "estimated" | "approval_required" | "unavailable"; currency: string | null; monthly: number | null; source: "infracost" | "unavailable"; generationId: string | null; releaseId: string | null; operationId: string | null; estimatedAt?: string | null; unavailableReason?: string | null; breakdown?: Array<{ name: string; service: string | null; monthly: number }> };
     persistentStorage: null | { type: "EFS"; status: string; encrypted: boolean; backupEnabled: boolean; region: string | null };

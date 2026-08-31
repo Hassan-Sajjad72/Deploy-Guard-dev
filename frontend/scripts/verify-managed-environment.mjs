@@ -15,10 +15,15 @@ assert.equal(application.entries[0].scope, "build");
 assert.equal(application.entries[1].isSecret, true);
 
 const panel = await readFile(new URL("../src/components/projects/EnvironmentVariablesPanel.jsx", import.meta.url), "utf8");
+const form = await readFile(new URL("../src/components/projects/EnvVarForm.jsx", import.meta.url), "utf8");
 const table = await readFile(new URL("../src/components/projects/EnvVarTable.jsx", import.meta.url), "utf8");
 assert.match(panel, /Managed by DeployGuard/);
 assert.match(panel, /reservedVariables\.map/);
 assert.match(panel, /ignoredEnvironmentNames/);
 assert.match(table, /!variable\.protected && !variable\.isRequired/);
 assert.doesNotMatch(table, /variable\.value/);
+assert.doesNotMatch(form, /placeholder="(?:DATABASE_URL|MONGODB_URI)"/);
+assert.doesNotMatch(panel, /DB_HOST=example|DB_NAME=mydb|MONGO(?:DB)?_URI=/);
+assert.match(form, /Database connection aliases are managed from Database settings/);
+assert.match(panel, /Database aliases are managed by DeployGuard/);
 console.log("Managed environment registry presentation and reserved-variable client guard passed");

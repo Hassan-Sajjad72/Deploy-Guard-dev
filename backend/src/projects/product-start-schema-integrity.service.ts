@@ -2,6 +2,10 @@ import { Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { DataSource } from "typeorm";
 
 const requiredColumns = [
+  ["project_deployable_services", "id"],
+  ["project_deployable_services", "project_id"],
+  ["project_deployable_services", "service_directory"],
+  ["project_environment_variables", "service_id"],
   ["project_pipeline_runs", "id"],
   ["project_pipeline_runs", "project_id"],
   ["project_pipeline_runs", "triggered_by_user_id"],
@@ -21,6 +25,7 @@ const requiredColumns = [
   ["project_stable_releases", "generation_id"],
   ["project_stable_releases", "status"],
   ["project_database_tiers", "active_generation_id"],
+  ["project_database_tiers", "attached_service_id"],
   ["project_database_tiers", "external_host"],
   ["project_database_tiers", "external_port"],
   ["project_database_tiers", "external_tls_required"],
@@ -72,6 +77,9 @@ const requiredColumns = [
   ["notification_deliveries", "sent_at"],
   ["notification_deliveries", "created_at"],
   ["notification_deliveries", "updated_at"],
+  ["project_pipeline_runs", "failure_owner"],
+  ["project_pipeline_runs", "failure_code"],
+  ["project_pipeline_runs", "failure_service_id"],
 ] as const;
 
 export type MappedSchemaColumn = {

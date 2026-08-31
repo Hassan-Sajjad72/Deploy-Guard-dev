@@ -112,7 +112,7 @@ export class AiTroubleshootingService {
       messages,
       results,
       provider,
-      operation: run ? { id: run.id, action: operationAction, commitSha: run.commitSha, generationId: run.generationId, failedStage, failedStageLabel: deployguardOperationStagePresentation(failedStage, operationAction).label, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage } : null,
+      operation: run ? { id: run.id, action: operationAction, commitSha: run.commitSha, generationId: run.generationId, failedStage, failedStageLabel: deployguardOperationStagePresentation(failedStage, operationAction).label, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage, failureOwner: run.failureOwner || "UNVERIFIED", externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId } : null,
       evidence: { context: { ...collected.context, project: project ? { name: project.name, repository: project.repositoryFullName } : null }, groups: collected.groups },
       suggestedQuestions: TROUBLESHOOTING_QUESTIONS,
     };
@@ -142,6 +142,10 @@ export class AiTroubleshootingService {
       failedStage: failedPresentation.key,
       failedStageLabel: failedPresentation.label,
       failureMessage: run.errorMessage,
+      failureOwner: run.failureOwner || "UNVERIFIED",
+      externalProvider: run.externalProvider,
+      failureCode: run.failureCode,
+      failureServiceId: run.failureServiceId,
       conversation: conversation.reverse().map((item) => ({ role: item.role, content: this.sanitizer.sanitize(item.content).slice(0, 1000) })),
     };
     let output: {

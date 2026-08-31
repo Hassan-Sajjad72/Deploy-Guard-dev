@@ -4,7 +4,7 @@ import { User } from "../users/user.entity";
 import { CloudWatchLogsService, LogQueryOptions } from "./cloudwatch-logs.service";
 import { CloudWatchMetricsService } from "./cloudwatch-metrics.service";
 import { getObservabilityConfig } from "./observability.config";
-import { LiveRuntimeResolverService } from "./live-runtime-resolver.service";
+import { AwsRuntimeUnavailableException, LiveRuntimeResolverService, RuntimeIdentityUnavailableException } from "./live-runtime-resolver.service";
 
 @Injectable()
 export class ObservabilityService {
@@ -15,8 +15,8 @@ export class ObservabilityService {
     private readonly logs: CloudWatchLogsService,
   ) {}
 
-  async getSummary(user: User, projectId: string) {
-    const identity = await this.liveRuntime.resolveForUser(user, projectId);
+  async getSummary(user: User, projectId: string, serviceId?: string) {
+    const identity = await this.liveRuntime.resolveForUser(user, projectId, serviceId);
     const config = getObservabilityConfig(this.config);
     return {
       available: config.awsRuntimeMonitoringEnabled,
@@ -24,6 +24,9 @@ export class ObservabilityService {
       environmentName: identity.environmentName,
       generationId: identity.generationId,
       releaseId: identity.releaseId,
+      serviceId: identity.serviceId,
+      serviceName: identity.serviceDisplayName,
+      publicUrl: identity.publicUrl,
       ecs: { cluster: identity.clusterName, service: identity.serviceName, runningTasks: identity.taskArns.length },
       alb: { targetGroupArn: identity.targetGroupArn, targetHealth: identity.targetHealth },
       prometheus: { enabled: config.prometheusEnabled, url: config.prometheusBaseUrl },
@@ -32,13 +35,19 @@ export class ObservabilityService {
     };
   }
 
-  async getApplicationMetrics(user: User, projectId: string, range = "1h") {
+  async getApplicationMetrics(user: User, projectId: string, range = "1h", serviceId?: string) {
     const config = getObservabilityConfig(this.config);
     const grafana = { configured: Boolean(config.grafanaBaseUrl), url: config.grafanaBaseUrl || null };
     let identity;
     try {
-      identity = await this.liveRuntime.resolveForUser(user, projectId);
+      identity = await this.liveRuntime.resolveForUser(user, projectId, serviceId);
     } catch (error) {
+      if (error instanceof RuntimeIdentityUnavailableException) {
+        return { available: false, availabilityState: "runtime_identity_unavailable", message: error.message, generationId: null, grafana };
+      }
+      if (error instanceof AwsRuntimeUnavailableException) {
+        return { available: false, availabilityState: "runtime_unavailable", message: error.message, generationId: null, grafana };
+      }
       if (error instanceof ServiceUnavailableException) {
         return { available: false, availabilityState: "temporarily_unavailable", message: error.message, generationId: null, grafana };
       }
@@ -69,12 +78,12 @@ export class ObservabilityService {
     }
   }
 
-  getApplicationLogs(user: User, projectId: string, options: LogQueryOptions) {
-    return this.logs.getRecentLogs(user, projectId, options);
+  getApplicationLogs(user: User, projectId: string, options: LogQueryOptions, serviceId?: string) {
+    return this.logs.getRecentLogs(user, projectId, options, serviceId);
   }
 
-  async getHealth(user: User, projectId: string) {
-    const summary = await this.getSummary(user, projectId);
+  async getHealth(user: User, projectId: string, serviceId?: string) {
+    const summary = await this.getSummary(user, projectId, serviceId);
     return {
       source: summary.source,
       generationId: summary.generationId,

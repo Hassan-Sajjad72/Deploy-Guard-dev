@@ -18,6 +18,7 @@ const operationB = "7fcf0947-d66e-4d79-9cfc-9879d0022548";
 const sourceA = "610aba282a1b0000000000000000000000000000";
 const digestA = `sha256:${"a".repeat(64)}`;
 const imageUri = `123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-${projectId}`;
+const serviceId = "99999999-9999-4999-8999-999999999999";
 
 function releaseA(): any {
   return {
@@ -35,7 +36,7 @@ function releaseA(): any {
     appPort: 8080,
     healthCheckPath: "/",
     deployedAt: new Date("2026-08-29T08:00:00.000Z"),
-    metadata: { imageDigest: digestA, releaseEvidenceVerified: true, deployedUrl: "http://dg.example.test" },
+    metadata: { imageDigest: digestA, releaseEvidenceVerified: true, deployedUrl: "http://dg.example.test", services: [{ serviceId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest: digestA }] },
   };
 }
 
@@ -45,18 +46,20 @@ async function verifyRollbackAuthority() {
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.project = async () => project;
   service.releases = { findOne: async ({ where }: any) => where.status === StableReleaseStatus.ROLLBACK_TARGET ? target : null };
+  const revision: any = { generationId: operationA, serviceId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest: digestA, runtimeConfigRevisionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", runtimeConfigRevision: { isRollbackSafe: true, sealedAt: new Date(), nonSecretEnvironment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseConfiguration: { attached: false, engine: null, aliases: [] } } };
+  service.serviceRevisions = { find: async () => [revision] };
   const candidates = await service.rollbackCandidates({ id: 1 }, projectId);
   assert.equal(candidates.candidates.length, 1);
-  assert.deepEqual(Object.keys(candidates.candidates[0]).sort(), ["appPort", "commitSha", "deployedAt", "generationId", "healthCheckPath", "imageDigest", "imageUri", "releaseId", "releaseRevision", "targetOperationId"].sort());
+  assert.deepEqual(Object.keys(candidates.candidates[0]).sort(), ["appPort", "commitSha", "deployedAt", "generationId", "healthCheckPath", "services", "releaseId", "releaseRevision", "targetOperationId"].sort());
   assert.equal(candidates.candidates[0].targetOperationId, operationA);
   assert.equal(candidates.candidates[0].commitSha, sourceA);
-  assert.equal(candidates.candidates[0].imageUri, imageUri);
-  assert.equal(candidates.candidates[0].imageDigest, digestA);
+  assert.equal(candidates.candidates[0].services[0].imageUri, imageUri);
+  assert.equal(candidates.candidates[0].services[0].imageDigest, digestA);
   let dispatchArgs: any[] = [];
   service.dispatch = async (...args: any[]) => { dispatchArgs = args; return { deployment: { state: "accepted" } }; };
   await service.rollback({ id: 1 }, projectId, operationA);
   assert.equal(dispatchArgs[2], "rollback");
-  assert.equal(dispatchArgs[3].immutableImage, `${imageUri}@${digestA}`);
+  assert.equal(dispatchArgs[3].services[0].immutableImage, `${imageUri}@${digestA}`);
   assert.equal(dispatchArgs[3].sourceSha, sourceA);
 
   const failed: any = { projectId, metadata: { deploymentAction: "rollback", rollbackTarget: dispatchArgs[3] } };
@@ -66,8 +69,8 @@ async function verifyRollbackAuthority() {
   assert.deepEqual(dispatchArgs[3], failed.metadata.rollbackTarget, "failed rollback retry must preserve the exact immutable target");
   assert.equal(dispatchArgs[4], undefined === failed.id ? null : failed.id);
 
-  service.releases.findOne = async () => ({ ...target, imageUri: "docker.io/example/app" });
-  await assert.rejects(() => service.rollbackCandidates({ id: 1 }, projectId), /immutable ECR release evidence/);
+  service.serviceRevisions.find = async () => [{ ...revision, imageUri: "docker.io/example/app" }];
+  assert.equal((await service.rollbackCandidates({ id: 1 }, projectId)).candidates.length, 0, "unsafe historical identity is not offered as a rollback target");
 
   const completedAt = new Date("2026-08-29T09:00:00.000Z");
   const currentOperation: any = { id: operationB, projectId, generationId: operationB, status: PipelineRunStatus.COMPLETED, currentStage: "release_complete", githubWorkflowRunId: "123", commitSha: "0fd1d77c357ce2ef7e49bf584fac60500c340532", createdAt: completedAt, startedAt: completedAt, completedAt, updatedAt: completedAt, failedAt: null, metadata: { executionEngine: "railpack", deploymentAction: "deploy", releaseEvidenceVerified: true } };
@@ -95,38 +98,13 @@ async function verifyHistoricalIdentityRecovery() {
     metadata: { imageDigest: digestA, releaseEvidenceVerified: true, deployedUrl: "http://dg.example.test", runtimeIdentity: generation.resourceManifest },
   };
   const route: any = { id: "77777777-8888-4999-8aaa-bbbbbbbbbbbb", projectId, environmentName: "dev", liveGenerationId: operationB, metadata: {} };
-  const generationRepository: any = { findOne: async () => generation, save: async (value: any) => Object.assign(generation, value) };
-  const releaseRepository: any = { findOne: async () => release, save: async (value: any) => Object.assign(release, value) };
-  const routeRepository: any = { findOne: async () => route, save: async (value: any) => Object.assign(route, value) };
-  let persisted = 0;
-  const dataSource: any = { transaction: async (work: any) => work({
-    query: async () => undefined,
-    getRepository: (entity: unknown) => entity === ProjectDeploymentGeneration ? { ...generationRepository, save: async (value: any) => { persisted += 1; return generationRepository.save(value); } }
-      : entity === ProjectStableRelease ? { ...releaseRepository, save: async (value: any) => { persisted += 1; return releaseRepository.save(value); } }
-        : { ...routeRepository, save: async (value: any) => { persisted += 1; return routeRepository.save(value); } },
-  }) };
-  const recovery: any = new LiveRuntimeIdentityRecoveryService(generationRepository, releaseRepository, routeRepository, dataSource);
-  let awsReads = 0;
-  recovery.ecs = () => ({ send: async (command: any) => {
-    awsReads += 1;
-    if (command.constructor.name === "DescribeServicesCommand") return { services: [{ serviceArn: release.ecsServiceArn, serviceName: "dg-service", clusterArn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg-cluster", status: "ACTIVE", taskDefinition: release.taskDefinitionArn, loadBalancers: [{ containerName: "application", targetGroupArn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/abc" }], tags: [{ key: "ManagedBy", value: "DeployGuard" }, { key: "DeployGuardProjectId", value: projectId }, { key: "DeployGuardOperationId", value: operationB }] }] };
-    return { taskDefinition: { containerDefinitions: [{ name: "application", image: `${imageUri}@${digestA}`, logConfiguration: { options: { "awslogs-group": `/deployguard/${projectId}/application`, "awslogs-stream-prefix": "application" } } }] }, tags: [{ key: "ManagedBy", value: "DeployGuard" }, { key: "DeployGuardProjectId", value: projectId }, { key: "DeployGuardOperationId", value: operationB }] };
-  } });
-  recovery.elb = () => ({ send: async (command: any) => {
-    awsReads += 1;
-    if (command.constructor.name === "DescribeTargetGroupsCommand") return { TargetGroups: [{ TargetGroupArn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/abc", TargetGroupName: "dg", LoadBalancerArns: ["arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/def"] }] };
-    if (command.constructor.name === "DescribeTagsCommand") return { TagDescriptions: [{ Tags: [{ Key: "ManagedBy", Value: "DeployGuard" }, { Key: "DeployGuardProjectId", Value: projectId }, { Key: "DeployGuardOperationId", Value: operationB }] }] };
-    return { LoadBalancers: [{ LoadBalancerArn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/def", LoadBalancerName: "dg", DNSName: "dg.example.test" }] };
-  } });
+  const generationRepository: any = { findOne: async () => generation };
+  const releaseRepository: any = { findOne: async () => release };
+  const routeRepository: any = { findOne: async () => route };
+  const recovery: any = new LiveRuntimeIdentityRecoveryService(generationRepository, releaseRepository, routeRepository, { find: async () => [] } as never);
   const identity = await recovery.recover({ id: projectId, environmentName: "dev" });
-  assert.equal(identity.ecsClusterName, "dg-cluster");
-  assert.equal(identity.targetGroupName, "dg");
-  assert.equal(identity.cloudWatchLogGroupName, `/deployguard/${projectId}/application`);
-  assert.equal(identity.applicationContainerName, "application");
-  assert.equal(persisted, 3, "recovered safe identity is persisted to generation, stable release, and route");
-  const readsAfterRecovery = awsReads;
-  await recovery.recover({ id: projectId, environmentName: "dev" });
-  assert.equal(awsReads, readsAfterRecovery, "complete recovered identity is idempotent and avoids repeated AWS reconstruction");
+  assert.equal(identity.ecsClusterName, undefined, "deprecated scalar release columns cannot reconstruct generation authority");
+  assert.equal(identity.ecsServiceArn, generation.resourceManifest.ecsServiceArn, "historical scalar data remains readable but is not expanded into new authority");
 }
 
 async function verifyDeveloperInfrastructureContract() {
@@ -148,10 +126,10 @@ function verifyWorkflowAndUiContract() {
   const controller = readFileSync(join(root, "backend", "src", "projects", "projects.controller.ts"), "utf8");
   assert.match(frontend, /target\.targetOperationId/);
   assert.match(workflow, /Checkout exact application source[\s\S]*?if: inputs\.deployment_action == 'deploy'/);
-  assert.match(workflow, /Build immutable Railpack image[\s\S]*?inputs\.deployment_action == 'deploy'/);
-  assert.match(workflow, /Publish immutable image to ECR[\s\S]*?inputs\.deployment_action == 'deploy'/);
-  assert.match(workflow, /Select immutable rollback image[\s\S]*?inputs\.deployment_action == 'rollback'/);
-  assert.match(workflow, /ROLLBACK_IMAGE_DIGEST[\s\S]*?@sha256:\[0-9a-f\]\{64\}/);
+  assert.match(workflow, /Build immutable Railpack images[\s\S]*?inputs\.deployment_action == 'deploy'/);
+  assert.match(workflow, /Publish immutable images to ECR[\s\S]*?inputs\.deployment_action == 'deploy'/);
+  assert.match(workflow, /Select immutable rollback service images[\s\S]*?inputs\.deployment_action == 'rollback'/);
+  assert.match(workflow, /rollbackImage[\s\S]*?@sha256:\[0-9a-f\]\{64\}/);
   assert.match(workflow, /terraform -chdir=\.deployguard\/terraform apply/);
   assert.match(workflow, /aws ecs wait services-stable/);
   assert.match(workflow, /curl --fail/);

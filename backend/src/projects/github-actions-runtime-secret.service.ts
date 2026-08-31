@@ -9,10 +9,10 @@ import {
   SecretsManagerClient,
   UpdateSecretVersionStageCommand,
 } from "@aws-sdk/client-secrets-manager";
+import { isCanonicalEnvironmentName } from "./canonical-environment";
 
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GENERATION_ID = PROJECT_ID;
-const ENVIRONMENT = /^(?:dev|production)$/;
 const CONFIGURATION_FINGERPRINT = /^[0-9a-f]{64}$/;
 const SECRET_KEY = /^[A-Z][A-Z0-9_]{0,127}$/;
 
@@ -48,6 +48,7 @@ export class RuntimeSecretMaterializer {
 
   async materialize(input: {
     projectId: string;
+    serviceId?: string;
     generationId: string;
     environment: string;
     configurationFingerprint: string;
@@ -56,7 +57,9 @@ export class RuntimeSecretMaterializer {
     this.assertInput(input);
     const secretNames = Object.keys(input.secretValues).sort();
     if (!secretNames.length) return null;
-    const secretName = `deployguard/${input.projectId}/${input.environment}/application/runtime`;
+    const serviceScope = input.serviceId || "default";
+    if (input.serviceId && !PROJECT_ID.test(input.serviceId)) throw new Error("Runtime secret materialization requires a valid service UUID.");
+    const secretName = `deployguard/${input.projectId}/${input.environment}/services/${serviceScope}/runtime`;
     const secretString = JSON.stringify(Object.fromEntries(secretNames.map((name) => [name, input.secretValues[name]])));
     const versionToken = createHash("sha256")
       .update(`deployguard-runtime-secret:${input.projectId}:${input.environment}:${input.configurationFingerprint}`)
@@ -64,8 +67,9 @@ export class RuntimeSecretMaterializer {
     const tags = {
       ManagedBy: "DeployGuard",
       DeployGuardProjectId: input.projectId,
+      DeployGuardServiceId: serviceScope,
       Environment: input.environment,
-      DeployGuardScope: "project",
+      DeployGuardScope: "service",
       SecretPurpose: "application_runtime",
     };
 
@@ -96,7 +100,9 @@ export class RuntimeSecretMaterializer {
     return {
       secretArn: arn,
       secretNames,
-      valueFromByName: Object.fromEntries(secretNames.map((name) => [name, `${arn}:${name}::`])),
+      // ECS accepts ARN:json-key:version-stage:version-id. Leaving both
+      // version selectors empty would make rollback follow mutable AWSCURRENT.
+      valueFromByName: Object.fromEntries(secretNames.map((name) => [name, `${arn}:${name}::${versionToken}`])),
       versionToken,
     };
   }
@@ -104,7 +110,7 @@ export class RuntimeSecretMaterializer {
   private assertInput(input: { projectId: string; generationId: string; environment: string; configurationFingerprint: string; secretValues: Record<string, string> }) {
     if (!PROJECT_ID.test(input.projectId)) throw new Error("Runtime secret materialization requires a valid project UUID.");
     if (!GENERATION_ID.test(input.generationId)) throw new Error("Runtime secret materialization requires a valid generation UUID.");
-    if (!ENVIRONMENT.test(input.environment)) throw new Error("Runtime secret materialization requires a supported environment.");
+    if (!isCanonicalEnvironmentName(input.environment)) throw new Error("Runtime secret materialization requires a supported environment.");
     if (!CONFIGURATION_FINGERPRINT.test(input.configurationFingerprint)) throw new Error("Runtime secret materialization requires an immutable configuration fingerprint.");
     if (!input.secretValues || typeof input.secretValues !== "object" || Array.isArray(input.secretValues)) throw new Error("Runtime secret materialization requires a secret map.");
     for (const [key, value] of Object.entries(input.secretValues)) {
@@ -143,6 +149,7 @@ export class GithubActionsRuntimeSecretService {
 
   async materialize(input: {
     projectId: string;
+    serviceId?: string;
     generationId: string;
     environment: string;
     configurationFingerprint: string;
