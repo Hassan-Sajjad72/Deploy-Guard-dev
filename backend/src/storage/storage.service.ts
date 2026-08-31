@@ -11,7 +11,7 @@ import { Queue } from "bullmq";
 import { Request } from "express";
 import { DataSource, Repository } from "typeorm";
 import { AuditLogService } from "../audit-log/audit-log.service";
-import { acquireProjectConfigurationAdvisoryLock } from "../infrastructure/database-service-binding.service";
+import { acquireProjectConfigurationAdvisoryLock } from "../projects/project-configuration-lock";
 import { ProjectPipelineRun, PipelineRunStatus } from "../projects/project-pipeline-run.entity";
 import { PIPELINE_QUEUE, PipelineJobData } from "../projects/pipeline/pipeline.types";
 import { Project, ProjectStatus, ProjectVisibility } from "../projects/project.entity";

@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository } from "typeorm";
 import { AuditLogService } from "../audit-log/audit-log.service";
-import { acquireProjectConfigurationAdvisoryLock } from "../infrastructure/database-service-binding.service";
+import { acquireProjectConfigurationAdvisoryLock } from "./project-configuration-lock";
 import { User } from "../users/user.entity";
 import { UpdateDatabaseTierDto } from "./dto/update-database-tier.dto";
 import { DatabaseTierProvider, DatabaseTierStatus, ProjectDatabaseTier } from "./project-database-tier.entity";

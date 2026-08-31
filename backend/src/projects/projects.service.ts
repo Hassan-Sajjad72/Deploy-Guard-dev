@@ -27,10 +27,7 @@ import { ProjectActivityService } from "./project-activity.service";
 import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
 import { classifyConfigurationVariable, isDeployGuardManagedDatabaseAlias, isSecretConfigurationKey, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
 import { canonicalEnvironmentName } from "./canonical-environment";
-import {
-  acquireProjectConfigurationAdvisoryLock,
-  DatabaseServiceBindingService,
-} from "../infrastructure/database-service-binding.service";
+import { acquireProjectConfigurationAdvisoryLock } from "./project-configuration-lock";
 import { GithubAppService } from "./github-app.service";
 import { ProjectDeployableService } from "./project-deployable-service.entity";
 import { normalizeServiceDirectory } from "./deployable-service-path";

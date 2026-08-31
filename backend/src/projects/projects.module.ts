@@ -1,7 +1,6 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { AuditLogModule } from "../audit-log/audit-log.module";
-import { InfrastructureModule } from "../infrastructure/infrastructure.module";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { UsersModule } from "../users/users.module";
 import { DatabaseTierService } from "./database-tier.service";
@@ -11,14 +10,12 @@ import { GithubActionsAwsCapabilityService } from "./github-actions-aws-capabili
 import { GithubAppInstallation } from "./github-app-installation.entity";
 import { GithubAppService } from "./github-app.service";
 import { ProjectActivityService } from "./project-activity.service";
-import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.entity";
 import { ProjectDatabaseTier } from "./project-database-tier.entity";
 import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
 import { ProjectPipelineRun } from "./project-pipeline-run.entity";
 import { GithubActionsService } from "./pipeline/github-actions.service";
-import { ProjectServiceBinding } from "./project-service-binding.entity";
 import { ProjectUserActivity } from "./project-user-activity.entity";
 import { Project } from "./project.entity";
 import { ProjectsController } from "./projects.controller";
@@ -39,7 +36,6 @@ import { AwsCliModule } from "../state-management/aws-cli.module";
 import { ProjectBackupRecord } from "../storage/project-backup-record.entity";
 import { ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
-import { DeploymentGenerationService } from "./deployment-generation.service";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
 import { InfracostService } from "../finops/infracost.service";
@@ -57,8 +53,7 @@ import { ProjectGenerationServiceRevision } from "./project-generation-service-r
   imports: [
     TypeOrmModule.forFeature([
       Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, User, GithubAppInstallation, ProjectEnvironmentVariable,
-      ProjectDatabaseTier, ProjectPipelineRun, ProjectPipelineEvent,
-      ProjectServiceBinding, ProjectConfigurationSnapshot, ProjectUserActivity,
+      ProjectDatabaseTier, ProjectPipelineRun, ProjectPipelineEvent, ProjectUserActivity,
       // Historical infrastructure/storage records are not part of ordinary
       // project state authority. Current routing uses generation records.
       ProjectInfrastructureEvent, ProjectCostEstimate, ProjectCostSettings, ProjectTerraformLock,
@@ -69,7 +64,6 @@ import { ProjectGenerationServiceRevision } from "./project-generation-service-r
       NotificationSubscription,
     ]),
     AuditLogModule,
-    InfrastructureModule,
     UsersModule,
     AwsCliModule,
     NotificationsModule,
@@ -83,7 +77,6 @@ import { ProjectGenerationServiceRevision } from "./project-generation-service-r
     PipelineStageResolverService,
     ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,
-    DeploymentGenerationService,
     InfracostService,
     GithubActionsCostEvidenceService,
     GenerationRetentionService,
