@@ -31,6 +31,25 @@ for (const [field, key] of [["environment", "DATABASE_URL"], ["secretReferences"
     : `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:${key}::${"c".repeat(64)}`;
   assert.throws(() => servicesBase64(legacyDatabaseAlias), /runtime (?:environment|secret reference) is invalid/, `legacy ${key} must fail closed before workflow dispatch`);
 }
+const historicalDatabaseVersionId = "terraform-20260830234105178100000005";
+const rollbackDatabaseFixture: any = structuredClone(contractFixture);
+rollbackDatabaseFixture.services[0].databaseAttached = true;
+rollbackDatabaseFixture.services[0].managedDatabase = {
+  engine: "mongodb",
+  aliases: ["MONGODB_URI"],
+  secretVersionId: historicalDatabaseVersionId,
+};
+const encodedRollbackDatabase = servicesBase64(rollbackDatabaseFixture);
+assert.equal(
+  JSON.parse(Buffer.from(encodedRollbackDatabase, "base64").toString("utf8")).services[0].managedDatabase.secretVersionId,
+  historicalDatabaseVersionId,
+  "a legitimate historical Secrets Manager VersionId must survive the rollback contract unchanged",
+);
+for (const invalidVersionId of ["a".repeat(31), "a".repeat(65), `${"a".repeat(31)}_`]) {
+  const invalidDatabaseVersion: any = structuredClone(rollbackDatabaseFixture);
+  invalidDatabaseVersion.services[0].managedDatabase.secretVersionId = invalidVersionId;
+  assert.throws(() => servicesBase64(invalidDatabaseVersion), /managed database secret-version identity is invalid/, "invalid Secrets Manager VersionIds must remain fail-closed");
+}
 const destroyFixture: any = structuredClone(contractFixture);
 destroyFixture.services[0].rollbackImage = `123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test@sha256:${"c".repeat(64)}`;
 destroyFixture.projectDeletion = { generationIds: ["55555555-5555-4555-8555-555555555555"] };

@@ -28,6 +28,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const ENVIRONMENT_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const KEY = /^[A-Z][A-Z0-9_]{0,127}$/;
 const SECRET_VALUE_FROM = /^arn:(?:aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$/;
+const SECRETS_MANAGER_VERSION_ID = /^[A-Za-z0-9-]{32,64}$/;
 const IMMUTABLE_IMAGE = /^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i;
 
 export function immutableRailpackServiceImageTag(commitSha: string, operationId: string, serviceId: string) {
@@ -50,7 +51,7 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     if (service.environment.PORT !== "8080" || service.environment.HOST !== "0.0.0.0") throw new Error("Railpack platform runtime values are invalid.");
     for (const [key, reference] of Object.entries(service.secretReferences)) if (!KEY.test(key) || !SECRET_VALUE_FROM.test(reference) || isDeployGuardManagedDatabaseAlias(key)) throw new Error("Railpack runtime secret reference is invalid.");
     if (typeof service.databaseAttached !== "boolean" || !service.managedDatabase || !Array.isArray(service.managedDatabase.aliases) || !service.managedDatabase.aliases.every((alias) => KEY.test(alias)) || ![null, "postgres", "mysql", "mongodb"].includes(service.managedDatabase.engine)) throw new Error("Railpack managed database configuration is invalid.");
-    if (service.managedDatabase.secretVersionId != null && !/^[0-9a-f]{64}$/.test(service.managedDatabase.secretVersionId)) throw new Error("Railpack managed database secret-version identity is invalid.");
+    if (service.managedDatabase.secretVersionId != null && !SECRETS_MANAGER_VERSION_ID.test(service.managedDatabase.secretVersionId)) throw new Error("Railpack managed database secret-version identity is invalid.");
     if (service.databaseAttached) databaseAttachments += 1;
     if (service.databaseAttached && (!service.managedDatabase.engine || !service.managedDatabase.aliases.length)) throw new Error("Attached managed database configuration is incomplete.");
     if (!service.databaseAttached && (service.managedDatabase.engine !== null || service.managedDatabase.aliases.length)) throw new Error("Database configuration may only be present on its attached service.");
