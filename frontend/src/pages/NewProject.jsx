@@ -36,7 +36,7 @@ export default function NewProject() {
   const [repository, setRepository] = useState("");
   const [branch, setBranch] = useState("");
   const [branches, setBranches] = useState([]);
-  const [services, setServices] = useState([{ key: crypto.randomUUID(), name: "Web", serviceDirectory: ".", envPaste: "" }]);
+  const [services, setServices] = useState([{ key: crypto.randomUUID(), name: "Web", serviceDirectory: "", envPaste: "" }]);
   const [directories, setDirectories] = useState(["."]);
   const [database, setDatabase] = useState({ provider: "none", engine: "postgres", attachedServiceKey: "" });
   const [readiness, setReadiness] = useState(null);
@@ -74,6 +74,7 @@ export default function NewProject() {
 
   async function chooseRepository(value) {
     const inspectionTicket = selectionGate.current.begin(value, "");
+    let directoryTicket = inspectionTicket;
     setWorking((current) => current === "review" ? "" : current);
     const item = repositories.find((entry) => entry.fullName === value);
     setRepository(value);
@@ -90,17 +91,21 @@ export default function NewProject() {
       const availableBranches = Array.from(new Set([details.defaultBranch || item?.defaultBranch, ...(details.branches || [])].filter(Boolean)));
       setBranches(availableBranches);
       const nextBranch = details.defaultBranch || availableBranches[0] || "";
-      selectionGate.current.select(value, nextBranch);
+      directoryTicket = selectionGate.current.begin(value, nextBranch);
       setBranch(nextBranch);
-      if (nextBranch) setDirectories((await getGithubRepositoryDirectories(value, nextBranch)).directories || ["."]);
+      if (nextBranch) {
+        const response = await getGithubRepositoryDirectories(value, nextBranch);
+        if (!selectionGate.current.isCurrent(directoryTicket)) return;
+        setDirectories(response.directories || ["."]);
+      }
     } catch (caught) {
-      if (!selectionGate.current.isCurrent(inspectionTicket)) return;
+      if (!selectionGate.current.isCurrent(directoryTicket)) return;
       setReadiness({ level: "blocked", message: safeMessage(caught) });
     }
   }
 
   async function changeBranch(value) {
-    selectionGate.current.select(repository, value);
+    const directoryTicket = selectionGate.current.begin(repository, value);
     setWorking((current) => current === "review" ? "" : current);
     setBranch(value);
     setReadiness(null);
@@ -108,8 +113,13 @@ export default function NewProject() {
     setIgnoredEnvironmentNames([]);
     setDirectories(["."]);
     if (repository && value) {
-      try { setDirectories((await getGithubRepositoryDirectories(repository, value)).directories || ["."]); }
-      catch (caught) { setReadiness({ level: "blocked", message: safeMessage(caught) }); }
+      try {
+        const response = await getGithubRepositoryDirectories(repository, value);
+        if (!selectionGate.current.isCurrent(directoryTicket)) return;
+        setDirectories(response.directories || ["."]);
+      } catch (caught) {
+        if (selectionGate.current.isCurrent(directoryTicket)) setReadiness({ level: "blocked", message: safeMessage(caught) });
+      }
     }
   }
 
@@ -193,7 +203,7 @@ export default function NewProject() {
       <div className="new-project-form-heading"><p className="eyebrow">New deployment</p><h2>Repository, branch, and environment</h2><p>Application values are optional. DeployGuard manages runtime PORT and HOST.</p></div>
       <ol aria-label="Deployment readiness journey" className="deployment-journey">{journey.map((step) => <li className={`is-${step.state}`} key={step.label}><span aria-hidden="true" className="deployment-journey-marker" /><div><strong>{step.label}</strong><small>{step.detail}</small></div></li>)}</ol>
       <div className="new-project-fields"><label className="field"><span>Authorized repository</span><select disabled={working === "deploy"} onChange={(event) => void chooseRepository(event.target.value)} value={repository}><option value="">Select a repository</option>{repositories.map((item) => <option key={item.id || item.fullName} value={item.fullName}>{item.fullName}</option>)}</select></label><label className="field"><span>Branch</span><select disabled={!repository || working === "deploy"} onChange={(event) => void changeBranch(event.target.value)} value={branch}><option value="">Select a branch</option>{branches.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>
-      <section className="deployable-services-editor"><div className="compact-section-heading"><div><p className="eyebrow">Services</p><h3>Applications to deploy</h3><p>Choose each runnable application explicitly. Railpack determines how it is built.</p></div><button className="secondary-button" disabled={Boolean(working) || services.length >= 20} onClick={() => setServices((current) => [...current, { key: crypto.randomUUID(), name: `Service ${current.length + 1}`, serviceDirectory: ".", envPaste: "" }])} type="button">+ Add Service</button></div>
+      <section className="deployable-services-editor"><div className="compact-section-heading"><div><p className="eyebrow">Services</p><h3>Applications to deploy</h3><p>Choose each runnable application explicitly. Railpack determines how it is built.</p></div><button className="secondary-button" disabled={Boolean(working) || services.length >= 20} onClick={() => setServices((current) => [...current, { key: crypto.randomUUID(), name: `Service ${current.length + 1}`, serviceDirectory: "", envPaste: "" }])} type="button">+ Add Service</button></div>
         {parsedServices.map(({ service, parsed }, index) => <article className="panel-flat deployable-service-editor" key={service.key}><div className="compact-section-heading"><strong>Service {index + 1}</strong>{services.length > 1 ? <button className="danger-text-button" disabled={Boolean(working)} onClick={() => setServices((current) => current.filter((item) => item.key !== service.key))} type="button">Remove</button> : null}</div><div className="new-project-fields"><label className="field"><span>Name</span><input disabled={Boolean(working)} maxLength="80" onChange={(event) => changeService(service.key, "name", event.target.value)} value={service.name} /></label><label className="field"><span>Directory</span><input disabled={Boolean(working)} list={`service-directories-${service.key}`} onChange={(event) => changeService(service.key, "serviceDirectory", event.target.value)} value={service.serviceDirectory} /><datalist id={`service-directories-${service.key}`}>{directories.map((directory) => <option key={directory} value={directory} />)}</datalist></label></div><label className="field"><span>Optional .env for {service.name || `Service ${index + 1}`}</span><textarea disabled={Boolean(working)} onChange={(event) => changeService(service.key, "envPaste", event.target.value)} placeholder={"# Optional\nAPI_URL=https://example.test"} rows="5" value={service.envPaste} /><small>Encrypted and injected only into this service.</small></label>{parsed.errors.map((message) => <IssueCard key={message} severity="danger" title="Invalid environment input"><p>{message}</p></IssueCard>)}{parsed.warnings?.map((message) => <IssueCard key={message} severity="warning" title="Input ignored"><p>{message}</p></IssueCard>)}</article>)}
       </section>
       <section className="panel-flat settings-simple-form"><div><p className="eyebrow">Database</p><h3>Managed container database</h3><p className="muted">Optional. Credentials are attached to exactly one service.</p></div><label className="field"><span>Database</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => ({ ...current, provider: event.target.value }))} value={database.provider}><option value="none">Disabled</option><option value="managed">Enabled</option></select></label>{database.provider === "managed" ? <><label className="field"><span>Engine</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => ({ ...current, engine: event.target.value }))} value={database.engine}><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option><option value="mongodb">MongoDB</option></select></label>{services.length > 1 ? <label className="field"><span>Connect database to</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => ({ ...current, attachedServiceKey: event.target.value }))} value={database.attachedServiceKey || services[0].key}>{services.map((service) => <option key={service.key} value={service.key}>{service.name}</option>)}</select></label> : <p className="muted">The database will connect to {services[0]?.name || "Web"}.</p>}</> : null}</section>
