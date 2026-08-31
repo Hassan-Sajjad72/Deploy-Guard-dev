@@ -20,6 +20,7 @@ import { canonicalEnvironmentName } from "../canonical-environment";
 import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from "../pipeline/github-actions-stage-presentation";
 import { RailpackDeploymentService } from "../railpack-deployment.service";
 import { LiveRuntimeIdentityRecoveryService } from "./live-runtime-identity-recovery.service";
+import { resolveApplicationEntrypointServiceId, resolveProjectApplicationUrl } from "../application-entrypoint";
 
 function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" | "commitSha">) {
   return operation.metadata?.executionEngine === "railpack"
@@ -80,12 +81,27 @@ export class ProjectCurrentStateService {
         where: { projectId, environmentName, generationId: authoritativeGenerationId, status: StableReleaseStatus.STABLE },
       })
       : null;
+    const canonicalRuntimeIdentity = authoritativeGenerationId
+      ? await this.runtimeIdentityRecovery.recover(project)
+      : null;
+    const canonicalServices = Array.isArray(canonicalRuntimeIdentity?.services)
+      ? canonicalRuntimeIdentity.services as Array<Record<string, unknown>>
+      : [];
+    const historicalDeployedUrl = typeof authoritativeRelease?.metadata?.deployedUrl === "string"
+      ? authoritativeRelease.metadata.deployedUrl
+      : null;
+    const applicationUrl = resolveProjectApplicationUrl(
+      project.applicationEntryPointServiceId,
+      canonicalServices,
+      historicalDeployedUrl,
+    );
     const projected = await this.withGithubActionsState(
       projectId,
       environmentName,
       this.githubActionsReadinessState(project),
       authoritativeGenerationId,
       authoritativeRelease,
+      applicationUrl,
     );
     const estimate = authoritativeRelease?.deployedByPipelineRunId
       ? await this.estimateRepository.findOne({
@@ -133,9 +149,6 @@ export class ProjectCurrentStateService {
           : [],
       } : null,
     };
-    const canonicalRuntimeIdentity = authoritativeGenerationId
-      ? await this.runtimeIdentityRecovery.recover(project)
-      : null;
     // Every developer-facing surface receives the same canonical service
     // revision projection. Stable-release metadata is only a historical cache.
     const projectedWithCanonicalRuntime = canonicalRuntimeIdentity && projectedWithCost.stableRelease
@@ -201,6 +214,17 @@ export class ProjectCurrentStateService {
         applicationError: { category: "repository", message: "Choose an accessible repository and branch to continue." },
       };
     }
+    if (!resolveApplicationEntrypointServiceId(project.applicationEntryPointServiceId, project.services || [])) {
+      return {
+        ...base,
+        developerState: "configuration_required",
+        developerAction: "provide_configuration",
+        developerMessage: "Select which service Open Application should open before deploying.",
+        progress: { percentage: 0, phase: null, label: "Choose application service" },
+        missingConfiguration: ["applicationEntryPointServiceId"],
+        applicationError: { category: "runtime", message: "Select an application service in Project Settings." },
+      };
+    }
     return {
       ...base,
       developerState: "ready",
@@ -216,6 +240,7 @@ export class ProjectCurrentStateService {
     projected: DeveloperProjectCurrentState,
     liveGenerationId: string | null,
     authoritativeRelease: ProjectStableRelease | null = null,
+    applicationUrl?: string | null,
   ): Promise<DeveloperProjectCurrentState> {
     const githubRuns = this.runRepository.createQueryBuilder("run")
       .where("run.projectId = :projectId", { projectId })
@@ -240,9 +265,9 @@ export class ProjectCurrentStateService {
       where: { projectId, environmentName, status: StableReleaseStatus.ROLLBACK_TARGET },
       order: { deployedAt: "DESC" },
     }) : null;
-    const stableUrl = typeof stableReleaseMetadata.deployedUrl === "string"
-      ? stableReleaseMetadata.deployedUrl
-      : null;
+    const stableUrl = applicationUrl === undefined
+      ? typeof stableReleaseMetadata.deployedUrl === "string" ? stableReleaseMetadata.deployedUrl : null
+      : applicationUrl;
     const stableRelease = stable && authoritativeRelease && stableUrl
       ? {
           id: authoritativeRelease.id,
@@ -904,12 +929,19 @@ export class ProjectCurrentStateService {
         observations.push({ serviceId, serviceName: String(item.serviceName || runtimeService.serviceName), publicUrl: typeof item.publicUrl === "string" ? item.publicUrl : null, imageDigest, ecs: { service: runtimeService.serviceName, desiredCount: runtimeService.desiredCount || 0, runningCount: runtimeService.runningCount || 0, pendingCount: runtimeService.pendingCount || 0 }, alb: { targetHealth: (targetHealth.TargetHealthDescriptions || []).map((target) => target.TargetHealth?.State || "unknown") } });
       }
       ecs.destroy(); ecr.destroy(); elb.destroy();
-      const canonicalService = services.reduce((selected, service) => String(service.serviceId).localeCompare(String(selected.serviceId)) < 0 ? service : selected);
-      const canonicalObservation = observations.find((item) => item.serviceId === String(canonicalService.serviceId));
-      if (!canonicalObservation) return null;
+      const applicationServiceId = resolveApplicationEntrypointServiceId(project.applicationEntryPointServiceId, services);
+      // A legacy multi-service project without an explicit selection retains
+      // only its historical deployedUrl for reads until the user selects one.
+      const applicationService = applicationServiceId
+        ? services.find((service) => String(service.serviceId) === applicationServiceId)
+        : !project.applicationEntryPointServiceId
+          ? services.find((service) => service.publicUrl === stableUrl)
+          : undefined;
+      const applicationObservation = observations.find((item) => item.serviceId === String(applicationService?.serviceId || ""));
+      if (!applicationService || !applicationObservation) return null;
       return {
         observedAt: new Date().toISOString(),
-        ecr: { repository: String(canonicalService.imageUri).replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, ""), imageTag: null, imageDigest: canonicalObservation.imageDigest },
+        ecr: { repository: String(applicationService.imageUri).replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, ""), imageTag: null, imageDigest: applicationObservation.imageDigest },
         ecs: { cluster, service: observations.map((item) => item.ecs.service).join(", "), taskDefinitionRevision: null, desiredCount: observations.reduce((sum, item) => sum + item.ecs.desiredCount, 0), runningCount: observations.reduce((sum, item) => sum + item.ecs.runningCount, 0), pendingCount: observations.reduce((sum, item) => sum + item.ecs.pendingCount, 0) },
         alb: {
           name: observations.map((item) => item.serviceName).join(", "),

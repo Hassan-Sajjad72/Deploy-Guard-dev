@@ -33,6 +33,7 @@ import { ProjectDeployableService } from "./project-deployable-service.entity";
 import { normalizeServiceDirectory } from "./deployable-service-path";
 import { DeployableServiceInputDto, UpdateDeployableServiceDto } from "./dto/deployable-service.dto";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
+import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
 
 type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
@@ -181,6 +182,7 @@ export class ProjectsService {
       await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-create:${user.id}`]);
       const repository = manager.getRepository(Project);
       const existing = await repository.createQueryBuilder("project")
+        .leftJoinAndSelect("project.services", "services")
         .where("project.ownerUserId = :userId", { userId: user.id })
         .andWhere("(project.githubRepositoryId = :githubRepositoryId OR lower(project.repositoryFullName) = lower(:repositoryFullName))", { githubRepositoryId: metadata.id || null, repositoryFullName: metadata.fullName })
         .andWhere("project.targetBranch = :targetBranch", { targetBranch })
@@ -215,12 +217,15 @@ export class ProjectsService {
       });
       const saved = await repository.save(project);
       const services = configuredServices.map((service, position) => manager.getRepository(ProjectDeployableService).create({
+        ...(service.id ? { id: service.id } : {}),
         projectId: saved.id,
         name: service.name,
         serviceDirectory: service.serviceDirectory,
         position,
       }));
       await manager.getRepository(ProjectDeployableService).save(services);
+      saved.applicationEntryPointServiceId = requireApplicationEntrypointServiceId(dto.applicationEntryPointServiceId, services);
+      await repository.save(saved);
       saved.services = services;
       return { project: saved };
     });
@@ -297,16 +302,24 @@ export class ProjectsService {
   async deleteDeployableService(user: User, projectId: string, serviceId: string) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const services = await this.deployableServices.find({ where: { projectId }, order: { position: "ASC" } });
-    if (services.length <= 1) throw new BadRequestException("A deployable project must retain at least one service.");
-    const service = services.find((item) => item.id === serviceId);
-    if (!service) throw new NotFoundException("Deployable service not found");
-    const attached = await this.databaseTierRepository.findOne({ where: { projectId, attachedServiceId: serviceId } });
-    if (attached) throw new BadRequestException("Move or disable the managed database before removing its attached service.");
-    if (await this.generationServiceRevisions.exist({ where: { projectId, serviceId } })) throw new BadRequestException("A service with immutable release history cannot be removed before the project is destroyed.");
-    await this.deployableServices.remove(service);
-    const remaining = services.filter((item) => item.id !== serviceId);
-    for (const [position, item] of remaining.entries()) { item.position = position; await this.deployableServices.save(item); }
+    await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const projects = manager.getRepository(Project);
+      const currentProject = await projects.findOne({ where: { id: projectId } });
+      if (!currentProject) throw new NotFoundException("Project not found");
+      const serviceRepository = manager.getRepository(ProjectDeployableService);
+      const services = await serviceRepository.find({ where: { projectId }, order: { position: "ASC" } });
+      if (services.length <= 1) throw new BadRequestException("A deployable project must retain at least one service.");
+      const service = services.find((item) => item.id === serviceId);
+      if (!service) throw new NotFoundException("Deployable service not found");
+      if (currentProject.applicationEntryPointServiceId === serviceId) throw new BadRequestException("Select another application service before removing the current application entrypoint.");
+      const attached = await manager.getRepository(ProjectDatabaseTier).findOne({ where: { projectId, attachedServiceId: serviceId } });
+      if (attached) throw new BadRequestException("Move or disable the managed database before removing its attached service.");
+      if (await manager.getRepository(ProjectGenerationServiceRevision).exist({ where: { projectId, serviceId } })) throw new BadRequestException("A service with immutable release history cannot be removed before the project is destroyed.");
+      await serviceRepository.remove(service);
+      const remaining = services.filter((item) => item.id !== serviceId);
+      for (const [position, item] of remaining.entries()) { item.position = position; await serviceRepository.save(item); }
+    });
   }
 
   async getProjectEntityForView(user: User, projectId: string) {
@@ -331,12 +344,17 @@ export class ProjectsService {
   ) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const persist = async (target: Project, repository: Repository<Project>, manager?: EntityManager) => {
+    const savedProject = await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const repository = manager.getRepository(Project);
+      const target = await repository.findOne({ where: { id: projectId }, relations: { services: true } });
+      if (!target || target.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
       this.applyProjectUpdate(target, dto);
+      if (dto.applicationEntryPointServiceId !== undefined) {
+        target.applicationEntryPointServiceId = requireApplicationEntrypointServiceId(dto.applicationEntryPointServiceId, target.services || []);
+      }
       return repository.save(target);
-    };
-
-    const savedProject = await persist(project, this.projectRepository);
+    });
 
     await this.auditLogService.record({
       actorUser: user,
@@ -908,6 +926,7 @@ export class ProjectsService {
       repositoryFullName: project.repositoryFullName,
       targetBranch: project.targetBranch,
       environmentName: project.environmentName || "dev",
+      applicationEntryPointServiceId: project.applicationEntryPointServiceId || ((project.services || []).length === 1 ? project.services[0].id : null),
       services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, position: service.position })),
       status: project.status,
       visibility: project.visibility,
@@ -1026,11 +1045,13 @@ export class ProjectsService {
     if (dto.visibility !== undefined) project.visibility = dto.visibility;
   }
 
-  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "name" | "serviceDirectory">>) {
+  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "id" | "name" | "serviceDirectory">>) {
     const values = input?.length ? input : [{ name: "Web", serviceDirectory: "." }];
     if (values.length > 20) throw new BadRequestException("A project supports at most 20 explicitly configured services.");
-    const services = values.map((value) => ({ name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory) }));
+    const services = values.map((value) => ({ id: value.id, name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory) }));
     if (services.some((service) => !service.name || service.name.length > 80)) throw new BadRequestException("Every service requires a bounded name.");
+    const ids = services.map((service) => service.id).filter((id): id is string => Boolean(id));
+    if (new Set(ids).size !== ids.length) throw new ConflictException("Service identities must be unique within a project.");
     const names = services.map((service) => service.name.toLocaleLowerCase());
     if (new Set(names).size !== names.length) throw new ConflictException("Service names must be unique within a project.");
     return services;

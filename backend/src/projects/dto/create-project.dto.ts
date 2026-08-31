@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsEnum, IsOptional, IsString, Matches, ValidateNested } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsEnum, IsOptional, IsString, IsUUID, Matches, ValidateNested } from "class-validator";
 import { ProjectVisibility } from "../project.entity";
 import { DeployableServiceInputDto } from "./deployable-service.dto";
 
@@ -38,6 +38,10 @@ export class CreateProjectDto {
   @ValidateNested({ each: true }) @Type(() => DeployableServiceInputDto)
   @IsOptional()
   services?: DeployableServiceInputDto[];
+
+  @IsUUID()
+  @IsOptional()
+  applicationEntryPointServiceId?: string;
 
   @IsEnum(ProjectVisibility)
   @IsOptional()

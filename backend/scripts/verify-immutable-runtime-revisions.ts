@@ -78,6 +78,6 @@ void (async () => {
   assert.match(migration, /project_generation_service_revisions/);
   assert.match(migration, /is_rollback_safe[\s\S]*false[\s\S]*legacy_backfill/);
   assert.match(deletionMigration, /ON DELETE CASCADE/);
-  assert.match(projectsService, /generationServiceRevisions\.exist[\s\S]*immutable release history cannot be removed/);
+  assert.match(projectsService, /getRepository\(ProjectGenerationServiceRevision\)\.exist[\s\S]*immutable release history cannot be removed/);
   console.log("IMMUTABLE_RUNTIME_REVISIONS=PASS IMAGE_A_CONFIG_A=1 SECRET_VERSION_PINNED=1 DATABASE_INDEPENDENT=1 SERVICE_ORDER_AUTHORITY=0");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

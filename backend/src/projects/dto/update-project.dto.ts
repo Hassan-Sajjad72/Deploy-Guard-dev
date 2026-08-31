@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, Matches } from "class-validator";
+import { IsEnum, IsOptional, IsString, IsUUID, Matches } from "class-validator";
 import { ProjectVisibility } from "../project.entity";
 
 export class UpdateProjectDto {
@@ -14,5 +14,9 @@ export class UpdateProjectDto {
   @IsEnum(ProjectVisibility)
   @IsOptional()
   visibility?: ProjectVisibility;
+
+  @IsUUID()
+  @IsOptional()
+  applicationEntryPointServiceId?: string;
 
 }

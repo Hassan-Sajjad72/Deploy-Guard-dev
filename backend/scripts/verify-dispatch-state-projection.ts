@@ -18,6 +18,7 @@ import { PINNED_AWS_PROVIDER_VERSION, PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS 
 import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
 import { ProjectServiceRuntimeConfigRevision } from "../src/projects/project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "../src/projects/project-generation-service-revision.entity";
+import { Project } from "../src/projects/project.entity";
 
 const user = { id: 7 } as any;
 const project = {
@@ -119,6 +120,7 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
           : entity === ProjectStableRelease ? releaseRepository
             : entity === ProjectServiceRuntimeConfigRevision ? runtimeConfigRepository
               : entity === ProjectGenerationServiceRevision ? generationRevisionRepository
+                : entity === Project ? { findOne: async () => ({ ...project, applicationEntryPointServiceId: serviceId }) }
             : null,
   };
   service.dataSource = { transaction: async (callback: any) => callback(manager) };
@@ -257,6 +259,7 @@ async function verifyPreDispatchFailure() {
     save: async (row: any) => { saved.push(structuredClone(row)); return row; },
   };
   service.config = { get: (key: string, fallback = "") => key === "DEPLOYGUARD_REUSABLE_WORKFLOW" ? "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0123456789abcdef0123456789abcdef01234567" : fallback };
+  service.deployableServices = { find: async () => [{ id: "77777777-7777-4777-8777-777777777777", projectId: project.id, name: "Web", serviceDirectory: ".", position: 0 }] };
   service.githubApp = {
     tokenForRepository: async () => {
       assert.equal(saved[0]?.status, PipelineRunStatus.QUEUED, "attempt must exist before GitHub authentication");

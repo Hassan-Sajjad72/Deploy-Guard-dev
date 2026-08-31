@@ -46,57 +46,49 @@ test("new deployment directory picker ranks roots before descendants and preserv
   });
 
   await page.goto("/deploy");
-  const directories = page.getByLabel("Directory", { exact: true });
-  const directorySearches = page.getByLabel("Search directory suggestions", { exact: true });
-  const directorySuggestionPickers = page.getByLabel("Directory suggestions", { exact: true });
+  const directories = page.getByRole("combobox", { name: "Directory", exact: true });
   await expect(directories).toHaveCount(1);
   await expect(directories.first()).toHaveValue("");
-  await expect(directorySearches.first()).toHaveValue("");
-  await expect(directorySuggestionPickers.first().locator("option[value='.']")).toHaveCount(1);
+  await expect(directories.first().locator("option:checked")).toHaveText("Choose a directory");
+  await expect(directories.first().locator("option[value='.']")).toHaveText("Repository root (.)");
 
   const repositorySelector = page.locator(".new-project-fields select").first();
   const branchSelector = page.locator(".new-project-fields select").nth(1);
   await repositorySelector.selectOption("example/app");
-  await expect(directorySuggestionPickers.first().locator("option[value='frontend']")).toHaveCount(1);
-  const initialOrder = await directorySuggestionPickers.first().locator("option:not([value=''])").evaluateAll((options) => options.map((option) => option.value));
+  await expect(directories.first().locator("option[value='frontend']")).toHaveCount(1);
+  const initialOrder = await directories.first().locator("option:not([value=''])").evaluateAll((options) => options.map((option) => option.value));
   expect(initialOrder).toEqual([".", ".github", "backend", "frontend", ".github/workflows", "backend/config", "backend/controllers", "backend/middleware", "backend/models", "backend/node_modules", "frontend/app", "frontend/components", "frontend/src", "backend/node_modules/a", "backend/node_modules/b", "backend/node_modules/c", "backend/node_modules/d", "backend/node_modules/e"]);
   expect(initialOrder.indexOf("frontend")).toBeLessThan(initialOrder.indexOf("backend/config"));
   expect(initialOrder.indexOf("frontend")).toBeLessThan(initialOrder.indexOf("backend/node_modules/a"));
 
-  await directorySearches.first().fill("front");
-  await expect.poll(() => directorySuggestionPickers.first().locator("option:not([value=''])").evaluateAll((options) => options.map((option) => option.value))).toEqual(["frontend", "frontend/app", "frontend/components", "frontend/src"]);
-  await directorySuggestionPickers.first().selectOption("frontend");
-  await expect(directories.first()).toHaveValue("frontend");
-  await expect(directorySearches.first()).toHaveValue("");
-  await expect(directorySuggestionPickers.first().locator("option[value='backend']")).toHaveCount(1);
-  await expect(directorySuggestionPickers.first().locator("option[value='.']")).toHaveCount(1);
-  await directorySuggestionPickers.first().selectOption(".");
-  await expect(directories.first()).toHaveValue(".");
-  await expect(directorySuggestionPickers.first().locator("option[value='backend']")).toHaveCount(1);
-  await expect(directorySuggestionPickers.first().locator("option[value='frontend']")).toHaveCount(1);
-  await directorySuggestionPickers.first().selectOption("frontend");
-  await directorySuggestionPickers.first().selectOption("backend");
+  await directories.first().selectOption("backend");
   await expect(directories.first()).toHaveValue("backend");
+  await directories.first().selectOption("frontend");
+  await expect(directories.first()).toHaveValue("frontend");
+  await directories.first().selectOption(".");
+  await expect(directories.first()).toHaveValue(".");
   await page.getByRole("button", { name: "+ Add Service" }).click();
   await expect(directories).toHaveCount(2);
   await expect(directories.nth(1)).toHaveValue("");
+  await expect(directories.nth(1).locator("option:checked")).toHaveText("Choose a directory");
+  const applicationService = page.getByRole("combobox", { name: "Application service", exact: true });
+  await expect(applicationService).toHaveValue("");
+  await expect(applicationService.locator("option")).toHaveCount(3);
 
-  await directorySearches.first().fill("front");
-  await expect(directorySuggestionPickers.first().locator("option[value='backend']")).toHaveCount(1);
-  await expect(directorySuggestionPickers.first().locator("option[value='backend/config']")).toHaveCount(0);
-  await expect(directorySuggestionPickers.nth(1).locator("option[value='backend/config']")).toHaveCount(1);
-  await directorySearches.first().fill("");
-  await directorySuggestionPickers.first().selectOption("backend");
-  await directorySuggestionPickers.nth(1).selectOption("frontend");
+  await directories.first().selectOption("backend");
+  await directories.nth(1).selectOption("frontend");
   await expect(directories.first()).toHaveValue("backend");
   await expect(directories.nth(1)).toHaveValue("frontend");
+  const secondServiceIdentity = await applicationService.locator("option").nth(2).getAttribute("value");
+  await applicationService.selectOption(secondServiceIdentity);
+  await expect(applicationService).toHaveValue(secondServiceIdentity);
 
   await branchSelector.selectOption("release");
   await releaseDirectoryRequested;
   await branchSelector.selectOption("main");
-  await expect(directorySuggestionPickers.locator("option[value='frontend']")).toHaveCount(2);
+  await expect(directories.locator("option[value='frontend']")).toHaveCount(2);
   releaseDirectories();
-  await expect(directorySuggestionPickers.locator("option[value='apps/release']")).toHaveCount(0);
+  await expect(directories.locator("option[value='apps/release']")).toHaveCount(0);
 });
 
 test("real browser configuration, persistence-facing responses, navigation, reload, and authorization", async ({ page, request, browser }) => {
@@ -135,6 +127,15 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   const savedService = await expectJson(await serviceResponse);
   expect(savedService.service.serviceDirectory).toBe("apps/api");
   const apiServiceId = savedService.service.id;
+
+  const applicationService = page.getByRole("combobox", { name: "Application service", exact: true });
+  await applicationService.selectOption(apiServiceId);
+  const applicationServiceResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}`));
+  await page.getByRole("button", { name: "Save application service" }).click();
+  const applicationProject = await expectJson(await applicationServiceResponse);
+  expect(applicationProject.project.applicationEntryPointServiceId).toBe(apiServiceId);
+  const selectedDelete = await request.delete(`${apiBase}/api/projects/${projectId}/services/${apiServiceId}`);
+  expect(selectedDelete.status()).toBe(400);
 
   const first = cards.nth(0);
   await first.getByLabel("Paste KEY=VALUE lines").fill("PUBLIC_URL=https://example.test");
@@ -204,7 +205,7 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   expect(forbidden.status()).toBe(403);
   await readonly.close();
 
-  saveResult({ projectId, apiServiceId, currentState: current.stateAuthority.state, browserMutations: 8, crossPageSurfaces: surfaces.length });
+  saveResult({ projectId, apiServiceId, currentState: current.stateAuthority.state, browserMutations: 9, crossPageSurfaces: surfaces.length });
 });
 
 test("real GitHub-backed repository and branch selection with project creation when admitted", async ({ page, request }) => {

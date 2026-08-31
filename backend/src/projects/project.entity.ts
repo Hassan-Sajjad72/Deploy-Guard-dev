@@ -87,6 +87,9 @@ export class Project {
   @OneToMany(() => ProjectDeployableService, (service) => service.project)
   services: ProjectDeployableService[];
 
+  @Column({ nullable: true, name: "application_entrypoint_service_id", type: "uuid" })
+  applicationEntryPointServiceId: string | null;
+
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt: Date;
 

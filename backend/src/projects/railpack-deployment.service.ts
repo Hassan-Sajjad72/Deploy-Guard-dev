@@ -33,6 +33,7 @@ import { ProjectDeployableService } from "./project-deployable-service.entity";
 import { classifyStructuredFailure } from "./failure-ownership";
 import { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
+import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -194,6 +195,15 @@ export class RailpackDeploymentService {
     const active = await this.runs.findOne({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
     if (active) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: active } };
     const environmentName = canonicalEnvironmentName(project);
+    const admittedServiceRows = action === "destroy" ? [] : await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } });
+    if (action !== "destroy") {
+      if (!admittedServiceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
+      try {
+        requireApplicationEntrypointServiceId(project.applicationEntryPointServiceId, action === "rollback" ? rollbackTarget?.services || [] : admittedServiceRows);
+      } catch (error) {
+        throw new ServiceUnavailableException(error instanceof Error ? error.message : "Select an application service before deploying this project.");
+      }
+    }
     const operationId = randomUUID();
     const attempt = await this.runs.count({ where: { projectId } }) + 1;
     const destroyRoute = action === "destroy"
@@ -224,7 +234,7 @@ export class RailpackDeploymentService {
         : action === "destroy" ? destroyRelease?.commitSha || ""
           : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
-      const serviceRows = await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } });
+      const serviceRows = action === "destroy" ? await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } }) : admittedServiceRows;
       if (!serviceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
       if (action === "deploy") {
         operation.currentStage = "service_directory_validation";
@@ -775,7 +785,13 @@ export class RailpackDeploymentService {
 
       const immutableServices = (immutable.services as Array<Record<string, unknown>>)
         .slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId)));
-      const canonicalEndpoint = immutableServices.reduce((selected, service) => String(service.serviceId).localeCompare(String(selected.serviceId)) < 0 ? service : selected);
+      const endpointProject = await manager.getRepository(Project).findOne({ where: { id: project.id } });
+      if (!endpointProject) throw new Error("Project application-entrypoint authority disappeared before release finalization.");
+      const applicationEntryPointServiceId = requireApplicationEntrypointServiceId(endpointProject.applicationEntryPointServiceId, immutableServices);
+      const applicationEndpoint = immutableServices.find((service) => String(service.serviceId) === applicationEntryPointServiceId);
+      if (!applicationEndpoint || typeof applicationEndpoint.publicUrl !== "string" || !/^https?:\/\//i.test(applicationEndpoint.publicUrl)) {
+        throw new Error("The selected application service has no verified public URL in the complete release evidence.");
+      }
       const runtimeConfigIds = immutableServices.map((service) => String(service.runtimeConfigRevisionId));
       const runtimeConfigs = await manager.getRepository(ProjectServiceRuntimeConfigRevision).find({ where: { id: In(runtimeConfigIds) } });
       const runtimeConfigById = new Map(runtimeConfigs.map((revision) => [revision.id, revision]));
@@ -857,7 +873,7 @@ export class RailpackDeploymentService {
         commitSha: current.commitSha || "",
         healthCheckPath: "/",
         appPort: DEPLOYGUARD_PLATFORM_PORT,
-        metadata: { deployedUrl: canonicalEndpoint.publicUrl, publicUrls: Object.fromEntries(immutableServices.map((service) => [String(service.serviceId), service.publicUrl])), services: immutableServices, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
+        metadata: { deployedUrl: applicationEndpoint.publicUrl, publicUrls: Object.fromEntries(immutableServices.map((service) => [String(service.serviceId), service.publicUrl])), services: immutableServices, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
       });
       current.generationId = generation.id;
       current.status = PipelineRunStatus.COMPLETED;
@@ -865,7 +881,7 @@ export class RailpackDeploymentService {
       current.errorMessage = null;
       current.failureOwner = null; current.externalProvider = null; current.failureCode = null; current.failureServiceId = null;
       current.completedAt = current.completedAt || new Date();
-      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl: canonicalEndpoint.publicUrl, publicUrls: Object.fromEntries(immutableServices.map((service) => [String(service.serviceId), service.publicUrl])), releaseEvidenceVerified: true, runtimeIdentity };
+      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl: applicationEndpoint.publicUrl, publicUrls: Object.fromEntries(immutableServices.map((service) => [String(service.serviceId), service.publicUrl])), releaseEvidenceVerified: true, runtimeIdentity };
       await operations.save(current);
       Object.assign(operation, current);
     });

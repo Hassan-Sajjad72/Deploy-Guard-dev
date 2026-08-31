@@ -5,6 +5,7 @@ import { ProjectEnvironmentVariable } from "./project-environment-variable.entit
 @Entity("project_deployable_services")
 @Unique("UQ_project_deployable_service_name", ["projectId", "name"])
 @Unique("UQ_project_deployable_service_position", ["projectId", "position"])
+@Unique("UQ_project_deployable_service_identity_project", ["id", "projectId"])
 export class ProjectDeployableService {
   @PrimaryGeneratedColumn("uuid") id: string;
   @Index() @Column({ name: "project_id", type: "uuid" }) projectId: string;

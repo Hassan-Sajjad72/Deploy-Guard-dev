@@ -55,8 +55,8 @@ async function verifyPersistence(client: Client, result: any) {
   const requiredTables = ["projects", "project_deployable_services", "project_environment_variables", "project_database_tiers", "project_pipeline_runs", "project_deployment_generations", "project_environment_routes", "project_stable_releases", "project_service_runtime_config_revisions", "project_generation_service_revisions"];
   const tables = await client.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY($1::text[])`, [requiredTables]);
   assert.equal(tables.rowCount, requiredTables.length, "all canonical persistence tables must exist after zero-to-head migrations");
-  const project = await client.query(`SELECT name,description,target_branch FROM projects WHERE id=$1`, [projectId]);
-  assert.deepEqual(project.rows[0], { name: "Certified application", description: "Full-stack persisted configuration", target_branch: "main" });
+  const project = await client.query(`SELECT name,description,target_branch,application_entrypoint_service_id FROM projects WHERE id=$1`, [projectId]);
+  assert.deepEqual(project.rows[0], { name: "Certified application", description: "Full-stack persisted configuration", target_branch: "main", application_entrypoint_service_id: result.apiServiceId });
   const services = await client.query(`SELECT id,name,service_directory,position FROM project_deployable_services WHERE project_id=$1 ORDER BY position`, [projectId]);
   assert.equal(services.rowCount, 2);
   assert.equal(services.rows.find((row) => row.id === result.apiServiceId)?.service_directory, "apps/api");
@@ -79,6 +79,7 @@ async function verifyPersistence(client: Client, result: any) {
   const disposableService = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   await client.query(`INSERT INTO projects (id,owner_user_id,name,repository_url,repository_full_name,target_branch,status,visibility) SELECT $1,owner_user_id,'Disposable','https://github.com/fixture/disposable','fixture/disposable','main','configured','private' FROM projects WHERE id=$2`, [disposableProject, projectId]);
   await client.query(`INSERT INTO project_deployable_services (id,project_id,name,service_directory,position) VALUES ($1,$2,'Web','.',0)`, [disposableService, disposableProject]);
+  await client.query(`UPDATE projects SET application_entrypoint_service_id=$1 WHERE id=$2`, [disposableService, disposableProject]);
   await client.query(`INSERT INTO project_environment_variables (project_id,service_id,key,normalized_key,value,is_secret,environment) VALUES ($1,$2,'DISPOSABLE','DISPOSABLE','encrypted',true,'dev')`, [disposableProject, disposableService]);
   await client.query(`DELETE FROM projects WHERE id=$1`, [disposableProject]);
   const residue = await client.query(`SELECT (SELECT count(*) FROM project_deployable_services WHERE project_id=$1)::int AS services,(SELECT count(*) FROM project_environment_variables WHERE project_id=$1)::int AS environment`, [disposableProject]);
@@ -141,7 +142,7 @@ async function main() {
     PORT: String(apiPort), FRONTEND_URL: `http://127.0.0.1:${frontendPort}`,
   };
   checked("npm", ["run", "migration:run"], backendRoot, env, false);
-  console.log("POSTGRES_MIGRATIONS_FROM_ZERO=PASS COUNT=100");
+  console.log("POSTGRES_MIGRATIONS_FROM_ZERO=PASS COUNT=101");
   databaseClient = new Client({ host: postgres.getHost(), port: postgres.getPort(), user: postgres.getUsername(), password: postgres.getPassword(), database: postgres.getDatabase() });
   await databaseClient.connect();
   const users = await seed(databaseClient);
