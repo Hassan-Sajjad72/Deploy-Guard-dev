@@ -40,6 +40,8 @@ assert.match(migration, /DROP COLUMN IF EXISTS "app_directory"/);
 assert.match(migration, /UQ_project_deployable_service_name_ci/);
 assert.match(newProject, /name: "Web", serviceDirectory: ""/);
 assert.match(newProject, /name: `Service \$\{current\.length \+ 1\}`, serviceDirectory: ""/);
+assert.match(newProject, /function compareDirectoryPresentation/);
+assert.match(newProject, /matchingDirectories\(rankedDirectories, service\.serviceDirectory\)/);
 assert.match(newProject, /\+ Add Service/);
 assert.doesNotMatch(newProject, /Install Command|Build Command|Start Command|Framework|Language|Package Manager/);
 assert.match(source, /assertDirectoriesAtExactSha/);

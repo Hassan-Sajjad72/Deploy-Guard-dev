@@ -19,11 +19,16 @@ async function expectJson(response, status = 200) {
   return response.json();
 }
 
-test("new deployment directory picker requires an explicit choice and ignores stale branch results", async ({ page }) => {
-  let mainDirectoryRequest;
-  const mainDirectoryRequested = new Promise((resolve) => { mainDirectoryRequest = resolve; });
-  let releaseMainDirectories;
-  const mainDirectoriesReleased = new Promise((resolve) => { releaseMainDirectories = resolve; });
+test("new deployment directory picker ranks roots before descendants and preserves exact selections", async ({ page }) => {
+  const mainDirectories = [
+    ".", ".github", ".github/workflows", "backend", "backend/config", "backend/controllers", "backend/middleware", "backend/models",
+    "backend/node_modules", "backend/node_modules/a", "backend/node_modules/b", "backend/node_modules/c", "backend/node_modules/d", "backend/node_modules/e",
+    "frontend", "frontend/app", "frontend/components", "frontend/src",
+  ];
+  let releaseDirectoryRequest;
+  const releaseDirectoryRequested = new Promise((resolve) => { releaseDirectoryRequest = resolve; });
+  let releaseDirectories;
+  const releaseDirectoriesReleased = new Promise((resolve) => { releaseDirectories = resolve; });
 
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: "1", name: "Directory Picker Tester", role: "developer" } } }));
   await page.route("**/api/projects/github/status", (route) => route.fulfill({ json: { connected: true } }));
@@ -31,13 +36,13 @@ test("new deployment directory picker requires an explicit choice and ignores st
   await page.route("**/api/projects/github/repositories/example/app", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main", "release"] } } }));
   await page.route("**/api/projects/github/repositories/example/app/directories?ref=*", async (route) => {
     const ref = new URL(route.request().url()).searchParams.get("ref");
-    if (ref === "main") {
-      mainDirectoryRequest();
-      await mainDirectoriesReleased;
-      await route.fulfill({ json: { directories: [".", "apps/main"] } });
+    if (ref === "release") {
+      releaseDirectoryRequest();
+      await releaseDirectoriesReleased;
+      await route.fulfill({ json: { directories: [".", "apps/release"] } });
       return;
     }
-    await route.fulfill({ json: { directories: [".", "apps/release"] } });
+    await route.fulfill({ json: { directories: mainDirectories } });
   });
 
   await page.goto("/deploy");
@@ -49,17 +54,35 @@ test("new deployment directory picker requires an explicit choice and ignores st
   const repositorySelector = page.locator(".new-project-fields select").first();
   const branchSelector = page.locator(".new-project-fields select").nth(1);
   await repositorySelector.selectOption("example/app");
-  await mainDirectoryRequested;
-  await branchSelector.selectOption("release");
-  await expect(page.locator("datalist option[value='apps/release']")).toHaveCount(1);
-  releaseMainDirectories();
-  await expect(page.locator("datalist option[value='apps/main']")).toHaveCount(0);
+  await expect(page.locator("datalist option[value='frontend']")).toHaveCount(1);
+  const initialOrder = await page.locator("datalist").first().locator("option").evaluateAll((options) => options.map((option) => option.value));
+  expect(initialOrder).toEqual([".", ".github", "backend", "frontend", ".github/workflows", "backend/config", "backend/controllers", "backend/middleware", "backend/models", "backend/node_modules", "frontend/app", "frontend/components", "frontend/src", "backend/node_modules/a", "backend/node_modules/b", "backend/node_modules/c", "backend/node_modules/d", "backend/node_modules/e"]);
+  expect(initialOrder.indexOf("frontend")).toBeLessThan(initialOrder.indexOf("backend/config"));
+  expect(initialOrder.indexOf("frontend")).toBeLessThan(initialOrder.indexOf("backend/node_modules/a"));
 
+  await directories.first().fill("front");
+  await expect.poll(() => page.locator("datalist").first().locator("option").evaluateAll((options) => options.map((option) => option.value))).toEqual(["frontend", "frontend/app", "frontend/components", "frontend/src"]);
+  await directories.first().fill("frontend");
+  await expect(directories.first()).toHaveValue("frontend");
   await directories.first().fill(".");
   await expect(directories.first()).toHaveValue(".");
   await page.getByRole("button", { name: "+ Add Service" }).click();
   await expect(directories).toHaveCount(2);
   await expect(directories.nth(1)).toHaveValue("");
+
+  await directories.first().fill("backend");
+  await directories.nth(1).fill("frontend");
+  await expect(directories.first()).toHaveValue("backend");
+  await expect(directories.nth(1)).toHaveValue("frontend");
+
+  await directories.first().fill("");
+  await directories.nth(1).fill("");
+  await branchSelector.selectOption("release");
+  await releaseDirectoryRequested;
+  await branchSelector.selectOption("main");
+  await expect(page.locator("datalist option[value='frontend']")).toHaveCount(2);
+  releaseDirectories();
+  await expect(page.locator("datalist option[value='apps/release']")).toHaveCount(0);
 });
 
 test("real browser configuration, persistence-facing responses, navigation, reload, and authorization", async ({ page, request, browser }) => {
