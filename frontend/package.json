@@ -35,6 +35,7 @@
     "test:rollback-stage-monotonicity": "node scripts/verify-rollback-stage-monotonicity.mjs",
     "test:full-local-certification": "npm run test:operator-segregation-ui && npm run test:application-surfaces && npm run test:current-state-ui && npm run test:visual-system && npm run test:github-home && npm run test:admin-readability && npm run test:deploy-journey && npm run test:managed-environment && npm run test:unified-lifecycle && npm run test:pipeline-recovery && npm run test:professional-pipeline && npm run test:infrastructure-presentation && npm run test:monitoring-presentation && npm run test:destroy-operation-presentation && npm run test:overview-lifecycle && npm run test:modal-viewport-browser && npm run test:railpack-failure-presentation && npm run test:project-state-sync && npm run test:recovery-ui && npm run test:time-recency-ui && npm run test:serialized-project-refresh && npm run test:project-page-loading && npm run test:rollback-stage-monotonicity",
     "preview": "vite preview"
+    ,"test:full-stack": "playwright test --config playwright.config.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.5",
@@ -42,5 +43,8 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.2",
     "vite": "^8.2.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
   }
 }

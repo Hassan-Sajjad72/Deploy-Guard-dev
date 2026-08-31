@@ -193,7 +193,7 @@ export class ProjectsController {
   @Header("Cache-Control", "private, no-store")
   async getCurrentState(
     @Req() req: Request,
-    @Param("projectId") projectId: string
+    @Param("projectId", ParseUUIDPipe) projectId: string
   ) {
     return this.projectCurrentStateService.getCurrentState(req.user!, projectId);
   }
@@ -359,7 +359,7 @@ export class ProjectsController {
 
 
   @Get(":projectId")
-  async getProject(@Req() req: Request, @Param("projectId") projectId: string) {
+  async getProject(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string) {
     return {
       project: await this.projectsService.getProjectForView(req.user!, projectId),
     };
@@ -368,7 +368,7 @@ export class ProjectsController {
   @Patch(":projectId")
   async updateProject(
     @Req() req: Request,
-    @Param("projectId") projectId: string,
+    @Param("projectId", ParseUUIDPipe) projectId: string,
     @Body() dto: UpdateProjectDto
   ) {
     return {
@@ -377,7 +377,7 @@ export class ProjectsController {
   }
 
   @Delete(":projectId")
-  async archiveProject(@Req() req: Request, @Param("projectId") projectId: string) {
+  async archiveProject(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string) {
     await this.attemptProjectAction(req, "PROJECT_ARCHIVED", projectId, () => this.projectsService.archiveProject(req.user!, projectId, req));
 
     return { message: "Project archived successfully" };
@@ -386,7 +386,7 @@ export class ProjectsController {
   @Patch(":projectId/repository")
   async updateRepository(
     @Req() req: Request,
-    @Param("projectId") projectId: string,
+    @Param("projectId", ParseUUIDPipe) projectId: string,
     @Body() dto: UpdateRepositoryDto
   ) {
     return {
@@ -400,7 +400,7 @@ export class ProjectsController {
   }
 
   @Get(":projectId/branches")
-  async getBranches(@Req() req: Request, @Param("projectId") projectId: string) {
+  async getBranches(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string) {
     return {
       branches: await this.projectsService.getBranches(req.user!, projectId),
     };
@@ -409,7 +409,7 @@ export class ProjectsController {
   @Patch(":projectId/branch")
   async updateBranch(
     @Req() req: Request,
-    @Param("projectId") projectId: string,
+    @Param("projectId", ParseUUIDPipe) projectId: string,
     @Body() dto: UpdateBranchDto
   ) {
     return {
@@ -418,7 +418,7 @@ export class ProjectsController {
   }
 
   @Get(":projectId/env")
-  async listEnvVars(@Req() req: Request, @Param("projectId") projectId: string) {
+  async listEnvVars(@Req() req: Request, @Param("projectId", ParseUUIDPipe) projectId: string) {
     return this.projectsService.getEnvVarSetup(req.user!, projectId);
   }
 
@@ -451,7 +451,7 @@ export class ProjectsController {
   @Post(":projectId/env")
   async createEnvVar(
     @Req() req: Request,
-    @Param("projectId") projectId: string,
+    @Param("projectId", ParseUUIDPipe) projectId: string,
     @Body() dto: CreateEnvVarDto
   ) {
     const result = await this.attemptProjectAction(req, "PROJECT_ENV_CREATED", projectId, () => this.projectsService.createEnvVar(req.user!, projectId, dto, req));
@@ -461,7 +461,7 @@ export class ProjectsController {
   @Post(":projectId/env/bulk")
   async bulkUpsertEnvVars(
     @Req() req: Request,
-    @Param("projectId") projectId: string,
+    @Param("projectId", ParseUUIDPipe) projectId: string,
     @Body() dto: BulkEnvVarsDto
   ) {
     const result = await this.attemptProjectAction(req, "PROJECT_ENV_BULK_UPSERTED", projectId, () =>
@@ -473,8 +473,8 @@ export class ProjectsController {
   @Patch(":projectId/env/:envId")
   async updateEnvVar(
     @Req() req: Request,
-    @Param("projectId") projectId: string,
-    @Param("envId") envId: string,
+    @Param("projectId", ParseUUIDPipe) projectId: string,
+    @Param("envId", ParseUUIDPipe) envId: string,
     @Body() dto: UpdateEnvVarDto
   ) {
     const result = await this.attemptProjectAction(req, "PROJECT_ENV_UPDATED", projectId, () => this.projectsService.updateEnvVar(
@@ -490,8 +490,8 @@ export class ProjectsController {
   @Delete(":projectId/env/:envId")
   async deleteEnvVar(
     @Req() req: Request,
-    @Param("projectId") projectId: string,
-    @Param("envId") envId: string
+    @Param("projectId", ParseUUIDPipe) projectId: string,
+    @Param("envId", ParseUUIDPipe) envId: string
   ) {
     await this.attemptProjectAction(req, "PROJECT_ENV_DELETED", projectId, () => this.projectsService.deleteEnvVar(req.user!, projectId, envId, req));
 

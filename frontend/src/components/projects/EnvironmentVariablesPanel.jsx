@@ -12,7 +12,7 @@ import { ViewportPortal } from "../common/DesignSystem.jsx";
 import EnvVarForm from "./EnvVarForm.jsx";
 import EnvVarTable from "./EnvVarTable.jsx";
 
-const emptyForm = { id: "", key: "", value: "", isSecret: true, scope: "runtime", isRequired: false, environment: "production", detectedSource: "User supplied" };
+const emptyForm = { id: "", key: "", value: "", isSecret: true, scope: "runtime", isRequired: false, detectedSource: "User supplied" };
 
 export default function EnvironmentVariablesPanel({ projectId, serviceId, serviceName, canManage, onSaved }) {
   const [setup, setSetup] = useState({ variables: [], managedVariables: [], reservedVariables: [] });
@@ -73,7 +73,7 @@ export default function EnvironmentVariablesPanel({ projectId, serviceId, servic
   async function submitSingle(event) {
     event.preventDefault(); setBusy(true); setError(""); setSuccess("");
     try {
-      const payload = { key: form.key.trim().toUpperCase(), value: form.value || undefined, isSecret: form.isSecret, scope: form.scope, isRequired: form.isRequired, environment: form.environment, detectedSource: form.detectedSource };
+      const payload = { key: form.key.trim().toUpperCase(), value: form.value || undefined, isSecret: form.isSecret, scope: form.scope, isRequired: form.isRequired, detectedSource: form.detectedSource };
       const response = form.id
         ? serviceId ? await updateProjectServiceEnvVar(projectId, serviceId, form.id, payload) : await updateProjectEnvVar(projectId, form.id, payload)
         : serviceId ? await createProjectServiceEnvVar(projectId, serviceId, payload) : await createProjectEnvVar(projectId, payload);

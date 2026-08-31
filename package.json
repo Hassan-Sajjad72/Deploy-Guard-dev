@@ -10,6 +10,9 @@
     "product:verify": "node scripts/verify-local-product.mjs",
     "test:canonical-backend-environment": "node scripts/verify-canonical-backend-environment.mjs",
     "product:build": "npm --prefix backend run build && npm --prefix frontend run build",
-    "install:all": "cd frontend && npm install && cd ../backend && npm install"
+    "install:all": "cd frontend && npm install && cd ../backend && npm install",
+    "test:workflow-executable-contract": "node scripts/run-workflow-lint.mjs && npm --prefix backend run test:railpack-runtime-contract",
+    "test:terraform-product-matrix": "terraform -chdir=infrastructure/railpack-runtime fmt -check && terraform -chdir=infrastructure/railpack-runtime validate && terraform -chdir=infrastructure/railpack-runtime test",
+    "test:pre-final-certification": "npm --prefix backend run test:pre-final-certification"
   }
 }

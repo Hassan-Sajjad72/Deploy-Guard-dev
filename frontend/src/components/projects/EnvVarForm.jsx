@@ -39,10 +39,7 @@ export default function EnvVarForm({
         />{" "}
         Secret
       </label>
-      <div className="form-grid">
-        <label className="field"><span>Scope</span><select name="scope" onChange={onChange} value={form.scope}><option value="build">Build</option><option value="runtime">Runtime</option><option value="both">Build and runtime</option></select></label>
-        <label className="field"><span>Environment</span><select name="environment" onChange={onChange} value={form.environment}><option value="production">Production</option><option value="development">Development</option></select></label>
-      </div>
+      <label className="field"><span>Scope</span><select name="scope" onChange={onChange} value={form.scope}><option value="build">Build</option><option value="runtime">Runtime</option><option value="both">Build and runtime</option></select></label>
       <p className="muted">Custom variables are optional. Database connection aliases are managed from Database settings.</p>
       <div className="quick-actions">
         <button className="button" disabled={isSubmitting} type="submit">

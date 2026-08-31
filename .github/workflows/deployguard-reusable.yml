@@ -140,9 +140,12 @@ jobs:
             service_id="$(jq -r '.serviceId' <<<"$artifact")"; image="$(jq -r '.localImage' <<<"$artifact")"; compact_service="${service_id//-/}"; container="deployguard-runtime-probe-${OPERATION_ID}-${compact_service:0:8}"; containers+=("$container")
             docker run --detach --name "$container" --env PORT=8080 --env HOST=0.0.0.0 "$image" >/dev/null
             ready=false
+            # The inner Bash receives the container/IP as positional parameters; expansion here would be wrong.
+            # shellcheck disable=SC2016
             if timeout --signal=TERM 45 bash -c 'while true; do running="$(docker inspect --format "{{.State.Running}}" "$1" 2>/dev/null || true)"; [ "$running" = true ] || exit 1; ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" "$1" 2>/dev/null || true)"; if [ -n "$ip" ] && timeout 1 bash -c "exec 3<>/dev/tcp/\$1/8080" _ "$ip" 2>/dev/null; then exit 0; fi; sleep 1; done' _ "$container"; then ready=true; fi
             if [ "$ready" != true ]; then docker logs "$container" --tail 100 2>&1 | sed -E 's/((password|passwd|token|secret|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/Ig' | tr -cd '\11\12\15\40-\176' | tail -c 12000 >&2 || true; echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime" >&2; echo 'Application did not listen on PORT=8080 within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable.' >&2; exit 1; fi
-            docker rm --force "$container" >/dev/null; unset 'containers[${#containers[@]}-1]'
+            docker rm --force "$container" >/dev/null
+            unset 'containers[${#containers[@]}-1]'
           done < <(jq -c '.[]' .deployguard/build-artifacts.json)
       - name: Publish immutable images to ECR
         if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.built == 'true'

@@ -11,7 +11,6 @@ export function classifyEnvironmentVariable(key) {
     scope: isPublicBuild ? "build" : "runtime",
     isSecret,
     isRequired: false,
-    environment: "production",
   };
 }
 
