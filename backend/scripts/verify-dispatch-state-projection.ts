@@ -19,6 +19,7 @@ import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
 import { ProjectServiceRuntimeConfigRevision } from "../src/projects/project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "../src/projects/project-generation-service-revision.entity";
 import { Project } from "../src/projects/project.entity";
+import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError } from "../src/projects/github-app.service";
 
 const user = { id: 7 } as any;
 const project = {
@@ -289,6 +290,10 @@ function verifyCapabilityFailureIsBoundedAndPreDispatch() {
   assert.equal(failure.evidence.classification, "platform_configuration");
   assert.deepEqual(failure.evidence.missingCapabilities, ["ecs:CreateCluster", "elasticloadbalancing:CreateLoadBalancer", "iam:AttachRolePolicy"]);
   assert.doesNotMatch(failure.message, /fixture/, "internal IAM simulator text must not become high-level operation evidence");
+  const compatibility = service.dispatchFailure(new ControlPlaneCompatibilityError("producer mismatch"), "caller_reconciliation");
+  assert.equal(compatibility.stage, "control_plane_compatibility");
+  assert.equal(compatibility.evidence.code, CONTROL_PLANE_VERSION_MISMATCH);
+  assert.match(compatibility.message, /DG_FAILURE code=DG_CONTROL_PLANE_VERSION_MISMATCH/);
 }
 
 async function verifyPerActionCapabilitySimulation() {

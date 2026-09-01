@@ -12,6 +12,8 @@ const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", 
 const outputs = readFileSync(join(root, "infrastructure", "railpack-runtime", "outputs.tf"), "utf8");
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
 const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-runtime", "verify-runtime.sh"), "utf8");
+const releaseResultProducer = readFileSync(join(root, "infrastructure", "railpack-runtime", "build-release-result.sh"), "utf8");
+const executableContract = { releaseResultProducer, runtimeVerifier: runtimeVerification };
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
 const providerLock = readFileSync(join(root, "infrastructure", "railpack-runtime", ".terraform.lock.hcl"), "utf8");
@@ -104,17 +106,22 @@ assert.equal(executeEcrCleanup(0, 1).status, 0, "confirmed ECR absence may conti
 assert.match(destroyRuntime, /\.Name == \$serviceSecret[\s\S]*?\.Name == \$legacySecret/, "destroy supports only exact owned service-scoped or historical project-scoped runtime secret namespaces");
 assert.match(destroyRuntime, /describe-secret --secret-id "\$service_secret" --query ARN --output text/, "destroy discovers the exact service secret even when it contains only build-scope values");
 assert.match(destroyRuntime, /\[ "\$repository" = "deployguard-\$\{PROJECT_ID\}" \] \|\| \[ "\$repository" = "deployguard-\$\{compact_project:0:12\}-\$\{compact_service:0:8\}" \]/, "destroy must reject any ECR repository outside the exact legacy or service-scoped DeployGuard namespace");
-assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller)));
+assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), executableContract));
 const staleResultContract = workflow.replace(/^      result_contract_version:.*\n/m, "");
 assert.throws(
-  () => assertReusableWorkflowCompatibility(staleResultContract, pinned, generatedCallerWithKeys(caller)),
+  () => assertReusableWorkflowCompatibility(staleResultContract, pinned, generatedCallerWithKeys(caller), executableContract),
   /result_contract_version/,
   "a reusable workflow with the stale result schema is blocked before dispatch",
 );
 assert.throws(
-  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v4", "# deployguard-result-contract: deployguard.release-result/v3"), pinned, generatedCallerWithKeys(caller)),
+  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v4", "# deployguard-result-contract: deployguard.release-result/v3"), pinned, generatedCallerWithKeys(caller), executableContract),
   /does not produce deployguard\.release-result\/v4/,
   "input compatibility alone cannot certify an incompatible result producer",
+);
+assert.throws(
+  () => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { ...executableContract, releaseResultProducer: releaseResultProducer.replace("awsRuntimeVerification:$awsRuntimeVerification", "runtimeVerification:$awsRuntimeVerification") }),
+  /required terminal evidence producer/,
+  "matching contract markers and inputs cannot certify a producer that drops awsRuntimeVerification",
 );
 
 assert.doesNotMatch(terraform, /aws_db_instance|aws_db_subnet_group/);
@@ -156,6 +163,7 @@ for (const message of ["invalid_deployment_action", "invalid_immutable_release_i
 }
 assert.match(workflow, /services_base64/);
 assert.match(workflow, /verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
+assert.match(workflow, /build-release-result\.sh[\s\S]*aws-runtime-verification\.json[\s\S]*release-runtime\.json/);
 assert.match(runtimeVerification, /\.services \| to_entries\[\]/);
 assert.doesNotMatch(workflow, /rollback_image_uri|runtime_environment_base64|runtime_secret_references_base64/);
 assert.match(deploymentService, /result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION/);

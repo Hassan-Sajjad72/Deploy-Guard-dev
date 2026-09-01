@@ -1,8 +1,10 @@
 import "reflect-metadata";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { GithubAppService, canonicalDeployguardReusableWorkflow, renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
+import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError, GithubAppService, canonicalDeployguardReusableWorkflow, renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
 import { DatabaseTierService } from "../src/projects/database-tier.service";
 import { DatabaseTierProvider } from "../src/projects/project-database-tier.entity";
 import { isSupportedManagedDatabaseEngine, managedDatabaseEngine } from "../src/projects/managed-database-engine";
@@ -11,6 +13,8 @@ import { RAILPACK_WORKFLOW_INPUTS } from "../src/projects/railpack-workflow-cont
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 
 void (async () => {
+const canonicalSha = "a9bcc72df2047de64cb4034960d4df72da3e9c1f";
+const canonicalReusable = `Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@${canonicalSha}`;
 const emptyConfig = new ConfigService({});
 const github = new GithubAppService({
   find: async () => [],
@@ -26,7 +30,7 @@ await assert.rejects(() => github.tokenForRepository(1, "inaccessible/repository
 
 const workflowCalls: Array<{ url: string; init?: RequestInit }> = [];
 const workflowGithub = Object.create(GithubAppService.prototype) as any;
-workflowGithub.config = new ConfigService({ DEPLOYGUARD_REUSABLE_WORKFLOW: `owner/repository/.github/workflows/deployguard-reusable.yml@${"a".repeat(40)}` });
+workflowGithub.config = new ConfigService({ DEPLOYGUARD_REUSABLE_WORKFLOW: canonicalReusable });
 workflowGithub.tokenForRepository = async () => ({ token: "installation-token", installationId: "42", repositoryId: "99", defaultBranch: "main" });
 workflowGithub.validatePinnedReusableWorkflow = async () => undefined;
 workflowGithub.githubFetch = async (url: string, init?: RequestInit) => {
@@ -38,6 +42,57 @@ assert.equal(workflowRegistration.registrationBranch, "main");
 assert.match(workflowCalls[0].url, /deployguard\.yml\?ref=main$/);
 assert.equal(JSON.parse(String(workflowCalls.at(-1)?.init?.body)).branch, "main", "caller workflow is registered on GitHub's default branch");
 assert.doesNotMatch(JSON.stringify(workflowCalls), /feature\/selected/, "application source branch never controls workflow registration");
+assert.match(Buffer.from(JSON.parse(String(workflowCalls.at(-1)?.init?.body)).content, "base64").toString("utf8"), new RegExp(`uses: ${canonicalReusable}`), "a fresh project gets the configured canonical workflow SHA");
+
+async function reconcileManagedCaller(existingContent: string) {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const candidate = Object.create(GithubAppService.prototype) as any;
+  candidate.config = new ConfigService({ DEPLOYGUARD_REUSABLE_WORKFLOW: canonicalReusable });
+  candidate.tokenForRepository = async () => ({ token: "installation-token", installationId: "42", repositoryId: "99", defaultBranch: "main" });
+  candidate.validatePinnedReusableWorkflow = async () => undefined;
+  candidate.githubFetch = async (url: string, init?: RequestInit) => {
+    calls.push({ url, init });
+    if (init?.method === "PUT") return new Response(null, { status: 200 });
+    return new Response(JSON.stringify({ encoding: "base64", content: Buffer.from(existingContent).toString("base64"), sha: "caller-blob-sha" }), { status: 200 });
+  };
+  const result = await candidate.ensureWorkflow(1, "owner/application", "42");
+  return { calls, result };
+}
+
+const oldManagedCaller = renderDeployguardCallerWorkflow("Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@2a769bd922a2561876d71def13d306360958d8d9");
+const reconciled = await reconcileManagedCaller(oldManagedCaller);
+assert.equal(reconciled.result.updated, true, "an existing DeployGuard-managed caller pinned to the old SHA is updated");
+const reconciledBody = JSON.parse(String(reconciled.calls.find((call) => call.init?.method === "PUT")?.init?.body));
+assert.match(Buffer.from(reconciledBody.content, "base64").toString("utf8"), new RegExp(`uses: ${canonicalReusable}`));
+const alreadyCurrent = await reconcileManagedCaller(renderDeployguardCallerWorkflow(canonicalReusable));
+assert.equal(alreadyCurrent.result.updated, false, "an already-current managed caller is left unchanged");
+assert.equal(alreadyCurrent.calls.some((call) => call.init?.method === "PUT"), false);
+
+const root = join(__dirname, "..", "..");
+const controlPlaneFiles: Record<string, string> = {
+  ".github/workflows/deployguard-reusable.yml": readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8"),
+  "infrastructure/railpack-runtime/build-release-result.sh": readFileSync(join(root, "infrastructure/railpack-runtime/build-release-result.sh"), "utf8"),
+  "infrastructure/railpack-runtime/verify-runtime.sh": readFileSync(join(root, "infrastructure/railpack-runtime/verify-runtime.sh"), "utf8"),
+};
+async function validateControlPlane(overrides: Partial<Record<keyof typeof controlPlaneFiles, string>> = {}) {
+  const candidate = Object.create(GithubAppService.prototype) as any;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  candidate.githubFetch = async (url: string, init?: RequestInit) => {
+    calls.push({ url, init });
+    const path = Object.keys(controlPlaneFiles).find((item) => url.includes(`/contents/${item}?ref=`));
+    const content = path ? overrides[path] ?? controlPlaneFiles[path] : null;
+    return content == null ? new Response(null, { status: 404 }) : new Response(JSON.stringify({ encoding: "base64", content: Buffer.from(content).toString("base64") }), { status: 200 });
+  };
+  await candidate.validatePinnedReusableWorkflow("installation-token", canonicalReusable, renderDeployguardCallerWorkflow(canonicalReusable));
+  return calls;
+}
+const validControlPlaneCalls = await validateControlPlane();
+assert.equal(validControlPlaneCalls.length, 3, "valid admission verifies the workflow and both terminal-evidence executables at the exact SHA");
+await assert.rejects(
+  () => validateControlPlane({ "infrastructure/railpack-runtime/build-release-result.sh": controlPlaneFiles["infrastructure/railpack-runtime/build-release-result.sh"].replace("awsRuntimeVerification:$awsRuntimeVerification", "runtimeVerification:$awsRuntimeVerification") }),
+  (error: any) => error instanceof ControlPlaneCompatibilityError && error.diagnosticCode === CONTROL_PLANE_VERSION_MISMATCH,
+  "an incompatible producer fails control-plane admission before caller update or dispatch",
+);
 
 const applicationBranch = "feature/selected";
 const reusable = `owner/repository/.github/workflows/deployguard-reusable.yml@${"a".repeat(40)}`;
@@ -88,5 +143,5 @@ assert.throws(() => railpack.controlPlaneSha(), (error: any) => error instanceof
 railpack.config = new ConfigService({ DEPLOYGUARD_REUSABLE_WORKFLOW: "owner/repository/.github/workflows/deployguard-reusable.yml@main" });
 assert.throws(() => railpack.controlPlaneSha(), (error: any) => error instanceof ServiceUnavailableException && /exact control-plane SHA/.test(error.message));
 
-console.log("CONFIGURATION_ADMISSION_MATRIX=PASS GITHUB_DEFAULT_BRANCH_REGISTRATION=1 APPLICATION_SOURCE_PRESERVED=1 SUPPORTED_DATABASES=3 UNSUPPORTED_PREMUTATION=1 AWS_REQUIRED_INPUTS=4 CONTROL_PLANE_PIN=1");
+console.log("CONFIGURATION_ADMISSION_MATRIX=PASS GITHUB_DEFAULT_BRANCH_REGISTRATION=1 APPLICATION_SOURCE_PRESERVED=1 FRESH_CALLER_CURRENT=1 STALE_CALLER_RECONCILED=1 CURRENT_CALLER_UNCHANGED=1 CONTROL_PLANE_COMPATIBILITY=1 SUPPORTED_DATABASES=3 UNSUPPORTED_PREMUTATION=1 AWS_REQUIRED_INPUTS=4 CONTROL_PLANE_PIN=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

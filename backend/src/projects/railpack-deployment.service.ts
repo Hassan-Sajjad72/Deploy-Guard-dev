@@ -9,7 +9,7 @@ import { canonicalEnvironmentName } from "./canonical-environment";
 import { ProjectDatabaseTier, DatabaseTierProvider, DatabaseTierStatus } from "./project-database-tier.entity";
 import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.service";
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
-import { GithubAppService } from "./github-app.service";
+import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError, GithubAppService } from "./github-app.service";
 import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
 import { GithubActionsAwsCapabilityService, WorkflowAwsCapabilityError } from "./github-actions-aws-capability.service";
 import { GithubActionsDispatchError, GithubActionsService } from "./pipeline/github-actions.service";
@@ -385,6 +385,9 @@ export class RailpackDeploymentService {
   }
 
   private dispatchFailure(error: unknown, stage: string | null) {
+    if (error instanceof ControlPlaneCompatibilityError) {
+      return { stage: "control_plane_compatibility", message: `${error.message} DG_FAILURE code=${CONTROL_PLANE_VERSION_MISMATCH} stage=control_plane_compatibility`, evidence: { classification: "platform_configuration", code: CONTROL_PLANE_VERSION_MISMATCH } };
+    }
     if (error instanceof WorkflowAwsCapabilityError) {
       return { stage: stage || "aws_capability_verification", message: `AWS platform capability verification failed: ${error.missingCapabilities.join(", ") || "required capability unavailable"}.`, evidence: { classification: "platform_configuration", missingCapabilities: error.missingCapabilities } };
     }

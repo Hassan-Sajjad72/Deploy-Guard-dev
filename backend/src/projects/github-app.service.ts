@@ -6,9 +6,17 @@ import { Repository } from "typeorm";
 import { GithubAppInstallation } from "./github-app-installation.entity";
 import { User, UserRole } from "../users/user.entity";
 import { RAILPACK_CALLER_INPUT_NAMES, RAILPACK_OPTIONAL_CALLER_INPUT_NAMES, RAILPACK_WORKFLOW_INPUTS } from "./railpack-workflow-contract";
-import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, GithubActionsWorkflowContractError, parsePinnedReusableWorkflow } from "./github-actions-workflow-contract";
+import { assertReusableWorkflowCompatibility, CONTROL_PLANE_EXECUTABLE_PATHS, generatedCallerWithKeys, GithubActionsWorkflowContractError, parsePinnedReusableWorkflow } from "./github-actions-workflow-contract";
 
 export const DEPLOYGUARD_WORKFLOW_PATH = ".github/workflows/deployguard.yml";
+export const CONTROL_PLANE_VERSION_MISMATCH = "DG_CONTROL_PLANE_VERSION_MISMATCH";
+
+export class ControlPlaneCompatibilityError extends ServiceUnavailableException {
+  readonly diagnosticCode = CONTROL_PLANE_VERSION_MISMATCH;
+  constructor(detail: string) {
+    super({ code: CONTROL_PLANE_VERSION_MISMATCH, message: `DeployGuard control-plane compatibility validation failed: ${detail}` });
+  }
+}
 /**
  * The deployment release is configured by the control plane at publication
  * time.  There is deliberately no source fallback: an old pinned workflow is
@@ -200,24 +208,26 @@ export class GithubAppService {
   private async validatePinnedReusableWorkflow(token: string, reusable: string, caller: string) {
     try {
       const pinned = parsePinnedReusableWorkflow(reusable);
-      const response = await this.githubFetch(
-        `https://api.github.com/repos/${pinned.owner}/${pinned.repository}/contents/${pinned.path}?ref=${pinned.sha}`,
-        { headers: this.headers(token) },
-      );
-      if (!response.ok) {
-        throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} is not accessible (HTTP ${response.status}).`);
-      }
-      const body = await response.json() as { content?: string; encoding?: string };
-      const workflow = body.encoding === "base64" && body.content
-        ? Buffer.from(body.content.replace(/\n/g, ""), "base64").toString("utf8")
-        : "";
-      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller));
+      const readAtPinnedSha = async (path: string) => {
+        const response = await this.githubFetch(
+          `https://api.github.com/repos/${pinned.owner}/${pinned.repository}/contents/${path}?ref=${pinned.sha}`,
+          { headers: this.headers(token) },
+        );
+        if (!response.ok) throw new GithubActionsWorkflowContractError(`pinned control-plane file ${path} at ${pinned.sha} is not accessible (HTTP ${response.status}).`);
+        const body = await response.json() as { content?: string; encoding?: string };
+        if (body.encoding !== "base64" || !body.content) throw new GithubActionsWorkflowContractError(`pinned control-plane file ${path} at ${pinned.sha} has no verifiable content.`);
+        return Buffer.from(body.content.replace(/\n/g, ""), "base64").toString("utf8");
+      };
+      const workflow = await readAtPinnedSha(pinned.path);
+      const releaseResultProducer = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.releaseResultProducer);
+      const runtimeVerifier = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.runtimeVerifier);
+      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, runtimeVerifier });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
       const message = error instanceof GithubActionsWorkflowContractError
         ? error.message
         : "Reusable workflow contract mismatch: pinned workflow validation failed.";
-      throw new ServiceUnavailableException({ code: "reusable_workflow_contract_mismatch", message });
+      throw new ControlPlaneCompatibilityError(message);
     }
   }
 
