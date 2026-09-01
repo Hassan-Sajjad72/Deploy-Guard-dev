@@ -16,10 +16,10 @@ import { GithubActionsDispatchError, GithubActionsService } from "./pipeline/git
 import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
 import { Project } from "./project.entity";
 import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
-import { DEPLOYGUARD_PLATFORM_PORT } from "./railpack-release";
+import { DEPLOYGUARD_DEFAULT_SERVICE_PORT, effectiveServicePort } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
 import { isSupportedManagedDatabaseEngine } from "./managed-database-engine";
-import { aliasesFor, isDeployGuardManagedDatabaseAlias } from "./configuration-ownership";
+import { aliasesFor } from "./configuration-ownership";
 import { assertRailpackRuntimeConfiguration, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
@@ -44,7 +44,7 @@ type RollbackTargetIdentity = {
   targetOperationId: string;
   generationId: string | null;
   sourceSha: string;
-  services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; runtimeConfigRevisionId: string; runtimeConfiguration: { environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null } } }>;
+  services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; runtimeConfigRevisionId: string; runtimeConfiguration: { servicePort: number; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null } } }>;
 };
 
 export function promotedServiceRevisions<T extends { serviceId: string }>(
@@ -267,7 +267,7 @@ export class RailpackDeploymentService {
         services_base64: servicesBase64(runtime), infrastructure_namespace: `/deployguard/${project.id}/${environmentName}`,
         aws_region: this.config.get<string>("AWS_REGION", "us-east-1"), aws_role_arn: this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"),
         vpc_id: this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
-        terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"), platform_port: String(DEPLOYGUARD_PLATFORM_PORT),
+        terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"),
         control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
       };
       operation.commitSha = sourceSha;
@@ -305,7 +305,8 @@ export class RailpackDeploymentService {
       imageUri: revision.imageUri, imageDigest: revision.imageDigest, immutableImage: `${revision.imageUri}@${revision.imageDigest}`,
       runtimeConfigRevisionId: revision.runtimeConfigRevisionId,
       runtimeConfiguration: {
-        environment: revision.runtimeConfigRevision.nonSecretEnvironment,
+        servicePort: effectiveServicePort(revision.runtimeConfigRevision.platformValues?.PORT ?? revision.runtimeConfigRevision.nonSecretEnvironment?.PORT),
+        environment: { ...revision.runtimeConfigRevision.nonSecretEnvironment, PORT: String(effectiveServicePort(revision.runtimeConfigRevision.platformValues?.PORT ?? revision.runtimeConfigRevision.nonSecretEnvironment?.PORT)), HOST: "0.0.0.0" },
         secretReferences: revision.runtimeConfigRevision.secretReferences,
         databaseAttached: revision.runtimeConfigRevision.databaseConfiguration.attached === true,
         managedDatabase: {
@@ -346,7 +347,8 @@ export class RailpackDeploymentService {
         // Platform-owned PORT/HOST are immutable deployment contract values,
         // persisted separately from user environment data. Retain them for a
         // legacy destroy without inventing any historical user configuration.
-        environment: { ...(revision.runtimeConfigRevision?.nonSecretEnvironment || {}), ...(revision.runtimeConfigRevision?.platformValues || {}) },
+        servicePort: effectiveServicePort(revision.runtimeConfigRevision?.platformValues?.PORT ?? revision.runtimeConfigRevision?.nonSecretEnvironment?.PORT),
+        environment: { ...(revision.runtimeConfigRevision?.nonSecretEnvironment || {}), ...(revision.runtimeConfigRevision?.platformValues || {}), PORT: String(effectiveServicePort(revision.runtimeConfigRevision?.platformValues?.PORT ?? revision.runtimeConfigRevision?.nonSecretEnvironment?.PORT)), HOST: "0.0.0.0" },
         secretReferences: revision.runtimeConfigRevision?.secretReferences,
         databaseAttached: revision.runtimeConfigRevision?.databaseConfiguration?.attached === true,
         managedDatabase: {
@@ -356,7 +358,7 @@ export class RailpackDeploymentService {
         },
       },
     }));
-    if (release.metadata?.releaseEvidenceVerified !== true || !release.deployedByPipelineRunId || !/^[0-9a-f]{40}$/i.test(release.commitSha) || !services.length || services.some((service) => service.runtimeConfiguration.environment.PORT !== String(DEPLOYGUARD_PLATFORM_PORT) || service.runtimeConfiguration.environment.HOST !== "0.0.0.0" || !service.runtimeConfiguration.secretReferences || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId) || !/^[0-9a-f-]{36}$/i.test(service.serviceId) || !service.serviceName || !service.serviceDirectory || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage))) {
+    if (release.metadata?.releaseEvidenceVerified !== true || !release.deployedByPipelineRunId || !/^[0-9a-f]{40}$/i.test(release.commitSha) || !services.length || services.some((service) => service.runtimeConfiguration.environment.PORT !== String(service.runtimeConfiguration.servicePort) || service.runtimeConfiguration.environment.HOST !== "0.0.0.0" || !service.runtimeConfiguration.secretReferences || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId) || !/^[0-9a-f-]{36}$/i.test(service.serviceId) || !service.serviceName || !service.serviceDirectory || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage))) {
       throw new ServiceUnavailableException("Destroy requires the complete immutable deployed service revision set.");
     }
     return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, services };
@@ -381,7 +383,24 @@ export class RailpackDeploymentService {
       || services.some((service) => !/^[0-9a-f-]{36}$/i.test(String(service.runtimeConfigRevisionId || "")) || !service.runtimeConfiguration || String(service.immutableImage || "") !== `${String(service.imageUri || "")}@${String(service.imageDigest || "")}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(String(service.immutableImage || "")))) {
       throw new ServiceUnavailableException("The failed rollback target identity is invalid.");
     }
-    return target as unknown as RollbackTargetIdentity;
+    return {
+      ...(target as unknown as RollbackTargetIdentity),
+      services: services.map((service) => {
+        const runtimeConfiguration = service.runtimeConfiguration as Record<string, unknown>;
+        const environment = runtimeConfiguration.environment && typeof runtimeConfiguration.environment === "object"
+          ? runtimeConfiguration.environment as Record<string, string>
+          : {};
+        const servicePort = effectiveServicePort(runtimeConfiguration.servicePort ?? environment.PORT);
+        return {
+          ...(service as unknown as RollbackTargetIdentity["services"][number]),
+          runtimeConfiguration: {
+            ...(runtimeConfiguration as unknown as RollbackTargetIdentity["services"][number]["runtimeConfiguration"]),
+            servicePort,
+            environment: { ...environment, PORT: String(servicePort), HOST: "0.0.0.0" },
+          },
+        };
+      }),
+    };
   }
 
   private dispatchFailure(error: unknown, stage: string | null) {
@@ -440,6 +459,7 @@ export class RailpackDeploymentService {
         serviceId: service.serviceId,
         serviceName: service.serviceName,
         serviceDirectory: service.serviceDirectory,
+        servicePort: service.runtimeConfiguration.servicePort,
         runtimeConfigRevisionId: service.runtimeConfigRevisionId,
         buildEnvironment: {},
         buildSecretReferences: {},
@@ -453,7 +473,7 @@ export class RailpackDeploymentService {
         ? { generationIds: (await this.dataSource.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName } })).map((generation) => generation.id).sort() }
         : undefined;
       if (action === "destroy" && !projectDeletion?.generationIds.length) throw new ServiceUnavailableException("Destroy requires an exact persisted runtime generation.");
-      return { schemaVersion: 2, projectId: project.id, environmentName, operationId, sourceSha, services, ...(projectDeletion ? { projectDeletion } : {}) };
+      return { schemaVersion: 3, projectId: project.id, environmentName, operationId, sourceSha, services, ...(projectDeletion ? { projectDeletion } : {}) };
     }
     const serviceRows = await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } });
     if (!serviceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
@@ -469,13 +489,16 @@ export class RailpackDeploymentService {
     ] : [];
     const services = [] as RailpackRuntimeConfiguration["services"];
     for (const service of serviceRows) {
+      const servicePort = effectiveServicePort(service.servicePort);
+      const databaseAttached = Boolean(tier && tier.attachedServiceId === service.id);
       const buildEnvironment: Record<string, string> = {};
-      const environment: Record<string, string> = { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" };
+      const environment: Record<string, string> = { PORT: String(servicePort), HOST: "0.0.0.0" };
       const allSecretValues: Record<string, string> = {};
       const buildSecretNames = new Set<string>();
       const runtimeSecretNames = new Set<string>();
       for (const row of rows.filter((variable) => variable.serviceId === service.id)) {
-        if (["PORT", "HOST"].includes(row.key) || isDeployGuardManagedDatabaseAlias(row.key)) continue;
+        if (["PORT", "HOST"].includes(row.key)) continue;
+        if (databaseAttached && managedAliases.includes(row.key)) throw new ServiceUnavailableException(`${row.key} conflicts with the DeployGuard-managed database attached to ${service.name}. Remove the variable or disable the managed database before deployment.`);
         const value = this.crypto.decrypt(row.value);
         const scope = row.scope || "runtime";
         const build = scope === "build" || scope === "both";
@@ -490,9 +513,8 @@ export class RailpackDeploymentService {
         }
       }
       const secretValueDigests = Object.fromEntries(Object.keys(allSecretValues).sort().map((key) => [key, createHash("sha256").update(allSecretValues[key]).digest("hex")]));
-      const databaseAttached = Boolean(tier && tier.attachedServiceId === service.id);
       const databaseConfiguration = { attached: databaseAttached, engine: databaseAttached ? tier?.engine || null : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] };
-      const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, buildEnvironment, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" } })).digest("hex");
+      const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, servicePort, buildEnvironment, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(servicePort), HOST: "0.0.0.0" } })).digest("hex");
       const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues: allSecretValues });
       const materializedReferences = materialized?.valueFromByName || {};
       const buildSecretReferences = Object.fromEntries([...buildSecretNames].sort().map((name) => [name, materializedReferences[name]]));
@@ -507,14 +529,14 @@ export class RailpackDeploymentService {
         secretReferences,
         secretVersionIds: materialized ? Object.fromEntries(materialized.secretNames.map((name) => [name, materialized.versionToken])) : {},
         databaseConfiguration,
-        platformValues: { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" },
+        platformValues: { PORT: String(servicePort), HOST: "0.0.0.0" },
         isRollbackSafe: true,
         legacyBackfill: false,
         sealedAt: null,
       }));
-      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, runtimeConfigRevisionId: revision.id, buildEnvironment, buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
+      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, servicePort, runtimeConfigRevisionId: revision.id, buildEnvironment, buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
     }
-    return { schemaVersion: 2, projectId: project.id, environmentName, operationId, sourceSha, services: services.sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
+    return { schemaVersion: 3, projectId: project.id, environmentName, operationId, sourceSha, services: services.sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
   }
 
   private async reconcile(operation: ProjectPipelineRun) {
@@ -700,8 +722,8 @@ export class RailpackDeploymentService {
       const item = value as Record<string, unknown>; const expectedService = expectedById.get(String(item.serviceId || ""));
       const imageUri = String(item.imageUri || ""); const imageDigest = String(item.imageDigest || ""); const image = String(item.image || "");
       const runtime = terraformServices[String(item.serviceId || "")];
-      if (!expectedService || String(item.runtimeConfigRevisionId || "") !== expectedService.runtimeConfigRevisionId || String(item.serviceName || "") !== expectedService.serviceName || String(item.serviceDirectory || "") !== expectedService.serviceDirectory || image !== `${imageUri}@${imageDigest}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*$/i.test(imageUri) || !/^sha256:[0-9a-f]{64}$/.test(imageDigest) || !runtime || runtime.image !== image || runtime.runtime_config_revision_id !== expectedService.runtimeConfigRevisionId || typeof runtime.public_url !== "string" || typeof runtime.task_definition_arn !== "string" || typeof runtime.ecs_service_arn !== "string") throw new Error("Release service evidence does not match its immutable service contract and Terraform runtime.");
-      return { serviceId: expectedService.serviceId, serviceName: expectedService.serviceName, serviceDirectory: expectedService.serviceDirectory, sourceSha, runtimeConfigRevisionId: expectedService.runtimeConfigRevisionId, imageUri, imageDigest, image, publicUrl: runtime.public_url, taskDefinitionArn: runtime.task_definition_arn, ecsServiceArn: runtime.ecs_service_arn, ecsServiceName: runtime.ecs_service_name, albArn: runtime.alb_arn, albName: runtime.alb_name, targetGroupArn: runtime.alb_target_group_arn, targetGroupName: runtime.alb_target_group_name, cloudWatchLogGroupName: runtime.cloudwatch_log_group_name, applicationContainerName: runtime.application_container_name };
+      if (!expectedService || String(item.runtimeConfigRevisionId || "") !== expectedService.runtimeConfigRevisionId || String(item.serviceName || "") !== expectedService.serviceName || String(item.serviceDirectory || "") !== expectedService.serviceDirectory || Number(item.servicePort) !== expectedService.servicePort || image !== `${imageUri}@${imageDigest}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*$/i.test(imageUri) || !/^sha256:[0-9a-f]{64}$/.test(imageDigest) || !runtime || runtime.image !== image || runtime.runtime_config_revision_id !== expectedService.runtimeConfigRevisionId || Number(runtime.service_port) !== expectedService.servicePort || typeof runtime.public_url !== "string" || typeof runtime.task_definition_arn !== "string" || typeof runtime.ecs_service_arn !== "string") throw new Error("Release service evidence does not match its immutable service contract and Terraform runtime.");
+      return { serviceId: expectedService.serviceId, serviceName: expectedService.serviceName, serviceDirectory: expectedService.serviceDirectory, servicePort: expectedService.servicePort, sourceSha, runtimeConfigRevisionId: expectedService.runtimeConfigRevisionId, imageUri, imageDigest, image, publicUrl: runtime.public_url, taskDefinitionArn: runtime.task_definition_arn, ecsServiceArn: runtime.ecs_service_arn, ecsServiceName: runtime.ecs_service_name, albArn: runtime.alb_arn, albName: runtime.alb_name, targetGroupArn: runtime.alb_target_group_arn, targetGroupName: runtime.alb_target_group_name, cloudWatchLogGroupName: runtime.cloudwatch_log_group_name, applicationContainerName: runtime.application_container_name };
     });
     if (intendedServices.length !== expected.services.length || new Set(intendedServices.map((service) => service.serviceId)).size !== expected.services.length) {
       throw new Error("Release result does not contain the complete immutable service set.");
@@ -710,6 +732,14 @@ export class RailpackDeploymentService {
     const outcomeServiceIds = runtimeOutcomes.map((service) => String(service?.serviceId || ""));
     if (outcomeServiceIds.length !== intendedServices.length || new Set(outcomeServiceIds).size !== intendedServices.length || intendedServices.some((service) => !outcomeServiceIds.includes(service.serviceId))) {
       throw new Error("AWS runtime verification does not cover the complete immutable service set.");
+    }
+    for (const outcome of runtimeOutcomes) {
+      const intended = intendedServices.find((service) => service.serviceId === String(outcome.serviceId || ""));
+      if (outcome.verified !== true) continue;
+      const observedEnvironment = outcome.environment && typeof outcome.environment === "object" ? outcome.environment as Record<string, unknown> : null;
+      if (!intended || Number(outcome.runtimePort) !== intended.servicePort || !observedEnvironment || observedEnvironment.PORT !== String(intended.servicePort) || observedEnvironment.HOST !== "0.0.0.0") {
+        throw new Error("AWS runtime verification port evidence does not match the immutable per-service runtime configuration.");
+      }
     }
     const verifiedServiceIds = runtimeOutcomes
       .filter((service) => service?.verified === true)
@@ -926,7 +956,7 @@ export class RailpackDeploymentService {
         operationId: current.id,
         commitSha: current.commitSha || "",
         healthCheckPath: "/",
-        appPort: DEPLOYGUARD_PLATFORM_PORT,
+        appPort: effectiveServicePort(applicationEndpoint?.servicePort ?? DEPLOYGUARD_DEFAULT_SERVICE_PORT),
         metadata: { deployedUrl, publicUrls: Object.fromEntries(reconciledServices.map((service) => [String(service.serviceId), service.publicUrl])), services: reconciledServices, serviceOutcomes, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
       });
       current.generationId = generation.id;

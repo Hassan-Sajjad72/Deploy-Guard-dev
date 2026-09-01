@@ -20,7 +20,7 @@ export function parseEnvPaste(value) {
     if (seen.has(key)) { errors.push(`Line ${number}: ${key} is duplicated.`); return; }
     seen.add(key);
     const valuePart = raw.trim().replace(/^(['"])(.*)\1$/, "$2");
-    entries.push({ key, value: valuePart, isSecret: /SECRET|TOKEN|PASSWORD|PRIVATE|API_KEY|CREDENTIAL/i.test(key) });
+    entries.push({ key, value: valuePart, isSecret: /SECRET|TOKEN|PASSWORD|PRIVATE|API_KEY|CREDENTIAL|(?:DATABASE|POSTGRES(?:QL)?|MYSQL|REDIS|MONGO(?:DB)?)_(?:URL|URI)/i.test(key) });
   });
   const ignored = [...new Set(ignoredVariableNames)].sort();
   return { entries, errors, warnings: ignoredEnvironmentNotice(ignored), ignoredVariableNames: ignored };

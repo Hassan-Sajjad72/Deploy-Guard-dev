@@ -40,7 +40,7 @@ export default function EnvVarForm({
         Secret
       </label>
       <label className="field"><span>Scope</span><select name="scope" onChange={onChange} value={form.scope}><option value="build">Build</option><option value="runtime">Runtime</option><option value="both">Build and runtime</option></select></label>
-      <p className="muted">Custom variables are optional. Database connection aliases are managed from Database settings.</p>
+      <p className="muted">Custom variables are optional. Database connection aliases may be supplied here when no conflicting managed database is attached.</p>
       <div className="quick-actions">
         <button className="button" disabled={isSubmitting} type="submit">
           {isSubmitting ? "Saving..." : submitLabel}

@@ -1,5 +1,5 @@
 name: DeployGuard Railpack release
-# deployguard-result-contract: deployguard.release-result/v4
+# deployguard-result-contract: deployguard.release-result/v5
 
 on:
   workflow_call:
@@ -18,7 +18,6 @@ on:
       vpc_id: { required: true, type: string }
       public_subnet_ids: { required: true, type: string }
       terraform_state_bucket: { required: true, type: string }
-      platform_port: { required: true, type: string }
       control_plane_sha: { required: true, type: string }
       result_contract_version: { required: true, type: string }
 
@@ -40,7 +39,6 @@ jobs:
       ENVIRONMENT_NAME: ${{ inputs.environment_name }}
       OPERATION_ID: ${{ inputs.deployment_operation_id }}
       SOURCE_SHA: ${{ inputs.commit_sha }}
-      PLATFORM_PORT: ${{ inputs.platform_port }}
       SERVICES_BASE64: ${{ inputs.services_base64 }}
       CONTROL_PLANE_SHA: ${{ inputs.control_plane_sha }}
       RESULT_CONTRACT_VERSION: ${{ inputs.result_contract_version }}
@@ -63,29 +61,27 @@ jobs:
           set -euo pipefail
           [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_deployment_action' >&2; exit 1; }
           [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ && "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_immutable_release_identity' >&2; exit 1; }
-          [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v4 ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=incompatible_result_contract' >&2; exit 1; }
-          [[ "$PLATFORM_PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PLATFORM_PORT" -le 65535 ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_platform_port' >&2; exit 1; }
+          [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v5 ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=incompatible_result_contract' >&2; exit 1; }
           mkdir -p .deployguard
           printf '%s' "$SERVICES_BASE64" | base64 --decode > .deployguard/runtime.json
           jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" --arg action "$DEPLOYMENT_ACTION" '
-            def managed_database_alias:
-              . as $key | ["DATABASE_HOST","DATABASE_NAME","DATABASE_PASSWORD","DATABASE_PORT","DATABASE_URL","DATABASE_USER","DB_HOST","DB_NAME","DB_PASSWORD","DB_PORT","DB_USER","MONGODB_DATABASE","MONGODB_HOST","MONGODB_PASSWORD","MONGODB_PORT","MONGODB_URI","MONGODB_USER","MONGO_DB","MONGO_HOST","MONGO_PASSWORD","MONGO_PORT","MONGO_URI","MONGO_URL","MONGO_USER","MYSQL_DATABASE","MYSQL_HOST","MYSQL_PASSWORD","MYSQL_PORT","MYSQL_URL","MYSQL_USER","PGDATABASE","PGHOST","PGPASSWORD","PGPORT","PGUSER","POSTGRES_DB","POSTGRES_HOST","POSTGRES_PASSWORD","POSTGRES_PORT","POSTGRES_URL","POSTGRES_USER","POSTGRESQL_URL","REDIS_HOST","REDIS_PASSWORD","REDIS_PORT","REDIS_URL"] | index($key) != null;
-            .schemaVersion == 2 and .projectId == $project and .operationId == $operation and .sourceSha == $sha
+            .schemaVersion == 3 and .projectId == $project and .operationId == $operation and .sourceSha == $sha
             and (.environmentName | test("^[a-z0-9][a-z0-9-]{0,39}$"))
             and (.services | type == "array" and length > 0 and length <= 20)
             and ([.services[].serviceId] | length == (unique | length))
             and ([.services[].serviceName | ascii_downcase] | length == (unique | length))
             and ([.services[] | select((.serviceId | type) != "string" or (.serviceId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not) or (.runtimeConfigRevisionId | type) != "string" or (.runtimeConfigRevisionId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not))] | length == 0)
+            and ([.services[] | select((.servicePort | type) != "number" or (.servicePort | floor) != .servicePort or .servicePort < 1 or .servicePort > 65535)] | length == 0)
             and ([.services[] | select((.serviceName | type) != "string" or (.serviceName | length) == 0 or (.serviceName | length) > 80 or .serviceName != (.serviceName | gsub("^\\s+|\\s+$"; "")))] | length == 0)
             and ([.services[] | select((.serviceDirectory | type) != "string" or .serviceDirectory == "" or (.serviceDirectory | startswith("/")) or (.serviceDirectory | test("(^|/)\\.\\.(/|$)")))] | length == 0)
             and ([.services[] | select((.buildEnvironment | type) != "object" or ([.buildEnvironment | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.key == "PORT") or (.key == "HOST") or (.value | type) != "string")] | length > 0))] | length == 0)
-            and ([.services[] | select((.buildEnvironment | type) == "object" and ([.buildEnvironment | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
+            and ([.services[] | . as $service | select(.databaseAttached == true and (.buildEnvironment | type) == "object" and ([.buildEnvironment | keys[] as $key | select($service.managedDatabase.aliases | index($key) != null)] | length > 0))] | length == 0)
             and ([.services[] | select((.buildSecretReferences | type) != "object" or ([.buildSecretReferences | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.key == "PORT") or (.key == "HOST") or (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$") | not))] | length > 0))] | length == 0)
-            and ([.services[] | select((.buildSecretReferences | type) == "object" and ([.buildSecretReferences | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
-            and ([.services[] | select((.environment | type) != "object" or .environment.PORT != "8080" or .environment.HOST != "0.0.0.0" or ([.environment | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.value | type) != "string")] | length > 0))] | length == 0)
-            and ([.services[] | select((.environment | type) == "object" and ([.environment | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
+            and ([.services[] | . as $service | select(.databaseAttached == true and (.buildSecretReferences | type) == "object" and ([.buildSecretReferences | keys[] as $key | select($service.managedDatabase.aliases | index($key) != null)] | length > 0))] | length == 0)
+            and ([.services[] | select((.environment | type) != "object" or .environment.PORT != (.servicePort|tostring) or .environment.HOST != "0.0.0.0" or ([.environment | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.value | type) != "string")] | length > 0))] | length == 0)
+            and ([.services[] | . as $service | select(.databaseAttached == true and (.environment | type) == "object" and ([.environment | keys[] as $key | select($service.managedDatabase.aliases | index($key) != null)] | length > 0))] | length == 0)
             and ([.services[] | select((.secretReferences | type) != "object" or ([.secretReferences | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$") | not))] | length > 0))] | length == 0)
-            and ([.services[] | select((.secretReferences | type) == "object" and ([.secretReferences | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
+            and ([.services[] | . as $service | select(.databaseAttached == true and (.secretReferences | type) == "object" and ([.secretReferences | keys[] as $key | select($service.managedDatabase.aliases | index($key) != null)] | length > 0))] | length == 0)
             and ([.services[] | select((.databaseAttached | type) != "boolean" or (.managedDatabase | type) != "object" or (.managedDatabase.aliases | type) != "array" or ([.managedDatabase.aliases[] | select((type) != "string" or (test("^[A-Z][A-Z0-9_]{0,127}$") | not))] | length > 0) or (.managedDatabase.engine as $engine | ([null,"postgres","mysql","mongodb"] | index($engine)) == null) or (.managedDatabase.secretVersionId != null and ((.managedDatabase.secretVersionId | type) != "string" or (.managedDatabase.secretVersionId | test("^[A-Za-z0-9-]{32,64}$") | not))))] | length == 0)
             and ([.services[] | select((.databaseAttached == true and (.managedDatabase.engine == null or (.managedDatabase.aliases | length) == 0)) or (.databaseAttached == false and (.managedDatabase.engine != null or (.managedDatabase.aliases | length) != 0)))] | length == 0)
             and ([.services[] | select(.databaseAttached == true)] | length <= 1)
@@ -141,9 +137,9 @@ jobs:
             done < <(jq -r '.buildSecretReferences | to_entries[] | @base64' <<<"$service")
             BUILDKIT_HOST="docker-container://${BUILDKIT_CONTAINER}" railpack build "${build_env_args[@]}" --name "$image" "$directory" || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_BUILD_FAILED stage=railpack_build" >&2; exit 1; }
             for key in "${build_env_names[@]}"; do unset "$key"; done
-            runtime_config_revision_id="$(jq -r '.runtimeConfigRevisionId' <<<"$service")"
+            runtime_config_revision_id="$(jq -r '.runtimeConfigRevisionId' <<<"$service")"; service_port="$(jq -r '.servicePort' <<<"$service")"
             image_id="$(docker image inspect --format '{{.Id}}' "$image")"; [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_BUILD_FAILED stage=railpack_build" >&2; exit 1; }
-            jq --arg id "$service_id" --arg name "$service_name" --arg directory "$directory" --arg runtimeConfigRevisionId "$runtime_config_revision_id" --arg image "$image" --arg imageId "$image_id" --arg repository "$repository" --arg registry "$registry" '. + [{serviceId:$id,serviceName:$name,serviceDirectory:$directory,runtimeConfigRevisionId:$runtimeConfigRevisionId,localImage:$image,localImageId:$imageId,repository:$repository,registry:$registry}]' .deployguard/build-artifacts.json > .deployguard/build-artifacts.next
+            jq --arg id "$service_id" --arg name "$service_name" --arg directory "$directory" --argjson servicePort "$service_port" --arg runtimeConfigRevisionId "$runtime_config_revision_id" --arg image "$image" --arg imageId "$image_id" --arg repository "$repository" --arg registry "$registry" '. + [{serviceId:$id,serviceName:$name,serviceDirectory:$directory,servicePort:$servicePort,runtimeConfigRevisionId:$runtimeConfigRevisionId,localImage:$image,localImageId:$imageId,repository:$repository,registry:$registry}]' .deployguard/build-artifacts.json > .deployguard/build-artifacts.next
             mv .deployguard/build-artifacts.next .deployguard/build-artifacts.json
           done < <(jq -c '.services[]' .deployguard/runtime.json)
           echo 'built=true' >> "$GITHUB_OUTPUT"
@@ -162,7 +158,7 @@ jobs:
           while IFS= read -r artifact; do
             service_id="$(jq -r '.serviceId' <<<"$artifact")"; image="$(jq -r '.localImage' <<<"$artifact")"; expected_image_id="$(jq -r '.localImageId' <<<"$artifact")"; compact_service="${service_id//-/}"; suffix="${compact_service:0:8}"; container="deployguard-runtime-probe-${OPERATION_ID}-${suffix}"; network="deployguard-runtime-probe-${OPERATION_ID}-${suffix}"; containers+=("$container"); networks+=("$network")
             actual_image_id="$(docker image inspect --format '{{.Id}}' "$image")"; [ "$actual_image_id" = "$expected_image_id" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime message=immutable_image_mismatch" >&2; exit 1; }
-            service="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' .deployguard/runtime.json)"; [ -n "$service" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime message=runtime_configuration_missing" >&2; exit 1; }
+            service="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' .deployguard/runtime.json)"; [ -n "$service" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime message=runtime_configuration_missing" >&2; exit 1; }; service_port="$(jq -r '.servicePort' <<<"$service")"
             docker network create "$network" >/dev/null
             runtime_args=(); runtime_names=()
             while IFS= read -r entry; do
@@ -208,12 +204,12 @@ jobs:
                 printf -v "$key" '%s' "$value"; export "${key?}"; runtime_names+=("$key"); runtime_args+=(--env "$key")
               done < <(jq -r '.managedDatabase.aliases[]' <<<"$service")
             fi
-            docker run --detach --name "$container" --network "$network" "${runtime_args[@]}" --env PORT=8080 --env HOST=0.0.0.0 "$expected_image_id" >/dev/null
+            docker run --detach --name "$container" --network "$network" "${runtime_args[@]}" --env PORT="$service_port" --env HOST=0.0.0.0 "$expected_image_id" >/dev/null
             ready=false
             # The inner Bash receives the container/IP as positional parameters; expansion here would be wrong.
             # shellcheck disable=SC2016
-            if timeout --signal=TERM 45 bash -c 'stable=0; while [ "$stable" -lt 5 ]; do running="$(docker inspect --format "{{.State.Running}}" "$1" 2>/dev/null || true)"; [ "$running" = true ] || exit 1; ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" "$1" 2>/dev/null || true)"; if [ -n "$ip" ] && timeout 1 bash -c "exec 3<>/dev/tcp/\$1/8080" _ "$ip" 2>/dev/null; then stable=$((stable + 1)); else stable=0; fi; sleep 1; done' _ "$container"; then ready=true; fi
-            if [ "$ready" != true ]; then docker logs "$container" --tail 100 2>&1 | sed -E 's/((password|passwd|token|secret|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/Ig' | tr -cd '\11\12\15\40-\176' | tail -c 12000 >&2 || true; echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime" >&2; echo 'Application did not listen on PORT=8080 within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable.' >&2; exit 1; fi
+            if timeout --signal=TERM 45 bash -c 'stable=0; while [ "$stable" -lt 5 ]; do running="$(docker inspect --format "{{.State.Running}}" "$1" 2>/dev/null || true)"; [ "$running" = true ] || exit 1; ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" "$1" 2>/dev/null || true)"; if [ -n "$ip" ] && timeout 1 bash -c "exec 3<>/dev/tcp/\$1/\$2" _ "$ip" "$2" 2>/dev/null; then stable=$((stable + 1)); else stable=0; fi; sleep 1; done' _ "$container" "$service_port"; then ready=true; fi
+            if [ "$ready" != true ]; then docker logs "$container" --tail 100 2>&1 | sed -E 's/((password|passwd|token|secret|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/Ig' | tr -cd '\11\12\15\40-\176' | tail -c 12000 >&2 || true; echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime" >&2; echo "Application did not listen on PORT=$service_port within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable." >&2; exit 1; fi
             docker rm --force "$container" >/dev/null
             unset 'containers[${#containers[@]}-1]'
             for key in "${runtime_names[@]:-}"; do unset "$key"; done; runtime_names=()
@@ -239,7 +235,7 @@ jobs:
       - name: Select immutable rollback service images
         if: success() && (inputs.deployment_action == 'rollback' || inputs.deployment_action == 'destroy')
         shell: bash
-        run: jq '[.services[] | {serviceId,serviceName,serviceDirectory,runtimeConfigRevisionId,imageUri:(.rollbackImage|split("@")|.[0]),imageDigest:(.rollbackImage|split("@")|.[1]),image:.rollbackImage}]' .deployguard/runtime.json > .deployguard/service-artifacts.json
+        run: jq '[.services[] | {serviceId,serviceName,serviceDirectory,servicePort,runtimeConfigRevisionId,imageUri:(.rollbackImage|split("@")|.[0]),imageDigest:(.rollbackImage|split("@")|.[1]),image:.rollbackImage}]' .deployguard/runtime.json > .deployguard/service-artifacts.json
       - name: Install Terraform
         if: success()
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
@@ -252,9 +248,9 @@ jobs:
           set -euo pipefail
           git init /tmp/deployguard-control-plane; git -C /tmp/deployguard-control-plane remote add origin https://github.com/Hassan-Sajjad72/Deploy-Guard-dev.git; git -C /tmp/deployguard-control-plane fetch --depth 1 origin "$CONTROL_PLANE_SHA"; git -C /tmp/deployguard-control-plane checkout --detach "$CONTROL_PLANE_SHA"; [ "$(git -C /tmp/deployguard-control-plane rev-parse HEAD)" = "$CONTROL_PLANE_SHA" ]
           mkdir -p .deployguard/terraform; cp -R /tmp/deployguard-control-plane/infrastructure/railpack-runtime/. .deployguard/terraform/
-          jq -n --arg region "$AWS_REGION" --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg vpc "$VPC_ID" --argjson port "$PLATFORM_PORT" --argjson subnets "$(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')" --slurpfile runtime .deployguard/runtime.json --slurpfile artifacts .deployguard/service-artifacts.json '
+          jq -n --arg region "$AWS_REGION" --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg vpc "$VPC_ID" --argjson subnets "$(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')" --slurpfile runtime .deployguard/runtime.json --slurpfile artifacts .deployguard/service-artifacts.json '
             ($artifacts[0] | map({key:.serviceId,value:.}) | from_entries) as $images |
-            {region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,platform_port:$port,services:($runtime[0].services | map({key:.serviceId,value:{name:.serviceName,image:$images[.serviceId].image,runtime_config_revision_id:.runtimeConfigRevisionId,environment:(.environment+{PORT:($port|tostring),HOST:"0.0.0.0"}),secret_references:.secretReferences,database_attached:.databaseAttached,managed_database_aliases:.managedDatabase.aliases,managed_database_engine:(.managedDatabase.engine//"postgres")}})|from_entries)}' > .deployguard/terraform/terraform.tfvars.json
+            {region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,services:($runtime[0].services | map({key:.serviceId,value:{name:.serviceName,image:$images[.serviceId].image,runtime_config_revision_id:.runtimeConfigRevisionId,service_port:.servicePort,environment:(.environment+{PORT:(.servicePort|tostring),HOST:"0.0.0.0"}),secret_references:.secretReferences,database_attached:.databaseAttached,managed_database_aliases:.managedDatabase.aliases,managed_database_engine:(.managedDatabase.engine//"postgres")}})|from_entries)}' > .deployguard/terraform/terraform.tfvars.json
           terraform -chdir=.deployguard/terraform fmt -check || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
           terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/runtime/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
           terraform -chdir=.deployguard/terraform validate || { echo 'DG_FAILURE code=DG_TERRAFORM_VALIDATE_FAILED stage=terraform_validate' >&2; exit 1; }

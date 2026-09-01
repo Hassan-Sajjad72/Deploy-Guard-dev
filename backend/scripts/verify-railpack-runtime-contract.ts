@@ -21,7 +21,7 @@ const pinned = parsePinnedReusableWorkflow("Hassan-Sajjad72/Deploy-Guard-dev/.gi
 const caller = renderDeployguardCallerWorkflow(pinned.reference);
 const jqContract = workflow.match(/jq -e[^']*'\n([\s\S]*?)\n\s*' \.deployguard\/runtime\.json/)?.[1];
 assert.ok(jqContract, "the workflow service-contract jq filter must be extractable");
-const contractFixture: RailpackRuntimeConfiguration = { schemaVersion: 2, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "44444444-4444-4444-8444-444444444444", serviceName: "Web", serviceDirectory: ".", buildEnvironment: { PUBLIC_BUILD_MODE: "production" }, buildSecretReferences: { BUILD_TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:BUILD_TOKEN::${"c".repeat(64)}` }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::${"b".repeat(64)}` }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
+const contractFixture: RailpackRuntimeConfiguration = { schemaVersion: 3, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "44444444-4444-4444-8444-444444444444", serviceName: "Web", serviceDirectory: ".", servicePort: 8080, buildEnvironment: { PUBLIC_BUILD_MODE: "production" }, buildSecretReferences: { BUILD_TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:BUILD_TOKEN::${"c".repeat(64)}` }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::${"b".repeat(64)}` }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
 const jqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(contractFixture), encoding: "utf8" });
 assert.equal(jqResult.status, 0, `workflow service contract must accept the canonical runtime fixture: ${jqResult.stderr}`);
 const invalidReference = structuredClone(contractFixture);
@@ -34,23 +34,22 @@ assert.throws(() => servicesBase64(invalidBuildPort), /build environment is inva
 const invalidBuildReference: any = structuredClone(contractFixture);
 invalidBuildReference.services[0].buildSecretReferences.BUILD_TOKEN = "not-an-immutable-secret-reference";
 assert.throws(() => servicesBase64(invalidBuildReference), /build secret reference is invalid/, "build secrets must use immutable Secrets Manager version references");
-for (const [field, key] of [["environment", "DATABASE_URL"], ["secretReferences", "MONGODB_URI"]] as const) {
-  const legacyDatabaseAlias: any = structuredClone(contractFixture);
-  legacyDatabaseAlias.services[0][field][key] = field === "environment"
-    ? "legacy-user-database-value"
-    : `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:${key}::${"c".repeat(64)}`;
-  assert.throws(() => servicesBase64(legacyDatabaseAlias), /runtime (?:environment|secret reference) is invalid/, `legacy ${key} must fail closed before workflow dispatch`);
-}
 const managedDatabaseAliases = [...new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service !== "storage").flatMap((group) => group.aliases))].sort();
 for (const key of managedDatabaseAliases) {
-  assert.match(workflow, new RegExp(`"${key}"`), `the workflow validator must include the canonical managed database alias ${key}`);
   for (const field of ["environment", "secretReferences"] as const) {
-    const legacyDatabaseAlias: any = structuredClone(contractFixture);
-    legacyDatabaseAlias.services[0][field][key] = field === "environment"
-      ? "legacy-user-database-value"
+    const externalDatabaseAlias: any = structuredClone(contractFixture);
+    externalDatabaseAlias.services[0][field][key] = field === "environment"
+      ? "user-supplied-external-database-value"
       : `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:${key}::${"c".repeat(64)}`;
-    const result = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(legacyDatabaseAlias), encoding: "utf8" });
-    assert.notEqual(result.status, 0, `the workflow must reject ${key} from generic ${field} at the execution boundary`);
+    assert.doesNotThrow(() => servicesBase64(externalDatabaseAlias), `external database alias ${key} is ordinary application configuration when no managed database is attached`);
+    const externalResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(externalDatabaseAlias), encoding: "utf8" });
+    assert.equal(externalResult.status, 0, `the workflow must accept external database alias ${key} when no managed database is attached`);
+    const managedConflict: any = structuredClone(externalDatabaseAlias);
+    managedConflict.services[0].databaseAttached = true;
+    managedConflict.services[0].managedDatabase = { engine: "postgres", aliases: [key] };
+    assert.throws(() => servicesBase64(managedConflict), /(?:environment|secret reference) is invalid/, `a managed database must reject the exact ${key} alias it injects`);
+    const managedResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(managedConflict), encoding: "utf8" });
+    assert.notEqual(managedResult.status, 0, `the workflow must reject managed alias ${key} at the execution boundary`);
   }
 }
 const historicalDatabaseVersionId = "terraform-20260830234105178100000005";
@@ -114,8 +113,8 @@ assert.throws(
   "a reusable workflow with the stale result schema is blocked before dispatch",
 );
 assert.throws(
-  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v4", "# deployguard-result-contract: deployguard.release-result/v3"), pinned, generatedCallerWithKeys(caller), executableContract),
-  /does not produce deployguard\.release-result\/v4/,
+  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v5", "# deployguard-result-contract: deployguard.release-result/v4"), pinned, generatedCallerWithKeys(caller), executableContract),
+  /does not produce deployguard\.release-result\/v5/,
   "input compatibility alone cannot certify an incompatible result producer",
 );
 assert.throws(
@@ -135,12 +134,17 @@ assert.match(terraform, /for_each\s+= var\.services/);
 assert.match(terraform, /database_services\s+= \{ for id, service in var\.services/);
 assert.doesNotMatch(terraform, /Resource\s*=\s*"\*"/);
 assert.match(terraform, /image\s*=\s*each\.value\.image/);
-assert.match(terraform, /containerPort\s*=\s*var\.platform_port/);
+assert.match(terraform, /containerPort\s*=\s*each\.value\.service_port/);
 for (const output of [
   "aws_region", "ecs_cluster_arn", "ecs_cluster_name", "services",
   "database_efs_file_system_id", "database_efs_access_point_id", "database",
 ]) assert.match(outputs, new RegExp(`output\\s+"${output}"`), `Railpack release evidence must expose ${output}`);
 assert.match(workflow, /HOST:"0\.0\.0\.0"/);
+assert.match(workflow, /service_port="\$\(jq -r '\.servicePort'/, "pre-Terraform validation consumes the canonical service port");
+assert.match(workflow, /--env PORT="\$service_port"/, "pre-Terraform validation injects each service's own PORT");
+assert.match(workflow, /service_port:\.servicePort/, "Terraform materialization consumes each canonical service port");
+assert.match(workflow, /Select immutable rollback service images[\s\S]*?\{serviceId,serviceName,serviceDirectory,servicePort,runtimeConfigRevisionId/, "rollback release evidence preserves the historical service port");
+assert.doesNotMatch(workflow, /platform_port/, "the obsolete global port is not an executable workflow authority");
 assert.match(workflow, /aws-actions\/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4\.0\.2/);
 assert.match(workflow, /actions\/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4\.2\.2/);
 assert.match(workflow, /hashicorp\/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3\.1\.2/);
@@ -157,8 +161,8 @@ assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials@0a3a7f8c8f
 assert.match(workflow, /control_plane_sha/);
 assert.match(workflow, /result_contract_version: \{ required: true, type: string \}/);
 assert.match(workflow, /RESULT_CONTRACT_VERSION.*inputs\.result_contract_version/);
-assert.match(workflow, /deployguard\.release-result\/v4/);
-for (const message of ["invalid_deployment_action", "invalid_immutable_release_identity", "incompatible_result_contract", "invalid_platform_port", "exact_source_sha_mismatch"]) {
+assert.match(workflow, /deployguard\.release-result\/v5/);
+for (const message of ["invalid_deployment_action", "invalid_immutable_release_identity", "incompatible_result_contract", "exact_source_sha_mismatch"]) {
   assert.match(workflow, new RegExp(`DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=${message}`), `Validate Release must emit structured platform failure evidence for ${message}`);
 }
 assert.match(workflow, /services_base64/);

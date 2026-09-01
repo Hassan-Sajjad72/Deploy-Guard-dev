@@ -117,7 +117,8 @@ async function verifyActualRuntimeAndRollbackAuthority() {
         imageUri: `123456789012.dkr.ecr.us-east-1.amazonaws.com/service-${index + 1}`, imageDigest: `sha256:${String((index % 9) + 1).repeat(64)}`,
         runtimeConfigRevisionId: serviceId, runtimeConfigRevision: {
           id: serviceId, projectId: "11111111-1111-4111-8111-111111111111", serviceId,
-          isRollbackSafe: true, sealedAt: new Date(), nonSecretEnvironment: { PORT: "8080", HOST: "0.0.0.0" },
+          isRollbackSafe: true, sealedAt: new Date(), nonSecretEnvironment: { PORT: String(3000 + index), HOST: "0.0.0.0" },
+          platformValues: { PORT: String(3000 + index), HOST: "0.0.0.0" },
           secretReferences: {}, databaseConfiguration: { attached: false, engine: null, aliases: [] },
         },
       }));
@@ -126,12 +127,16 @@ async function verifyActualRuntimeAndRollbackAuthority() {
       const release = { id: "77777777-7777-4777-8777-777777777777", generationId: "22222222-2222-4222-8222-222222222222", deployedByPipelineRunId: "33333333-3333-4333-8333-333333333333", commitSha: "a".repeat(40), metadata: { releaseEvidenceVerified: true } };
       const target = await deployment.rollbackTarget(release);
       assert.deepEqual(target.services.map((item: any) => item.serviceId), [...serviceIds].sort(), "rollback service authority must be independent of storage order");
+      for (const item of target.services) {
+        const historical = revisions.find((revision) => revision.serviceId === item.serviceId);
+        assert.equal(item.runtimeConfiguration.servicePort, Number(historical?.runtimeConfigRevision.platformValues.PORT), "rollback preserves the historical service port rather than current UI configuration");
+      }
       const runtime: RailpackRuntimeConfiguration = {
-        schemaVersion: 2, projectId: "11111111-1111-4111-8111-111111111111", environmentName: "dev",
+        schemaVersion: 3, projectId: "11111111-1111-4111-8111-111111111111", environmentName: "dev",
         operationId: "33333333-3333-4333-8333-333333333333", sourceSha: "a".repeat(40),
         services: target.services.map((item: any) => ({
           serviceId: item.serviceId, serviceName: item.serviceName, serviceDirectory: item.serviceDirectory,
-          runtimeConfigRevisionId: item.runtimeConfigRevisionId, buildEnvironment: {}, buildSecretReferences: {}, environment: item.runtimeConfiguration.environment,
+          runtimeConfigRevisionId: item.runtimeConfigRevisionId, servicePort: item.runtimeConfiguration.servicePort, buildEnvironment: {}, buildSecretReferences: {}, environment: item.runtimeConfiguration.environment,
           secretReferences: item.runtimeConfiguration.secretReferences, databaseAttached: false,
           managedDatabase: { engine: null, aliases: [] }, rollbackImage: item.immutableImage,
         })),

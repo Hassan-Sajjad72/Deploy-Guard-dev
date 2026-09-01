@@ -94,8 +94,8 @@ resource "aws_security_group" "application" {
   name_prefix = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}-app-"
   vpc_id      = var.vpc_id
   ingress {
-    from_port       = var.platform_port
-    to_port         = var.platform_port
+    from_port       = each.value.service_port
+    to_port         = each.value.service_port
     protocol        = "tcp"
     security_groups = [aws_security_group.load_balancer[each.key].id]
   }
@@ -230,7 +230,7 @@ resource "aws_lb" "application" {
 resource "aws_lb_target_group" "application" {
   for_each    = var.services
   name        = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}"
-  port        = var.platform_port
+  port        = each.value.service_port
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = var.vpc_id
@@ -265,7 +265,7 @@ resource "aws_ecs_task_definition" "application" {
     name             = "application"
     image            = each.value.image
     essential        = true
-    portMappings     = [{ containerPort = var.platform_port, hostPort = var.platform_port, protocol = "tcp" }]
+    portMappings     = [{ containerPort = each.value.service_port, hostPort = each.value.service_port, protocol = "tcp" }]
     environment      = [for key, value in merge(each.value.environment, each.value.database_attached ? local.database_environment : {}) : { name = key, value = value }]
     secrets          = [for key, value in merge(each.value.secret_references, each.value.database_attached ? local.database_secrets : {}) : { name = key, valueFrom = value }]
     logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.application[each.key].name, awslogs-region = var.region, awslogs-stream-prefix = "application" } }
@@ -354,7 +354,7 @@ resource "aws_ecs_service" "application" {
   load_balancer {
     target_group_arn = aws_lb_target_group.application[each.key].arn
     container_name   = "application"
-    container_port   = var.platform_port
+    container_port   = each.value.service_port
   }
   depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets, aws_ecs_service.database]
   tags       = merge(local.tags, { DeployGuardServiceId = each.key })

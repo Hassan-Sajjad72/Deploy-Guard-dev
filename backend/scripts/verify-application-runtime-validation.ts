@@ -83,7 +83,7 @@ fi
   require("node:fs").mkdirSync(deployguard);
   const serviceId = "11111111-1111-4111-8111-111111111111";
   writeFileSync(join(deployguard, "build-artifacts.json"), JSON.stringify([{ serviceId, localImage: "registry.example/app:exact-sha", localImageId: `sha256:${"0".repeat(64)}` }]), "utf8");
-  writeFileSync(join(deployguard, "runtime.json"), JSON.stringify({ services: [{ serviceId, environment: { PORT: "8080", HOST: "0.0.0.0", REQUIRED_RUNTIME_VALUE: "present" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] }), "utf8");
+  writeFileSync(join(deployguard, "runtime.json"), JSON.stringify({ services: [{ serviceId, servicePort: 3000, environment: { PORT: "3000", HOST: "0.0.0.0", REQUIRED_RUNTIME_VALUE: "present" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] }), "utf8");
   const suffix = mode === "workflow_failure"
     ? "\nfalse\nprintf 'ECR\\nTerraform\\n' > \"$DOWNSTREAM_FILE\""
     : "\nprintf 'ECR\\nTerraform\\n' > \"$DOWNSTREAM_FILE\"";
@@ -151,10 +151,10 @@ void (async () => {
   assert.match(validationScript, /\.managedDatabase\.aliases\[\]/);
   assert.match(validationScript, /timeout --signal=TERM 45 bash -c/);
   assert.match(validationScript, /while \[ "\$stable" -lt 5 \]/, "readiness must prove a durable process and port");
-  assert.match(validationScript, /\/dev\/tcp\/\\\$1\/8080/);
+  assert.match(validationScript, /\/dev\/tcp\/\\\$1\/\\\$2/);
   assert.doesNotMatch(validationScript, /\bcurl\b|\bwget\b|https?:\/\//, "pre-publish validation must be TCP-only");
   assert.match(validationScript, /docker logs .*--tail 100[\s\S]*tail -c 12000/);
-  assert.match(validationScript, /Application did not listen on PORT=8080 within 45 seconds\. Bind to 0\.0\.0\.0 and use the PORT environment variable\./);
+  assert.match(validationScript, /Application did not listen on PORT=\$service_port within 45 seconds\. Bind to 0\.0\.0\.0 and use the PORT environment variable\./);
   assert.match(workflow, /name: Clean up application runtime validation[\s\S]*if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*deployguard-runtime-probe-\$\{OPERATION_ID\}-/);
   assert.match(stepBlock("Publish immutable images to ECR", "Select immutable rollback service images"), /if: success\(\)/);
   assert.match(stepBlock("Install Terraform", "Materialize release runtime"), /if: success\(\)/);
@@ -167,7 +167,7 @@ void (async () => {
   assert.equal(success.status, 0);
   assert.equal(success.downstream, "ECR\nTerraform\n", "successful TCP validation continues to downstream stages");
   assert.match(success.trace, /docker image inspect --format \{\{\.Id\}\} registry\.example\/app:exact-sha/);
-  assert.match(success.trace, /docker run .*--env PORT --env HOST --env REQUIRED_RUNTIME_VALUE --env PORT=8080 --env HOST=0\.0\.0\.0 sha256:0{64}/, "platform bindings override inherited values on the exact validated image");
+  assert.match(success.trace, /docker run .*--env PORT --env HOST --env REQUIRED_RUNTIME_VALUE --env PORT=3000 --env HOST=0\.0\.0\.0 sha256:0{64}/, "the canonical service port and HOST override inherited values on the exact validated image");
   assert.match(success.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/);
 
   for (const mode of ["timeout", "exited", "run_failure", "workflow_failure"] as const) {
@@ -175,7 +175,7 @@ void (async () => {
     assert.notEqual(result.status, 0, `${mode} must fail the composed workflow path`);
     assert.equal(result.downstream, "", `${mode} must not reach ECR or Terraform`);
     assert.match(result.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/, `${mode} must clean up the probe container`);
-    if (mode === "timeout" || mode === "exited") assert.match(result.stderr, /Application did not listen on PORT=8080 within 45 seconds/);
+    if (mode === "timeout" || mode === "exited") assert.match(result.stderr, /Application did not listen on PORT=3000 within 45 seconds/);
   }
   const timeout = executeProbe("timeout");
   assert.match(timeout.trace, /^tcp --signal=TERM 45 bash -c/m, "the entire wait loop has one hard 45-second deadline");

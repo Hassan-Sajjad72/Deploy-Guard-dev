@@ -6,7 +6,9 @@ import { BadRequestException, ServiceUnavailableException } from "@nestjs/common
 import { ConfigService } from "@nestjs/config";
 import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError, GithubAppService, canonicalDeployguardReusableWorkflow, renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
 import { DatabaseTierService } from "../src/projects/database-tier.service";
-import { DatabaseTierProvider } from "../src/projects/project-database-tier.entity";
+import { DatabaseTierProvider, ProjectDatabaseTier } from "../src/projects/project-database-tier.entity";
+import { ProjectEnvironmentVariable } from "../src/projects/project-environment-variable.entity";
+import { ProjectDeployableService } from "../src/projects/project-deployable-service.entity";
 import { isSupportedManagedDatabaseEngine, managedDatabaseEngine } from "../src/projects/managed-database-engine";
 import { GithubActionsService } from "../src/projects/pipeline/github-actions.service";
 import { RAILPACK_WORKFLOW_INPUTS } from "../src/projects/railpack-workflow-contract";
@@ -134,6 +136,30 @@ databaseTier.projects = { getProjectEntityForManage: async () => ({ id: "project
 await assert.rejects(() => databaseTier.update({} as any, "project", { provider: DatabaseTierProvider.MANAGED } as any), /Select a supported managed database engine/);
 await assert.rejects(() => databaseTier.update({} as any, "project", { provider: DatabaseTierProvider.MANAGED, engine: "redis" } as any), /Select a supported managed database engine/);
 
+async function updateDatabase(services: any[], dto: any, conflictingKeys: string[] = []) {
+  const candidate = Object.create(DatabaseTierService.prototype) as any;
+  let saved: any = null;
+  candidate.projects = { getProjectEntityForManage: async () => ({ id: "11111111-1111-4111-8111-111111111111", environmentName: "dev" }) };
+  candidate.audit = { record: async () => undefined };
+  const tierRepository = { findOne: async () => null, create: (value: any) => value, save: async (value: any) => { saved = value; return value; } };
+  const environmentRepository = { createQueryBuilder: () => ({ where() { return this; }, andWhere() { return this; }, orderBy() { return this; }, getMany: async () => conflictingKeys.map((key) => ({ key })) }) };
+  const serviceRepository = { find: async () => services };
+  candidate.dataSource = { transaction: async (work: any) => work({ query: async () => undefined, getRepository: (entity: unknown) => entity === ProjectDatabaseTier ? tierRepository : entity === ProjectEnvironmentVariable ? environmentRepository : entity === ProjectDeployableService ? serviceRepository : null }) };
+  const result = await candidate.update({ id: 7 }, "11111111-1111-4111-8111-111111111111", dto);
+  return { result, saved };
+}
+const singleService = [{ id: "22222222-2222-4222-8222-222222222222", position: 0 }];
+const singleManaged = await updateDatabase(singleService, { provider: DatabaseTierProvider.MANAGED, engine: "postgres", persistenceEnabled: true });
+assert.equal(singleManaged.saved.attachedServiceId, singleService[0].id, "a single-service managed database attaches automatically");
+const multiServices = [...singleService, { id: "33333333-3333-4333-8333-333333333333", position: 1 }];
+await assert.rejects(() => updateDatabase(multiServices, { provider: DatabaseTierProvider.MANAGED, engine: "mysql", persistenceEnabled: true }), /Select the service/);
+const explicitManaged = await updateDatabase(multiServices, { provider: DatabaseTierProvider.MANAGED, engine: "mysql", persistenceEnabled: true, attachedServiceId: multiServices[1].id });
+assert.equal(explicitManaged.saved.attachedServiceId, multiServices[1].id, "a multi-service managed database attaches only to the explicit service");
+await assert.rejects(
+  () => updateDatabase(singleService, { provider: DatabaseTierProvider.MANAGED, engine: "mongodb", persistenceEnabled: true }, ["MONGODB_URI"]),
+  /Managed database conflicts with existing application ENV: MONGODB_URI/,
+);
+
 const railpack = Object.create(RailpackDeploymentService.prototype) as any;
 railpack.config = emptyConfig;
 for (const key of ["DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN", "DEPLOYGUARD_VPC_ID", "DEPLOYGUARD_PUBLIC_SUBNET_IDS", "DEPLOYGUARD_TERRAFORM_STATE_BUCKET"]) {
@@ -143,5 +169,5 @@ assert.throws(() => railpack.controlPlaneSha(), (error: any) => error instanceof
 railpack.config = new ConfigService({ DEPLOYGUARD_REUSABLE_WORKFLOW: "owner/repository/.github/workflows/deployguard-reusable.yml@main" });
 assert.throws(() => railpack.controlPlaneSha(), (error: any) => error instanceof ServiceUnavailableException && /exact control-plane SHA/.test(error.message));
 
-console.log("CONFIGURATION_ADMISSION_MATRIX=PASS GITHUB_DEFAULT_BRANCH_REGISTRATION=1 APPLICATION_SOURCE_PRESERVED=1 FRESH_CALLER_CURRENT=1 STALE_CALLER_RECONCILED=1 CURRENT_CALLER_UNCHANGED=1 CONTROL_PLANE_COMPATIBILITY=1 SUPPORTED_DATABASES=3 UNSUPPORTED_PREMUTATION=1 AWS_REQUIRED_INPUTS=4 CONTROL_PLANE_PIN=1");
+console.log("CONFIGURATION_ADMISSION_MATRIX=PASS GITHUB_DEFAULT_BRANCH_REGISTRATION=1 APPLICATION_SOURCE_PRESERVED=1 FRESH_CALLER_CURRENT=1 STALE_CALLER_RECONCILED=1 CURRENT_CALLER_UNCHANGED=1 CONTROL_PLANE_COMPATIBILITY=1 SUPPORTED_DATABASES=3 DATABASE_ATTACHMENT_AUTHORITY=1 DATABASE_CONFLICT_PREMUTATION=1 UNSUPPORTED_PREMUTATION=1 AWS_REQUIRED_INPUTS=4 CONTROL_PLANE_PIN=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

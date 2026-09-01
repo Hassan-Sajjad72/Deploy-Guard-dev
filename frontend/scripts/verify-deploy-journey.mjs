@@ -16,6 +16,8 @@ assert.deepEqual(managed.ignoredVariableNames, ["ACTIONS_RUNTIME_TOKEN", "AWS_AC
 assert.doesNotMatch(JSON.stringify(managed), /secret-value|token-value|actions-value|region-value|id-value|3000/, "ignored values are discarded at parse time");
 assert.match(managed.warnings.join(" "), /PORT is managed by DeployGuard and was ignored/);
 assert.equal(parseEnvPaste("").entries.length, 0, "an empty .env block is accepted");
+const externalDatabase = parseEnvPaste("DATABASE_URL=postgresql://external.example/app");
+assert.equal(externalDatabase.entries[0].isSecret, true, "external database URLs retain encrypted secret delivery");
 
 const gate = createDeploymentSelectionGate();
 const branchA = gate.begin("Example/Application", "main");
@@ -41,6 +43,11 @@ assert.match(page, /<IssueCard/);
 assert.match(page, /Review readiness/);
 assert.match(page, /function deploymentJourney/);
 assert.match(page, /aria-label="Deployment readiness journey"/);
+assert.match(page, /<span>Application Port<\/span>/);
+assert.match(page, /servicePort: Number\(servicePort\)/);
+assert.match(page, /No managed database \/ use existing ENV/);
+assert.match(page, /Database configuration conflict/);
+assert.match(page, /MANAGED_DATABASE_ALIASES\[database\.engine\]/);
 for (const step of ["Repository", "Branch", "Environment", "Deploy"]) assert.match(page, new RegExp(`label: "${step}"`));
 assert.match(page, /hasReadiness \? "complete"/);
 assert.match(page, /values are not displayed/);

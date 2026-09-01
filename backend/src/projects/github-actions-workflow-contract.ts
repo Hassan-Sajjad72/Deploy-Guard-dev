@@ -11,9 +11,9 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   runtimeVerifier: "infrastructure/railpack-runtime/verify-runtime.sh",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "28717a20e430fc4fcce2685bdbd265ab07711494b43d36588393a352228acb9f",
-  releaseResultProducer: "0b652a54dc5337ee7bc42c3229bb22faf9d755a7e133b28239e73b9d50788340",
-  runtimeVerifier: "08e72dade088477de6bafd990ce6ba7f63297045fab56e9f28ee853a6c7424d8",
+  workflow: "cbc25e649475121d4d113e49015f0049d18e048bab0bbcdfb553eb5c0be8619f",
+  releaseResultProducer: "827818ad91b704548fc226cb989586cf777b3aa8337b8467d975d25265b3793d",
+  runtimeVerifier: "6aea9382137f1a0b07cb52cf896c461a190027f3be7af50f0e1e8ac26245f707",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {
@@ -63,15 +63,19 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
   }
   if (!workflow.includes(`verify-runtime.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/aws-runtime-verification.json`)
     || !workflow.includes(`build-release-result.sh "$DEPLOYMENT_ACTION" "$RESULT_CONTRACT_VERSION" "$SOURCE_SHA" "$OPERATION_ID" .deployguard/service-artifacts.json .deployguard/terraform-outputs.json .deployguard/aws-runtime-verification.json .deployguard/release-runtime.json`)
-    || !workflow.includes("cp .deployguard/release-runtime.json terraform/deployguard-result.json")) {
+    || !workflow.includes("cp .deployguard/release-runtime.json terraform/deployguard-result.json")
+    || !workflow.includes("service_port:.servicePort")
+    || !workflow.includes('--env PORT="$service_port"')) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not hand verified AWS runtime evidence to the terminal release artifact.`);
   }
   if (!executable.releaseResultProducer.includes("awsRuntimeVerification:$awsRuntimeVerification")
     || !executable.releaseResultProducer.includes(`.awsRuntimeVerification.contractVersion == "${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}"`)
+    || !executable.releaseResultProducer.includes(".servicePort == $release.terraform.services[.serviceId].service_port")
     || !executable.releaseResultProducer.includes("DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation")) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the required terminal evidence producer.`);
   }
   if (!executable.runtimeVerifier.includes(`--arg contractVersion ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}`)
+    || !executable.runtimeVerifier.includes("expected_port=\"$(jq -r '.servicePort' <<<\"$expected\")\"")
     || (!executable.runtimeVerifier.includes("awsRuntimeVerification") && !executable.runtimeVerifier.includes("services:$services"))) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}.`);
   }

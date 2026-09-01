@@ -12,7 +12,7 @@ const projectId = "11111111-1111-4111-8111-111111111111";
 const operationId = "22222222-2222-4222-8222-222222222222";
 const ids = ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"];
 const sourceSha = "a".repeat(40);
-const runtime: RailpackRuntimeConfiguration = { schemaVersion: 2, projectId, operationId, environmentName: "dev", sourceSha, services: ids.map((serviceId, index) => ({ serviceId, runtimeConfigRevisionId: `${index ? "66666666-6666-4666-8666-666666666666" : "55555555-5555-4555-8555-555555555555"}`, serviceName: index ? "API" : "Web", serviceDirectory: index ? "api" : "web", buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8080", HOST: "0.0.0.0", RELEASE: index ? "api" : "web" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/${serviceId}:TOKEN::${index ? "b".repeat(64) : "a".repeat(64)}` }, databaseAttached: index === 1, managedDatabase: index === 1 ? { engine: "postgres", aliases: ["DATABASE_URL"] } : { engine: null, aliases: [] } })) };
+const runtime: RailpackRuntimeConfiguration = { schemaVersion: 3, projectId, operationId, environmentName: "dev", sourceSha, services: ids.map((serviceId, index) => ({ serviceId, runtimeConfigRevisionId: `${index ? "66666666-6666-4666-8666-666666666666" : "55555555-5555-4555-8555-555555555555"}`, serviceName: index ? "API" : "Web", serviceDirectory: index ? "api" : "web", servicePort: index ? 8000 : 3000, buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: String(index ? 8000 : 3000), HOST: "0.0.0.0", RELEASE: index ? "api" : "web" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/${serviceId}:TOKEN::${index ? "b".repeat(64) : "a".repeat(64)}` }, databaseAttached: index === 1, managedDatabase: index === 1 ? { engine: "postgres", aliases: ["DATABASE_URL"] } : { engine: null, aliases: [] } })) };
 const service = Object.create(RailpackDeploymentService.prototype) as any;
 const operation: any = { id: operationId, commitSha: sourceSha, metadata: { deploymentAction: "deploy", immutableDispatchInputs: { services_base64: servicesBase64(runtime) } } };
 const serviceEvidence = runtime.services.map((expected, index) => {
@@ -20,7 +20,7 @@ const serviceEvidence = runtime.services.map((expected, index) => {
   const imageDigest = `sha256:${String(index + 1).repeat(64)}`;
   return { ...expected, environment: undefined, secretReferences: undefined, databaseAttached: undefined, managedDatabase: undefined, imageUri, imageDigest, image: `${imageUri}@${imageDigest}` };
 });
-const terraformServices = Object.fromEntries(serviceEvidence.map((item, index) => [item.serviceId, { image: item.image, runtime_config_revision_id: item.runtimeConfigRevisionId, public_url: `http://service-${index}.example.test`, task_definition_arn: `arn:aws:ecs:us-east-1:123456789012:task-definition/dg-${index}:1`, ecs_service_arn: `arn:aws:ecs:us-east-1:123456789012:service/dg/dg-${index}`, ecs_service_name: `dg-${index}`, alb_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/${index}`, alb_name: `dg-${index}`, alb_target_group_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/${index}`, alb_target_group_name: `dg-${index}`, cloudwatch_log_group_name: `/deployguard/${projectId}/services/${item.serviceId}`, application_container_name: "application" }]));
+const terraformServices = Object.fromEntries(serviceEvidence.map((item, index) => [item.serviceId, { image: item.image, runtime_config_revision_id: item.runtimeConfigRevisionId, service_port: item.servicePort, public_url: `http://service-${index}.example.test`, task_definition_arn: `arn:aws:ecs:us-east-1:123456789012:task-definition/dg-${index}:1`, ecs_service_arn: `arn:aws:ecs:us-east-1:123456789012:service/dg/dg-${index}`, ecs_service_name: `dg-${index}`, alb_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/${index}`, alb_name: `dg-${index}`, alb_target_group_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/${index}`, alb_target_group_name: `dg-${index}`, cloudwatch_log_group_name: `/deployguard/${projectId}/services/${item.serviceId}`, application_container_name: "application" }]));
 const database = { attached_service_id: ids[1], engine: "postgres", host: "database.internal", port: 5432, ecs_service_arn: "arn:aws:ecs:us-east-1:123456789012:service/dg/database", ecs_service_name: "database", task_definition_arn: "arn:aws:ecs:us-east-1:123456789012:task-definition/database:1", cloudwatch_log_group_name: `/deployguard/${projectId}/database`, credentials_secret_arn: "arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/database", secret_version_id: "terraform-20260901000000000000000001" };
 const runtimeOutcomes = runtime.services.map((expected, index) => ({
   serviceId: expected.serviceId,
@@ -30,7 +30,7 @@ const runtimeOutcomes = runtime.services.map((expected, index) => ({
   taskDefinitionArn: terraformServices[expected.serviceId].task_definition_arn,
   runningTaskArns: [`arn:aws:ecs:us-east-1:123456789012:task/dg/${index + 1}`],
   ecsTasksRunning: 1,
-  runtimePort: 8080,
+  runtimePort: expected.servicePort,
   targetGroupArn: terraformServices[expected.serviceId].alb_target_group_arn,
   targetHealth: ["healthy"],
   environment: expected.environment,
@@ -51,7 +51,7 @@ const runtimeOutcomes = runtime.services.map((expected, index) => ({
 }));
 const terraform = { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: terraformServices, database };
 const awsRuntimeVerification = { contractVersion: "deployguard.aws-runtime-verification/v1", verified: true, verifiedAt: "2026-09-01T00:00:00Z", services: runtimeOutcomes, databaseVerified: true };
-const artifact: any = { contractVersion: "deployguard.release-result/v4", action: "deploy", sourceSha, operationId, services: serviceEvidence, terraform, awsRuntimeVerification };
+const artifact: any = { contractVersion: "deployguard.release-result/v5", action: "deploy", sourceSha, operationId, services: serviceEvidence, terraform, awsRuntimeVerification };
 
 const handoffDirectory = mkdtempSync(join(tmpdir(), "deployguard-release-evidence-handoff-"));
 const artifactsPath = join(handoffDirectory, "service-artifacts.json");
@@ -62,7 +62,7 @@ writeFileSync(artifactsPath, JSON.stringify(serviceEvidence), "utf8");
 writeFileSync(terraformPath, JSON.stringify(terraform), "utf8");
 writeFileSync(evidencePath, JSON.stringify(awsRuntimeVerification), "utf8");
 const producer = join(__dirname, "..", "..", "infrastructure", "railpack-runtime", "build-release-result.sh");
-const produced = spawnSync("bash", [producer, "deploy", "deployguard.release-result/v4", sourceSha, operationId, artifactsPath, terraformPath, evidencePath, resultPath], { encoding: "utf8" });
+const produced = spawnSync("bash", [producer, "deploy", "deployguard.release-result/v5", sourceSha, operationId, artifactsPath, terraformPath, evidencePath, resultPath], { encoding: "utf8" });
 assert.equal(produced.status, 0, produced.stderr);
 const terminalArtifact = JSON.parse(readFileSync(resultPath, "utf8"));
 const handoff = service.validatedReleaseEvidence(operation, terminalArtifact);
@@ -74,7 +74,7 @@ for (const [index, outcome] of handoff.serviceOutcomes.entries()) {
   assert.equal(outcome.taskDefinitionArn, terraformServices[ids[index]].task_definition_arn);
   assert.equal(outcome.ecsServiceArn, terraformServices[ids[index]].ecs_service_arn);
   assert.equal(outcome.ecsTasksRunning, 1);
-  assert.equal(outcome.runtimePort, 8080);
+  assert.equal(outcome.runtimePort, runtime.services[index].servicePort);
   assert.deepEqual(outcome.targetHealth, ["healthy"]);
   assert.deepEqual(outcome.environment, runtime.services[index].environment);
   assert.deepEqual(outcome.secretValueFrom.TOKEN, runtime.services[index].secretReferences.TOKEN);
@@ -85,7 +85,7 @@ assert.equal(handoff.serviceOutcomes[1].secretValueFrom.DATABASE_URL, `${databas
 assert.equal(resolveProjectApplicationUrl(ids[0], handoff.services), terraformServices[ids[0]].public_url, "the configured application entrypoint retains its verified public endpoint");
 
 writeFileSync(evidencePath, JSON.stringify({ ...awsRuntimeVerification, services: [] }), "utf8");
-const rejected = spawnSync("bash", [producer, "deploy", "deployguard.release-result/v4", sourceSha, operationId, artifactsPath, terraformPath, evidencePath, join(handoffDirectory, "invalid-result.json")], { encoding: "utf8" });
+const rejected = spawnSync("bash", [producer, "deploy", "deployguard.release-result/v5", sourceSha, operationId, artifactsPath, terraformPath, evidencePath, join(handoffDirectory, "invalid-result.json")], { encoding: "utf8" });
 assert.notEqual(rejected.status, 0, "the workflow producer must fail before upload when terminal AWS evidence is incomplete");
 assert.match(rejected.stderr, /DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation/);
 rmSync(handoffDirectory, { recursive: true, force: true });

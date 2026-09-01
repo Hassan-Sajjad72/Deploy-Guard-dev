@@ -5,6 +5,7 @@ const requiredColumns = [
   ["project_deployable_services", "id"],
   ["project_deployable_services", "project_id"],
   ["project_deployable_services", "service_directory"],
+  ["project_deployable_services", "service_port"],
   ["project_environment_variables", "service_id"],
   ["project_pipeline_runs", "id"],
   ["project_pipeline_runs", "project_id"],

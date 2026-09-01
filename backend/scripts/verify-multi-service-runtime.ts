@@ -22,12 +22,13 @@ assert.match(terraform, /database_runtime[\s\S]*security_groups = local\.databas
 assert.match(terraform, /aws_security_group\.database_efs[\s\S]*aws_security_group\.database_runtime/);
 assert.match(outputs, /output "services"/);
 assert.match(outputs, /security_group_id/);
+assert.match(outputs, /service_port/);
 assert.match(outputs, /cloud_map_service_id/);
 assert.match(workflow, /while IFS= read -r service; do[\s\S]*railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$directory"/);
-assert.match(workflow, /while IFS= read -r artifact; do[\s\S]*docker run --detach[\s\S]*PORT=8080[\s\S]*HOST=0\.0\.0\.0/);
+assert.match(workflow, /while IFS= read -r artifact; do[\s\S]*service_port="\$\(jq -r '\.servicePort'[\s\S]*docker run --detach[\s\S]*--env PORT="\$service_port"[\s\S]*--env HOST=0\.0\.0\.0/);
 assert.match(workflow, /verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
 const verifier = readFileSync(join(root, "infrastructure/railpack-runtime/verify-runtime.sh"), "utf8");
-for (const fact of ["describe-task-definition", "describe-tasks", "describe-security-groups", "describe-target-health", "filter-log-events", "servicediscovery get-service", "servicediscovery list-instances", "DG_ECS_DIAGNOSTICS"]) assert.match(verifier, new RegExp(fact));
+for (const fact of ["describe-task-definition", "describe-tasks", "describe-security-groups", "describe-target-groups", "describe-target-health", "filter-log-events", "servicediscovery get-service", "servicediscovery list-instances", "DG_ECS_DIAGNOSTICS"]) assert.match(verifier, new RegExp(fact));
 assert.match(verifier, /\.services \| to_entries\[\]/);
 assert.match(workflow, /terraform -chdir=\.deployguard\/terraform destroy/);
 assert.match(workflow, /Select immutable rollback service images/);

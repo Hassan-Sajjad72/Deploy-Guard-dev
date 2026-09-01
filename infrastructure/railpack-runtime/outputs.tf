@@ -8,6 +8,7 @@ output "services" {
     name                       = service.name
     image                      = service.image
     runtime_config_revision_id = service.runtime_config_revision_id
+    service_port               = service.service_port
     ecs_service_arn            = aws_ecs_service.application[id].id
     ecs_service_name           = aws_ecs_service.application[id].name
     task_definition_arn        = aws_ecs_task_definition.application[id].arn
@@ -18,7 +19,8 @@ output "services" {
     public_url                 = "http://${aws_lb.application[id].dns_name}"
     cloudwatch_log_group_name  = aws_cloudwatch_log_group.application[id].name
     application_container_name = "application"
-    security_group_id           = aws_security_group.application[id].id
+    security_group_id          = aws_security_group.application[id].id
+    alb_security_group_id      = aws_security_group.load_balancer[id].id
   } }
 }
 output "database_efs_file_system_id" { value = local.database_enabled ? aws_efs_file_system.database[0].id : null }

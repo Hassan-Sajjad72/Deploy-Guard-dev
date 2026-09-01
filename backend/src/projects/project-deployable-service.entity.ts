@@ -13,6 +13,7 @@ export class ProjectDeployableService {
   @JoinColumn({ name: "project_id" }) project: Project;
   @Column({ length: 80 }) name: string;
   @Column({ name: "service_directory", length: 512, default: "." }) serviceDirectory: string;
+  @Column({ name: "service_port", type: "integer", default: 8080 }) servicePort: number;
   @Column({ type: "integer", default: 0 }) position: number;
   @OneToMany(() => ProjectEnvironmentVariable, (variable) => variable.service) environmentVariables: ProjectEnvironmentVariable[];
   @CreateDateColumn({ name: "created_at", type: "timestamptz" }) createdAt: Date;
