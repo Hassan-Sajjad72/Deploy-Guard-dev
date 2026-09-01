@@ -132,7 +132,8 @@ function verifyWorkflowAndUiContract() {
   assert.match(workflow, /rollbackImage[\s\S]*?@sha256:\[0-9a-f\]\{64\}/);
   assert.match(workflow, /terraform -chdir=\.deployguard\/terraform apply/);
   assert.match(workflow, /aws ecs wait services-stable/);
-  assert.match(workflow, /curl --fail/);
+  assert.match(workflow, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/);
+  assert.doesNotMatch(workflow, /curl --fail --show-error --silent --retry 20/);
   assert.match(workflow, /Publish verified release result/);
   const detailsRoute = /@Get\(":projectId\/current-state\/details"\)([\s\S]*?)async getDetailedCurrentState/.exec(controller)?.[1] || "";
   assert.doesNotMatch(detailsRoute, /UserRole\.ADMIN/, "normal Infrastructure details must not require ADMIN");

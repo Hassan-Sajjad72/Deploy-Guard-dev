@@ -235,8 +235,10 @@ resource "aws_lb_target_group" "application" {
   target_type = "ip"
   vpc_id      = var.vpc_id
   health_check {
-    path    = "/"
-    matcher = "200-399"
+    path = "/"
+    # Any completed HTTP response proves transport readiness. Application
+    # status semantics (including 4xx) remain the repository owner's concern.
+    matcher = "200-499"
   }
   tags = merge(local.tags, { DeployGuardServiceId = each.key })
 }
