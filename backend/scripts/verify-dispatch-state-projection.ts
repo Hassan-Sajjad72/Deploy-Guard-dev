@@ -10,7 +10,7 @@ import { ProjectCurrentStateService } from "../src/projects/current-state/projec
 import { isAiTroubleshootingEligible } from "../src/ai-troubleshooting/ai-troubleshooting.service";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentation } from "../src/projects/pipeline/github-actions-stage-presentation";
-import { DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
+import { DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
 import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
@@ -20,6 +20,7 @@ import { ProjectServiceRuntimeConfigRevision } from "../src/projects/project-ser
 import { ProjectGenerationServiceRevision } from "../src/projects/project-generation-service-revision.entity";
 import { Project } from "../src/projects/project.entity";
 import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError } from "../src/projects/github-app.service";
+import { terminalStructuredFailureMarker } from "../src/projects/failure-ownership";
 
 const user = { id: 7 } as any;
 const project = {
@@ -252,11 +253,22 @@ async function verifyTerminalFinalizationFailureIsRetryable() {
   const recovery = Object.create(RailpackDeploymentService.prototype) as any;
   recovery.project = async () => project;
   recovery.runs = { findOne: async () => operation };
-  let retryArgs: any[] | null = null;
-  recovery.dispatch = async (...args: any[]) => { retryArgs = args; return { deployment: { state: "accepted" } }; };
-  await recovery.retry(user, project.id);
-  assert.equal(retryArgs?.[2], "deploy");
-  assert.equal(retryArgs?.[4], operation.id, "normal retry must retain the failed reconciliation operation as its recovery ancestor");
+  recovery.validatedReleaseEvidence = () => validEvidence;
+  let dispatchCalls = 0;
+  let localFinalizationCalls = 0;
+  recovery.dispatch = async () => { dispatchCalls += 1; return { deployment: { state: "accepted" } }; };
+  recovery.finalizeVerifiedRelease = async (_project: any, candidate: any, evidence: any) => {
+    localFinalizationCalls += 1;
+    assert.equal(candidate, operation);
+    assert.equal(evidence, validEvidence);
+    candidate.status = PipelineRunStatus.COMPLETED;
+    candidate.failureCode = null;
+  };
+  const recovered = await recovery.retry(user, project.id);
+  assert.equal(recovered.deployment.state, "no_op");
+  assert.equal(localFinalizationCalls, 1, "retry revalidates evidence and invokes only the local release-finalization transaction");
+  assert.equal(dispatchCalls, 0, "release-finalization recovery must perform zero GitHub/AWS deployment dispatches");
+  assert.equal(operation.status, PipelineRunStatus.COMPLETED);
 }
 
 async function verifyPreDispatchFailure() {
@@ -490,7 +502,8 @@ async function verifyTerminalGithubFailure() {
     ],
   }] });
   githubActions.getJobLog = async () => "Railpack 0.38.0\nERRO BUILDKIT_HOST environment variable is not set.\ntoken=ghp_abcdefghijklmnopqrstuvwxyz1234567890";
-  const githubEvidence = await githubActions.getTerminalFailureEvidence("example/application", "123", "ignored");
+  githubActions.getArtifactEntry = async () => null;
+  const githubEvidence = await githubActions.getTerminalFailureEvidence("example/application", "123", "22222222-2222-4222-8222-222222222222", "ignored");
   assert.ok(githubEvidence);
   assert.equal(githubEvidence.failedStage, "build_immutable_railpack_images");
   assert.deepEqual(githubEvidence.workflowStages.map((stage: any) => [stage.key, stage.status]), [
@@ -502,7 +515,7 @@ async function verifyTerminalGithubFailure() {
   ]);
   service.actions = { getTerminalFailureEvidence: async () => githubEvidence };
   service.sanitizer = new LogSanitizerService();
-  const evidence = await service.terminalFailureEvidence("example/application", "123", "ignored");
+  const evidence = await service.terminalFailureEvidence("example/application", "123", "22222222-2222-4222-8222-222222222222", "ignored", "deploy");
   assert.equal(evidence.failedStage, "build_immutable_railpack_images");
   assert.match(evidence.safeLog, /BUILDKIT_HOST environment variable is not set/);
   assert.doesNotMatch(evidence.safeLog, /ghp_/);
@@ -560,6 +573,30 @@ async function verifyStructuredRuntimeFailureSurvivesTerminalReconciliation() {
   }
 }
 
+async function verifyPersistedRuntimeFailureArtifactIsConsumed() {
+  const operationId = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+  const serviceId = "77777777-7777-4777-8777-777777777777";
+  const marker = `DG_FAILURE serviceId=${serviceId} code=DG_ECS_STABILITY_FAILED stage=ecs_stability`;
+  const actions = Object.create(GithubActionsService.prototype) as any;
+  actions.getWorkflowJobs = async () => ({ jobs: [{ id: 91, name: "deploy", status: "completed", conclusion: "failure", steps: [{ name: "Materialize release runtime", status: "completed", conclusion: "failure" }] }] });
+  actions.getWorkflowStages = async () => [{ key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application", status: "failed", startedAt: null, completedAt: null, jobUrl: null, failureReason: "GitHub Actions step failed: Materialize release runtime" }];
+  actions.getJobLog = async () => "The verifier returned exit code 1.";
+  actions.getArtifactEntry = async (_repository: string, _runId: string, candidateOperationId: string, _token: string, entry: string) => {
+    assert.equal(candidateOperationId, operationId);
+    assert.equal(entry, DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY);
+    return JSON.stringify({ contractVersion: "deployguard.release-failure/v1", action: "deploy", sourceSha: "a".repeat(40), operationId, failedStage: "aws_runtime_verification", awsRuntimeVerification: { contractVersion: "deployguard.aws-runtime-verification/v1", verified: false, services: [{ serviceId, verified: false, failureCode: "DG_ECS_STABILITY_FAILED", stage: "ecs_stability", failureMarker: marker, diagnostics: { taskEvents: ["service deployment failed"], targetHealth: [{ targetId: "10.0.0.5", state: "unhealthy" }] } }] } });
+  };
+  const evidence = await actions.getTerminalFailureEvidence("example/application", "123", operationId, "ignored", "deploy");
+  assert.ok(evidence);
+  assert.match(evidence.rawEvidence, /Persisted terminal verification evidence/);
+  assert.match(evidence.rawEvidence, new RegExp(marker));
+  assert.match(evidence.rawEvidence, /targetHealth/);
+  const parsed = terminalStructuredFailureMarker(evidence.rawEvidence);
+  assert.equal(parsed.code, "DG_ECS_STABILITY_FAILED");
+  assert.equal(parsed.serviceId, serviceId);
+  assert.equal(parsed.stage, "ecs_stability", "backend terminal reconciliation consumes the exact persisted verifier failure marker");
+}
+
 async function verifyActiveGithubStagesPersistWithoutPipeline() {
   const saved: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
@@ -583,6 +620,50 @@ async function verifyActiveGithubStagesPersistWithoutPipeline() {
   service.actions.getWorkflowStages = async () => [];
   await service.reconcile(operation);
   assert.equal(saved.at(-1).metadata.workflowStages.length, 4, "a transient empty jobs response must retain prior stage evidence");
+}
+
+async function verifyTerminalStageMetadataConvergenceAndBackfill() {
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.config = { get: () => 0 };
+  let reads = 0;
+  service.actions = { getWorkflowStages: async () => {
+    reads += 1;
+    return reads < 3
+      ? [{ key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application", status: "running", startedAt: "2026-09-01T00:00:00Z", completedAt: null }]
+      : [{ key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application", status: "passed", startedAt: "2026-09-01T00:00:00Z", completedAt: "2026-09-01T00:04:00Z" }];
+  } };
+  const settled = await service.terminalWorkflowStages("example/application", "123", "ignored", "deploy", []);
+  assert.equal(reads, 3, "terminal jobs metadata is retried within a fixed bound until GitHub exposes a final snapshot");
+  assert.equal(settled.unavailable, false);
+  assert.deepEqual(settled.stages.map((stage: any) => stage.status), ["passed"]);
+
+  reads = 0;
+  service.actions.getWorkflowStages = async () => {
+    reads += 1;
+    return [
+      { key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application", status: "running", startedAt: "2026-09-01T00:00:00Z", completedAt: null },
+      { key: "publish_verified_release_result", label: "Finalize Release", status: "pending", startedAt: null, completedAt: null },
+    ];
+  };
+  const unavailable = await service.terminalWorkflowStages("example/application", "123", "ignored", "deploy", []);
+  assert.equal(reads, 3);
+  assert.equal(unavailable.unavailable, true);
+  assert.deepEqual(unavailable.stages.map((stage: any) => stage.status), ["unavailable", "unavailable"], "terminal state never persists visually Running or Pending when GitHub's final jobs snapshot is absent");
+
+  const terminal: any = {
+    id: "99999999-9999-4999-8999-999999999999", projectId: project.id, triggeredByUserId: user.id,
+    githubWorkflowRunId: "123", status: PipelineRunStatus.FAILED, currentStage: "ecs_stability",
+    metadata: { deploymentAction: "deploy", terminalWorkflowStagesUnavailable: true, workflowStages: unavailable.stages },
+  };
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+  service.runs = { save: async (row: any) => row };
+  service.actions.getWorkflowStages = async () => [{ key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application", status: "failed", startedAt: "2026-09-01T00:00:00Z", completedAt: "2026-09-01T00:04:00Z" }];
+  await service.reconcileTerminalWorkflowStages(terminal);
+  assert.equal(terminal.status, PipelineRunStatus.FAILED, "read-only stage backfill cannot change the terminal operation outcome");
+  assert.equal(terminal.metadata.terminalWorkflowStagesUnavailable, false);
+  assert.deepEqual(terminal.metadata.workflowStages.map((stage: any) => stage.status), ["failed"], "a later read-only refresh backfills real final GitHub metadata without fabricating Passed");
 }
 
 async function verifyCurrentStateReconcilesWithoutPipeline() {
@@ -676,7 +757,9 @@ void (async () => {
   await verifyVerifiedReleaseProjectsLive();
   const terminalFailure = await verifyTerminalGithubFailure();
   await verifyStructuredRuntimeFailureSurvivesTerminalReconciliation();
+  await verifyPersistedRuntimeFailureArtifactIsConsumed();
   await verifyActiveGithubStagesPersistWithoutPipeline();
+  await verifyTerminalStageMetadataConvergenceAndBackfill();
   await verifyCurrentStateProjection(terminalFailure, true);
   await verifyCurrentStateReconcilesWithoutPipeline();
   await verifyConcurrentStateReadsShareReconciliation();

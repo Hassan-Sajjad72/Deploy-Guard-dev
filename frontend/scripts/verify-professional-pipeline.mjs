@@ -22,6 +22,7 @@ for (const heading of ["Latest deployment", "Operation", "Duration", "Completed"
 assert.doesNotMatch(execution, /\$\{date\(latest\.createdAt\)\} to \$\{date\(operationEnd\(latest\)\)\}/, "Pipeline omits the verbose start-to-end range");
 assert.match(execution, /latest\?\.workflowStages \|\| \[\]/);
 assert.match(execution, /pipelineStageDurationEnd\(stage, operation\)/);
+assert.match(execution, /workflowStagesUnavailable[\s\S]*Unavailable — GitHub Actions final step metadata is temporarily unavailable/, "missing terminal jobs metadata is presented honestly as Unavailable");
 assert.match(execution, /stage\.durationMs/);
 assert.match(execution, /stage\.status !== "skipped"[\s\S]*stage\.durationMs > 0/);
 assert.match(execution, /stage\.status === "skipped" \? "Not run"/);
@@ -50,6 +51,8 @@ assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "completed" }
 assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "running" }, "2026-09-02T10:00:00.000Z"), "2026-09-02T10:00:00.000Z", "active operations continue to accumulate duration");
 assert.equal(pipelineStageDisplayStatus(staleRunningStage, { status: "completed" }), "unavailable", "a terminal operation never presents stale stage metadata as actively Running");
 assert.equal(pipelineStageDisplayStatus(staleRunningStage, { status: "failed" }), "unavailable");
+assert.equal(pipelineStageDisplayStatus({ status: "pending" }, { status: "completed" }), "unavailable", "a terminal operation never presents stale stage metadata as Pending");
+assert.equal(pipelineStageDisplayStatus({ status: "pending" }, { status: "failed" }), "unavailable");
 assert.equal(pipelineStageDisplayStatus(staleRunningStage, { status: "running" }), "running");
 assert.equal(pipelineStageDisplayStatus({ status: "passed" }, { status: "completed" }), "passed", "the guard never manufactures successful GitHub evidence");
 assert.match(github, /getWorkflowJobs/);
