@@ -26,7 +26,7 @@
     "test:deployable-services": "ts-node scripts/verify-deployable-services.ts",
     "test:application-entrypoint": "ts-node scripts/verify-application-entrypoint-authority.ts",
     "test:service-env-isolation": "ts-node scripts/verify-reserved-environment-boundary.ts && ts-node scripts/verify-service-env-isolation.ts",
-    "test:multi-service-release": "ts-node scripts/verify-multi-service-release.ts",
+    "test:multi-service-release": "ts-node scripts/verify-multi-service-release.ts && ts-node scripts/verify-terminal-runtime-bindings.ts",
     "test:multi-service-runtime": "ts-node scripts/verify-multi-service-runtime.ts",
     "test:failure-ownership": "ts-node scripts/verify-failure-ownership.ts",
     "test:immutable-runtime-revisions": "ts-node scripts/verify-immutable-runtime-revisions.ts",

@@ -47,6 +47,17 @@ type RollbackTargetIdentity = {
   services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; runtimeConfigRevisionId: string; runtimeConfiguration: { environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null } } }>;
 };
 
+export function promotedServiceRevisions<T extends { serviceId: string }>(
+  verifiedCandidates: readonly T[],
+  expectedServiceIds: readonly string[],
+) {
+  const candidates = new Map(verifiedCandidates.map((service) => [service.serviceId, service]));
+  return [...new Set(expectedServiceIds)].sort().flatMap((serviceId) => {
+    const revision = candidates.get(serviceId);
+    return revision ? [revision] : [];
+  });
+}
+
 /** Explicit-service Railpack deployment admission; it does not inspect application source. */
 @Injectable()
 export class RailpackDeploymentService {
@@ -671,7 +682,7 @@ export class RailpackDeploymentService {
     }
     if (!artifact.terraform || typeof artifact.terraform !== "object" || !Array.isArray(artifact.services) || !artifact.services.length) throw new Error("The release result artifact does not prove the complete service runtime.");
     const awsRuntimeVerification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
-    if (!awsRuntimeVerification || awsRuntimeVerification.contractVersion !== "deployguard.aws-runtime-verification/v1" || awsRuntimeVerification.verified !== true || !Array.isArray(awsRuntimeVerification.services)) {
+    if (!awsRuntimeVerification || awsRuntimeVerification.contractVersion !== "deployguard.aws-runtime-verification/v1" || typeof awsRuntimeVerification.verified !== "boolean" || !Array.isArray(awsRuntimeVerification.services)) {
       throw new Error("The release result artifact does not contain verified AWS runtime evidence.");
     }
     const terraform = artifact.terraform as Record<string, unknown>;
@@ -681,7 +692,7 @@ export class RailpackDeploymentService {
     const expected = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as RailpackRuntimeConfiguration;
     assertRailpackRuntimeConfiguration(expected);
     const expectedById = new Map(expected.services.map((service) => [service.serviceId, service]));
-    const services = artifact.services.map((value) => {
+    const intendedServices = artifact.services.map((value) => {
       if (!value || typeof value !== "object") throw new Error("Release service evidence is malformed.");
       const item = value as Record<string, unknown>; const expectedService = expectedById.get(String(item.serviceId || ""));
       const imageUri = String(item.imageUri || ""); const imageDigest = String(item.imageDigest || ""); const image = String(item.image || "");
@@ -689,21 +700,24 @@ export class RailpackDeploymentService {
       if (!expectedService || String(item.runtimeConfigRevisionId || "") !== expectedService.runtimeConfigRevisionId || String(item.serviceName || "") !== expectedService.serviceName || String(item.serviceDirectory || "") !== expectedService.serviceDirectory || image !== `${imageUri}@${imageDigest}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*$/i.test(imageUri) || !/^sha256:[0-9a-f]{64}$/.test(imageDigest) || !runtime || runtime.image !== image || runtime.runtime_config_revision_id !== expectedService.runtimeConfigRevisionId || typeof runtime.public_url !== "string" || typeof runtime.task_definition_arn !== "string" || typeof runtime.ecs_service_arn !== "string") throw new Error("Release service evidence does not match its immutable service contract and Terraform runtime.");
       return { serviceId: expectedService.serviceId, serviceName: expectedService.serviceName, serviceDirectory: expectedService.serviceDirectory, sourceSha, runtimeConfigRevisionId: expectedService.runtimeConfigRevisionId, imageUri, imageDigest, image, publicUrl: runtime.public_url, taskDefinitionArn: runtime.task_definition_arn, ecsServiceArn: runtime.ecs_service_arn, ecsServiceName: runtime.ecs_service_name, albArn: runtime.alb_arn, albName: runtime.alb_name, targetGroupArn: runtime.alb_target_group_arn, targetGroupName: runtime.alb_target_group_name, cloudWatchLogGroupName: runtime.cloudwatch_log_group_name, applicationContainerName: runtime.application_container_name };
     });
-    if (services.length !== expected.services.length || new Set(services.map((service) => service.serviceId)).size !== expected.services.length) {
+    if (intendedServices.length !== expected.services.length || new Set(intendedServices.map((service) => service.serviceId)).size !== expected.services.length) {
       throw new Error("Release result does not contain the complete immutable service set.");
     }
-    const verifiedServiceIds = (awsRuntimeVerification.services as Array<Record<string, unknown>>)
-      .filter((service) => service?.verified === true)
-      .map((service) => String(service.serviceId || ""));
-    if (verifiedServiceIds.length !== services.length || new Set(verifiedServiceIds).size !== services.length || services.some((service) => !verifiedServiceIds.includes(service.serviceId))) {
+    const runtimeOutcomes = awsRuntimeVerification.services as Array<Record<string, unknown>>;
+    const outcomeServiceIds = runtimeOutcomes.map((service) => String(service?.serviceId || ""));
+    if (outcomeServiceIds.length !== intendedServices.length || new Set(outcomeServiceIds).size !== intendedServices.length || intendedServices.some((service) => !outcomeServiceIds.includes(service.serviceId))) {
       throw new Error("AWS runtime verification does not cover the complete immutable service set.");
     }
+    const verifiedServiceIds = runtimeOutcomes
+      .filter((service) => service?.verified === true)
+      .map((service) => String(service.serviceId || ""));
+    const services = intendedServices.filter((service) => verifiedServiceIds.includes(service.serviceId));
     const database = terraform.database && typeof terraform.database === "object" ? terraform.database as Record<string, unknown> : null;
     const attached = expected.services.find((service) => service.databaseAttached);
     if ((attached && (!database || database.attached_service_id !== attached.serviceId || database.engine !== attached.managedDatabase.engine || typeof database.secret_version_id !== "string" || !database.secret_version_id)) || (!attached && database !== null)) {
       throw new Error("Release result does not match the independent managed database runtime contract.");
     }
-    return { releaseArtifact: artifact, services, terraform, awsRuntimeVerification };
+    return { releaseArtifact: artifact, services, intendedServices, serviceOutcomes: runtimeOutcomes, terraform, awsRuntimeVerification };
   }
 
   private async reconcileCompletedRelease(operation: ProjectPipelineRun) {
@@ -764,9 +778,15 @@ export class RailpackDeploymentService {
       if (!current) throw new Error("Release operation disappeared before finalization.");
       const immutable = this.validatedReleaseEvidence(current, artifact as Record<string, unknown>);
       const environmentName = canonicalEnvironmentName(project);
-      const runtimeIdentity = this.runtimeIdentity(project, environmentName, immutable);
+      const verifiedCandidateServices = (immutable.services as Array<Record<string, unknown>>)
+        .slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId)));
+      const serviceOutcomes = immutable.serviceOutcomes as Array<Record<string, unknown>>;
+      const expectedServiceIds = (immutable.intendedServices as Array<Record<string, unknown>>).map((service) => String(service.serviceId));
       const generationId = current.generationId || current.id;
       const generations = manager.getRepository(ProjectDeploymentGeneration);
+      const promotedServiceIds = new Set(verifiedCandidateServices.map((service) => String(service.serviceId)));
+      if (!verifiedCandidateServices.length) throw new Error("No service passed terminal AWS reconciliation; no release can be promoted.");
+      const runtimeIdentity = this.runtimeIdentity(project, environmentName, { ...immutable, services: verifiedCandidateServices });
       let generation = await generations.findOne({ where: { id: generationId } });
       if (generation && (generation.projectId !== project.id || generation.environmentName !== environmentName)) {
         throw new Error("Release generation identity conflicts with another project environment.");
@@ -795,13 +815,13 @@ export class RailpackDeploymentService {
           retiredAt: null,
           failedAt: null,
           cleanedAt: null,
-          metadata: { executionEngine: "railpack", serviceImageDigests: (immutable.services as Array<Record<string, unknown>>).map((service) => ({ serviceId: service.serviceId, imageDigest: service.imageDigest })), releaseOperationId: current.id },
+          metadata: { executionEngine: "railpack", serviceOutcomes, releaseOperationId: current.id },
         });
       } else {
         generation.status = DeploymentGenerationStatus.LIVE;
         generation.activatedAt = generation.activatedAt || new Date();
         generation.resourceManifest = { ...generation.resourceManifest, ...runtimeIdentity };
-        generation.metadata = { ...generation.metadata, executionEngine: "railpack", serviceImageDigests: (immutable.services as Array<Record<string, unknown>>).map((service) => ({ serviceId: service.serviceId, imageDigest: service.imageDigest })), releaseOperationId: current.id };
+        generation.metadata = { ...generation.metadata, executionEngine: "railpack", serviceOutcomes, releaseOperationId: current.id };
       }
       const previous = await generations.find({ where: { projectId: project.id, environmentName, status: DeploymentGenerationStatus.LIVE } });
       for (const existing of previous) {
@@ -813,15 +833,10 @@ export class RailpackDeploymentService {
       }
       await generations.save(generation);
 
-      const immutableServices = (immutable.services as Array<Record<string, unknown>>)
-        .slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId)));
+      const immutableServices = verifiedCandidateServices;
       const endpointProject = await manager.getRepository(Project).findOne({ where: { id: project.id } });
       if (!endpointProject) throw new Error("Project application-entrypoint authority disappeared before release finalization.");
-      const applicationEntryPointServiceId = requireApplicationEntrypointServiceId(endpointProject.applicationEntryPointServiceId, immutableServices);
-      const applicationEndpoint = immutableServices.find((service) => String(service.serviceId) === applicationEntryPointServiceId);
-      if (!applicationEndpoint || typeof applicationEndpoint.publicUrl !== "string" || !/^https?:\/\//i.test(applicationEndpoint.publicUrl)) {
-        throw new Error("The selected application service has no verified public URL in the complete release evidence.");
-      }
+      const applicationEntryPointServiceId = endpointProject.applicationEntryPointServiceId;
       const runtimeConfigIds = immutableServices.map((service) => String(service.runtimeConfigRevisionId));
       const runtimeConfigs = await manager.getRepository(ProjectServiceRuntimeConfigRevision).find({ where: { id: In(runtimeConfigIds) } });
       const runtimeConfigById = new Map(runtimeConfigs.map((revision) => [revision.id, revision]));
@@ -837,7 +852,7 @@ export class RailpackDeploymentService {
         revision.sealedAt = revision.sealedAt || new Date();
         await manager.getRepository(ProjectServiceRuntimeConfigRevision).save(revision);
       }
-      if (databaseRuntime) {
+      if (databaseRuntime && promotedServiceIds.has(String(databaseRuntime.attached_service_id))) {
         const tier = await manager.getRepository(ProjectDatabaseTier).findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } });
         if (!tier || tier.engine !== databaseRuntime.engine) throw new Error("Persisted managed database ownership does not match the verified independent runtime.");
         tier.attachedServiceId = String(databaseRuntime.attached_service_id);
@@ -861,7 +876,7 @@ export class RailpackDeploymentService {
         })) throw new Error("Generation service revision set conflicts with immutable release evidence.");
       }
       if (!existingGenerationRevisions.length) {
-        await generationRevisions.save(immutableServices.map((service) => generationRevisions.create({
+        const candidateRevisions = immutableServices.map((service) => generationRevisions.create({
           projectId: project.id,
           generationId: generation.id,
           serviceId: String(service.serviceId),
@@ -872,12 +887,18 @@ export class RailpackDeploymentService {
           imageDigest: String(service.imageDigest),
           runtimeConfigRevisionId: String(service.runtimeConfigRevisionId),
           runtimeIdentity: service,
-        })));
+        }));
+        await generationRevisions.save(promotedServiceRevisions(candidateRevisions, expectedServiceIds));
       }
+      const reconciledRevisions = await generationRevisions.find({ where: { generationId: generation.id } });
+      const reconciledServices = reconciledRevisions.map((revision) => revision.runtimeIdentity);
+      const applicationEndpoint = reconciledServices.find((service) => String(service.serviceId) === applicationEntryPointServiceId);
+      const deployedUrl = applicationEndpoint && typeof applicationEndpoint.publicUrl === "string" && /^https?:\/\//i.test(applicationEndpoint.publicUrl) ? applicationEndpoint.publicUrl : null;
       generation.metadata = {
         ...generation.metadata,
-        serviceRevisionIds: (await generationRevisions.find({ where: { generationId: generation.id } })).map((revision) => revision.id).sort(),
-        runtimeConfigRevisionIds: [...runtimeConfigIds].sort(),
+        serviceRevisionIds: reconciledRevisions.map((revision) => revision.id).sort(),
+        runtimeConfigRevisionIds: reconciledRevisions.map((revision) => revision.runtimeConfigRevisionId).sort(),
+        serviceImageDigests: reconciledRevisions.map((revision) => ({ serviceId: revision.serviceId, imageDigest: revision.imageDigest })),
       };
       await generations.save(generation);
 
@@ -903,15 +924,15 @@ export class RailpackDeploymentService {
         commitSha: current.commitSha || "",
         healthCheckPath: "/",
         appPort: DEPLOYGUARD_PLATFORM_PORT,
-        metadata: { deployedUrl: applicationEndpoint.publicUrl, publicUrls: Object.fromEntries(immutableServices.map((service) => [String(service.serviceId), service.publicUrl])), services: immutableServices, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
+        metadata: { deployedUrl, publicUrls: Object.fromEntries(reconciledServices.map((service) => [String(service.serviceId), service.publicUrl])), services: reconciledServices, serviceOutcomes, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
       });
       current.generationId = generation.id;
       current.status = PipelineRunStatus.COMPLETED;
-      current.currentStage = "release_complete";
+      current.currentStage = verifiedCandidateServices.length === expectedServiceIds.length ? "release_complete" : "release_partial";
       current.errorMessage = null;
       current.failureOwner = null; current.externalProvider = null; current.failureCode = null; current.failureServiceId = null;
       current.completedAt = current.completedAt || new Date();
-      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl: applicationEndpoint.publicUrl, publicUrls: Object.fromEntries(immutableServices.map((service) => [String(service.serviceId), service.publicUrl])), releaseEvidenceVerified: true, runtimeIdentity };
+      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl, publicUrls: Object.fromEntries(reconciledServices.map((service) => [String(service.serviceId), service.publicUrl])), releaseEvidenceVerified: true, runtimeIdentity };
       await operations.save(current);
       Object.assign(operation, current);
     });

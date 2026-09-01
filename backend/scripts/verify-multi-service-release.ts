@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { strict as assert } from "node:assert";
-import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
+import { RailpackDeploymentService, promotedServiceRevisions } from "../src/projects/railpack-deployment.service";
 import { servicesBase64, RailpackRuntimeConfiguration } from "../src/projects/railpack-workflow-contract";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
@@ -27,5 +27,10 @@ for (const invalid of [
   { ...artifact, terraform: { ...artifact.terraform, services: { [ids[0]]: terraformServices[ids[0]] } } },
   { ...artifact, awsRuntimeVerification: { ...artifact.awsRuntimeVerification, services: [{ serviceId: ids[0], verified: true }] } },
 ]) assert.throws(() => service.validatedReleaseEvidence(operation, invalid), /complete|does not match/);
+const partialArtifact = { ...artifact, awsRuntimeVerification: { ...artifact.awsRuntimeVerification, verified: false, services: [{ serviceId: ids[0], verified: true }, { serviceId: ids[1], verified: false, failureCode: "DG_ECS_STABILITY_FAILED" }] } };
+const partial = service.validatedReleaseEvidence(operation, partialArtifact);
+assert.deepEqual(partial.services.map((item: any) => item.serviceId), [ids[0]], "only the independently verified service is eligible for promotion");
+const candidateA = { serviceId: ids[0], revision: "candidate-a" };
+assert.deepEqual(promotedServiceRevisions([candidateA], ids), [candidateA], "A is promoted while failed B remains outside LIVE authority");
 const release: any = { id: "55555555-5555-4555-8555-555555555555", generationId: operationId, deployedByPipelineRunId: operationId, commitSha: sourceSha, metadata: { releaseEvidenceVerified: true, services: valid.services } };
-console.log("MULTI_SERVICE_RELEASE=PASS COMPLETE_SET_REQUIRED=1 RUNTIME_CONFIG_IDS=1 PARTIAL_PROMOTION=0");
+console.log("MULTI_SERVICE_RELEASE=PASS COMPLETE_OUTCOMES_REQUIRED=1 RUNTIME_CONFIG_IDS=1 PARTIAL_PROMOTION=1 FAILED_SERVICE_LIVE=0");

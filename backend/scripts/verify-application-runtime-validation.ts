@@ -9,6 +9,7 @@ import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentati
 
 const root = join(__dirname, "..", "..");
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
+const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-runtime", "verify-runtime.sh"), "utf8");
 const orderedSteps = [
   "Checkout exact application source",
   "Configure AWS credentials through OIDC",
@@ -158,14 +159,15 @@ void (async () => {
   assert.match(stepBlock("Publish immutable images to ECR", "Select immutable rollback service images"), /if: success\(\)/);
   assert.match(stepBlock("Install Terraform", "Materialize release runtime"), /if: success\(\)/);
   const deployedReadiness = stepBlock("Materialize release runtime", "Publish verified release result");
-  assert.match(deployedReadiness, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/, "post-ALB verification proves public reachability");
-  assert.doesNotMatch(deployedReadiness, /curl --fail/, "HTTP business status must not decide deployment readiness");
+  assert.match(deployedReadiness, /bash \.deployguard\/terraform\/verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/, "post-ALB readiness delegates to the canonical runtime verifier");
+  assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/, "the delegated verifier proves public reachability");
+  assert.doesNotMatch(runtimeVerification, /curl --fail/, "HTTP business status must not decide deployment readiness");
 
   const success = executeProbe("success");
   assert.equal(success.status, 0);
   assert.equal(success.downstream, "ECR\nTerraform\n", "successful TCP validation continues to downstream stages");
   assert.match(success.trace, /docker image inspect --format \{\{\.Id\}\} registry\.example\/app:exact-sha/);
-  assert.match(success.trace, /docker run .*--env PORT --env HOST --env REQUIRED_RUNTIME_VALUE sha256:0{64}/);
+  assert.match(success.trace, /docker run .*--env PORT --env HOST --env REQUIRED_RUNTIME_VALUE --env PORT=8080 --env HOST=0\.0\.0\.0 sha256:0{64}/, "platform bindings override inherited values on the exact validated image");
   assert.match(success.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/);
 
   for (const mode of ["timeout", "exited", "run_failure", "workflow_failure"] as const) {
