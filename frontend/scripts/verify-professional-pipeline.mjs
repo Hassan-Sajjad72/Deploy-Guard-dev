@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { pipelineStageDurationEnd } from "../src/utils/pipelineStageTiming.js";
+import { pipelineStageDisplayStatus, pipelineStageDurationEnd } from "../src/utils/pipelineStageTiming.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const page = read("../src/pages/ProjectPipeline.jsx");
@@ -48,6 +48,10 @@ assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "completed", 
 assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "failed", failedAt: "2026-09-01T10:04:00.000Z" }, "2026-09-02T10:00:00.000Z"), "2026-09-01T10:04:00.000Z");
 assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "completed" }, "2026-09-02T10:00:00.000Z"), null, "missing terminal timestamps never fall through to the current clock");
 assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "running" }, "2026-09-02T10:00:00.000Z"), "2026-09-02T10:00:00.000Z", "active operations continue to accumulate duration");
+assert.equal(pipelineStageDisplayStatus(staleRunningStage, { status: "completed" }), "unavailable", "a terminal operation never presents stale stage metadata as actively Running");
+assert.equal(pipelineStageDisplayStatus(staleRunningStage, { status: "failed" }), "unavailable");
+assert.equal(pipelineStageDisplayStatus(staleRunningStage, { status: "running" }), "running");
+assert.equal(pipelineStageDisplayStatus({ status: "passed" }, { status: "completed" }), "passed", "the guard never manufactures successful GitHub evidence");
 assert.match(github, /getWorkflowJobs/);
 assert.match(backend, /failureSource: "github_actions"/);
 assert.match(backend, /getWorkflowStages/);

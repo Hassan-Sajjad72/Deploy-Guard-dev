@@ -11,7 +11,7 @@ import {
 import ErrorState from "../common/ErrorState.jsx";
 import { retryGithubActionsDeployment } from "../../api/projectApi.js";
 import { useToast } from "../../hooks/useToast.js";
-import { pipelineStageDurationEnd } from "../../utils/pipelineStageTiming.js";
+import { pipelineStageDisplayStatus, pipelineStageDurationEnd } from "../../utils/pipelineStageTiming.js";
 
 function date(value) {
   return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Unavailable";
@@ -110,12 +110,12 @@ export default function PipelineExecution({ canManage = false, currentState, onR
     <Card className="pipeline-timeline-card">
       <div className="pipeline-section-heading"><div><p className="eyebrow">GitHub Actions execution</p><h2>Technical pipeline timeline</h2><p>Only stages returned by the selected GitHub Actions run are shown. Expand a stage for its recorded evidence.</p></div>{latest?.workflowUrl ? <Button href={latest.workflowUrl} rel="noreferrer" target="_blank" tone="secondary">Open GitHub Actions</Button> : null}</div>
       {latest?.dispatchFailure ? <p className="pipeline-unavailable"><strong>GitHub Actions run was not created.</strong> DeployGuard stopped during dispatch: {latest.errorMessage || "The persisted dispatch failure has no additional safe detail."}</p> : stages.length ? <ol aria-label="GitHub Actions workflow stages" className="pipeline-stage-timeline">
-        {stages.map((stage) => <li className={`pipeline-stage-row is-${stage.status}`} key={`${stage.key}-${stage.startedAt || "pending"}`}>
+        {stages.map((stage) => { const displayStatus = pipelineStageDisplayStatus(stage, latest); return <li className={`pipeline-stage-row is-${displayStatus}`} key={`${stage.key}-${stage.startedAt || "pending"}`}>
           <span aria-hidden="true" className="pipeline-stage-icon"><AppIcon name={stageIcon(stage)} size={18} /></span>
-          <div className="pipeline-stage-main"><div className="pipeline-stage-title"><strong>{stage.label}</strong><StatusChip status={stage.status} /></div><p>{stageDurationLabel(stage, latest)}</p></div>
+          <div className="pipeline-stage-main"><div className="pipeline-stage-title"><strong>{stage.label}</strong><StatusChip status={displayStatus} /></div><p>{stageDurationLabel(stage, latest)}</p></div>
           <div className="pipeline-stage-times"><span>Started {date(stage.startedAt)}</span><span>Completed {date(stage.completedAt)}</span></div>
           <details className="pipeline-stage-evidence"><summary>Evidence</summary><p>Source: GitHub Actions workflow job.</p>{stage.jobUrl ? <a href={stage.jobUrl} rel="noreferrer" target="_blank">Open GitHub Actions job</a> : null}{stage.failureReason ? <p className="pipeline-stage-failure">{stage.failureReason}</p> : null}</details>
-        </li>)}
+        </li>; })}
       </ol> : <p className="pipeline-unavailable">{latest ? "GitHub Actions step metadata has not been collected yet. The operation status and run link remain available." : "No deployment request has been made yet."}</p>}
       {latest ? <details className="pipeline-advanced"><summary>Advanced run details</summary><dl><div><dt>GitHub Actions run</dt><dd>{latest.workflowRunId || "Unavailable"}</dd></div><div><dt>Workflow status</dt><dd>{latest.workflowStatus || "Unavailable"}</dd></div><div><dt>Operation identifier</dt><dd>{latest.id}</dd></div></dl></details> : null}
       {latestFailed && canManage && currentState.canRetry ? <div className="pipeline-retry-action"><Button disabled={retryBusy} onClick={() => void retry()}>{retryBusy ? "Retrying…" : `Retry failed ${operationType(latest).toLowerCase()}`}</Button></div> : null}
