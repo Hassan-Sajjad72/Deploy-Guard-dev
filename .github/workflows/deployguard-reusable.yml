@@ -332,6 +332,28 @@ jobs:
           if [ -f .deployguard/terraform/deployguard-cost-plan.json ]; then
             cp .deployguard/terraform/deployguard-cost-plan.json terraform/deployguard-cost-plan.json
           fi
+      - name: Preserve terminal verification failure evidence
+        if: failure() && steps.runtime.outcome == 'failure' && hashFiles('.deployguard/aws-runtime-verification.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '
+            .contractVersion == "deployguard.aws-runtime-verification/v1"
+            and .verified == false
+            and (.services | type == "array" and length > 0)
+            and any(.services[]; .verified == false and (.serviceId | type == "string" and length > 0) and (.failureCode | type == "string" and startswith("DG_")) and (.stage | type == "string" and length > 0) and (.failureMarker | type == "string" and startswith("DG_FAILURE ")))
+          ' .deployguard/aws-runtime-verification.json >/dev/null
+          mkdir -p terraform
+          jq -n --arg contractVersion deployguard.release-failure/v1 --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --slurpfile verification .deployguard/aws-runtime-verification.json '{contractVersion:$contractVersion,action:$action,sourceSha:$sourceSha,operationId:$operationId,failedStage:"aws_runtime_verification",awsRuntimeVerification:$verification[0]}' > terraform/deployguard-failure-evidence.json
+          [ "$(wc -c < terraform/deployguard-failure-evidence.json)" -le 524288 ]
+      - name: Publish terminal verification failure evidence
+        if: failure() && hashFiles('terraform/deployguard-failure-evidence.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deployguard-result-${{ inputs.deployment_operation_id }}
+          path: terraform/deployguard-failure-evidence.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Publish verified release result
         if: success() && hashFiles('terraform/deployguard-result.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

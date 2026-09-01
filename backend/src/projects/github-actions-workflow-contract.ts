@@ -11,9 +11,9 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   runtimeVerifier: "infrastructure/railpack-runtime/verify-runtime.sh",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "cbc25e649475121d4d113e49015f0049d18e048bab0bbcdfb553eb5c0be8619f",
+  workflow: "ccbc2e381879b6b7672876f5c0c7ceed36de473068d95feb3abd619c2f5bf9bf",
   releaseResultProducer: "644b940a381a688d1e79cd78a402a61993e9efd7940dc4ab45241d9a327bca55",
-  runtimeVerifier: "5e2b3e7a2a6a876e57bb249f9e8be4bd271043aab0aa2b5fa5a3f9335a71d752",
+  runtimeVerifier: "6cfd1675353ee77217443ead988428b709cc10d2d15e826d711723b0e4246f5f",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {
@@ -64,6 +64,9 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
   if (!workflow.includes(`verify-runtime.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/aws-runtime-verification.json`)
     || !workflow.includes(`build-release-result.sh "$DEPLOYMENT_ACTION" "$RESULT_CONTRACT_VERSION" "$SOURCE_SHA" "$OPERATION_ID" .deployguard/service-artifacts.json .deployguard/terraform-outputs.json .deployguard/aws-runtime-verification.json .deployguard/release-runtime.json`)
     || !workflow.includes("cp .deployguard/release-runtime.json terraform/deployguard-result.json")
+    || !workflow.includes("deployguard.release-failure/v1")
+    || !workflow.includes("terraform/deployguard-failure-evidence.json")
+    || !workflow.includes("if: failure() && steps.runtime.outcome == 'failure'")
     || !workflow.includes("service_port:.servicePort")
     || !workflow.includes('--env PORT="$service_port"')) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not hand verified AWS runtime evidence to the terminal release artifact.`);
@@ -76,6 +79,8 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
   }
   if (!executable.runtimeVerifier.includes(`--arg contractVersion ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}`)
     || !executable.runtimeVerifier.includes("expected_port=\"$(jq -r '.servicePort' <<<\"$expected\")\"")
+    || !executable.runtimeVerifier.includes('or .state == "draining"')
+    || !executable.runtimeVerifier.includes("failureMarker:")
     || (!executable.runtimeVerifier.includes("awsRuntimeVerification") && !executable.runtimeVerifier.includes("services:$services"))) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}.`);
   }

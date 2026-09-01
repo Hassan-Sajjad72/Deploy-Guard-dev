@@ -2,7 +2,7 @@ const TERMINAL_OPERATION_STATUSES = new Set(["completed", "failed", "dispatch_fa
 
 export function pipelineStageDisplayStatus(stage, operation) {
   const status = String(stage?.status || "pending").toLowerCase();
-  return status === "running" && TERMINAL_OPERATION_STATUSES.has(String(operation?.status || "").toLowerCase()) ? "unavailable" : status;
+  return (status === "running" || status === "pending") && TERMINAL_OPERATION_STATUSES.has(String(operation?.status || "").toLowerCase()) ? "unavailable" : status;
 }
 
 export function pipelineStageDurationEnd(stage, operation, now = new Date().toISOString()) {

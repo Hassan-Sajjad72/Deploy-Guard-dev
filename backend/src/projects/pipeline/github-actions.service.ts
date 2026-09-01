@@ -115,11 +115,12 @@ export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryByt
 // actions/upload-artifact preserves the file but strips the uploaded common
 // directory, so `path: terraform/deployguard-result.json` is ZIP-rooted.
 export const DEPLOYGUARD_RESULT_ARTIFACT_ENTRY = "deployguard-result.json";
+export const DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY = "deployguard-failure-evidence.json";
 
 export type GithubActionsWorkflowStage = {
   key: string;
   label: string;
-  status: "failed" | "passed" | "running" | "pending" | "skipped";
+  status: "failed" | "passed" | "running" | "pending" | "skipped" | "unavailable";
   startedAt: string | null;
   completedAt: string | null;
   jobUrl: string | null;
@@ -387,23 +388,46 @@ export class GithubActionsService {
    * Collect only bounded evidence for a terminal failure. This deliberately
    * works for bootstrap failures where no deployment artifact exists.
    */
-  async getTerminalFailureEvidence(repository: string, workflowRunId: string, token: string, action: GithubActionsPresentationAction = "deploy"): Promise<GithubActionsTerminalFailureEvidence | null> {
+  async getTerminalFailureEvidence(repository: string, workflowRunId: string, operationId: string, token: string, action: GithubActionsPresentationAction = "deploy"): Promise<GithubActionsTerminalFailureEvidence | null> {
     const response = await this.getWorkflowJobs(repository, workflowRunId, token);
     const jobs = response.jobs || [];
     const failed = jobs.find((job) => String(job.conclusion || "").toLowerCase() === "failure")
       || jobs.find((job) => String(job.status || "").toLowerCase() === "completed" && String(job.conclusion || "").toLowerCase() !== "success");
-    if (!failed) return null;
-    const failedStep = (failed.steps || []).find((step) => String(step.conclusion || "").toLowerCase() === "failure");
+    let persistedFailure: string | null = null;
+    let persistedMarkers: string[] = [];
+    try {
+      const raw = await this.getArtifactEntry(repository, workflowRunId, operationId, token, DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, 512 * 1024);
+      if (raw) {
+        const artifact = JSON.parse(raw) as Record<string, unknown>;
+        const verification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
+        const services = Array.isArray(verification?.services) ? verification.services as Array<Record<string, unknown>> : [];
+        if (artifact.contractVersion === "deployguard.release-failure/v1"
+          && artifact.operationId === operationId
+          && artifact.action === action
+          && verification?.contractVersion === "deployguard.aws-runtime-verification/v1"
+          && verification.verified === false
+          && services.some((service) => service.verified === false && typeof service.failureMarker === "string" && service.failureMarker.startsWith("DG_FAILURE "))) {
+          persistedFailure = JSON.stringify(artifact).slice(-8_000);
+          persistedMarkers = services.flatMap((service) => service.verified === false && typeof service.failureMarker === "string" ? [service.failureMarker.slice(0, 500)] : []);
+        }
+      }
+    } catch {
+      // Failed-workflow job/log metadata remains usable when GitHub has not
+      // finished indexing the bounded diagnostic artifact.
+    }
+    if (!failed && !persistedFailure) return null;
+    const failedStep = (failed?.steps || []).find((step) => String(step.conclusion || "").toLowerCase() === "failure");
     const normalized = (value: unknown) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-    const failedStage = normalized(failedStep?.name) || normalized(failed.name) || "workflow_bootstrap";
+    const failedStage = normalized(failedStep?.name) || normalized(failed?.name) || "workflow_bootstrap";
     const workflowStages = await this.getWorkflowStages(repository, workflowRunId, token, action);
     const summary = [
-      `GitHub Actions job: ${String(failed.name || "workflow bootstrap")}`,
-      `Job status: ${String(failed.status || "completed")}`,
-      `Job conclusion: ${String(failed.conclusion || "failure")}`,
+      `GitHub Actions job: ${String(failed?.name || "workflow bootstrap")}`,
+      `Job status: ${String(failed?.status || "completed")}`,
+      `Job conclusion: ${String(failed?.conclusion || "failure")}`,
       failedStep ? `Failed step: ${String(failedStep.name || "workflow bootstrap")}` : "Failed before a runnable workflow step was recorded.",
     ];
-    if (typeof failed.id === "number") {
+    if (persistedFailure) summary.push(`Persisted terminal verification evidence: ${persistedFailure}`);
+    if (typeof failed?.id === "number") {
       try {
         const log = await this.getJobLog(repository, failed.id, token);
         // Keep the terminal diagnostic area only; sanitation is applied by the
@@ -413,7 +437,8 @@ export class GithubActionsService {
         // Job metadata remains valid bounded evidence when logs are withheld.
       }
     }
-    return { failedStage, rawEvidence: summary.join("\n").slice(0, 16_000), workflowStages };
+    summary.push(...persistedMarkers);
+    return { failedStage, rawEvidence: summary.join("\n").slice(-16_000), workflowStages };
   }
 
   async getResultArtifact(repository: string, workflowRunId: string, operationId: string, token: string) {

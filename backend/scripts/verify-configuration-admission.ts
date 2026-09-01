@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BadRequestException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -11,12 +11,17 @@ import { ProjectEnvironmentVariable } from "../src/projects/project-environment-
 import { ProjectDeployableService } from "../src/projects/project-deployable-service.entity";
 import { isSupportedManagedDatabaseEngine, managedDatabaseEngine } from "../src/projects/managed-database-engine";
 import { GithubActionsService } from "../src/projects/pipeline/github-actions.service";
+import { parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
 import { RAILPACK_WORKFLOW_INPUTS } from "../src/projects/railpack-workflow-contract";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 
 void (async () => {
-const canonicalSha = "a077458565d27a4c2cf4b039f68908f1b71052e3";
-const canonicalReusable = `Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@${canonicalSha}`;
+const runtimeEnvironmentPath = join(__dirname, "../.env");
+const configuredEnvironment = existsSync(runtimeEnvironmentPath) ? readFileSync(runtimeEnvironmentPath, "utf8") : "";
+const canonicalReusable = process.env.DEPLOYGUARD_REUSABLE_WORKFLOW
+  || configuredEnvironment.match(/^DEPLOYGUARD_REUSABLE_WORKFLOW=(.+)$/m)?.[1]
+  || "";
+const canonicalSha = parsePinnedReusableWorkflow(canonicalReusable).sha;
 const emptyConfig = new ConfigService({});
 const github = new GithubAppService({
   find: async () => [],

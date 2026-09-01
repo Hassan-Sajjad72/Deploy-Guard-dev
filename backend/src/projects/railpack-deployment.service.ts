@@ -104,6 +104,29 @@ export class RailpackDeploymentService {
         return { deployment: { state: "no_op", message: "Verified AWS deletion remains complete; DeployGuard control-plane cleanup still needs attention and can be retried.", operation: previous } };
       }
     }
+    if (previous?.failureCode === "DG_RELEASE_FINALIZATION_FAILED"
+      && previous.metadata?.releaseEvidenceValidated === true
+      && previous.metadata?.workflowConclusion === "success") {
+      const artifact = previous.metadata.releaseArtifact;
+      if (!artifact || typeof artifact !== "object") {
+        await this.persistTerminalEvidenceFailure(previous, new TerminalReleaseEvidenceError("Persisted release-finalization recovery evidence is missing its immutable artifact."));
+        return { deployment: { state: "no_op", message: "DeployGuard rejected the persisted finalization evidence; no GitHub or AWS deployment was started.", operation: previous } };
+      }
+      let evidence: Record<string, unknown>;
+      try {
+        evidence = this.validatedReleaseEvidence(previous, artifact as Record<string, unknown>);
+      } catch (error) {
+        await this.persistTerminalEvidenceFailure(previous, error);
+        return { deployment: { state: "no_op", message: "DeployGuard rejected the persisted finalization evidence; no GitHub or AWS deployment was started.", operation: previous } };
+      }
+      try {
+        await this.finalizeVerifiedRelease(project, previous, evidence, "success");
+        return { deployment: { state: "no_op", message: "Verified AWS release evidence was revalidated and DeployGuard finalization completed without rebuilding or changing AWS.", operation: previous } };
+      } catch (error) {
+        await this.persistFinalizationFailure(previous, evidence, error);
+        return { deployment: { state: "no_op", message: "Verified AWS release evidence remains valid; DeployGuard finalization still needs attention and can be retried without changing AWS.", operation: previous } };
+      }
+    }
     const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
     return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null);
   }
@@ -176,10 +199,12 @@ export class RailpackDeploymentService {
       this.completedReconciliationAfter ||= new Map<string, number>();
       if ((this.completedReconciliationAfter.get(projectId) || 0) <= Date.now()) {
         const completed = await this.runs.find({ where: { projectId, status: PipelineRunStatus.COMPLETED }, order: { createdAt: "DESC" }, take: 50 });
+        const failed = await this.runs.find({ where: { projectId, status: In([PipelineRunStatus.FAILED, PipelineRunStatus.CANCELLED]) }, order: { createdAt: "DESC" }, take: 50 });
         await Promise.all(completed.map(async (operation) => {
           await this.reconcileCompletedRelease(operation);
           await this.reconcileCostEvidence(operation);
         }));
+        await Promise.all([...completed, ...failed].map((operation) => this.reconcileTerminalWorkflowStages(operation)));
         this.completedReconciliationAfter.set(projectId, Date.now() + 60_000);
       }
     })();
@@ -439,6 +464,7 @@ export class RailpackDeploymentService {
       stageLabel: dispatchFailed ? "Deployment could not start" : deployguardOperationStagePresentation(operation.currentStage, action).label,
       failedStageLabel: dispatchFailed ? deployguardOperationStagePresentation(metadata.failedStage || "dispatch", action).label : operation.status === PipelineRunStatus.FAILED ? deployguardOperationStagePresentation(metadata.failedStage || operation.currentStage, action).label : null,
       errorMessage: operation.errorMessage || null, githubRunCreated: Boolean(operation.githubWorkflowRunId),
+      workflowStagesUnavailable: metadata.terminalWorkflowStagesUnavailable === true,
       failureOwner: operation.failureOwner || null, externalProvider: operation.externalProvider || null, failureCode: operation.failureCode || null, failureServiceId: operation.failureServiceId || null, failureServiceName,
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
@@ -556,16 +582,14 @@ export class RailpackDeploymentService {
         const workflowCompletedAt = typeof workflow.updated_at === "string" && Number.isFinite(Date.parse(workflow.updated_at)) ? new Date(workflow.updated_at) : new Date();
         operation.completedAt = workflowCompletedAt;
         const action = operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy";
-        let terminalStages: Awaited<ReturnType<GithubActionsService["getWorkflowStages"]>> = [];
-        try {
-          terminalStages = await this.actions.getWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, action);
-        } catch {
-          // Terminal reconciliation still proceeds when GitHub withholds job
-          // metadata. Existing evidence is retained and no stage is fabricated.
-        }
-        if (terminalStages.length) {
-          operation.metadata = { ...(operation.metadata || {}), workflowStages: terminalStages, workflowUpdatedAt: new Date().toISOString() };
-        }
+        const terminalMetadata = await this.terminalWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, action, operation.metadata?.workflowStages);
+        const terminalStages = terminalMetadata.stages;
+        operation.metadata = {
+          ...(operation.metadata || {}),
+          ...(terminalStages.length ? { workflowStages: terminalStages } : {}),
+          terminalWorkflowStagesUnavailable: terminalMetadata.unavailable,
+          workflowUpdatedAt: new Date().toISOString(),
+        };
         if (conclusion === "success") {
           let evidence: Record<string, unknown> | null;
           try {
@@ -608,7 +632,7 @@ export class RailpackDeploymentService {
             await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project)).catch(() => null);
           }
         } else {
-          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, action);
+          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, operation.id, credential.token, action);
           const marker = terminalStructuredFailureMarker(failureEvidence?.safeLog || "");
           const failedStage = marker.stage || failureEvidence?.failedStage || "release_failed";
           operation.status = PipelineRunStatus.FAILED;
@@ -618,7 +642,7 @@ export class RailpackDeploymentService {
           operation.failureOwner = ownership.failureOwner; operation.externalProvider = ownership.externalProvider; operation.failureCode = ownership.failureCode; operation.failureServiceId = ownership.failureServiceId;
           operation.metadata = {
             ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
-            ...(failureEvidence ? { failedStage, safeLog: failureEvidence.safeLog, workflowStages: failureEvidence.workflowStages.length ? failureEvidence.workflowStages : terminalStages, failureSource: "github_actions" } : terminalStages.length ? { failedStage, workflowStages: terminalStages, failureSource: "github_actions" } : {}),
+            ...(failureEvidence ? { failedStage, safeLog: failureEvidence.safeLog, workflowStages: terminalStages.length ? terminalStages : failureEvidence.workflowStages, failureSource: "github_actions" } : terminalStages.length ? { failedStage, workflowStages: terminalStages, failureSource: "github_actions" } : {}),
           };
         }
       } else {
@@ -680,9 +704,9 @@ export class RailpackDeploymentService {
     await this.runs.save(operation);
   }
 
-  private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, token: string, action: "deploy" | "rollback" | "destroy") {
+  private async terminalFailureEvidence(repositoryFullName: string, workflowRunId: string, operationId: string, token: string, action: "deploy" | "rollback" | "destroy") {
     try {
-      const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, token, action);
+      const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, operationId, token, action);
       if (!evidence) return null;
       const safeLog = this.sanitizer.sanitize(evidence.rawEvidence).replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 12_000);
       if (!safeLog) return null;
@@ -691,6 +715,59 @@ export class RailpackDeploymentService {
       // A terminal GitHub conclusion remains persisted, but troubleshooting is
       // intentionally unavailable unless bounded job/log evidence was read.
       return null;
+    }
+  }
+
+  private async terminalWorkflowStages(repositoryFullName: string, workflowRunId: string, token: string, action: "deploy" | "rollback" | "destroy", existing: unknown) {
+    let observed: Awaited<ReturnType<GithubActionsService["getWorkflowStages"]>> = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const stages = await this.actions.getWorkflowStages(repositoryFullName, workflowRunId, token, action);
+        if (stages.length) observed = stages;
+        if (observed.length && !observed.some((stage) => stage.status === "running" || stage.status === "pending")) {
+          return { stages: observed, unavailable: false };
+        }
+      } catch {
+        // GitHub may report the run terminal before the final jobs snapshot is
+        // indexed. The bounded retries below never affect release evidence.
+      }
+      if (attempt < 2) {
+        const configured = Number(this.config?.get?.("DEPLOYGUARD_TERMINAL_STAGE_RETRY_DELAY_MS", 250) ?? 250);
+        const delay = Number.isFinite(configured) ? Math.max(0, Math.min(configured, 2_000)) : 250;
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+    const fallback = observed.length ? observed : Array.isArray(existing) ? existing : [];
+    return {
+      stages: fallback.map((stage) => {
+        if (!stage || typeof stage !== "object") return stage;
+        const value = stage as Record<string, unknown>;
+        return value.status === "running" || value.status === "pending"
+          ? { ...value, status: "unavailable", failureReason: value.failureReason || "Final GitHub Actions step status is temporarily unavailable." }
+          : value;
+      }) as Awaited<ReturnType<GithubActionsService["getWorkflowStages"]>>,
+      unavailable: true,
+    };
+  }
+
+  private async reconcileTerminalWorkflowStages(operation: ProjectPipelineRun) {
+    if (!operation.githubWorkflowRunId || ACTIVE.includes(operation.status)) return;
+    const existing = Array.isArray(operation.metadata?.workflowStages) ? operation.metadata.workflowStages as Array<Record<string, unknown>> : [];
+    if (operation.metadata?.terminalWorkflowStagesUnavailable !== true && existing.length && !existing.some((stage) => stage.status === "running" || stage.status === "pending" || stage.status === "unavailable")) return;
+    const [project, user] = await Promise.all([
+      this.projects.findOne({ where: { id: operation.projectId } }),
+      this.users.findOne({ where: { id: operation.triggeredByUserId } }),
+    ]);
+    if (!project?.repositoryFullName || !user) return;
+    try {
+      const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
+      const action = operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy";
+      const result = await this.terminalWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, action, existing);
+      operation.metadata = { ...(operation.metadata || {}), ...(result.stages.length ? { workflowStages: result.stages } : {}), terminalWorkflowStagesUnavailable: result.unavailable, workflowUpdatedAt: new Date().toISOString() };
+      await this.runs.save(operation);
+    } catch {
+      // This is a read-only presentation backfill. Terminal operation state and
+      // immutable release evidence remain authoritative when GitHub is absent.
     }
   }
 

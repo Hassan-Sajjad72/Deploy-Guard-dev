@@ -113,7 +113,7 @@ async function throttlesCompletedProjection() {
   service.reconcileCostEvidence = async () => undefined;
   await service.reconcileActive(user, "project");
   await service.reconcileActive(user, "project");
-  assert.equal(findCalls, 3, "two reads require two active queries but only one completed-history query");
+  assert.equal(findCalls, 4, "two reads require two active queries plus one completed and one failed-terminal history query under the shared throttle");
   assert.equal(completedProjections, 1);
 }
 

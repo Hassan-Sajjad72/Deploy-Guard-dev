@@ -8,10 +8,16 @@ mkdir -p "$(dirname "$evidence")"
 printf '[]' > "$evidence"
 
 append_outcome() {
-  local service_id="$1" verified="$2" code="${3:-}" summary="${4:-}"
+  local service_id="$1" verified="$2" code="${3:-}" summary="${4:-}" stage="${5:-aws_runtime_verification}"
   local outcome
-  outcome="$(jq -cn --arg serviceId "$service_id" --argjson verified "$verified" --arg code "$code" --arg summary "$summary" --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{serviceId:$serviceId,verified:$verified,checkedAt:$checkedAt} + (if $code == "" then {} else {failureCode:$code,summary:$summary} end)')"
+  outcome="$(jq -cn --arg serviceId "$service_id" --argjson verified "$verified" --arg code "$code" --arg summary "$summary" --arg stage "$stage" --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{serviceId:$serviceId,verified:$verified,checkedAt:$checkedAt} + (if $code == "" then {} else {failureCode:$code,stage:$stage,failureMarker:("DG_FAILURE serviceId="+$serviceId+" code="+$code+" stage="+$stage),summary:$summary} end)')"
   jq --arg id "$service_id" --argjson outcome "$outcome" '[.[] | select(.serviceId != $id)] + [$outcome]' "$evidence" > "$evidence.next"
+  mv "$evidence.next" "$evidence"
+}
+
+attach_diagnostics() {
+  local service_id="$1" diagnostic="$2"
+  jq --arg id "$service_id" --argjson diagnostic "$diagnostic" 'map(if .serviceId == $id then . + {diagnostics:$diagnostic} else . end)' "$evidence" > "$evidence.next"
   mv "$evidence.next" "$evidence"
 }
 
@@ -26,7 +32,7 @@ sanitize() {
 configuration_failure() {
   local service_id="$1" message="$2"
   echo "DG_FAILURE serviceId=$service_id code=DG_AWS_RUNTIME_CONFIGURATION_FAILED stage=aws_runtime_verification" >&2
-  append_outcome "$service_id" false DG_AWS_RUNTIME_CONFIGURATION_FAILED "$message"
+  append_outcome "$service_id" false DG_AWS_RUNTIME_CONFIGURATION_FAILED "$message" aws_runtime_verification
   jq -cn --arg diagnosticCode AWS_RUNTIME_CONFIGURATION_MISMATCH --arg summary "$message" '{diagnosticCode:$diagnosticCode,summary:$summary}' \
     | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2 || true
   exit 1
@@ -37,11 +43,11 @@ provider_failure() {
   if grep -Eqi 'AccessDenied|not authorized|UnauthorizedOperation' <<<"$detail"; then
     printf '%s\n' "$detail" | sanitize >&2
     echo "DG_FAILURE serviceId=$service_id code=DG_AWS_AUTHORIZATION_FAILED stage=aws_runtime_verification" >&2
-    append_outcome "$service_id" false DG_AWS_AUTHORIZATION_FAILED "AWS authorization failed during terminal reconciliation."
+    append_outcome "$service_id" false DG_AWS_AUTHORIZATION_FAILED "AWS authorization failed during terminal reconciliation." aws_runtime_verification
   else
     printf '%s\n' "$detail" | sanitize >&2
     echo "DG_FAILURE serviceId=$service_id code=DG_AWS_PROVIDER_FAILED stage=aws_runtime_verification" >&2
-    append_outcome "$service_id" false DG_AWS_PROVIDER_FAILED "AWS provider observation failed during terminal reconciliation."
+    append_outcome "$service_id" false DG_AWS_PROVIDER_FAILED "AWS provider observation failed during terminal reconciliation." aws_runtime_verification
   fi
   exit 1
 }
@@ -50,7 +56,7 @@ ecs_diagnostics() {
   local service_id="$1" cluster="$2" service_name="$3" target_group="$4" log_group="$5"
   local stopped_arns tasks service_description target_health logs start_ms diagnostic
   echo "DG_FAILURE serviceId=$service_id code=DG_ECS_STABILITY_FAILED stage=ecs_stability" >&2
-  append_outcome "$service_id" false DG_ECS_STABILITY_FAILED "ECS service stability or runtime-process verification failed."
+  append_outcome "$service_id" false DG_ECS_STABILITY_FAILED "ECS service stability or runtime-process verification failed." ecs_stability
   stopped_arns="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status STOPPED --max-results 20 --output json 2>/dev/null || printf '{"taskArns":[]}')"
   tasks='{"tasks":[]}'
   if [ "$(jq '.taskArns | length' <<<"$stopped_arns")" -gt 0 ]; then
@@ -70,8 +76,11 @@ ecs_diagnostics() {
     --argjson tasks "$tasks" --argjson service "$service_description" --argjson target "$target_health" --argjson logs "$logs" '
       (($tasks.tasks // []) | sort_by(.stoppedAt // "") | last // {}) as $task |
       (($task.containers // []) | map(select(.name == "application")) | first // (($task.containers // [])[0]) // {}) as $container |
-      {diagnosticCode:"ECS_STABILITY_FAILED",stopCode:($task.stopCode//null),stoppedTaskReason:($task.stoppedReason//null),containerExitCode:($container.exitCode//null),containerReason:($container.reason//null),taskEvents:((($service.services // [])[0].events // [])[0:12] | map(.message // null)),targetHealth:(($target.TargetHealthDescriptions // [])[0:20] | map({state:(.TargetHealth.State//null),reason:(.TargetHealth.Reason//null),description:(.TargetHealth.Description//null)})),logLines:(($logs.events // [])[-25:] | map(.message // null))}' 2>/dev/null || printf '{"diagnosticCode":"ECS_STABILITY_FAILED","diagnosticsUnavailable":true}')"
-  printf '%s\n' "$diagnostic" | sanitize | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2 || true
+      {diagnosticCode:"ECS_STABILITY_FAILED",stopCode:($task.stopCode//null),stoppedTaskReason:($task.stoppedReason//null),containerExitCode:($container.exitCode//null),containerReason:($container.reason//null),taskEvents:((($service.services // [])[0].events // [])[0:12] | map(.message // null)),targetHealth:(($target.TargetHealthDescriptions // [])[0:20] | map({targetId:(.Target.Id//null),port:(.Target.Port//null),state:(.TargetHealth.State//null),reason:(.TargetHealth.Reason//null),description:(.TargetHealth.Description//null)})),logLines:(($logs.events // [])[-25:] | map(.message // null))}' 2>/dev/null || printf '{"diagnosticCode":"ECS_STABILITY_FAILED","diagnosticsUnavailable":true}')"
+  diagnostic="$(printf '%s\n' "$diagnostic" | sanitize)"
+  jq -e 'type == "object"' <<<"$diagnostic" >/dev/null 2>&1 || diagnostic='{"diagnosticCode":"ECS_STABILITY_FAILED","diagnosticsUnavailable":true}'
+  attach_diagnostics "$service_id" "$diagnostic" || true
+  printf '%s\n' "$diagnostic" | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2 || true
   exit 1
 }
 
@@ -84,10 +93,11 @@ wait_for_target_health() {
     detail="$(aws elbv2 describe-target-health --target-group-arn "$target_group" --output json 2>&1)" || provider_failure "$service_id" "$detail"
     target_health="$detail"
     if jq -e --argjson expected "$expected_targets" '
-      ([.TargetHealthDescriptions[]?.Target.Id] | sort | unique) == ($expected | sort | unique)
-      and ($expected | length > 0)
-      and (.TargetHealthDescriptions | length == ($expected | length))
-      and all(.TargetHealthDescriptions[]; .TargetHealth.State == "healthy")
+      ($expected | sort | unique) as $current |
+      [.TargetHealthDescriptions[]? | {id:.Target.Id,state:.TargetHealth.State}] as $observed |
+      ($current | length > 0)
+      and all($current[]; . as $id | any($observed[]; .id == $id and .state == "healthy"))
+      and all($observed[]; (.id as $id | ($current | index($id)) != null) or .state == "draining")
     ' <<<"$target_health" >/dev/null; then
       return 0
     fi
@@ -185,7 +195,7 @@ verify_service() {
   expected_targets="$(jq -c '[.tasks[]?.attachments[]?.details[]? | select(.name == "privateIPv4Address") | .value] | sort | unique' <<<"$tasks")"
   jq -e 'length > 0' <<<"$expected_targets" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   wait_for_target_health "$service_id" "$target_group" "$expected_targets" || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
-  curl --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused --output /dev/null "$(jq -r '.public_url' <<<"$deployed")" || { echo "DG_FAILURE serviceId=$service_id code=DG_PUBLIC_REACHABILITY_FAILED stage=public_health" >&2; append_outcome "$service_id" false DG_PUBLIC_REACHABILITY_FAILED "The verified service endpoint is not publicly reachable."; exit 1; }
+  curl --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused --output /dev/null "$(jq -r '.public_url' <<<"$deployed")" || { echo "DG_FAILURE serviceId=$service_id code=DG_PUBLIC_REACHABILITY_FAILED stage=public_health" >&2; append_outcome "$service_id" false DG_PUBLIC_REACHABILITY_FAILED "The verified service endpoint is not publicly reachable." public_health; exit 1; }
   check="$(jq -cn \
     --arg serviceId "$service_id" \
     --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -195,12 +205,13 @@ verify_service() {
     --arg targetGroupArn "$target_group" \
     --arg publicUrl "$(jq -r '.public_url' <<<"$deployed")" \
     --argjson runningTaskArns "$(jq '.taskArns' <<<"$running")" \
-    --argjson targets "$(jq '[.TargetHealthDescriptions[] | .TargetHealth.State]' <<<"$target_health")" \
+    --argjson targets "$(jq --argjson expected "$expected_targets" '[.TargetHealthDescriptions[] | select(.Target.Id as $id | $expected | index($id)) | .TargetHealth.State]' <<<"$target_health")" \
+    --argjson targetRegistrations "$(jq '[.TargetHealthDescriptions[] | {targetId:.Target.Id,port:(.Target.Port//null),state:.TargetHealth.State}]' <<<"$target_health")" \
     --argjson environment "$expected_environment" \
     --argjson secretValueFrom "$expected_secrets" \
     --argjson managedDatabase "$managed_database" \
     --argjson runtimePort "$expected_port" \
-    '{serviceId:$serviceId,verified:true,image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),runtimePort:$runtimePort,targetGroupArn:$targetGroupArn,targetHealth:$targets,environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
+    '{serviceId:$serviceId,verified:true,image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),runtimePort:$runtimePort,targetGroupArn:$targetGroupArn,targetHealth:$targets,targetRegistrations:$targetRegistrations,environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
   jq --argjson check "$check" '. + [$check]' "$evidence" > "$evidence.next"; mv "$evidence.next" "$evidence"
 }
 

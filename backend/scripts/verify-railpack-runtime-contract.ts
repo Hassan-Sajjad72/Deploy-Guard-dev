@@ -168,10 +168,14 @@ for (const message of ["invalid_deployment_action", "invalid_immutable_release_i
 assert.match(workflow, /services_base64/);
 assert.match(workflow, /verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
 assert.match(workflow, /build-release-result\.sh[\s\S]*aws-runtime-verification\.json[\s\S]*release-runtime\.json/);
+assert.match(workflow, /name: Preserve terminal verification failure evidence[\s\S]*if: failure\(\) && steps\.runtime\.outcome == 'failure'[\s\S]*deployguard\.release-failure\/v1[\s\S]*awsRuntimeVerification:\$verification\[0\]/, "failed AWS verification materializes a bounded diagnostic artifact without creating a v5 release");
+assert.match(workflow, /name: Publish terminal verification failure evidence[\s\S]*if: failure\(\)[\s\S]*deployguard-failure-evidence\.json/, "failed verification evidence remains retrievable while the workflow stays failed");
 assert.match(runtimeVerification, /\.services \| to_entries\[\]/);
 assert.doesNotMatch(runtimeVerification, /\(verify_service "\$service"\) \|\| true/, "terminal service verification must never be swallowed");
 assert.match(runtimeVerification, /verification_failed=true[\s\S]*exit 1/, "collected service failures must make the verifier return non-zero");
 assert.match(runtimeVerification, /wait_for_target_health[\s\S]*DEPLOYGUARD_TARGET_HEALTH_MAX_ATTEMPTS/, "target health uses bounded state convergence");
+assert.match(runtimeVerification, /all\(\$current\[\];[\s\S]*\.state == "healthy"\)[\s\S]*or \.state == "draining"/, "current ECS task targets must be healthy while only unexpected draining targets are tolerated");
+assert.match(runtimeVerification, /failureMarker:[\s\S]*attach_diagnostics/, "failed terminal verification persists its structured DG_FAILURE and bounded ECS\/ALB diagnostics");
 assert.match(runtimeVerification, /\$task\.containers \/\/ \[\]/, "ECS diagnostics must tolerate absent containers");
 assert.match(releaseResultProducer, /\.awsRuntimeVerification\.verified == true/);
 assert.match(releaseResultProducer, /all\(\.awsRuntimeVerification\.services\[\]; \.verified == true\)/);
