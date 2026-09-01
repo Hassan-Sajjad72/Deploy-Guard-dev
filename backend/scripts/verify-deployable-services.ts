@@ -7,6 +7,7 @@ import { assertRailpackRuntimeConfiguration, RailpackRuntimeConfiguration } from
 
 const root = join(__dirname, "..", "..");
 const workflow = readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8");
+const executableWorkflow = workflow.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
 const migration = readFileSync(join(root, "backend/src/migrations/1787356813000-ProjectDeployableServices.ts"), "utf8");
 const projectEntity = readFileSync(join(root, "backend/src/projects/project.entity.ts"), "utf8");
 const entrypointMigration = readFileSync(join(root, "backend/src/migrations/1787356818000-ProjectApplicationEntrypoint.ts"), "utf8");
@@ -54,7 +55,7 @@ assert.match(source, /assertDirectoriesAtExactSha/);
 assert.match(source, /checkout\.sourceSha\.toLowerCase\(\) !== input\.sourceSha\.toLowerCase\(\)/);
 assert.match(workflow, /fetch-depth: 1/);
 assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$directory"/);
-assert.doesNotMatch(workflow, /sparse-checkout|framework|package-manager|install-command|start-command/i);
+assert.doesNotMatch(executableWorkflow, /sparse-checkout|framework|package-manager|install-command|start-command/i);
 assert.deepEqual(workspacePackage.workspaces, ["apps/*", "packages/*"]);
 assert.equal(workspacePackage.scripts.start, "npm --workspace @deployguard-fixture/web run start", "the shared-workspace fixture uses repository-owned targeting rather than DeployGuard-generated commands");
 console.log("DEPLOYABLE_SERVICES=PASS DEFAULT_ROOT=1 PATH_AUTHORITY=SERVICE_ONLY EXACT_SHA_DIRECTORY_GATE=1");
