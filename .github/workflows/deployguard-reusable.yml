@@ -78,6 +78,10 @@ jobs:
             and ([.services[] | select((.serviceId | type) != "string" or (.serviceId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not) or (.runtimeConfigRevisionId | type) != "string" or (.runtimeConfigRevisionId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not))] | length == 0)
             and ([.services[] | select((.serviceName | type) != "string" or (.serviceName | length) == 0 or (.serviceName | length) > 80 or .serviceName != (.serviceName | gsub("^\\s+|\\s+$"; "")))] | length == 0)
             and ([.services[] | select((.serviceDirectory | type) != "string" or .serviceDirectory == "" or (.serviceDirectory | startswith("/")) or (.serviceDirectory | test("(^|/)\\.\\.(/|$)")))] | length == 0)
+            and ([.services[] | select((.buildEnvironment | type) != "object" or ([.buildEnvironment | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.key == "PORT") or (.key == "HOST") or (.value | type) != "string")] | length > 0))] | length == 0)
+            and ([.services[] | select((.buildEnvironment | type) == "object" and ([.buildEnvironment | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
+            and ([.services[] | select((.buildSecretReferences | type) != "object" or ([.buildSecretReferences | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.key == "PORT") or (.key == "HOST") or (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$") | not))] | length > 0))] | length == 0)
+            and ([.services[] | select((.buildSecretReferences | type) == "object" and ([.buildSecretReferences | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
             and ([.services[] | select((.environment | type) != "object" or .environment.PORT != "8080" or .environment.HOST != "0.0.0.0" or ([.environment | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.value | type) != "string")] | length > 0))] | length == 0)
             and ([.services[] | select((.environment | type) == "object" and ([.environment | keys[] | select(managed_database_alias)] | length > 0))] | length == 0)
             and ([.services[] | select((.secretReferences | type) != "object" or ([.secretReferences | to_entries[] | select((.key | test("^[A-Z][A-Z0-9_]{0,127}$") | not) or (.value | test("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$") | not))] | length > 0))] | length == 0)
@@ -124,7 +128,19 @@ jobs:
             compact_project="${PROJECT_ID//-/}"; compact_operation="${OPERATION_ID//-/}"; compact_service="${service_id//-/}"
             repository="deployguard-${compact_project:0:12}-${compact_service:0:8}"; tag="sha-${SOURCE_SHA:0:10}-${compact_operation:0:8}-${compact_service:0:8}"; image="${registry}/${repository}:${tag}"
             echo "DG_SERVICE_STAGE serviceId=$service_id stage=railpack_build"
-            BUILDKIT_HOST="docker-container://${BUILDKIT_CONTAINER}" railpack build --name "$image" "$directory" || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_BUILD_FAILED stage=railpack_build" >&2; exit 1; }
+            build_env_args=(); build_env_names=()
+            while IFS= read -r entry; do
+              key="$(base64 --decode <<<"$entry" | jq -r '.key')"; value="$(base64 --decode <<<"$entry" | jq -r '.value')"
+              printf -v "$key" '%s' "$value"; export "$key"; build_env_names+=("$key"); build_env_args+=(--env "$key")
+            done < <(jq -r '.buildEnvironment | to_entries[] | @base64' <<<"$service")
+            while IFS= read -r entry; do
+              key="$(base64 --decode <<<"$entry" | jq -r '.key')"; reference="$(base64 --decode <<<"$entry" | jq -r '.value')"
+              secret_id="$(cut -d: -f1-7 <<<"$reference")"; version_id="${reference##*:}"
+              value="$(aws secretsmanager get-secret-value --secret-id "$secret_id" --version-id "$version_id" --query SecretString --output text | jq -er --arg key "$key" '.[$key] | select(type == "string")')"
+              printf -v "$key" '%s' "$value"; export "$key"; build_env_names+=("$key"); build_env_args+=(--env "$key")
+            done < <(jq -r '.buildSecretReferences | to_entries[] | @base64' <<<"$service")
+            BUILDKIT_HOST="docker-container://${BUILDKIT_CONTAINER}" railpack build "${build_env_args[@]}" --name "$image" "$directory" || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_BUILD_FAILED stage=railpack_build" >&2; exit 1; }
+            for key in "${build_env_names[@]}"; do unset "$key"; done
             runtime_config_revision_id="$(jq -r '.runtimeConfigRevisionId' <<<"$service")"
             jq --arg id "$service_id" --arg name "$service_name" --arg directory "$directory" --arg runtimeConfigRevisionId "$runtime_config_revision_id" --arg image "$image" --arg repository "$repository" --arg registry "$registry" '. + [{serviceId:$id,serviceName:$name,serviceDirectory:$directory,runtimeConfigRevisionId:$runtimeConfigRevisionId,localImage:$image,repository:$repository,registry:$registry}]' .deployguard/build-artifacts.json > .deployguard/build-artifacts.next
             mv .deployguard/build-artifacts.next .deployguard/build-artifacts.json
@@ -210,7 +226,10 @@ jobs:
                   and ((.Name == $serviceSecret and tag("DeployGuardScope") == "service" and tag("DeployGuardServiceId") == $service) or (.Name == $legacySecret and tag("DeployGuardScope") == "project"))
                 ' <<<"$metadata" >/dev/null || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
                 aws secretsmanager delete-secret --secret-id "$secret_arn" --force-delete-without-recovery
-              done < <(jq -r '.secretReferences[]? | split(":") | .[0:7] | join(":")' <<<"$service" | sort -u)
+              done < <({
+                jq -r '.secretReferences[]? | split(":") | .[0:7] | join(":")' <<<"$service"
+                aws secretsmanager describe-secret --secret-id "$service_secret" --query ARN --output text 2>/dev/null || true
+              } | sort -u)
               repository="$(jq -r '.rollbackImage | split("@")[0] | split("/")[1:] | join("/")' <<<"$service")"
               compact_service="${service_id//-/}"
               [ "$repository" = "deployguard-${PROJECT_ID}" ] || [ "$repository" = "deployguard-${compact_project:0:12}-${compact_service:0:8}" ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=terraform_materialization' >&2; exit 1; }

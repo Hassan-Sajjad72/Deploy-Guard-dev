@@ -18,6 +18,7 @@ import { Project } from "./project.entity";
 import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
 import { DEPLOYGUARD_PLATFORM_PORT } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
+import { isSupportedManagedDatabaseEngine } from "./managed-database-engine";
 import { aliasesFor, isDeployGuardManagedDatabaseAlias } from "./configuration-ownership";
 import { assertRailpackRuntimeConfiguration, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
@@ -243,7 +244,7 @@ export class RailpackDeploymentService {
       }
       operation.currentStage = "caller_reconciliation";
       await this.runs.save(operation);
-      await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
+      const caller = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.githubInstallationId);
       operation.currentStage = "oidc_authorization";
       await this.runs.save(operation);
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
@@ -264,9 +265,9 @@ export class RailpackDeploymentService {
       await this.runs.save(operation);
       await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled: runtime.services.some((service) => service.databaseAttached) });
       operation.currentStage = "workflow_dispatch";
-      operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", configuredControlPlaneSha: inputs.control_plane_sha, immutableDispatchInputs: inputs, immutableDispatchFingerprint: immutableRailpackDispatchFingerprint(inputs) };
+      operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", configuredControlPlaneSha: inputs.control_plane_sha, workflowRegistrationBranch: caller.registrationBranch, immutableDispatchInputs: inputs, immutableDispatchFingerprint: immutableRailpackDispatchFingerprint(inputs) };
       await this.runs.save(operation);
-      const dispatched = await this.actions.triggerWorkflow({ repositoryFullName: project.repositoryFullName, targetBranch: project.targetBranch, token: credential.token, inputs });
+      const dispatched = await this.actions.triggerWorkflow({ repositoryFullName: project.repositoryFullName, targetBranch: project.targetBranch, workflowRegistrationBranch: caller.registrationBranch, token: credential.token, inputs });
       operation.githubWorkflowRunId = dispatched.receipt.workflowRunId;
       operation.githubWorkflowStatus = "queued";
       operation.status = PipelineRunStatus.RUNNING;
@@ -426,6 +427,8 @@ export class RailpackDeploymentService {
         serviceName: service.serviceName,
         serviceDirectory: service.serviceDirectory,
         runtimeConfigRevisionId: service.runtimeConfigRevisionId,
+        buildEnvironment: {},
+        buildSecretReferences: {},
         environment: { ...service.runtimeConfiguration.environment },
         secretReferences: { ...service.runtimeConfiguration.secretReferences },
         databaseAttached: service.runtimeConfiguration.databaseAttached,
@@ -443,26 +446,43 @@ export class RailpackDeploymentService {
     const rows = await this.variables.createQueryBuilder("variable").addSelect("variable.value").where({ projectId: project.id, environment: environmentName, isActive: true }).getMany();
     const tier = await this.databaseTiers.findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } });
     if (tier && (!tier.attachedServiceId || !serviceRows.some((service) => service.id === tier.attachedServiceId))) throw new ServiceUnavailableException("Managed database attachment does not reference a configured service.");
-    const engine = tier?.engine || "postgres";
+    if (tier && !isSupportedManagedDatabaseEngine(tier.engine)) throw new ServiceUnavailableException("The configured managed database engine is unsupported. Select PostgreSQL, MySQL, or MongoDB before deploying.");
+    const engine = tier?.engine || null;
     const managedAliases = tier ? [
-      ...aliasesFor(engine, "host"), ...aliasesFor(engine, "port"),
-      ...aliasesFor(engine, "username"), ...aliasesFor(engine, "password"),
-      ...aliasesFor(engine, "database"), ...aliasesFor(engine, "url"),
+      ...aliasesFor(engine!, "host"), ...aliasesFor(engine!, "port"),
+      ...aliasesFor(engine!, "username"), ...aliasesFor(engine!, "password"),
+      ...aliasesFor(engine!, "database"), ...aliasesFor(engine!, "url"),
     ] : [];
     const services = [] as RailpackRuntimeConfiguration["services"];
     for (const service of serviceRows) {
+      const buildEnvironment: Record<string, string> = {};
       const environment: Record<string, string> = { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" };
-      const secretValues: Record<string, string> = {};
+      const allSecretValues: Record<string, string> = {};
+      const buildSecretNames = new Set<string>();
+      const runtimeSecretNames = new Set<string>();
       for (const row of rows.filter((variable) => variable.serviceId === service.id)) {
         if (["PORT", "HOST"].includes(row.key) || isDeployGuardManagedDatabaseAlias(row.key)) continue;
         const value = this.crypto.decrypt(row.value);
-        if (row.isSecret) secretValues[row.key] = value; else environment[row.key] = value;
+        const scope = row.scope || "runtime";
+        const build = scope === "build" || scope === "both";
+        const runtime = scope === "runtime" || scope === "both";
+        if (row.isSecret) {
+          allSecretValues[row.key] = value;
+          if (build) buildSecretNames.add(row.key);
+          if (runtime) runtimeSecretNames.add(row.key);
+        } else {
+          if (build) buildEnvironment[row.key] = value;
+          if (runtime) environment[row.key] = value;
+        }
       }
-      const secretValueDigests = Object.fromEntries(Object.keys(secretValues).sort().map((key) => [key, createHash("sha256").update(secretValues[key]).digest("hex")]));
+      const secretValueDigests = Object.fromEntries(Object.keys(allSecretValues).sort().map((key) => [key, createHash("sha256").update(allSecretValues[key]).digest("hex")]));
       const databaseAttached = Boolean(tier && tier.attachedServiceId === service.id);
       const databaseConfiguration = { attached: databaseAttached, engine: databaseAttached ? tier?.engine || null : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] };
-      const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" } })).digest("hex");
-      const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues });
+      const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, buildEnvironment, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" } })).digest("hex");
+      const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues: allSecretValues });
+      const materializedReferences = materialized?.valueFromByName || {};
+      const buildSecretReferences = Object.fromEntries([...buildSecretNames].sort().map((name) => [name, materializedReferences[name]]));
+      const secretReferences = Object.fromEntries([...runtimeSecretNames].sort().map((name) => [name, materializedReferences[name]]));
       const revision = await this.runtimeConfigRevisions.save(this.runtimeConfigRevisions.create({
         projectId: project.id,
         serviceId: service.id,
@@ -470,7 +490,7 @@ export class RailpackDeploymentService {
         environmentName,
         configurationFingerprint,
         nonSecretEnvironment: environment,
-        secretReferences: materialized?.valueFromByName || {},
+        secretReferences,
         secretVersionIds: materialized ? Object.fromEntries(materialized.secretNames.map((name) => [name, materialized.versionToken])) : {},
         databaseConfiguration,
         platformValues: { PORT: String(DEPLOYGUARD_PLATFORM_PORT), HOST: "0.0.0.0" },
@@ -478,7 +498,7 @@ export class RailpackDeploymentService {
         legacyBackfill: false,
         sealedAt: null,
       }));
-      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, runtimeConfigRevisionId: revision.id, environment, secretReferences: materialized?.valueFromByName || {}, databaseAttached, managedDatabase: { engine: databaseAttached ? tier?.engine || null : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
+      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, runtimeConfigRevisionId: revision.id, buildEnvironment, buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
     }
     return { schemaVersion: 2, projectId: project.id, environmentName, operationId, sourceSha, services: services.sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
   }

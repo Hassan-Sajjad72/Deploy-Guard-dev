@@ -26,7 +26,7 @@ const base: RailpackRuntimeConfiguration = {
   operationId: "22222222-2222-4222-8222-222222222222",
   environmentName: "dev",
   sourceSha: "a".repeat(40),
-  services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "55555555-5555-4555-8555-555555555555", serviceName: "Web", serviceDirectory: ".", environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }],
+  services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "55555555-5555-4555-8555-555555555555", serviceName: "Web", serviceDirectory: ".", buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }],
 };
 assert.doesNotThrow(() => assertRailpackRuntimeConfiguration(base));
 assert.throws(() => assertRailpackRuntimeConfiguration({ ...base, services: [...base.services, { ...base.services[0], serviceId: "44444444-4444-4444-8444-444444444444", serviceName: "web" }] }), /service identity/);
@@ -53,7 +53,7 @@ assert.doesNotMatch(newProject, /Install Command|Build Command|Start Command|Fra
 assert.match(source, /assertDirectoriesAtExactSha/);
 assert.match(source, /checkout\.sourceSha\.toLowerCase\(\) !== input\.sourceSha\.toLowerCase\(\)/);
 assert.match(workflow, /fetch-depth: 1/);
-assert.match(workflow, /railpack build --name "\$image" "\$directory"/);
+assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$directory"/);
 assert.doesNotMatch(workflow, /sparse-checkout|framework|package-manager|install-command|start-command/i);
 assert.deepEqual(workspacePackage.workspaces, ["apps/*", "packages/*"]);
 assert.equal(workspacePackage.scripts.start, "npm --workspace @deployguard-fixture/web run start", "the shared-workspace fixture uses repository-owned targeting rather than DeployGuard-generated commands");

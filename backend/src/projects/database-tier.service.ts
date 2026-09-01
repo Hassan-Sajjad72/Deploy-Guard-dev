@@ -9,7 +9,7 @@ import { DatabaseTierProvider, DatabaseTierStatus, ProjectDatabaseTier } from ".
 import { ProjectEnvironmentVariable } from "./project-environment-variable.entity";
 import { ProjectsService } from "./projects.service";
 import { canonicalEnvironmentName } from "./canonical-environment";
-import { ManagedDatabaseEngine, managedDatabaseProfile } from "./managed-database-engine";
+import { isSupportedManagedDatabaseEngine, ManagedDatabaseEngine, managedDatabaseProfile } from "./managed-database-engine";
 import { SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
 import { ProjectDeployableService } from "./project-deployable-service.entity";
 
@@ -35,9 +35,12 @@ export class DatabaseTierService {
     if (dto.provider === DatabaseTierProvider.EXTERNAL) {
       throw new BadRequestException("External databases are not part of the DeployGuard managed container database runtime.");
     }
+    if (dto.provider === DatabaseTierProvider.MANAGED && !isSupportedManagedDatabaseEngine(dto.engine)) {
+      throw new BadRequestException("Select a supported managed database engine: PostgreSQL, MySQL, or MongoDB.");
+    }
     const saved = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
-      const engine: ManagedDatabaseEngine | null = dto.provider === DatabaseTierProvider.MANAGED ? (dto.engine || "postgres") : null;
+      const engine: ManagedDatabaseEngine | null = dto.provider === DatabaseTierProvider.MANAGED ? dto.engine! : null;
       const tiers = manager.getRepository(ProjectDatabaseTier);
       const environmentVariables = manager.getRepository(ProjectEnvironmentVariable);
       const services = manager.getRepository(ProjectDeployableService);

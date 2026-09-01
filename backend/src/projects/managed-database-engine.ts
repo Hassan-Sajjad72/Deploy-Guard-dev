@@ -64,10 +64,14 @@ export const MANAGED_DATABASE_ENGINE_PROFILES: Record<ManagedDatabaseEngine, Man
   },
 };
 
+export function isSupportedManagedDatabaseEngine(value: unknown): value is ManagedDatabaseEngine {
+  return value === "postgres" || value === "mysql" || value === "mongodb";
+}
+
 export function managedDatabaseEngine(value: unknown): ManagedDatabaseEngine | null {
   const normalized = String(value || "").trim().toLowerCase();
   if (/^(?:postgres|postgresql)$/.test(normalized)) return "postgres";
-  if (/^(?:mysql|mariadb)$/.test(normalized)) return "mysql";
+  if (normalized === "mysql") return "mysql";
   if (/^(?:mongo|mongodb)$/.test(normalized)) return "mongodb";
   return null;
 }

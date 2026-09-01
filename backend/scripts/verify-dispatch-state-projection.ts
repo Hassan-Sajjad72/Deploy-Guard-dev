@@ -45,7 +45,7 @@ function storedZipEntry(name: string, value: string) {
 
 async function verifyReleaseArtifactEvidenceReconciliation() {
   const serviceId = "77777777-7777-4777-8777-777777777777";
-  const contract = (operationId: string, sourceSha: string, action: "deploy" | "rollback" = "deploy", immutableImage?: string) => servicesBase64({ schemaVersion: 2, projectId: project.id, environmentName: "dev", operationId, sourceSha, services: [{ serviceId, runtimeConfigRevisionId: "77777777-7777-4777-8777-777777777777", serviceName: "Web", serviceDirectory: ".", environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] }, ...(action === "rollback" && immutableImage ? { rollbackImage: immutableImage } : {}) }] });
+  const contract = (operationId: string, sourceSha: string, action: "deploy" | "rollback" = "deploy", immutableImage?: string) => servicesBase64({ schemaVersion: 2, projectId: project.id, environmentName: "dev", operationId, sourceSha, services: [{ serviceId, runtimeConfigRevisionId: "77777777-7777-4777-8777-777777777777", serviceName: "Web", serviceDirectory: ".", buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] }, ...(action === "rollback" && immutableImage ? { rollbackImage: immutableImage } : {}) }] });
   const imageUri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/repo";
   const imageDigest = `sha256:${"a".repeat(64)}`;
   const image = `${imageUri}@${imageDigest}`;
@@ -328,7 +328,10 @@ async function verifyProviderContractAndConditionalDatabaseScope() {
   const databaseActions = new Set(database.flatMap((capability) => capability.actions));
   const privateDnsActions = ["route53:CreateHostedZone", "route53:GetHostedZone", "route53:ListHostedZonesByName", "route53:DeleteHostedZone", "ec2:DescribeRegions"];
   for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds", ...privateDnsActions]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
-  assert.equal(WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, "deployguard.railpack-runtime-aws/v7");
+  assert.equal(WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, "deployguard.railpack-runtime-aws/v8");
+  const applicationSecrets = normal.find((capability) => capability.id === "application-secrets");
+  assert.ok(applicationSecrets, "application ENV secrets require an explicit pre-dispatch capability");
+  assert.ok(applicationSecrets.actions.includes("secretsmanager:GetSecretValue"), "build-scope secrets require immutable-version reads");
   const databasePolicy: any = workflowCapabilityPolicy({ ...scope, managedDatabaseEnabled: true });
   const globalRoute53 = databasePolicy.Statement.find((statement: any) => statement.Action.includes("route53:CreateHostedZone"));
   const hostedZoneRoute53 = databasePolicy.Statement.find((statement: any) => statement.Action.includes("route53:GetHostedZone"));
@@ -649,7 +652,7 @@ void (async () => {
   assert.match(workflow, /name: Install Terraform[\s\S]*?if: success\(\)/);
   assert.match(workflow, /name: Materialize release runtime[\s\S]*?steps\.image\.outputs\.published == 'true'/);
   assert.match(workflow, /name: Publish verified release result[\s\S]*?if: success\(\) && hashFiles/);
-  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build --name/);
+  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" --name/);
   assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
   assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
   assert.match(overviewPage, /getProjectCurrentState/);

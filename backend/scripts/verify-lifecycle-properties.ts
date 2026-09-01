@@ -131,7 +131,7 @@ async function verifyActualRuntimeAndRollbackAuthority() {
         operationId: "33333333-3333-4333-8333-333333333333", sourceSha: "a".repeat(40),
         services: target.services.map((item: any) => ({
           serviceId: item.serviceId, serviceName: item.serviceName, serviceDirectory: item.serviceDirectory,
-          runtimeConfigRevisionId: item.runtimeConfigRevisionId, environment: item.runtimeConfiguration.environment,
+          runtimeConfigRevisionId: item.runtimeConfigRevisionId, buildEnvironment: {}, buildSecretReferences: {}, environment: item.runtimeConfiguration.environment,
           secretReferences: item.runtimeConfiguration.secretReferences, databaseAttached: false,
           managedDatabase: { engine: null, aliases: [] }, rollbackImage: item.immutableImage,
         })),

@@ -108,8 +108,13 @@ export class GithubAppService {
       const token = await this.createInstallationToken(row.installationId);
       const response = await this.githubFetch(`https://api.github.com/repos/${repositoryFullName}`, { headers: this.headers(token) });
       if (response.ok) {
-        const repository = await response.json() as { id?: number };
-        return { token, installationId: row.installationId, repositoryId: repository.id ? String(repository.id) : null };
+        const repository = await response.json() as { id?: number; default_branch?: string };
+        return {
+          token,
+          installationId: row.installationId,
+          repositoryId: repository.id ? String(repository.id) : null,
+          defaultBranch: String(repository.default_branch || "").trim() || null,
+        };
       }
     }
     throw new BadRequestException("Install the DeployGuard GitHub App for this repository before continuing.");
@@ -132,8 +137,10 @@ export class GithubAppService {
     return `repo:${account}@${accountId}/${repositoryName}@${credential.repositoryId}:*`;
   }
 
-  async ensureWorkflow(userId: number, repositoryFullName: string, branch: string, installationId?: string | null) {
+  async ensureWorkflow(userId: number, repositoryFullName: string, installationId?: string | null) {
     const credential = await this.tokenForRepository(userId, repositoryFullName, installationId);
+    const branch = credential.defaultBranch;
+    if (!branch) throw new BadRequestException("GitHub did not provide the repository default branch required for workflow registration.");
     const reusable = canonicalDeployguardReusableWorkflow(this.config);
     const content = renderDeployguardCallerWorkflow(reusable);
     await this.validatePinnedReusableWorkflow(credential.token, reusable, content);
@@ -145,7 +152,7 @@ export class GithubAppService {
       const existingContent = existing.encoding === "base64" && existing.content
         ? Buffer.from(existing.content.replace(/\n/g, ""), "base64").toString("utf8")
         : "";
-      if (existingContent === content) return { verified: true, generated: false, updated: false, path: DEPLOYGUARD_WORKFLOW_PATH, installationId: credential.installationId };
+      if (existingContent === content) return { verified: true, generated: false, updated: false, path: DEPLOYGUARD_WORKFLOW_PATH, registrationBranch: branch, installationId: credential.installationId };
       if (!/^name: DeployGuard\n/.test(existingContent) || !/Deploy-Guard-dev\/\.github\/workflows\/deployguard-reusable\.yml@/.test(existingContent)) {
         throw new BadRequestException("The DeployGuard workflow path is not managed by DeployGuard.");
       }
@@ -158,11 +165,13 @@ export class GithubAppService {
       body: JSON.stringify({ message: existingSha ? "chore: update DeployGuard deployment workflow" : "chore: add DeployGuard deployment workflow", content: Buffer.from(content).toString("base64"), branch, ...(existingSha ? { sha: existingSha } : {}) }),
     });
     if (!response.ok) throw new BadRequestException("DeployGuard could not generate deployguard.yml. Grant Contents write permission to the GitHub App.");
-    return { verified: true, generated: !existingSha, updated: Boolean(existingSha), path: DEPLOYGUARD_WORKFLOW_PATH, installationId: credential.installationId };
+    return { verified: true, generated: !existingSha, updated: Boolean(existingSha), path: DEPLOYGUARD_WORKFLOW_PATH, registrationBranch: branch, installationId: credential.installationId };
   }
 
-  async removeManagedWorkflow(userId: number, repositoryFullName: string, branch: string, installationId?: string | null) {
+  async removeManagedWorkflow(userId: number, repositoryFullName: string, installationId?: string | null) {
     const credential = await this.tokenForRepository(userId, repositoryFullName, installationId);
+    const branch = credential.defaultBranch;
+    if (!branch) throw new Error("GitHub did not provide the repository default branch required for workflow cleanup.");
     const url = `https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}?ref=${encodeURIComponent(branch)}`;
     const existingResponse = await this.githubFetch(url, { headers: this.headers(credential.token) });
     if (existingResponse.status === 404) return credential.token;

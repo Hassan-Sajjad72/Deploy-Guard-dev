@@ -892,7 +892,7 @@ export class ProjectsService {
   async ensureDeployguardWorkflow(user: User, projectId: string) {
     const project = await this.getProjectEntityForView(user, projectId);
     if (!project.repositoryFullName) throw new BadRequestException("Project repository is not linked.");
-    const workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
+    const workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.githubInstallationId);
     if (project.githubInstallationId !== workflow.installationId) {
       project.githubInstallationId = workflow.installationId;
       await this.projectRepository.save(project);

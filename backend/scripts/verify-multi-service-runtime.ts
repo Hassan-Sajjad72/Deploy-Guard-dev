@@ -21,7 +21,7 @@ assert.doesNotMatch(applicationTask, /name\s*=\s*"database"|aws_efs_file_system\
 assert.match(terraform, /database_runtime[\s\S]*security_groups = local\.database_enabled \? \[aws_security_group\.application\[local\.database_service_id\]\.id\] : \[\]/);
 assert.match(terraform, /aws_security_group\.database_efs[\s\S]*aws_security_group\.database_runtime/);
 assert.match(outputs, /output "services"/);
-assert.match(workflow, /while IFS= read -r service; do[\s\S]*railpack build --name "\$image" "\$directory"/);
+assert.match(workflow, /while IFS= read -r service; do[\s\S]*railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$directory"/);
 assert.match(workflow, /while IFS= read -r artifact; do[\s\S]*docker run --detach[\s\S]*PORT=8080[\s\S]*HOST=0\.0\.0\.0/);
 assert.match(workflow, /\.services \| to_entries\[\]/);
 assert.match(workflow, /terraform -chdir=\.deployguard\/terraform destroy/);
