@@ -13,7 +13,7 @@ const outputs = readFileSync(join(root, "infrastructure", "railpack-runtime", "o
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
 const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-runtime", "verify-runtime.sh"), "utf8");
 const releaseResultProducer = readFileSync(join(root, "infrastructure", "railpack-runtime", "build-release-result.sh"), "utf8");
-const executableContract = { releaseResultProducer, runtimeVerifier: runtimeVerification };
+const executableContract = { releaseResultProducer, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform };
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
 const providerLock = readFileSync(join(root, "infrastructure", "railpack-runtime", ".terraform.lock.hcl"), "utf8");
@@ -201,7 +201,13 @@ assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f
 assert.match(runtimeVerification, /aws ecs wait services-stable/);
 assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/);
 assert.doesNotMatch(runtimeVerification, /curl --fail --show-error --silent --retry 20/, "application HTTP status is outside deployment readiness");
-assert.match(terraform, /health_check\s*\{[\s\S]*?matcher\s*=\s*"200-499"/, "ALB readiness accepts completed non-5xx application responses");
+assert.match(terraform, /platform_health_check_path\s*=\s*"\/_deployguard\/transport-ready"/, "the platform owns its transport-readiness endpoint");
+assert.match(terraform, /name\s*=\s*"deployguard-transport-probe"[\s\S]*?APPLICATION_PORT[\s\S]*?nc -z -w 1 127\.0\.0\.1/, "the task-local probe succeeds only while the declared application port accepts TCP");
+assert.match(terraform, /name\s*=\s*"application"[\s\S]*?awslogs-stream-prefix = "application"/, "developer application errors remain available in the existing runtime log stream");
+assert.match(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*local\.platform_health_check_path[\s\S]*?port\s*=\s*tostring\(local\.transport_probe_ports\[each\.key\]\)[\s\S]*?matcher\s*=\s*"200-299"/, "ALB stability uses DeployGuard transport readiness instead of application response status");
+assert.doesNotMatch(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*"\/"/, "developer root-route semantics are not a default deployment gate");
+assert.match(runtimeVerification, /readinessMode:"platform_transport"/);
+assert.match(releaseResultProducer, /\$outcome\.readinessMode == "platform_transport"/);
 assert.match(workflow, /destroyVerification:\{/);
 assert.match(workflow, /contractVersion:"deployguard\.destroy-result\/v2"/);
 assert.match(workflow, /generationIds:\(\$runtime\[0\]\.projectDeletion\.generationIds\s*\|\s*sort\)/);

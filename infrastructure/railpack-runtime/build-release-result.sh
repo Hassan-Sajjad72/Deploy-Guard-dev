@@ -80,6 +80,9 @@ jq -e \
     and ($release.terraform.services[.serviceId].ecs_service_arn | type == "string")
     and ($release.terraform.services[.serviceId].alb_target_group_arn | type == "string")
     and ($release.terraform.services[.serviceId].public_url | test("^https?://"))
+    and ($release.terraform.services[.serviceId].transport_probe_container_name == "deployguard-transport-probe")
+    and (($release.terraform.services[.serviceId].transport_probe_port | type) == "number")
+    and ($release.terraform.services[.serviceId].platform_health_check_path == "/_deployguard/transport-ready")
   )
   and all(.awsRuntimeVerification.services[];
     . as $outcome |
@@ -92,6 +95,9 @@ jq -e \
       and ($outcome.runningTaskArns | type == "array" and length > 0)
       and ($outcome.ecsTasksRunning == ($outcome.runningTaskArns | length))
       and ($outcome.runtimePort == $runtime.service_port)
+      and ($outcome.readinessMode == "platform_transport")
+      and ($outcome.transportProbePort == $runtime.transport_probe_port)
+      and ($outcome.platformHealthCheckPath == $runtime.platform_health_check_path)
       and ($outcome.targetGroupArn == $runtime.alb_target_group_arn)
       and ($outcome.targetHealth | type == "array" and length > 0 and all(. == "healthy"))
       and ($outcome.environment | type == "object")

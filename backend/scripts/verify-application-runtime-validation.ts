@@ -44,7 +44,7 @@ function executable(path: string, source: string) {
   chmodSync(path, 0o755);
 }
 
-function executeProbe(mode: "success" | "timeout" | "exited" | "run_failure" | "workflow_failure") {
+function executeProbe(mode: "success" | "flask_template_not_found" | "timeout" | "exited" | "run_failure" | "workflow_failure") {
   const directory = mkdtempSync(join(tmpdir(), "deployguard-runtime-validation-"));
   const trace = join(directory, "trace");
   executable(join(directory, "docker"), `#!/usr/bin/env bash
@@ -75,7 +75,7 @@ if [ "$1" = --signal=TERM ]; then
   shift 2
   exec "$@"
 fi
-[ "$PROBE_MODE" = success ] || [ "$PROBE_MODE" = workflow_failure ]
+[ "$PROBE_MODE" = success ] || [ "$PROBE_MODE" = flask_template_not_found ] || [ "$PROBE_MODE" = workflow_failure ]
 `);
   executable(join(directory, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
   const downstream = join(directory, "downstream");
@@ -170,6 +170,11 @@ void (async () => {
   assert.match(success.trace, /docker run .*--env PORT --env HOST --env REQUIRED_RUNTIME_VALUE --env PORT=3000 --env HOST=0\.0\.0\.0 sha256:0{64}/, "the canonical service port and HOST override inherited values on the exact validated image");
   assert.match(success.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/);
 
+  const templateException = executeProbe("flask_template_not_found");
+  assert.equal(templateException.status, 0, "a stable Flask process listening on the declared port remains deployable when a route raises TemplateNotFound/HTTP 500");
+  assert.equal(templateException.downstream, "ECR\nTerraform\n");
+  assert.doesNotMatch(templateException.trace, /docker logs/, "successful TCP validation does not inspect or reinterpret application exceptions");
+
   for (const mode of ["timeout", "exited", "run_failure", "workflow_failure"] as const) {
     const result = executeProbe(mode);
     assert.notEqual(result.status, 0, `${mode} must fail the composed workflow path`);
@@ -180,5 +185,5 @@ void (async () => {
   const timeout = executeProbe("timeout");
   assert.match(timeout.trace, /^tcp --signal=TERM 45 bash -c/m, "the entire wait loop has one hard 45-second deadline");
   await verifyStageProjection();
-  console.log("APPLICATION_RUNTIME_VALIDATION=PASS TCP_ONLY=1 TIMEOUT_SECONDS=45 DOWNSTREAM_FAIL_CLOSED=1 CLEANUP_ALL_PATHS=1");
+  console.log("APPLICATION_RUNTIME_VALIDATION=PASS TCP_ONLY=1 FLASK_TEMPLATE_NOT_FOUND_HTTP_500_DEPLOYABLE=1 TIMEOUT_SECONDS=45 DOWNSTREAM_FAIL_CLOSED=1 CLEANUP_ALL_PATHS=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

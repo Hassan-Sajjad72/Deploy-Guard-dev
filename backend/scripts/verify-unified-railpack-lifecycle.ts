@@ -34,7 +34,7 @@ function releaseA(): any {
     taskDefinitionArn: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:1",
     ecsServiceArn: "arn:aws:ecs:us-east-1:123456789012:service/dg-cluster/dg-service",
     appPort: 8080,
-    healthCheckPath: "/",
+    healthCheckPath: "/_deployguard/transport-ready",
     deployedAt: new Date("2026-08-29T08:00:00.000Z"),
     metadata: { imageDigest: digestA, releaseEvidenceVerified: true, deployedUrl: "http://dg.example.test", services: [{ serviceId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest: digestA }] },
   };

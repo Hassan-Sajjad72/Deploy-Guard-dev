@@ -9,16 +9,19 @@ export const AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION = "deployguard.aws-runtim
 export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   releaseResultProducer: "infrastructure/railpack-runtime/build-release-result.sh",
   runtimeVerifier: "infrastructure/railpack-runtime/verify-runtime.sh",
+  runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
   workflow: "ccbc2e381879b6b7672876f5c0c7ceed36de473068d95feb3abd619c2f5bf9bf",
-  releaseResultProducer: "644b940a381a688d1e79cd78a402a61993e9efd7940dc4ab45241d9a327bca55",
-  runtimeVerifier: "6cfd1675353ee77217443ead988428b709cc10d2d15e826d711723b0e4246f5f",
+  releaseResultProducer: "cbda8bb60b9bd08ae8c305ce0a036ec5ffab960476aabe0b8e9caaa63cf31b80",
+  runtimeVerifier: "eb202a5f60d4ab79b6a8e0415fdeb7d3aa5e6de3df8c543334eeb03c3ce3b76e",
+  runtimeInfrastructure: "bc4febc3f1a32a07ba259398ea8ef3aa22f3726d7d4bd052e2cc10b7d3686daa",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {
   releaseResultProducer: string;
   runtimeVerifier: string;
+  runtimeInfrastructure: string;
 };
 
 export type PinnedReusableWorkflow = {
@@ -84,6 +87,12 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || (!executable.runtimeVerifier.includes("awsRuntimeVerification") && !executable.runtimeVerifier.includes("services:$services"))) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}.`);
   }
+  if (!executable.runtimeInfrastructure.includes('platform_health_check_path = "/_deployguard/transport-ready"')
+    || !executable.runtimeInfrastructure.includes('name         = "deployguard-transport-probe"')
+    || !executable.runtimeInfrastructure.includes('nc -z -w 1 127.0.0.1')
+    || !executable.runtimeInfrastructure.includes('port    = tostring(local.transport_probe_ports[each.key])')) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement platform-owned transport readiness.`);
+  }
   const declared = reusableWorkflowInputDeclarations(workflow);
   const byName = new Map(declared.map((input) => [input.name, input]));
   for (const expected of RAILPACK_WORKFLOW_INPUTS) {
@@ -107,6 +116,7 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     workflow: sha256(workflow),
     releaseResultProducer: sha256(executable.releaseResultProducer),
     runtimeVerifier: sha256(executable.runtimeVerifier),
+    runtimeInfrastructure: sha256(executable.runtimeInfrastructure),
   };
   for (const [name, expected] of Object.entries(CONTROL_PLANE_EXECUTABLE_SHA256)) {
     if (executableHashes[name as keyof typeof executableHashes] !== expected) {

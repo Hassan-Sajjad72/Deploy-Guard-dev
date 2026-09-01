@@ -5,22 +5,25 @@ output "vpc_id" { value = var.vpc_id }
 output "public_subnet_ids" { value = var.public_subnet_ids }
 output "services" {
   value = { for id, service in var.services : id => {
-    name                       = service.name
-    image                      = service.image
-    runtime_config_revision_id = service.runtime_config_revision_id
-    service_port               = service.service_port
-    ecs_service_arn            = aws_ecs_service.application[id].id
-    ecs_service_name           = aws_ecs_service.application[id].name
-    task_definition_arn        = aws_ecs_task_definition.application[id].arn
-    alb_arn                    = aws_lb.application[id].arn
-    alb_name                   = aws_lb.application[id].name
-    alb_target_group_arn       = aws_lb_target_group.application[id].arn
-    alb_target_group_name      = aws_lb_target_group.application[id].name
-    public_url                 = "http://${aws_lb.application[id].dns_name}"
-    cloudwatch_log_group_name  = aws_cloudwatch_log_group.application[id].name
-    application_container_name = "application"
-    security_group_id          = aws_security_group.application[id].id
-    alb_security_group_id      = aws_security_group.load_balancer[id].id
+    name                           = service.name
+    image                          = service.image
+    runtime_config_revision_id     = service.runtime_config_revision_id
+    service_port                   = service.service_port
+    ecs_service_arn                = aws_ecs_service.application[id].id
+    ecs_service_name               = aws_ecs_service.application[id].name
+    task_definition_arn            = aws_ecs_task_definition.application[id].arn
+    alb_arn                        = aws_lb.application[id].arn
+    alb_name                       = aws_lb.application[id].name
+    alb_target_group_arn           = aws_lb_target_group.application[id].arn
+    alb_target_group_name          = aws_lb_target_group.application[id].name
+    public_url                     = "http://${aws_lb.application[id].dns_name}"
+    cloudwatch_log_group_name      = aws_cloudwatch_log_group.application[id].name
+    application_container_name     = "application"
+    transport_probe_container_name = "deployguard-transport-probe"
+    transport_probe_port           = local.transport_probe_ports[id]
+    platform_health_check_path     = local.platform_health_check_path
+    security_group_id              = aws_security_group.application[id].id
+    alb_security_group_id          = aws_security_group.load_balancer[id].id
   } }
 }
 output "database_efs_file_system_id" { value = local.database_enabled ? aws_efs_file_system.database[0].id : null }

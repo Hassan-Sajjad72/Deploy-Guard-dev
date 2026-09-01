@@ -141,7 +141,7 @@ if [ -n "$database_service" ] && ! (verify_database); then
 fi
 
 verify_service() {
-  local service="$1" service_id deployed expected service_name target_group log_group service_description task_definition_arn task_definition expected_image expected_port
+  local service="$1" service_id deployed expected service_name target_group log_group service_description task_definition_arn task_definition expected_image expected_port expected_probe_port expected_health_path
   local database expected_environment expected_secrets managed_database application_sg alb_sg security_group target_group_description running tasks target_health expected_targets check
   service_id="$(jq -r '.key' <<<"$service")"; deployed="$(jq -c '.value' <<<"$service")"
   expected="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' "$runtime")"
@@ -151,6 +151,8 @@ verify_service() {
   task_definition="$(aws ecs describe-task-definition --task-definition "$task_definition_arn" --output json 2>&1)" || provider_failure "$service_id" "$task_definition"
   expected_image="$(jq -r '.image' <<<"$deployed")"
   expected_port="$(jq -r '.servicePort' <<<"$expected")"
+  expected_probe_port="$(jq -r '.transport_probe_port' <<<"$deployed")"
+  expected_health_path="$(jq -r '.platform_health_check_path' <<<"$deployed")"
   database="$(jq -c '.database // null' "$outputs")"
   expected_environment="$(jq -cn --argjson expected "$expected" --argjson database "$database" '
     def secret_alias: test("(PASSWORD|URL|URI)$");
@@ -175,18 +177,22 @@ verify_service() {
     .services[0].status == "ACTIVE" and .services[0].taskDefinition == $task and (.services[0].networkConfiguration.awsvpcConfiguration.subnets | sort) == $subnets and (.services[0].networkConfiguration.awsvpcConfiguration.securityGroups | length > 0)
     and any(.services[0].loadBalancers[]; .targetGroupArn == $target and .containerName == "application" and .containerPort == $port)
   ' <<<"$service_description" >/dev/null || configuration_failure "$service_id" "ECS service identity or VPC/subnet configuration does not match the expected runtime."
-  jq -e --arg image "$expected_image" --arg log "$log_group" --argjson port "$expected_port" --argjson secrets "$expected_secrets" --argjson environment "$expected_environment" '
+  jq -e --arg image "$expected_image" --arg log "$log_group" --arg probeImage "public.ecr.aws/docker/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662" --argjson port "$expected_port" --argjson probePort "$expected_probe_port" --argjson secrets "$expected_secrets" --argjson environment "$expected_environment" '
     (.taskDefinition.containerDefinitions | map(select(.name == "application")) | first) as $app |
+    (.taskDefinition.containerDefinitions | map(select(.name == "deployguard-transport-probe")) | first) as $probe |
     $app.image == $image and ($app.portMappings | any(.containerPort == $port and .hostPort == $port)) and $app.logConfiguration.options["awslogs-group"] == $log
     and ([$app.secrets[]? | {key:.name,value:.valueFrom}] | from_entries) == $secrets
     and ([$app.environment[]? | {key:.name,value:.value}] | from_entries) == $environment
+    and $probe.essential == true and $probe.image == $probeImage
+    and ($probe.portMappings | any(.containerPort == $probePort and .hostPort == $probePort))
+    and ([$probe.environment[]? | {key:.name,value:.value}] | from_entries) == {APPLICATION_PORT:($port|tostring),PROBE_PORT:($probePort|tostring)}
   ' <<<"$task_definition" >/dev/null || configuration_failure "$service_id" "Task definition image, port, log, environment, or Secrets Manager injection does not match the immutable runtime."
   application_sg="$(jq -r '.security_group_id' <<<"$deployed")"
   alb_sg="$(jq -r '.alb_security_group_id' <<<"$deployed")"
   security_group="$(aws ec2 describe-security-groups --group-ids "$application_sg" --output json 2>&1)" || provider_failure "$service_id" "$security_group"
-  jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --arg alb "$alb_sg" --argjson port "$expected_port" '.SecurityGroups[0].VpcId == $vpc and any(.SecurityGroups[0].IpPermissions[]; .FromPort == $port and .ToPort == $port and any(.UserIdGroupPairs[]; .GroupId == $alb))' <<<"$security_group" >/dev/null || configuration_failure "$service_id" "Application security group does not admit the service ALB on the immutable service port."
+  jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --arg alb "$alb_sg" --argjson port "$expected_port" --argjson probePort "$expected_probe_port" --argjson root "$security_group" '.SecurityGroups[0].VpcId == $vpc and all([$port,$probePort][]; . as $required | any($root.SecurityGroups[0].IpPermissions[]; .FromPort == $required and .ToPort == $required and any(.UserIdGroupPairs[]; .GroupId == $alb)))' <<<"$security_group" >/dev/null || configuration_failure "$service_id" "Application security group does not admit the service ALB on the immutable application and transport-probe ports."
   target_group_description="$(aws elbv2 describe-target-groups --target-group-arns "$target_group" --output json 2>&1)" || provider_failure "$service_id" "$target_group_description"
-  jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --argjson port "$expected_port" '.TargetGroups[0].VpcId == $vpc and .TargetGroups[0].Port == $port and .TargetGroups[0].Protocol == "HTTP"' <<<"$target_group_description" >/dev/null || configuration_failure "$service_id" "ALB target group does not use the immutable service port."
+  jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --argjson port "$expected_port" --arg probePort "$expected_probe_port" --arg path "$expected_health_path" '.TargetGroups[0].VpcId == $vpc and .TargetGroups[0].Port == $port and .TargetGroups[0].Protocol == "HTTP" and .TargetGroups[0].HealthCheckPort == $probePort and .TargetGroups[0].HealthCheckPath == $path and .TargetGroups[0].Matcher.HttpCode == "200-299"' <<<"$target_group_description" >/dev/null || configuration_failure "$service_id" "ALB target group does not use the immutable application port and platform transport-readiness probe."
   aws ecs wait services-stable --cluster "$cluster" --services "$service_name" || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   running="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status RUNNING --output json 2>&1)" || provider_failure "$service_id" "$running"
   jq -e '.taskArns | length > 0' <<<"$running" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
@@ -211,7 +217,9 @@ verify_service() {
     --argjson secretValueFrom "$expected_secrets" \
     --argjson managedDatabase "$managed_database" \
     --argjson runtimePort "$expected_port" \
-    '{serviceId:$serviceId,verified:true,image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),runtimePort:$runtimePort,targetGroupArn:$targetGroupArn,targetHealth:$targets,targetRegistrations:$targetRegistrations,environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
+    --argjson transportProbePort "$expected_probe_port" \
+    --arg platformHealthCheckPath "$expected_health_path" \
+    '{serviceId:$serviceId,verified:true,readinessMode:"platform_transport",image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),runtimePort:$runtimePort,transportProbePort:$transportProbePort,platformHealthCheckPath:$platformHealthCheckPath,targetGroupArn:$targetGroupArn,targetHealth:$targets,targetRegistrations:$targetRegistrations,environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
   jq --argjson check "$check" '. + [$check]' "$evidence" > "$evidence.next"; mv "$evidence.next" "$evidence"
 }
 

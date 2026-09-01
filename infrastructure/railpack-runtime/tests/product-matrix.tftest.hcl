@@ -46,6 +46,17 @@ run "one_service_without_database_or_secrets" {
     condition     = length(output.services) == 1 && output.database_efs_file_system_id == null && output.database_efs_access_point_id == null
     error_message = "Release evidence outputs must represent the exact service set and absent database."
   }
+  assert {
+    condition = (
+      output.services["33333333-3333-4333-8333-333333333333"].transport_probe_container_name == "deployguard-transport-probe" &&
+      output.services["33333333-3333-4333-8333-333333333333"].transport_probe_port == 65535 &&
+      output.services["33333333-3333-4333-8333-333333333333"].platform_health_check_path == "/_deployguard/transport-ready" &&
+      aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].health_check[0].port == "65535" &&
+      aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].health_check[0].path == "/_deployguard/transport-ready" &&
+      jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[1].name == "deployguard-transport-probe"
+    )
+    error_message = "Default ALB readiness must use the platform-owned TCP transport probe, not the developer application route."
+  }
 }
 
 run "two_services_with_generic_runtime_secret" {
@@ -88,9 +99,11 @@ run "two_services_with_generic_runtime_secret" {
       aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].port == 3000 &&
       aws_lb_target_group.application["55555555-5555-4555-8555-555555555555"].port == 8000 &&
       jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[0].portMappings[0].containerPort == 3000 &&
-      jsondecode(aws_ecs_task_definition.application["55555555-5555-4555-8555-555555555555"].container_definitions)[0].portMappings[0].containerPort == 8000
+      jsondecode(aws_ecs_task_definition.application["55555555-5555-4555-8555-555555555555"].container_definitions)[0].portMappings[0].containerPort == 8000 &&
+      jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[1].environment[0].value == "3000" &&
+      jsondecode(aws_ecs_task_definition.application["55555555-5555-4555-8555-555555555555"].container_definitions)[1].environment[0].value == "8000"
     )
-    error_message = "Each service port must remain independent through release output, target group, and ECS task definition."
+    error_message = "Each service port must remain independent through release output, target group, ECS task definition, and platform transport probe."
   }
 }
 

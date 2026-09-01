@@ -20,7 +20,7 @@ const serviceEvidence = runtime.services.map((expected, index) => {
   const imageDigest = `sha256:${String(index + 1).repeat(64)}`;
   return { ...expected, environment: undefined, secretReferences: undefined, databaseAttached: undefined, managedDatabase: undefined, imageUri, imageDigest, image: `${imageUri}@${imageDigest}` };
 });
-const terraformServices = Object.fromEntries(serviceEvidence.map((item, index) => [item.serviceId, { image: item.image, runtime_config_revision_id: item.runtimeConfigRevisionId, service_port: item.servicePort, public_url: `http://service-${index}.example.test`, task_definition_arn: `arn:aws:ecs:us-east-1:123456789012:task-definition/dg-${index}:1`, ecs_service_arn: `arn:aws:ecs:us-east-1:123456789012:service/dg/dg-${index}`, ecs_service_name: `dg-${index}`, alb_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/${index}`, alb_name: `dg-${index}`, alb_target_group_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/${index}`, alb_target_group_name: `dg-${index}`, cloudwatch_log_group_name: `/deployguard/${projectId}/services/${item.serviceId}`, application_container_name: "application" }]));
+const terraformServices = Object.fromEntries(serviceEvidence.map((item, index) => [item.serviceId, { image: item.image, runtime_config_revision_id: item.runtimeConfigRevisionId, service_port: item.servicePort, public_url: `http://service-${index}.example.test`, task_definition_arn: `arn:aws:ecs:us-east-1:123456789012:task-definition/dg-${index}:1`, ecs_service_arn: `arn:aws:ecs:us-east-1:123456789012:service/dg/dg-${index}`, ecs_service_name: `dg-${index}`, alb_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/${index}`, alb_name: `dg-${index}`, alb_target_group_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/${index}`, alb_target_group_name: `dg-${index}`, cloudwatch_log_group_name: `/deployguard/${projectId}/services/${item.serviceId}`, application_container_name: "application", transport_probe_container_name: "deployguard-transport-probe", transport_probe_port: 65535, platform_health_check_path: "/_deployguard/transport-ready" }]));
 const database = { attached_service_id: ids[1], engine: "postgres", host: "database.internal", port: 5432, ecs_service_arn: "arn:aws:ecs:us-east-1:123456789012:service/dg/database", ecs_service_name: "database", task_definition_arn: "arn:aws:ecs:us-east-1:123456789012:task-definition/database:1", cloudwatch_log_group_name: `/deployguard/${projectId}/database`, credentials_secret_arn: "arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/database", secret_version_id: "terraform-20260901000000000000000001" };
 const runtimeOutcomes = runtime.services.map((expected, index) => ({
   serviceId: expected.serviceId,
@@ -31,6 +31,9 @@ const runtimeOutcomes = runtime.services.map((expected, index) => ({
   runningTaskArns: [`arn:aws:ecs:us-east-1:123456789012:task/dg/${index + 1}`],
   ecsTasksRunning: 1,
   runtimePort: expected.servicePort,
+  readinessMode: "platform_transport",
+  transportProbePort: terraformServices[expected.serviceId].transport_probe_port,
+  platformHealthCheckPath: terraformServices[expected.serviceId].platform_health_check_path,
   targetGroupArn: terraformServices[expected.serviceId].alb_target_group_arn,
   targetHealth: ["healthy"],
   environment: expected.environment,
@@ -75,6 +78,9 @@ for (const [index, outcome] of handoff.serviceOutcomes.entries()) {
   assert.equal(outcome.ecsServiceArn, terraformServices[ids[index]].ecs_service_arn);
   assert.equal(outcome.ecsTasksRunning, 1);
   assert.equal(outcome.runtimePort, runtime.services[index].servicePort);
+  assert.equal(outcome.readinessMode, "platform_transport");
+  assert.equal(outcome.transportProbePort, 65535);
+  assert.equal(outcome.platformHealthCheckPath, "/_deployguard/transport-ready");
   assert.deepEqual(outcome.targetHealth, ["healthy"]);
   assert.deepEqual(outcome.environment, runtime.services[index].environment);
   assert.deepEqual(outcome.secretValueFrom.TOKEN, runtime.services[index].secretReferences.TOKEN);

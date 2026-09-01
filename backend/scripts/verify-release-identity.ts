@@ -23,6 +23,7 @@ const controlPlanePaths = [
   ".github/workflows/deployguard-reusable.yml",
   "infrastructure/railpack-runtime/build-release-result.sh",
   "infrastructure/railpack-runtime/verify-runtime.sh",
+  "infrastructure/railpack-runtime/main.tf",
 ] as const;
 const atConfiguredRelease = Object.fromEntries(controlPlanePaths.map((path) => {
   const result = spawnSync("git", ["show", `${canonicalSha}:${path}`], { cwd: repositoryRoot, encoding: "utf8" });
@@ -38,6 +39,7 @@ const certification = assertReusableWorkflowCompatibility(
   {
     releaseResultProducer: atConfiguredRelease["infrastructure/railpack-runtime/build-release-result.sh"],
     runtimeVerifier: atConfiguredRelease["infrastructure/railpack-runtime/verify-runtime.sh"],
+    runtimeInfrastructure: atConfiguredRelease["infrastructure/railpack-runtime/main.tf"],
   },
 );
 assert.equal(certification.sha, canonicalSha);
@@ -50,4 +52,4 @@ const admin = readFileSync(join(__dirname, "../src/admin/admin.controller.ts"), 
 assert.match(admin, /releaseIdentity: "exact_immutable"/);
 assert.match(admin, /remoteWorkflowCompatibility: "not_checked"/);
 assert.match(admin, /does not imply that GitHub has remotely[\s\S]*Dispatch performs that live check/);
-console.log(`RELEASE_IDENTITY=PASS CANONICAL_SHA=${canonicalSha} EXACT_EXECUTABLE_BYTES=3 ACTIVE_OLD_SHA=0 IMMUTABLE_PIN_REQUIRED=1`);
+console.log(`RELEASE_IDENTITY=PASS CANONICAL_SHA=${canonicalSha} EXACT_EXECUTABLE_BYTES=4 ACTIVE_OLD_SHA=0 IMMUTABLE_PIN_REQUIRED=1`);

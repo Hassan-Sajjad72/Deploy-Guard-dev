@@ -3,6 +3,7 @@ import { normalizeServiceDirectory } from "./deployable-service-path";
 
 export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v4";
 export const RAILPACK_RESULT_CONTRACT_VERSION = "deployguard.release-result/v5";
+export const DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH = "/_deployguard/transport-ready";
 export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "deployment_action", required: true, type: "string" }, { name: "deployment_operation_id", required: true, type: "string" },
   { name: "project_id", required: true, type: "string" }, { name: "environment_name", required: true, type: "string" },

@@ -221,7 +221,8 @@ export class GithubAppService {
       const workflow = await readAtPinnedSha(pinned.path);
       const releaseResultProducer = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.releaseResultProducer);
       const runtimeVerifier = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.runtimeVerifier);
-      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, runtimeVerifier });
+      const runtimeInfrastructure = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.runtimeInfrastructure);
+      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, runtimeVerifier, runtimeInfrastructure });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
       const message = error instanceof GithubActionsWorkflowContractError
