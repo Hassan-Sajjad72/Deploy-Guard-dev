@@ -105,7 +105,7 @@ fi
 
 verify_service() {
   local service="$1" service_id deployed expected service_name target_group log_group service_description task_definition_arn task_definition expected_image
-  local database expected_environment expected_secrets application_sg security_group running tasks target_health check
+  local database expected_environment expected_secrets managed_database application_sg security_group running tasks target_health check
   service_id="$(jq -r '.key' <<<"$service")"; deployed="$(jq -c '.value' <<<"$service")"
   expected="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' "$runtime")"
   service_name="$(jq -r '.ecs_service_name' <<<"$deployed")"; target_group="$(jq -r '.alb_target_group_arn' <<<"$deployed")"; log_group="$(jq -r '.cloudwatch_log_group_name' <<<"$deployed")"
@@ -124,6 +124,15 @@ verify_service() {
     def secret_alias: test("(PASSWORD|URL|URI)$");
     def url_alias: test("^(DATABASE_URL|POSTGRES_URL|POSTGRESQL_URL|MYSQL_URL|MONGO_URI|MONGO_URL|MONGODB_URI)$");
     $expected.secretReferences + (if $expected.databaseAttached then reduce $expected.managedDatabase.aliases[] as $key ({}; if ($key|secret_alias) then .[$key] = ($database.credentials_secret_arn + ":" + (if ($key|url_alias) then "url" else "password" end) + "::" + $database.secret_version_id) else . end) else {} end)')"
+  managed_database="$(jq -cn --argjson expected "$expected" --argjson database "$database" '
+    if $expected.databaseAttached then {
+      attached:true,
+      attachedServiceId:$database.attached_service_id,
+      engine:$database.engine,
+      aliases:$expected.managedDatabase.aliases,
+      credentialsSecretArn:$database.credentials_secret_arn,
+      secretVersionId:$database.secret_version_id
+    } else {attached:false,attachedServiceId:null,engine:null,aliases:[],credentialsSecretArn:null,secretVersionId:null} end')"
   jq -e --arg task "$task_definition_arn" --argjson subnets "$expected_subnets" '
     .services[0].status == "ACTIVE" and .services[0].taskDefinition == $task and (.services[0].networkConfiguration.awsvpcConfiguration.subnets | sort) == $subnets and (.services[0].networkConfiguration.awsvpcConfiguration.securityGroups | length > 0)
   ' <<<"$service_description" >/dev/null || configuration_failure "$service_id" "ECS service identity or VPC/subnet configuration does not match the expected runtime."
@@ -144,7 +153,20 @@ verify_service() {
   target_health="$(aws elbv2 describe-target-health --target-group-arn "$target_group" --output json 2>&1)" || provider_failure "$service_id" "$target_health"
   jq -e '.TargetHealthDescriptions | length > 0 and all(.[]; .TargetHealth.State == "healthy")' <<<"$target_health" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   curl --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused --output /dev/null "$(jq -r '.public_url' <<<"$deployed")" || { echo "DG_FAILURE serviceId=$service_id code=DG_PUBLIC_REACHABILITY_FAILED stage=public_health" >&2; append_outcome "$service_id" false DG_PUBLIC_REACHABILITY_FAILED "The verified service endpoint is not publicly reachable."; exit 1; }
-  check="$(jq -cn --arg serviceId "$service_id" --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson running "$(jq '.taskArns | length' <<<"$running")" --argjson targets "$(jq '[.TargetHealthDescriptions[] | .TargetHealth.State]' <<<"$target_health")" '{serviceId:$serviceId,verified:true,ecsTasksRunning:$running,targetHealth:$targets,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
+  check="$(jq -cn \
+    --arg serviceId "$service_id" \
+    --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg image "$expected_image" \
+    --arg ecsServiceArn "$(jq -r '.ecs_service_arn' <<<"$deployed")" \
+    --arg taskDefinitionArn "$task_definition_arn" \
+    --arg targetGroupArn "$target_group" \
+    --arg publicUrl "$(jq -r '.public_url' <<<"$deployed")" \
+    --argjson runningTaskArns "$(jq '.taskArns' <<<"$running")" \
+    --argjson targets "$(jq '[.TargetHealthDescriptions[] | .TargetHealth.State]' <<<"$target_health")" \
+    --argjson environment "$expected_environment" \
+    --argjson secretValueFrom "$expected_secrets" \
+    --argjson managedDatabase "$managed_database" \
+    '{serviceId:$serviceId,verified:true,image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),runtimePort:8080,targetGroupArn:$targetGroupArn,targetHealth:$targets,environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
   jq --argjson check "$check" '. + [$check]' "$evidence" > "$evidence.next"; mv "$evidence.next" "$evidence"
 }
 

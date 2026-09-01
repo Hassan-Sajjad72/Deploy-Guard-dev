@@ -662,6 +662,7 @@ void (async () => {
   assert.equal(githubActionsWorkflowStepPresentation("Post Checkout"), null);
   assert.equal(githubActionsWorkflowStepPresentation("Materialize release runtime")?.key, "materialize_release_runtime");
   assert.equal(githubActionsFailureLifecyclePhase("Materialize release runtime"), "deploy");
+  assert.equal(githubActionsFailureLifecyclePhase("release_evidence_validation"), "finalize", "terminal artifact rejection must not project as runtime deployment failure");
   const lifecycle = Object.create(ProjectCurrentStateService.prototype) as any;
   assert.equal(lifecycle.githubLifecyclePhase("materialize_release_runtime", { deploymentAction: "deploy", workflowStages: [{ key: "publish_immutable_images_to_ecr", status: "passed" }] }), "deploy");
   assert.equal(lifecycle.githubLifecyclePhase("publish_immutable_images_to_ecr", { deploymentAction: "deploy", workflowStages: [{ key: "build_immutable_railpack_images", status: "passed" }] }), "build");

@@ -109,12 +109,13 @@ export function githubActionsFailureMessage(errorMessage: unknown, failedStage: 
   return persisted || "The operation failed.";
 }
 
-export function githubActionsFailureLifecyclePhase(failedStage: unknown, action: GithubActionsPresentationAction = "deploy"): "source" | "build" | "deploy" | "verify" {
+export function githubActionsFailureLifecyclePhase(failedStage: unknown, action: GithubActionsPresentationAction = "deploy"): "source" | "build" | "deploy" | "verify" | "finalize" {
   const key = githubActionsStagePresentation(failedStage).key;
+  if (action === "deploy" && ["publish_verified_release_result", "release_evidence_pending", "release_evidence_validation", "release_finalization"].includes(key)) return "finalize";
   if (action === "destroy" && (key.includes("evidence") || key.includes("verify") || key === "publish_verified_release_result")) return "verify";
   if (["workflow_bootstrap", "set_up_job", "workflow_dispatch", "configure_aws_credentials_through_oidc", "checkout_exact_application_source", "validate_immutable_release_input"].includes(key)) return "source";
   if (BUILD_PHASE_FAILURE_STAGES.has(key) || key.includes("build")) return "build";
-  if (key === "publish_verified_release_result") return "verify";
+  if (key === "publish_verified_release_result" || key.includes("evidence") || key.includes("finalization")) return "verify";
   if (key.includes("health") || key.includes("verify")) return "verify";
   return "deploy";
 }

@@ -4,6 +4,7 @@ export const DEVELOPER_DEPLOYMENT_PHASES = Object.freeze([
   { key: "publish", label: "Publish Image" },
   { key: "deploy", label: "Deploy Runtime" },
   { key: "verify", label: "Verify Application" },
+  { key: "finalize", label: "Finalize Release" },
 ]);
 
 export const DEVELOPER_ROLLBACK_PHASES = Object.freeze([
@@ -50,8 +51,8 @@ export function deploymentPhasePresentation(currentState) {
     publish: ["publish_immutable_image_to_ecr"],
     deploy: ["install_terraform", "materialize_release_runtime"],
     verify: ["verify_alb_health_and_write_result"],
+    finalize: ["publish_verified_release_result", "project_delete_cleanup"],
     destroy: ["install_terraform", "materialize_release_runtime"],
-    finalize: ["project_delete_cleanup"],
   };
 
   function evidenceStatus(phase) {
@@ -71,8 +72,8 @@ export function deploymentPhasePresentation(currentState) {
     } else if (currentState?.developerState === "ready") {
       status = "waiting";
     } else if (completed) status = "passed";
-    else if (proven) status = proven;
     else if (currentIndex >= 0 && index === currentIndex && failed) status = "failed";
+    else if (proven) status = proven;
     else if (currentIndex >= 0 && index === currentIndex && attention) status = "attention";
     else if (currentIndex >= 0 && index === currentIndex && active) status = "running";
     return { ...phase, status };

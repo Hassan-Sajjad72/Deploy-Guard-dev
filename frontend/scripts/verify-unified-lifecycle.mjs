@@ -24,10 +24,15 @@ for (const path of ["pipeline", "infrastructure", "monitoring", "settings", "tro
 
 assert.deepEqual(
   deploymentPhasePresentation({ developerState: "building", progress: { phase: "build" } }).map((item) => [item.key, item.status]),
-  [["source", "waiting"], ["build", "running"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"]],
+  [["source", "waiting"], ["build", "running"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"], ["finalize", "waiting"]],
 );
 assert.deepEqual(
   deploymentPhasePresentation({ developerState: "failed_application", progress: { phase: "verify" } }).map((item) => [item.key, item.status]),
-  [["source", "waiting"], ["build", "waiting"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "failed"]],
+  [["source", "waiting"], ["build", "waiting"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "failed"], ["finalize", "waiting"]],
+);
+assert.deepEqual(
+  deploymentPhasePresentation({ developerState: "failed_application", progress: { phase: "finalize" }, latestAttempt: { workflowStages: [{ key: "publish_verified_release_result", status: "passed" }] } }).map((item) => [item.key, item.status]),
+  [["source", "waiting"], ["build", "waiting"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"], ["finalize", "failed"]],
+  "backend terminal-evidence rejection overrides the successful artifact-upload step",
 );
 console.log("Unified lifecycle projection, refresh, rail, navigation, and failure-boundary verification passed.");

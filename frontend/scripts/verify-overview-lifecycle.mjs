@@ -62,13 +62,17 @@ const setupFailureRail = deploymentPhasePresentation({
 });
 assert.deepEqual(
   setupFailureRail.map(({ key, status }) => [key, status]),
-  [["source", "passed"], ["build", "failed"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"]],
+  [["source", "passed"], ["build", "failed"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"], ["finalize", "waiting"]],
   "Railpack build failure must not present later deployment phases as completed",
 );
 assert.equal(overviewLifecycleCopy({
   developerState: "failed_application", progress: { phase: "build" }, latestAttempt: { workflowRunId: "33212514809" },
   stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } },
 }).title, "Build Application failed");
+assert.equal(overviewLifecycleCopy({
+  developerState: "failed_application", progress: { phase: "finalize" }, latestAttempt: { workflowRunId: "33464002814" },
+  stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } },
+}).title, "Finalize Release failed");
 const failedDestroyWithStableRuntime = {
   developerState: "live",
   developerMessage: "The latest destroy operation failed. The verified stable release remains live.",

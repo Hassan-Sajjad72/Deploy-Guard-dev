@@ -28,6 +28,7 @@ assert.deepEqual(deploymentPhasePresentation(failure).map(({ key, status }) => [
   ["publish", "waiting"],
   ["deploy", "waiting"],
   ["verify", "waiting"],
+  ["finalize", "waiting"],
 ]);
 const destroy = {
   developerState: "destroying",

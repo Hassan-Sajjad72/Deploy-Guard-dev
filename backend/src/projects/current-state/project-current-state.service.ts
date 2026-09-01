@@ -518,8 +518,8 @@ export class ProjectCurrentStateService {
     return { percentage: 20, phase: "prepare", label: "Preparing Destroy" };
   }
 
-  private githubLifecycleProgress(phase: "source" | "prepare" | "build" | "deploy" | "verify") {
-    return { source: 0, prepare: 20, build: 40, deploy: 60, verify: 80 }[phase];
+  private githubLifecycleProgress(phase: "source" | "prepare" | "build" | "deploy" | "verify" | "finalize") {
+    return { source: 0, prepare: 20, build: 40, deploy: 60, verify: 80, finalize: 95 }[phase];
   }
 
   private conciseFailureMessage(errorMessage: unknown) {
