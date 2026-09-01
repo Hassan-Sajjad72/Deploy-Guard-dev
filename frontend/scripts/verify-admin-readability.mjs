@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { classifyAdminFailure, loadIndependentAdminSources } from "../src/utils/adminDataPresentation.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const admin = read("../src/pages/AdminUsers.jsx");
@@ -19,6 +20,12 @@ assert.match(admin, /Operation state distribution/);
 assert.match(admin, /data-admin-project-state-source="current-state"/);
 assert.match(admin, /<DataTable/);
 assert.match(admin, /<Pagination/);
+assert.match(admin, /loadIndependentAdminSources/);
+assert.match(admin, /sourceErrors\.projects/);
+assert.match(admin, /Platform data unavailable/);
+assert.match(admin, /Project operation evidence unavailable/);
+assert.doesNotMatch(admin, /Last updated: \$\{date\(overview\?\.generatedAt\)\}/);
+assert.doesNotMatch(admin, /Check the guidance above/);
 assert.doesNotMatch(admin, /<dl[\s>]/);
 assert.doesNotMatch(admin, /deployGithubActionsDeployment|retryGithubActionsDeployment|destroyGithubActionsDeployment/);
 for (const heading of ["User", "GitHub account", "Role", "Access", "Last activity", "Action"]) assert.match(users, new RegExp(`<th>${heading}<`));
@@ -37,5 +44,30 @@ assert.match(controller, /USER_ENABLED|USER_DISABLED/);
 for (const action of ["GITHUB_APP_INSTALLATION_CONNECTED", "GITHUB_ACTIONS_DEPLOYMENT_REQUESTED", "GITHUB_ACTIONS_DEPLOYMENT_RETRIED", "GITHUB_ACTIONS_DESTROY_REQUESTED"]) assert.match(projectsController, new RegExp(action));
 assert.doesNotMatch(projectsController, /metadata:\s*\{[^}]*?(?:token|secret|password|authorization)/i);
 for (const rule of ["admin-summary-grid", "admin-service-grid", "admin-responsive-table", "audit-details-grid", "admin-audit-filters"]) assert.match(styles, new RegExp(rule));
+assert.match(styles, /\.admin-shell::before\{background:linear-gradient\(rgba\(8,12,14,\.92\)/);
+assert.match(styles, /\.admin-section\{background:rgba\(18,22,24,\.96\)/);
 assert.match(styles, /@media\(max-width:700px\)[\s\S]*admin-responsive-table/);
+
+const ownerError = Object.assign(new Error("Project operations are restricted to the project owner."), { status: 403, code: "FORBIDDEN" });
+const ownerFailure = classifyAdminFailure(ownerError, { ownerScoped: true });
+assert.equal(ownerFailure.kind, "owner-restriction");
+assert.equal(ownerFailure.retryable, false);
+assert.equal(ownerFailure.title, "Project operation evidence unavailable");
+assert.equal(ownerFailure.message, "Administrative access does not grant ownership of individual project operations.");
+assert.equal(ownerFailure.providerMessage, "Project operations are restricted to the project owner.");
+
+const transientFailure = classifyAdminFailure(Object.assign(new Error("Service unavailable"), { status: 503 }));
+assert.equal(transientFailure.kind, "transient");
+assert.equal(transientFailure.retryable, true);
+
+const partial = await loadIndependentAdminSources({
+  users: async () => ({ users: [{ id: "user-1" }] }),
+  projects: async () => { throw ownerError; },
+  overview: async () => ({ generatedAt: "2026-09-01T12:00:00.000Z" }),
+});
+assert.equal(partial.users.status, "fulfilled");
+assert.equal(partial.projects.status, "rejected");
+assert.equal(partial.overview.status, "fulfilled");
+assert.deepEqual(partial.users.value.users, [{ id: "user-1" }]);
+assert.equal(partial.overview.value.generatedAt, "2026-09-01T12:00:00.000Z");
 console.log("Admin and audit presentation verification passed.");

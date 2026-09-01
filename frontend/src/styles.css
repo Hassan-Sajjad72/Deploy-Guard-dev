@@ -277,8 +277,11 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 }
 
 /* Iteration 6: read-focused platform administration and audit evidence. */
+.admin-shell::before{background:linear-gradient(rgba(8,12,14,.92),rgba(8,12,14,.96)),radial-gradient(circle at 82% 12%,rgba(244,122,32,.08),transparent 32%)}
+.admin-shell-header{background:rgba(14,18,20,.96);border-color:rgba(244,122,32,.2);box-shadow:0 18px 55px rgba(0,0,0,.34)}
 .admin-console{gap:var(--space-5)}
-.admin-section{display:grid;gap:var(--space-4);min-width:0}
+.admin-section{background:rgba(18,22,24,.96);border-color:rgba(255,255,255,.1);box-shadow:0 22px 60px rgba(0,0,0,.3);display:grid;gap:var(--space-4);min-width:0}
+.admin-error-metadata{color:var(--ink-soft);display:block;margin-top:var(--space-2)}
 .admin-section-heading h2{margin-bottom:var(--space-2)}
 .admin-section-heading p:last-child{margin-bottom:0;max-width:760px}
 .admin-summary-grid{display:grid;gap:var(--space-3);grid-template-columns:repeat(3,minmax(0,1fr))}
