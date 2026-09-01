@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { pipelineStageDurationEnd } from "../src/utils/pipelineStageTiming.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const page = read("../src/pages/ProjectPipeline.jsx");
@@ -20,6 +21,7 @@ assert.match(execution, /className="pipeline-identity-card"/);
 for (const heading of ["Latest deployment", "Operation", "Duration", "Completed"]) assert.match(execution, new RegExp(heading));
 assert.doesNotMatch(execution, /\$\{date\(latest\.createdAt\)\} to \$\{date\(operationEnd\(latest\)\)\}/, "Pipeline omits the verbose start-to-end range");
 assert.match(execution, /latest\?\.workflowStages \|\| \[\]/);
+assert.match(execution, /pipelineStageDurationEnd\(stage, operation\)/);
 assert.match(execution, /stage\.durationMs/);
 assert.match(execution, /stage\.status !== "skipped"[\s\S]*stage\.durationMs > 0/);
 assert.match(execution, /stage\.status === "skipped" \? "Not run"/);
@@ -40,6 +42,12 @@ assert.match(recovery, /operation\.aiAnalysisEligible/);
 assert.match(recovery, /AI troubleshooting requires a failed deployment attempt with sanitized persisted evidence/);
 assert.doesNotMatch(recovery, /CloudWatch|Redis|BullMQ/);
 assert.match(backend, /workflowStages: Array\.isArray\(metadata\.workflowStages\)/);
+
+const staleRunningStage = { status: "running", startedAt: "2026-09-01T10:00:00.000Z", completedAt: null };
+assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "completed", completedAt: "2026-09-01T10:05:00.000Z" }, "2026-09-02T10:00:00.000Z"), "2026-09-01T10:05:00.000Z", "terminal operations cap stale running-stage duration at the operation terminal timestamp");
+assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "failed", failedAt: "2026-09-01T10:04:00.000Z" }, "2026-09-02T10:00:00.000Z"), "2026-09-01T10:04:00.000Z");
+assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "completed" }, "2026-09-02T10:00:00.000Z"), null, "missing terminal timestamps never fall through to the current clock");
+assert.equal(pipelineStageDurationEnd(staleRunningStage, { status: "running" }, "2026-09-02T10:00:00.000Z"), "2026-09-02T10:00:00.000Z", "active operations continue to accumulate duration");
 assert.match(github, /getWorkflowJobs/);
 assert.match(backend, /failureSource: "github_actions"/);
 assert.match(backend, /getWorkflowStages/);

@@ -12,8 +12,8 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
   workflow: "cbc25e649475121d4d113e49015f0049d18e048bab0bbcdfb553eb5c0be8619f",
-  releaseResultProducer: "827818ad91b704548fc226cb989586cf777b3aa8337b8467d975d25265b3793d",
-  runtimeVerifier: "6aea9382137f1a0b07cb52cf896c461a190027f3be7af50f0e1e8ac26245f707",
+  releaseResultProducer: "644b940a381a688d1e79cd78a402a61993e9efd7940dc4ab45241d9a327bca55",
+  runtimeVerifier: "5e2b3e7a2a6a876e57bb249f9e8be4bd271043aab0aa2b5fa5a3f9335a71d752",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {

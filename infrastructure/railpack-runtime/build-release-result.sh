@@ -59,12 +59,13 @@ jq -e \
   and ($service_ids | length == (unique | length))
   and ($service_ids == $terraform_service_ids)
   and (.awsRuntimeVerification.contractVersion == "deployguard.aws-runtime-verification/v1")
-  and (.awsRuntimeVerification.verified | type == "boolean")
+  and (.awsRuntimeVerification.verified == true)
   and (.awsRuntimeVerification.verifiedAt | type == "string")
   and (.awsRuntimeVerification.services | type == "array")
   and ($outcome_service_ids | length == (unique | length))
   and ($outcome_service_ids == $service_ids)
-  and (.awsRuntimeVerification.verified == ([.awsRuntimeVerification.services[].verified] | all(. == true)))
+  and (all(.awsRuntimeVerification.services[]; .verified == true))
+  and (.awsRuntimeVerification.databaseVerified == (if .terraform.database == null then false else true end))
   and all(.services[];
     (.serviceId | type == "string")
     and ((.servicePort | type) == "number" and (.servicePort | floor) == .servicePort and .servicePort >= 1 and .servicePort <= 65535)
@@ -83,7 +84,8 @@ jq -e \
   and all(.awsRuntimeVerification.services[];
     . as $outcome |
     ($release.terraform.services[$outcome.serviceId]) as $runtime |
-    if $outcome.verified == true then
+    ($outcome.verified == true)
+      and
       ($outcome.image == $runtime.image)
       and ($outcome.ecsServiceArn == $runtime.ecs_service_arn)
       and ($outcome.taskDefinitionArn == $runtime.task_definition_arn)
@@ -103,10 +105,6 @@ jq -e \
       and ($outcome.secretsInjection == true)
       and ($outcome.vpcConnectivity == true)
       and ($outcome.publicReachability == true)
-    else
-      ($outcome.verified == false)
-      and ($outcome.failureCode | type == "string" and length > 0)
-    end
   )
 ' "${result}.next" >/dev/null || contract_failure
 

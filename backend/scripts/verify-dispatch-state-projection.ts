@@ -52,7 +52,7 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   const image = `${imageUri}@${imageDigest}`;
   const runtimeConfigRevisionId = serviceId;
   const runtime = { name: "Web", image, runtime_config_revision_id: runtimeConfigRevisionId, service_port: 8080, ecs_service_arn: "arn:aws:ecs:us-east-1:123456789012:service/dg/dg", ecs_service_name: "dg", task_definition_arn: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:1", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/a", alb_target_group_name: "dg", public_url: "http://example.test", cloudwatch_log_group_name: `/deployguard/${project.id}/services/${serviceId}`, application_container_name: "application" };
-  const valid = { contractVersion: "deployguard.release-result/v5", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", services: [{ serviceId, runtimeConfigRevisionId, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, imageUri, imageDigest, image }], terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: { [serviceId]: runtime }, database: null }, awsRuntimeVerification: { contractVersion: "deployguard.aws-runtime-verification/v1", verified: true, verifiedAt: "2026-09-01T00:00:00Z", services: [{ serviceId, verified: true, runtimePort: 8080, environment: { PORT: "8080", HOST: "0.0.0.0" } }] } };
+  const valid = { contractVersion: "deployguard.release-result/v5", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", services: [{ serviceId, runtimeConfigRevisionId, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, imageUri, imageDigest, image }], terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: { [serviceId]: runtime }, database: null }, awsRuntimeVerification: { contractVersion: "deployguard.aws-runtime-verification/v1", verified: true, verifiedAt: "2026-09-01T00:00:00Z", databaseVerified: false, services: [{ serviceId, verified: true, image, ecsServiceArn: runtime.ecs_service_arn, taskDefinitionArn: runtime.task_definition_arn, runningTaskArns: ["arn:aws:ecs:us-east-1:123456789012:task/dg/1"], ecsTasksRunning: 1, runtimePort: 8080, targetGroupArn: runtime.alb_target_group_arn, targetHealth: ["healthy"], environment: { PORT: "8080", HOST: "0.0.0.0" }, secretValueFrom: {}, managedDatabase: { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null }, publicUrl: runtime.public_url, publicEndpointVerified: true, taskDefinition: true, secretsInjection: true, vpcConnectivity: true, publicReachability: true, checkedAt: "2026-09-01T00:00:00Z" }] } };
   assert.equal(DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, "deployguard-result.json");
   const archive = storedZipEntry("deployguard-result.json", JSON.stringify(valid));
   assert.equal(exactZipEntry(archive, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY), JSON.stringify(valid));
@@ -125,7 +125,11 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
             : null,
   };
   service.dataSource = { transaction: async (callback: any) => callback(manager) };
-  service.actions = { getWorkflowRun: async () => ({ status: "completed", conclusion: "success" }), getResultArtifact: async () => JSON.stringify(valid) };
+  const terminalStages = [
+    { key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application", status: "passed", startedAt: "2026-09-01T00:00:00.000Z", completedAt: "2026-09-01T00:04:00.000Z", jobUrl: "https://github.example/job/1", failureReason: null },
+    { key: "publish_verified_release_result", label: "Finalize Release", status: "passed", startedAt: "2026-09-01T00:04:00.000Z", completedAt: "2026-09-01T00:05:00.000Z", jobUrl: "https://github.example/job/1", failureReason: null },
+  ];
+  service.actions = { getWorkflowRun: async () => ({ status: "completed", conclusion: "success", updated_at: "2026-09-01T00:05:00.000Z" }), getWorkflowStages: async () => terminalStages, getResultArtifact: async () => JSON.stringify(valid) };
   await service.reconcile(operation);
   assert.equal(saved.at(-1).status, PipelineRunStatus.COMPLETED);
   assert.equal(operation.generationId, operation.id, "the immutable operation establishes the authoritative runtime generation");
@@ -135,6 +139,9 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   assert.equal(generations[0]?.resourceManifest?.services?.find((item: any) => item.serviceId === serviceId)?.cloudWatchLogGroupName, runtime.cloudwatch_log_group_name);
   assert.equal(generations[0]?.resourceManifest?.services?.find((item: any) => item.serviceId === serviceId)?.applicationContainerName, "application");
   assert.equal(operation.metadata.releaseEvidenceVerified, true);
+  assert.deepEqual(operation.metadata.workflowStages.map((stage: any) => stage.status), ["passed", "passed"], "terminal success refreshes actual GitHub stage metadata before finalization");
+  assert.equal(operation.metadata.workflowStages[1].completedAt, "2026-09-01T00:05:00.000Z");
+  assert.equal(operation.metadata.workflowStages.some((stage: any) => ["running", "pending"].includes(stage.status)), false);
   const redeployEvidence = structuredClone(valid);
   redeployEvidence.operationId = "88888888-8888-4888-8888-888888888888";
   redeployEvidence.sourceSha = "e".repeat(40);
@@ -142,6 +149,8 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   redeployEvidence.services[0].image = `${imageUri}@${redeployEvidence.services[0].imageDigest}`;
   redeployEvidence.terraform.services[serviceId].image = redeployEvidence.services[0].image;
   redeployEvidence.terraform.services[serviceId].task_definition_arn = "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:2";
+  redeployEvidence.awsRuntimeVerification.services[0].image = redeployEvidence.services[0].image;
+  redeployEvidence.awsRuntimeVerification.services[0].taskDefinitionArn = redeployEvidence.terraform.services[serviceId].task_definition_arn;
   const redeploy: any = { ...operation, id: redeployEvidence.operationId, generationId: null, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", commitSha: redeployEvidence.sourceSha, metadata: { deploymentAction: "deploy", immutableDispatchInputs: { services_base64: contract(redeployEvidence.operationId, redeployEvidence.sourceSha) } } };
   transactionOperation = redeploy;
   runtimeConfig.createdByOperationId = redeploy.id;
@@ -159,6 +168,7 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   rollbackEvidence.action = "rollback";
   rollbackEvidence.operationId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
   rollbackEvidence.terraform.services[serviceId].task_definition_arn = "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:3";
+  rollbackEvidence.awsRuntimeVerification.services[0].taskDefinitionArn = rollbackEvidence.terraform.services[serviceId].task_definition_arn;
   const rollback: any = { ...operation, id: rollbackEvidence.operationId, generationId: null, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: { deploymentAction: "rollback", immutableDispatchInputs: { services_base64: contract(rollbackEvidence.operationId, rollbackEvidence.sourceSha, "rollback", rollbackEvidence.services[0].image) } } };
   transactionOperation = rollback;
   service.actions.getResultArtifact = async () => JSON.stringify(rollbackEvidence);
@@ -515,6 +525,41 @@ async function verifyTerminalGithubFailure() {
   return failedRun;
 }
 
+async function verifyStructuredRuntimeFailureSurvivesTerminalReconciliation() {
+  const serviceId = "77777777-7777-4777-8777-777777777777";
+  for (const action of ["deploy", "rollback", "destroy"] as const) {
+    const saved: any[] = [];
+    const terminalStages = [
+      { key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application", status: "failed", startedAt: "2026-09-01T00:00:00.000Z", completedAt: "2026-09-01T00:03:00.000Z", jobUrl: null, failureReason: "GitHub Actions step failed: Materialize release runtime" },
+      { key: "publish_verified_release_result", label: "Finalize Release", status: "skipped", startedAt: null, completedAt: null, jobUrl: null, failureReason: null },
+    ];
+    const service = Object.create(RailpackDeploymentService.prototype) as any;
+    service.projects = { findOne: async () => project };
+    service.users = { findOne: async () => user };
+    service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
+    service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+    service.sanitizer = new LogSanitizerService();
+    service.actions = {
+      getWorkflowRun: async () => ({ status: "completed", conclusion: "failure", updated_at: "2026-09-01T00:03:00.000Z" }),
+      getWorkflowStages: async () => terminalStages,
+      getTerminalFailureEvidence: async () => ({
+        failedStage: "materialize_release_runtime",
+        rawEvidence: `DG_ECS_DIAGNOSTICS {"diagnosticCode":"ECS_STABILITY_FAILED"}\nDG_FAILURE serviceId=${serviceId} code=DG_ECS_STABILITY_FAILED stage=ecs_stability`,
+        workflowStages: terminalStages,
+      }),
+    };
+    const operation: any = { id: "55555555-5555-4555-8555-555555555555", projectId: project.id, triggeredByUserId: user.id, githubWorkflowRunId: "123", status: PipelineRunStatus.RUNNING, currentStage: "materialize_release_runtime", commitSha: "a".repeat(40), metadata: { executionEngine: "railpack", deploymentAction: action } };
+    await service.reconcile(operation);
+    const persisted = saved.at(-1);
+    assert.equal(persisted.status, PipelineRunStatus.FAILED);
+    assert.equal(persisted.currentStage, "ecs_stability", `${action} preserves the emitted runtime stage instead of the wrapper GitHub step`);
+    assert.equal(persisted.metadata.failedStage, "ecs_stability");
+    assert.equal(persisted.failureCode, "DG_ECS_STABILITY_FAILED");
+    assert.equal(persisted.failureServiceId, serviceId);
+    assert.equal(persisted.metadata.workflowStages.some((stage: any) => stage.status === "running"), false, `${action} terminal failure leaves no falsely running stage`);
+  }
+}
+
 async function verifyActiveGithubStagesPersistWithoutPipeline() {
   const saved: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
@@ -630,6 +675,7 @@ void (async () => {
   await verifyCurrentStateProjection(failed);
   await verifyVerifiedReleaseProjectsLive();
   const terminalFailure = await verifyTerminalGithubFailure();
+  await verifyStructuredRuntimeFailureSurvivesTerminalReconciliation();
   await verifyActiveGithubStagesPersistWithoutPipeline();
   await verifyCurrentStateProjection(terminalFailure, true);
   await verifyCurrentStateReconcilesWithoutPipeline();
@@ -672,10 +718,10 @@ void (async () => {
   assert.equal(lifecycle.githubLifecyclePhase("materialize_release_runtime", { deploymentAction: "deploy", workflowStages: [{ key: "publish_immutable_images_to_ecr", status: "passed" }] }), "deploy");
   assert.equal(lifecycle.githubLifecyclePhase("publish_immutable_images_to_ecr", { deploymentAction: "deploy", workflowStages: [{ key: "build_immutable_railpack_images", status: "passed" }] }), "build");
   assert.match(infrastructurePage, /getProjectDetailedCurrentState/);
-  assert.match(infrastructurePage, /Persisted verified identity/);
-  assert.match(infrastructurePage, /Current AWS observation/);
+  assert.match(infrastructurePage, /runtimeIdentity\?\.services/, "Infrastructure retains persisted release identity");
+  assert.match(infrastructurePage, /evidence\?\.services/, "Infrastructure retains current per-service AWS observations");
   assert.match(infrastructurePage, /terraformStateKey/);
-  assert.match(monitoringPage, /Temporarily unavailable/);
+  assert.match(monitoringPage, /temporarily unavailable/i);
   assert.doesNotMatch(currentStateService, /DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN|DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME|DEPLOYGUARD_SHARED_ALB_ARN/);
   assert.doesNotMatch(runtimeResolver, /DEPLOYGUARD_SHARED_ECS_CLUSTER_ARN|DEPLOYGUARD_SHARED_ECS_CLUSTER_NAME|DEPLOYGUARD_SHARED_ALB_ARN|metadata\.targetGroupArn/);
   assert.match(runtimeResolver, /cloudWatchLogGroupName/);

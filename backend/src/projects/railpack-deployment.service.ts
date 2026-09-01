@@ -31,7 +31,7 @@ import { githubActionsDestroyEvidenceFromValue } from "./github-actions-destroy-
 import { ProjectDeletionService } from "./project-deletion.service";
 import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
 import { ProjectDeployableService } from "./project-deployable-service.entity";
-import { classifyStructuredFailure } from "./failure-ownership";
+import { classifyStructuredFailure, terminalStructuredFailureMarker } from "./failure-ownership";
 import { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
@@ -553,7 +553,19 @@ export class RailpackDeploymentService {
       const conclusion = String(workflow.conclusion || "");
       operation.githubWorkflowStatus = status || operation.githubWorkflowStatus;
       if (status === "completed") {
-        operation.completedAt = new Date();
+        const workflowCompletedAt = typeof workflow.updated_at === "string" && Number.isFinite(Date.parse(workflow.updated_at)) ? new Date(workflow.updated_at) : new Date();
+        operation.completedAt = workflowCompletedAt;
+        const action = operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy";
+        let terminalStages: Awaited<ReturnType<GithubActionsService["getWorkflowStages"]>> = [];
+        try {
+          terminalStages = await this.actions.getWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, action);
+        } catch {
+          // Terminal reconciliation still proceeds when GitHub withholds job
+          // metadata. Existing evidence is retained and no stage is fabricated.
+        }
+        if (terminalStages.length) {
+          operation.metadata = { ...(operation.metadata || {}), workflowStages: terminalStages, workflowUpdatedAt: new Date().toISOString() };
+        }
         if (conclusion === "success") {
           let evidence: Record<string, unknown> | null;
           try {
@@ -596,15 +608,17 @@ export class RailpackDeploymentService {
             await this.costEvidence.capture(operation, project.repositoryFullName, credential.token, canonicalEnvironmentName(project)).catch(() => null);
           }
         } else {
-          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy");
+          const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, action);
+          const marker = terminalStructuredFailureMarker(failureEvidence?.safeLog || "");
+          const failedStage = marker.stage || failureEvidence?.failedStage || "release_failed";
           operation.status = PipelineRunStatus.FAILED;
-          operation.currentStage = failureEvidence?.failedStage || "release_failed";
+          operation.currentStage = failedStage;
           operation.errorMessage = failureEvidence?.safeLog || `GitHub Actions concluded: ${conclusion || "failure"}.`;
-          const ownership = classifyStructuredFailure(failureEvidence?.failedStage || "release_failed", failureEvidence?.safeLog || "");
+          const ownership = classifyStructuredFailure(failedStage, failureEvidence?.safeLog || "");
           operation.failureOwner = ownership.failureOwner; operation.externalProvider = ownership.externalProvider; operation.failureCode = ownership.failureCode; operation.failureServiceId = ownership.failureServiceId;
           operation.metadata = {
             ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
-            ...(failureEvidence ? { failedStage: failureEvidence.failedStage, safeLog: failureEvidence.safeLog, workflowStages: failureEvidence.workflowStages, failureSource: "github_actions" } : {}),
+            ...(failureEvidence ? { failedStage, safeLog: failureEvidence.safeLog, workflowStages: failureEvidence.workflowStages.length ? failureEvidence.workflowStages : terminalStages, failureSource: "github_actions" } : terminalStages.length ? { failedStage, workflowStages: terminalStages, failureSource: "github_actions" } : {}),
           };
         }
       } else {
@@ -707,7 +721,7 @@ export class RailpackDeploymentService {
     }
     if (!artifact.terraform || typeof artifact.terraform !== "object" || !Array.isArray(artifact.services) || !artifact.services.length) throw new Error("The release result artifact does not prove the complete service runtime.");
     const awsRuntimeVerification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
-    if (!awsRuntimeVerification || awsRuntimeVerification.contractVersion !== "deployguard.aws-runtime-verification/v1" || typeof awsRuntimeVerification.verified !== "boolean" || !Array.isArray(awsRuntimeVerification.services)) {
+    if (!awsRuntimeVerification || awsRuntimeVerification.contractVersion !== "deployguard.aws-runtime-verification/v1" || awsRuntimeVerification.verified !== true || !Array.isArray(awsRuntimeVerification.services)) {
       throw new Error("The release result artifact does not contain verified AWS runtime evidence.");
     }
     const terraform = artifact.terraform as Record<string, unknown>;
@@ -733,20 +747,34 @@ export class RailpackDeploymentService {
     if (outcomeServiceIds.length !== intendedServices.length || new Set(outcomeServiceIds).size !== intendedServices.length || intendedServices.some((service) => !outcomeServiceIds.includes(service.serviceId))) {
       throw new Error("AWS runtime verification does not cover the complete immutable service set.");
     }
-    for (const outcome of runtimeOutcomes) {
-      const intended = intendedServices.find((service) => service.serviceId === String(outcome.serviceId || ""));
-      if (outcome.verified !== true) continue;
-      const observedEnvironment = outcome.environment && typeof outcome.environment === "object" ? outcome.environment as Record<string, unknown> : null;
-      if (!intended || Number(outcome.runtimePort) !== intended.servicePort || !observedEnvironment || observedEnvironment.PORT !== String(intended.servicePort) || observedEnvironment.HOST !== "0.0.0.0") {
-        throw new Error("AWS runtime verification port evidence does not match the immutable per-service runtime configuration.");
-      }
-    }
-    const verifiedServiceIds = runtimeOutcomes
-      .filter((service) => service?.verified === true)
-      .map((service) => String(service.serviceId || ""));
-    const services = intendedServices.filter((service) => verifiedServiceIds.includes(service.serviceId));
     const database = terraform.database && typeof terraform.database === "object" ? terraform.database as Record<string, unknown> : null;
     const attached = expected.services.find((service) => service.databaseAttached);
+    if (awsRuntimeVerification.databaseVerified !== Boolean(attached)) throw new Error("AWS runtime verification does not match the immutable managed database contract.");
+    const equalObject = (left: unknown, right: unknown) => JSON.stringify(Object.entries(left && typeof left === "object" && !Array.isArray(left) ? left as Record<string, unknown> : {}).sort()) === JSON.stringify(Object.entries(right && typeof right === "object" && !Array.isArray(right) ? right as Record<string, unknown> : {}).sort());
+    for (const outcome of runtimeOutcomes) {
+      const intended = intendedServices.find((service) => service.serviceId === String(outcome.serviceId || ""));
+      const expectedService = expectedById.get(String(outcome.serviceId || ""));
+      const runtime = terraformServices[String(outcome.serviceId || "")];
+      if (outcome.verified !== true || !intended || !expectedService || !runtime) throw new Error("AWS runtime verification contains a failed or unknown service outcome.");
+      const observedEnvironment = outcome.environment && typeof outcome.environment === "object" ? outcome.environment as Record<string, unknown> : null;
+      const expectedEnvironment: Record<string, unknown> = { ...expectedService.environment };
+      const expectedSecrets: Record<string, unknown> = { ...expectedService.secretReferences };
+      const aliases = expectedService.databaseAttached ? expectedService.managedDatabase.aliases : [];
+      for (const key of aliases) {
+        if (/(PASSWORD|URL|URI)$/.test(key)) {
+          const field = /^(DATABASE_URL|POSTGRES_URL|POSTGRESQL_URL|MYSQL_URL|MONGO_URI|MONGO_URL|MONGODB_URI)$/.test(key) ? "url" : "password";
+          expectedSecrets[key] = `${String(database?.credentials_secret_arn || "")}:${field}::${String(database?.secret_version_id || "")}`;
+        } else if (/^(DB_HOST|DATABASE_HOST|POSTGRES_HOST|PGHOST|MYSQL_HOST|MONGO_HOST|MONGODB_HOST)$/.test(key)) expectedEnvironment[key] = database?.host;
+        else if (/^(DB_PORT|DATABASE_PORT|POSTGRES_PORT|PGPORT|MYSQL_PORT|MONGO_PORT|MONGODB_PORT)$/.test(key)) expectedEnvironment[key] = String(database?.port || "");
+        else if (/^(DB_USER|DATABASE_USER|POSTGRES_USER|PGUSER|MYSQL_USER|MONGO_USER|MONGODB_USER)$/.test(key)) expectedEnvironment[key] = "deployguard";
+        else expectedEnvironment[key] = "application";
+      }
+      const expectedManagedDatabase = expectedService.databaseAttached ? { attached: true, attachedServiceId: expectedService.serviceId, engine: expectedService.managedDatabase.engine, aliases, credentialsSecretArn: database?.credentials_secret_arn, secretVersionId: database?.secret_version_id } : { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null };
+      const runningTaskArns = Array.isArray(outcome.runningTaskArns) ? outcome.runningTaskArns : [];
+      const targetHealth = Array.isArray(outcome.targetHealth) ? outcome.targetHealth : [];
+      if (outcome.image !== intended.image || outcome.ecsServiceArn !== intended.ecsServiceArn || outcome.taskDefinitionArn !== intended.taskDefinitionArn || !runningTaskArns.length || Number(outcome.ecsTasksRunning) !== runningTaskArns.length || Number(outcome.runtimePort) !== intended.servicePort || outcome.targetGroupArn !== intended.targetGroupArn || !targetHealth.length || targetHealth.some((state) => state !== "healthy") || !equalObject(observedEnvironment, expectedEnvironment) || !equalObject(outcome.secretValueFrom, expectedSecrets) || !equalObject(outcome.managedDatabase, expectedManagedDatabase) || outcome.publicUrl !== intended.publicUrl || outcome.publicEndpointVerified !== true || outcome.taskDefinition !== true || outcome.secretsInjection !== true || outcome.vpcConnectivity !== true || outcome.publicReachability !== true || typeof outcome.checkedAt !== "string") throw new Error("AWS runtime verification does not match the complete immutable per-service runtime contract.");
+    }
+    const services = intendedServices;
     if ((attached && (!database || database.attached_service_id !== attached.serviceId || database.engine !== attached.managedDatabase.engine || typeof database.secret_version_id !== "string" || !database.secret_version_id)) || (!attached && database !== null)) {
       throw new Error("Release result does not match the independent managed database runtime contract.");
     }

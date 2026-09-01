@@ -50,11 +50,11 @@ function repositoryContracts() {
   const currentState = readFileSync(join(root, "backend/src/projects/current-state/project-current-state.service.ts"), "utf8");
   assert.match(infrastructure, /Source[\s\S]*Build[\s\S]*ECR[\s\S]*ECS[\s\S]*ALB[\s\S]*Application/);
   for (const supporting of ["Terraform", "CloudWatch", "Infracost"]) assert.match(infrastructure, new RegExp(supporting));
-  assert.match(infrastructure, /persisted Infracost evidence only/i);
-  assert.match(infrastructure, /Technical details/);
+  assert.match(infrastructure, /cost\?\.source === "infracost"/, "Infrastructure pricing remains gated by persisted Infracost evidence");
+  assert.match(infrastructure, /Technical infrastructure details/);
   assert.match(monitoring, /getProjectDetailedCurrentState/, "Monitoring must consume the same bounded AWS observation as Infrastructure");
   assert.doesNotMatch(monitoring, /getProjectCurrentState/);
-  for (const service of ["Application", "ECS", "Load Balancer", "Logs", "Metrics", "Grafana"]) assert.match(monitoring, new RegExp(`label="${service}"`));
+  for (const evidence of ["CPU", "Memory", "Latency", "Targets", "ECS task health", "ALB health", "Logs", "Grafana"]) assert.match(monitoring, new RegExp(evidence));
   for (const state of ["disabled_by_configuration", "temporarily_unavailable", "no_samples_yet"]) assert.match(monitoring, new RegExp(state));
   assert.match(workflow, /terraform -chdir=\.deployguard\/terraform plan -input=false -out=deployguard\.tfplan/);
   assert.match(workflow, /deployguard-cost-plan\.json/);

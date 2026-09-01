@@ -25,10 +25,10 @@ sanitize() {
 
 configuration_failure() {
   local service_id="$1" message="$2"
-  jq -cn --arg diagnosticCode AWS_RUNTIME_CONFIGURATION_MISMATCH --arg summary "$message" '{diagnosticCode:$diagnosticCode,summary:$summary}' \
-    | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2
   echo "DG_FAILURE serviceId=$service_id code=DG_AWS_RUNTIME_CONFIGURATION_FAILED stage=aws_runtime_verification" >&2
   append_outcome "$service_id" false DG_AWS_RUNTIME_CONFIGURATION_FAILED "$message"
+  jq -cn --arg diagnosticCode AWS_RUNTIME_CONFIGURATION_MISMATCH --arg summary "$message" '{diagnosticCode:$diagnosticCode,summary:$summary}' \
+    | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2 || true
   exit 1
 }
 
@@ -48,25 +48,52 @@ provider_failure() {
 
 ecs_diagnostics() {
   local service_id="$1" cluster="$2" service_name="$3" target_group="$4" log_group="$5"
-  local stopped_arns tasks service_description target_health logs start_ms
+  local stopped_arns tasks service_description target_health logs start_ms diagnostic
+  echo "DG_FAILURE serviceId=$service_id code=DG_ECS_STABILITY_FAILED stage=ecs_stability" >&2
+  append_outcome "$service_id" false DG_ECS_STABILITY_FAILED "ECS service stability or runtime-process verification failed."
   stopped_arns="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status STOPPED --max-results 20 --output json 2>/dev/null || printf '{"taskArns":[]}')"
   tasks='{"tasks":[]}'
   if [ "$(jq '.taskArns | length' <<<"$stopped_arns")" -gt 0 ]; then
     tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks $(jq -r '.taskArns[]' <<<"$stopped_arns") --output json 2>/dev/null || printf '{"tasks":[]}')"
   fi
   service_description="$(aws ecs describe-services --cluster "$cluster" --services "$service_name" --output json 2>/dev/null || printf '{"services":[]}')"
-  target_health="$(aws elbv2 describe-target-health --target-group-arn "$target_group" --output json 2>/dev/null || printf '{"TargetHealthDescriptions":[]}')"
+  target_health='{"TargetHealthDescriptions":[]}'
+  if [ -n "$target_group" ]; then
+    target_health="$(aws elbv2 describe-target-health --target-group-arn "$target_group" --output json 2>/dev/null || printf '{"TargetHealthDescriptions":[]}')"
+  fi
   start_ms="$(( $(date +%s) * 1000 - 900000 ))"
-  logs="$(aws logs filter-log-events --log-group-name "$log_group" --start-time "$start_ms" --limit 50 --output json 2>/dev/null || printf '{"events":[]}')"
-  jq -cn \
+  logs='{"events":[]}'
+  if [ -n "$log_group" ]; then
+    logs="$(aws logs filter-log-events --log-group-name "$log_group" --start-time "$start_ms" --limit 50 --output json 2>/dev/null || printf '{"events":[]}')"
+  fi
+  diagnostic="$(jq -cn \
     --argjson tasks "$tasks" --argjson service "$service_description" --argjson target "$target_health" --argjson logs "$logs" '
-      ($tasks.tasks | sort_by(.stoppedAt // "") | last // {}) as $task |
-      ($task.containers | map(select(.name == "application")) | first // $task.containers[0] // {}) as $container |
-      {diagnosticCode:"ECS_STABILITY_FAILED",stopCode:($task.stopCode//null),stoppedTaskReason:($task.stoppedReason//null),containerExitCode:($container.exitCode//null),containerReason:($container.reason//null),taskEvents:([$service.services[0].events[0:12][]?.message][0:12]),targetHealth:([$target.TargetHealthDescriptions[0:20][]?|{state:(.TargetHealth.State//null),reason:(.TargetHealth.Reason//null),description:(.TargetHealth.Description//null)}]),logLines:([$logs.events[-25:][]?.message][0:25])}' \
-    | sanitize | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2
-  echo "DG_FAILURE serviceId=$service_id code=DG_ECS_STABILITY_FAILED stage=ecs_stability" >&2
-  append_outcome "$service_id" false DG_ECS_STABILITY_FAILED "ECS service stability or runtime-process verification failed."
+      (($tasks.tasks // []) | sort_by(.stoppedAt // "") | last // {}) as $task |
+      (($task.containers // []) | map(select(.name == "application")) | first // (($task.containers // [])[0]) // {}) as $container |
+      {diagnosticCode:"ECS_STABILITY_FAILED",stopCode:($task.stopCode//null),stoppedTaskReason:($task.stoppedReason//null),containerExitCode:($container.exitCode//null),containerReason:($container.reason//null),taskEvents:((($service.services // [])[0].events // [])[0:12] | map(.message // null)),targetHealth:(($target.TargetHealthDescriptions // [])[0:20] | map({state:(.TargetHealth.State//null),reason:(.TargetHealth.Reason//null),description:(.TargetHealth.Description//null)})),logLines:(($logs.events // [])[-25:] | map(.message // null))}' 2>/dev/null || printf '{"diagnosticCode":"ECS_STABILITY_FAILED","diagnosticsUnavailable":true}')"
+  printf '%s\n' "$diagnostic" | sanitize | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2 || true
   exit 1
+}
+
+wait_for_target_health() {
+  local service_id="$1" target_group="$2" expected_targets="$3" attempt detail
+  local max_attempts="${DEPLOYGUARD_TARGET_HEALTH_MAX_ATTEMPTS:-20}"
+  local interval_seconds="${DEPLOYGUARD_TARGET_HEALTH_INTERVAL_SECONDS:-6}"
+  target_health='{"TargetHealthDescriptions":[]}'
+  for ((attempt=1; attempt<=max_attempts; attempt++)); do
+    detail="$(aws elbv2 describe-target-health --target-group-arn "$target_group" --output json 2>&1)" || provider_failure "$service_id" "$detail"
+    target_health="$detail"
+    if jq -e --argjson expected "$expected_targets" '
+      ([.TargetHealthDescriptions[]?.Target.Id] | sort | unique) == ($expected | sort | unique)
+      and ($expected | length > 0)
+      and (.TargetHealthDescriptions | length == ($expected | length))
+      and all(.TargetHealthDescriptions[]; .TargetHealth.State == "healthy")
+    ' <<<"$target_health" >/dev/null; then
+      return 0
+    fi
+    [ "$attempt" -eq "$max_attempts" ] || sleep "$interval_seconds"
+  done
+  return 1
 }
 
 cluster="$(jq -r '.ecs_cluster_name' "$outputs")"
@@ -105,7 +132,7 @@ fi
 
 verify_service() {
   local service="$1" service_id deployed expected service_name target_group log_group service_description task_definition_arn task_definition expected_image expected_port
-  local database expected_environment expected_secrets managed_database application_sg alb_sg security_group target_group_description running tasks target_health check
+  local database expected_environment expected_secrets managed_database application_sg alb_sg security_group target_group_description running tasks target_health expected_targets check
   service_id="$(jq -r '.key' <<<"$service")"; deployed="$(jq -c '.value' <<<"$service")"
   expected="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' "$runtime")"
   service_name="$(jq -r '.ecs_service_name' <<<"$deployed")"; target_group="$(jq -r '.alb_target_group_arn' <<<"$deployed")"; log_group="$(jq -r '.cloudwatch_log_group_name' <<<"$deployed")"
@@ -155,8 +182,9 @@ verify_service() {
   jq -e '.taskArns | length > 0' <<<"$running" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks $(jq -r '.taskArns[]' <<<"$running") --output json 2>&1)" || provider_failure "$service_id" "$tasks"
   jq -e --arg task "$task_definition_arn" 'all(.tasks[]; .lastStatus == "RUNNING" and .taskDefinitionArn == $task and any(.containers[]; .name == "application" and .lastStatus == "RUNNING"))' <<<"$tasks" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
-  target_health="$(aws elbv2 describe-target-health --target-group-arn "$target_group" --output json 2>&1)" || provider_failure "$service_id" "$target_health"
-  jq -e '.TargetHealthDescriptions | length > 0 and all(.[]; .TargetHealth.State == "healthy")' <<<"$target_health" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
+  expected_targets="$(jq -c '[.tasks[]?.attachments[]?.details[]? | select(.name == "privateIPv4Address") | .value] | sort | unique' <<<"$tasks")"
+  jq -e 'length > 0' <<<"$expected_targets" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
+  wait_for_target_health "$service_id" "$target_group" "$expected_targets" || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   curl --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused --output /dev/null "$(jq -r '.public_url' <<<"$deployed")" || { echo "DG_FAILURE serviceId=$service_id code=DG_PUBLIC_REACHABILITY_FAILED stage=public_health" >&2; append_outcome "$service_id" false DG_PUBLIC_REACHABILITY_FAILED "The verified service endpoint is not publicly reachable."; exit 1; }
   check="$(jq -cn \
     --arg serviceId "$service_id" \
@@ -176,13 +204,20 @@ verify_service() {
   jq --argjson check "$check" '. + [$check]' "$evidence" > "$evidence.next"; mv "$evidence.next" "$evidence"
 }
 
+verification_failed="$database_failed"
 while IFS= read -r service; do
   service_id="$(jq -r '.key' <<<"$service")"
   if [ "$database_failed" = true ] && [ "$service_id" = "$database_id" ]; then
     continue
   fi
-  (verify_service "$service") || true
+  if ! (verify_service "$service"); then
+    verification_failed=true
+  fi
 done < <(jq -c '.services | to_entries[]' "$outputs")
 
 jq -n --arg contractVersion deployguard.aws-runtime-verification/v1 --arg verifiedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson services "$(cat "$evidence")" --argjson databaseVerified "$([ -n "$database_service" ] && [ "$database_failed" = false ] && echo true || echo false)" '{contractVersion:$contractVersion,verified:($services | all(.verified == true)),verifiedAt:$verifiedAt,services:$services,databaseVerified:$databaseVerified}' > "$evidence.next"
 mv "$evidence.next" "$evidence"
+
+if [ "$verification_failed" = true ] || ! jq -e '.verified == true and all(.services[]; .verified == true)' "$evidence" >/dev/null; then
+  exit 1
+fi

@@ -11,6 +11,7 @@ import {
 import ErrorState from "../common/ErrorState.jsx";
 import { retryGithubActionsDeployment } from "../../api/projectApi.js";
 import { useToast } from "../../hooks/useToast.js";
+import { pipelineStageDurationEnd } from "../../utils/pipelineStageTiming.js";
 
 function date(value) {
   return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Unavailable";
@@ -32,8 +33,8 @@ function operationEnd(operation) {
   return operation?.completedAt || operation?.failedAt || null;
 }
 
-function stageDurationLabel(stage) {
-  return stage.status === "skipped" ? "Not run" : stage.status === "pending" ? "Not started" : duration(stage.startedAt, stage.completedAt || new Date().toISOString());
+function stageDurationLabel(stage, operation) {
+  return stage.status === "skipped" ? "Not run" : stage.status === "pending" ? "Not started" : duration(stage.startedAt, pipelineStageDurationEnd(stage, operation));
 }
 
 function resultLabel(operation) {
@@ -111,7 +112,7 @@ export default function PipelineExecution({ canManage = false, currentState, onR
       {latest?.dispatchFailure ? <p className="pipeline-unavailable"><strong>GitHub Actions run was not created.</strong> DeployGuard stopped during dispatch: {latest.errorMessage || "The persisted dispatch failure has no additional safe detail."}</p> : stages.length ? <ol aria-label="GitHub Actions workflow stages" className="pipeline-stage-timeline">
         {stages.map((stage) => <li className={`pipeline-stage-row is-${stage.status}`} key={`${stage.key}-${stage.startedAt || "pending"}`}>
           <span aria-hidden="true" className="pipeline-stage-icon"><AppIcon name={stageIcon(stage)} size={18} /></span>
-          <div className="pipeline-stage-main"><div className="pipeline-stage-title"><strong>{stage.label}</strong><StatusChip status={stage.status} /></div><p>{stageDurationLabel(stage)}</p></div>
+          <div className="pipeline-stage-main"><div className="pipeline-stage-title"><strong>{stage.label}</strong><StatusChip status={stage.status} /></div><p>{stageDurationLabel(stage, latest)}</p></div>
           <div className="pipeline-stage-times"><span>Started {date(stage.startedAt)}</span><span>Completed {date(stage.completedAt)}</span></div>
           <details className="pipeline-stage-evidence"><summary>Evidence</summary><p>Source: GitHub Actions workflow job.</p>{stage.jobUrl ? <a href={stage.jobUrl} rel="noreferrer" target="_blank">Open GitHub Actions job</a> : null}{stage.failureReason ? <p className="pipeline-stage-failure">{stage.failureReason}</p> : null}</details>
         </li>)}

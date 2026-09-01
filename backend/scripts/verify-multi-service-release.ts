@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { RailpackDeploymentService, promotedServiceRevisions } from "../src/projects/railpack-deployment.service";
+import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { servicesBase64, RailpackRuntimeConfiguration } from "../src/projects/railpack-workflow-contract";
 import { resolveProjectApplicationUrl } from "../src/projects/application-entrypoint";
 
@@ -88,8 +88,6 @@ writeFileSync(evidencePath, JSON.stringify({ ...awsRuntimeVerification, services
 const rejected = spawnSync("bash", [producer, "deploy", "deployguard.release-result/v5", sourceSha, operationId, artifactsPath, terraformPath, evidencePath, join(handoffDirectory, "invalid-result.json")], { encoding: "utf8" });
 assert.notEqual(rejected.status, 0, "the workflow producer must fail before upload when terminal AWS evidence is incomplete");
 assert.match(rejected.stderr, /DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation/);
-rmSync(handoffDirectory, { recursive: true, force: true });
-
 const valid = service.validatedReleaseEvidence(operation, artifact);
 assert.equal(valid.services.length, 2);
 assert.deepEqual(valid.services.map((item: any) => item.serviceId), ids);
@@ -100,9 +98,50 @@ for (const invalid of [
   { ...artifact, awsRuntimeVerification: { ...artifact.awsRuntimeVerification, services: [{ serviceId: ids[0], verified: true }] } },
 ]) assert.throws(() => service.validatedReleaseEvidence(operation, invalid), /complete|does not match/);
 const partialArtifact = { ...artifact, awsRuntimeVerification: { ...artifact.awsRuntimeVerification, verified: false, services: [runtimeOutcomes[0], { serviceId: ids[1], verified: false, failureCode: "DG_ECS_STABILITY_FAILED" }] } };
-const partial = service.validatedReleaseEvidence(operation, partialArtifact);
-assert.deepEqual(partial.services.map((item: any) => item.serviceId), [ids[0]], "only the independently verified service is eligible for promotion");
-const candidateA = { serviceId: ids[0], revision: "candidate-a" };
-assert.deepEqual(promotedServiceRevisions([candidateA], ids), [candidateA], "A is promoted while failed B remains outside LIVE authority");
+assert.throws(() => service.validatedReleaseEvidence(operation, partialArtifact), /verified AWS runtime evidence|failed or unknown service outcome/, "verified=false cannot be consumed as a successful release");
+writeFileSync(evidencePath, JSON.stringify(partialArtifact.awsRuntimeVerification), "utf8");
+for (const action of ["deploy", "rollback"] as const) {
+  const partialProduced = spawnSync("bash", [producer, action, "deployguard.release-result/v5", sourceSha, operationId, artifactsPath, terraformPath, evidencePath, join(handoffDirectory, `partial-${action}-result.json`)], { encoding: "utf8" });
+  assert.notEqual(partialProduced.status, 0, `verified=false cannot produce a successful ${action} release result`);
+  assert.match(partialProduced.stderr, /DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation/);
+}
+rmSync(handoffDirectory, { recursive: true, force: true });
+
+const shapes = [
+  { name: "flask-root", directories: ["."], ports: [5000], databaseEngine: null },
+  { name: "fullstack-mongodb", directories: ["frontend", "backend"], ports: [2997, 5000], databaseEngine: "mongodb" },
+  { name: "rentmate-mongodb", directories: ["frontend", "backend"], ports: [3000, 3001], databaseEngine: "mongodb" },
+  { name: "smart-retail-postgresql", directories: ["."], ports: [4997], databaseEngine: "postgres" },
+] as const;
+for (const shape of shapes) {
+  const selectedIds = ids.slice(0, shape.ports.length);
+  const attachedServiceId = shape.databaseEngine ? selectedIds.at(-1)! : null;
+  const shapeDatabase = shape.databaseEngine ? { ...database, attached_service_id: attachedServiceId, engine: shape.databaseEngine, port: shape.databaseEngine === "mongodb" ? 27017 : 5432 } : null;
+  const shapeServices = selectedIds.map((serviceId, index) => ({
+    ...runtime.services[index], serviceId, serviceName: index ? "Backend" : shape.ports.length > 1 ? "Frontend" : "Application", serviceDirectory: shape.directories[index], servicePort: shape.ports[index],
+    environment: { PORT: String(shape.ports[index]), HOST: "0.0.0.0", RELEASE: index ? "api" : "web" },
+    databaseAttached: serviceId === attachedServiceId,
+    managedDatabase: serviceId === attachedServiceId ? { engine: shape.databaseEngine, aliases: [shape.databaseEngine === "mongodb" ? "MONGODB_URI" : "DATABASE_URL"] } : { engine: null, aliases: [] },
+  }));
+  const shapeRuntime: RailpackRuntimeConfiguration = { ...runtime, services: shapeServices as RailpackRuntimeConfiguration["services"] };
+  const shapeTerraformServices = Object.fromEntries(shapeServices.map((expected, index) => [expected.serviceId, { ...terraformServices[expected.serviceId], service_port: expected.servicePort, public_url: `http://${shape.name}-${index}.example.test` }]));
+  const shapeArtifacts = shapeServices.map((expected, index) => ({ ...serviceEvidence[index], serviceId: expected.serviceId, serviceName: expected.serviceName, serviceDirectory: expected.serviceDirectory, servicePort: expected.servicePort }));
+  const shapeOutcomes = shapeServices.map((expected, index) => {
+    const managedSecret = expected.databaseAttached ? { [expected.managedDatabase.aliases[0]]: `${shapeDatabase!.credentials_secret_arn}:url::${shapeDatabase!.secret_version_id}` } : {};
+    return { ...runtimeOutcomes[index], serviceId: expected.serviceId, image: shapeTerraformServices[expected.serviceId].image, ecsServiceArn: shapeTerraformServices[expected.serviceId].ecs_service_arn, taskDefinitionArn: shapeTerraformServices[expected.serviceId].task_definition_arn, runtimePort: expected.servicePort, targetGroupArn: shapeTerraformServices[expected.serviceId].alb_target_group_arn, environment: expected.environment, secretValueFrom: { ...expected.secretReferences, ...managedSecret }, managedDatabase: expected.databaseAttached ? { attached: true, attachedServiceId: expected.serviceId, engine: shape.databaseEngine, aliases: expected.managedDatabase.aliases, credentialsSecretArn: shapeDatabase!.credentials_secret_arn, secretVersionId: shapeDatabase!.secret_version_id } : { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null }, publicUrl: shapeTerraformServices[expected.serviceId].public_url };
+  });
+  const shapeTerraform = { ...terraform, services: shapeTerraformServices, database: shapeDatabase };
+  const shapeVerification = { ...awsRuntimeVerification, services: shapeOutcomes, databaseVerified: Boolean(shapeDatabase) };
+  const shapeDirectory = mkdtempSync(join(tmpdir(), `deployguard-${shape.name}-`));
+  const shapeArtifactsPath = join(shapeDirectory, "artifacts.json"); const shapeTerraformPath = join(shapeDirectory, "terraform.json"); const shapeEvidencePath = join(shapeDirectory, "evidence.json"); const shapeResultPath = join(shapeDirectory, "result.json");
+  writeFileSync(shapeArtifactsPath, JSON.stringify(shapeArtifacts), "utf8"); writeFileSync(shapeTerraformPath, JSON.stringify(shapeTerraform), "utf8"); writeFileSync(shapeEvidencePath, JSON.stringify(shapeVerification), "utf8");
+  const producedShape = spawnSync("bash", [producer, "deploy", "deployguard.release-result/v5", sourceSha, operationId, shapeArtifactsPath, shapeTerraformPath, shapeEvidencePath, shapeResultPath], { encoding: "utf8" });
+  assert.equal(producedShape.status, 0, `${shape.name}: ${producedShape.stderr}`);
+  const shapeOperation: any = { ...operation, metadata: { deploymentAction: "deploy", immutableDispatchInputs: { services_base64: servicesBase64(shapeRuntime) } } };
+  const parsedShape = service.validatedReleaseEvidence(shapeOperation, JSON.parse(readFileSync(shapeResultPath, "utf8")));
+  assert.deepEqual(parsedShape.services.map((item: any) => [item.serviceDirectory, item.servicePort]), shape.directories.map((directory, index) => [directory, shape.ports[index]]));
+  assert.equal(parsedShape.awsRuntimeVerification.databaseVerified, Boolean(shapeDatabase));
+  rmSync(shapeDirectory, { recursive: true, force: true });
+}
 const release: any = { id: "55555555-5555-4555-8555-555555555555", generationId: operationId, deployedByPipelineRunId: operationId, commitSha: sourceSha, metadata: { releaseEvidenceVerified: true, services: valid.services } };
-console.log("MULTI_SERVICE_RELEASE=PASS COMPLETE_OUTCOMES_REQUIRED=1 TERMINAL_EVIDENCE_HANDOFF=1 RUNTIME_CONFIG_IDS=1 PARTIAL_PROMOTION=1 FAILED_SERVICE_LIVE=0");
+console.log("MULTI_SERVICE_RELEASE=PASS COMPLETE_OUTCOMES_REQUIRED=1 TERMINAL_EVIDENCE_HANDOFF=1 RUNTIME_CONFIG_IDS=1 VERIFIED_FALSE_REJECTED=1 FLASK_SHAPE=1 FULLSTACK_SHAPE=1 RENTMATE_SHAPE=1 SMART_RETAIL_SHAPE=1 FAILED_SERVICE_LIVE=0");

@@ -48,7 +48,7 @@ assert.match(portMigration, /ADD COLUMN "service_port" integer NOT NULL DEFAULT 
 assert.match(portMigration, /"service_port" BETWEEN 1 AND 65535/);
 assert.match(newProject, /name: "Web", serviceDirectory: "", servicePort: "8080"/);
 assert.match(newProject, /name: `Service \$\{current\.length \+ 1\}`, serviceDirectory: "", servicePort: "8080"/);
-assert.match(newProject, /<span>Application Port<\/span>/);
+assert.match(newProject, /<span>Application port<\/span>/);
 assert.match(newProject, /servicePort: Number\(servicePort\)/);
 assert.match(newProject, /function compareDirectoryPresentation/);
 assert.match(newProject, /<option value="">Choose a directory<\/option>\{rankedDirectories\.map/);
