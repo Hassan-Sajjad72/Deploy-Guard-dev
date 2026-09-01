@@ -17,7 +17,7 @@ function executable(path: string, source: string) {
   chmodSync(path, 0o755);
 }
 
-function verify(mode: "correct" | "wrong_env" | "wrong_secret" | "wrong_port" | "empty_diagnostics" | "target_converges" | "target_timeout") {
+function verify(mode: "correct" | "wrong_env" | "wrong_secret" | "wrong_port" | "empty_diagnostics" | "target_converges" | "target_timeout" | "old_target_draining" | "unexpected_target_healthy" | "expected_target_unhealthy") {
   const directory = mkdtempSync(join(tmpdir(), "deployguard-terminal-bindings-"));
   const bin = join(directory, "bin");
   mkdirSync(bin);
@@ -48,6 +48,12 @@ function verify(mode: "correct" | "wrong_env" | "wrong_secret" | "wrong_port" | 
   "elbv2 describe-target-health")
     if [ "$BINDING_MODE" = empty_diagnostics ] || [ "$BINDING_MODE" = target_timeout ]; then
       printf '%s\n' '{"TargetHealthDescriptions":[]}'
+    elif [ "$BINDING_MODE" = old_target_draining ]; then
+      printf '%s\n' '{"TargetHealthDescriptions":[{"Target":{"Id":"10.0.0.4","Port":8080},"TargetHealth":{"State":"draining"}},{"Target":{"Id":"10.0.0.5","Port":8080},"TargetHealth":{"State":"healthy"}}]}'
+    elif [ "$BINDING_MODE" = unexpected_target_healthy ]; then
+      printf '%s\n' '{"TargetHealthDescriptions":[{"Target":{"Id":"10.0.0.4","Port":8080},"TargetHealth":{"State":"healthy"}},{"Target":{"Id":"10.0.0.5","Port":8080},"TargetHealth":{"State":"healthy"}}]}'
+    elif [ "$BINDING_MODE" = expected_target_unhealthy ]; then
+      printf '%s\n' '{"TargetHealthDescriptions":[{"Target":{"Id":"10.0.0.5","Port":8080},"TargetHealth":{"State":"unhealthy","Reason":"Target.ResponseCodeMismatch"}}]}'
     elif [ "$BINDING_MODE" = target_converges ]; then
       count=0; [ ! -f '${counter}' ] || count="$(cat '${counter}')"; count=$((count + 1)); printf '%s' "$count" > '${counter}'
       if [ "$count" -lt 2 ]; then printf '%s\n' '{"TargetHealthDescriptions":[{"Target":{"Id":"10.0.0.5"},"TargetHealth":{"State":"initial","Reason":"Elb.RegistrationInProgress"}}]}'
@@ -89,6 +95,20 @@ for (const mode of ["wrong_env", "wrong_secret", "wrong_port"] as const) {
 const converged = verify("target_converges");
 assert.equal(converged.result.status, 0, converged.result.stderr);
 assert.equal(converged.observed.verified, true, "bounded target-health observation accepts the exact target set after it converges");
+const rolling = verify("old_target_draining");
+assert.equal(rolling.result.status, 0, rolling.result.stderr);
+assert.equal(rolling.observed.verified, true, "a healthy current ECS task target passes while an old target is legitimately draining");
+assert.deepEqual(rolling.observed.services[0].targetHealth, ["healthy"], "release evidence describes current expected target health only");
+assert.deepEqual(rolling.observed.services[0].targetRegistrations.map((target: any) => [target.targetId, target.state]), [["10.0.0.4", "draining"], ["10.0.0.5", "healthy"]]);
+for (const mode of ["unexpected_target_healthy", "expected_target_unhealthy"] as const) {
+  const failed = verify(mode);
+  assert.notEqual(failed.result.status, 0, `${mode} must fail closed`);
+  assert.equal(failed.observed.verified, false);
+  assert.equal(failed.observed.services[0].failureCode, "DG_ECS_STABILITY_FAILED");
+  assert.equal(failed.observed.services[0].stage, "ecs_stability");
+  assert.match(failed.observed.services[0].failureMarker, new RegExp(`DG_FAILURE serviceId=${serviceId}`));
+  assert.ok(Array.isArray(failed.observed.services[0].diagnostics.targetHealth), "bounded structured ALB diagnostics remain in the failed verifier evidence");
+}
 const timedOut = verify("target_timeout");
 assert.notEqual(timedOut.result.status, 0, "target-health convergence timeout must fail terminal verification");
 assert.match(timedOut.result.stderr, new RegExp(`DG_FAILURE serviceId=${serviceId} code=DG_ECS_STABILITY_FAILED stage=ecs_stability`));
@@ -97,4 +117,4 @@ assert.notEqual(emptyDiagnostics.result.status, 0);
 assert.match(emptyDiagnostics.result.stderr, /DG_ECS_DIAGNOSTICS/);
 assert.match(emptyDiagnostics.result.stderr, new RegExp(`DG_FAILURE serviceId=${serviceId} code=DG_ECS_STABILITY_FAILED stage=ecs_stability`));
 assert.doesNotMatch(emptyDiagnostics.result.stderr, /Cannot iterate over null|jq: error/, "empty stopped tasks, containers, ECS events, targets, and log events remain null-safe");
-console.log("TERMINAL_RUNTIME_BINDINGS=PASS EXACT_ENV=1 EXACT_SECRET_VALUE_FROM=1 FAILURE_PROPAGATION=1 NULL_SAFE_DIAGNOSTICS=1 TARGET_HEALTH_CONVERGENCE=1");
+console.log("TERMINAL_RUNTIME_BINDINGS=PASS EXACT_ENV=1 EXACT_SECRET_VALUE_FROM=1 FAILURE_PROPAGATION=1 NULL_SAFE_DIAGNOSTICS=1 TARGET_HEALTH_CONVERGENCE=1 ROLLING_DRAINING_ALLOWED=1 UNEXPECTED_ACTIVE_TARGET_REJECTED=1");
