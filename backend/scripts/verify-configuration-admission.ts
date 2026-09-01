@@ -15,7 +15,7 @@ import { RAILPACK_WORKFLOW_INPUTS } from "../src/projects/railpack-workflow-cont
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 
 void (async () => {
-const canonicalSha = "a9bcc72df2047de64cb4034960d4df72da3e9c1f";
+const canonicalSha = "a077458565d27a4c2cf4b039f68908f1b71052e3";
 const canonicalReusable = `Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@${canonicalSha}`;
 const emptyConfig = new ConfigService({});
 const github = new GithubAppService({

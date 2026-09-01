@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { ConfigService } from "@nestjs/config";
 import { canonicalDeployguardReusableWorkflow, renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
 
-const canonicalSha = "a9bcc72df2047de64cb4034960d4df72da3e9c1f";
+const canonicalSha = "a077458565d27a4c2cf4b039f68908f1b71052e3";
 const release = `Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@${canonicalSha}`;
 const retiredSha = "2a769bd922a2561876d71def13d306360958d8d9";
 assert.throws(() => canonicalDeployguardReusableWorkflow(new ConfigService({})), /release revision is not configured/i);
