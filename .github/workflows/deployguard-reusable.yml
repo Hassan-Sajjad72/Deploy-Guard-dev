@@ -208,7 +208,7 @@ jobs:
                 printf -v "$key" '%s' "$value"; export "${key?}"; runtime_names+=("$key"); runtime_args+=(--env "$key")
               done < <(jq -r '.managedDatabase.aliases[]' <<<"$service")
             fi
-            docker run --detach --name "$container" --network "$network" "${runtime_args[@]}" "$expected_image_id" >/dev/null
+            docker run --detach --name "$container" --network "$network" "${runtime_args[@]}" --env PORT=8080 --env HOST=0.0.0.0 "$expected_image_id" >/dev/null
             ready=false
             # The inner Bash receives the container/IP as positional parameters; expansion here would be wrong.
             # shellcheck disable=SC2016
@@ -329,11 +329,8 @@ jobs:
               actual_database_version="$(jq -r '.database.secret_version_id // empty' .deployguard/terraform-outputs.json)"
               [ -z "$expected_database_version" ] || [ "$actual_database_version" = "$expected_database_version" ] || { echo 'DG_FAILURE code=DG_DATABASE_SECRET_VERSION_MISMATCH stage=terraform_apply' >&2; exit 1; }
             fi
-            cluster="$(jq -r '.ecs_cluster_name' .deployguard/terraform-outputs.json)"
-            database_service="$(jq -r '.database.ecs_service_name // empty' .deployguard/terraform-outputs.json)"
-            [ -z "$database_service" ] || aws ecs wait services-stable --cluster "$cluster" --services "$database_service" || { echo 'DG_FAILURE code=DG_DATABASE_STABILITY_FAILED stage=ecs_stability' >&2; exit 1; }
-            while IFS= read -r service; do service_id="$(jq -r '.key' <<<"$service")"; runtime="$(jq -c '.value' <<<"$service")"; aws ecs wait services-stable --cluster "$cluster" --services "$(jq -r '.ecs_service_name' <<<"$runtime")" || { echo "DG_FAILURE serviceId=$service_id code=DG_ECS_STABILITY_FAILED stage=ecs_stability" >&2; exit 1; }; curl --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused --output /dev/null "$(jq -r '.public_url' <<<"$runtime")" || { echo "DG_FAILURE serviceId=$service_id code=DG_PUBLIC_REACHABILITY_FAILED stage=public_health" >&2; exit 1; }; done < <(jq -c '.services | to_entries[]' .deployguard/terraform-outputs.json)
-            jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --argjson artifacts "$(cat .deployguard/service-artifacts.json)" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,services:($artifacts|map(. as $artifact|. + ($terraform.services[.serviceId] // {}))),terraform:$terraform}' > .deployguard/release-runtime.json
+            bash .deployguard/terraform/verify-runtime.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/aws-runtime-verification.json
+            jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --argjson artifacts "$(cat .deployguard/service-artifacts.json)" --argjson terraform "$(cat .deployguard/terraform-outputs.json)" --argjson awsRuntimeVerification "$(cat .deployguard/aws-runtime-verification.json)" '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,services:($artifacts|map(. as $artifact|. + ($terraform.services[.serviceId] // {}))),terraform:$terraform,awsRuntimeVerification:$awsRuntimeVerification}' > .deployguard/release-runtime.json
           fi
           mkdir -p terraform; cp .deployguard/release-runtime.json terraform/deployguard-result.json
           if [ -f .deployguard/terraform/deployguard-cost-plan.json ]; then

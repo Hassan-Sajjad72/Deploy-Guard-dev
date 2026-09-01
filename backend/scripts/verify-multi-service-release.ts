@@ -16,7 +16,7 @@ const serviceEvidence = runtime.services.map((expected, index) => {
   return { ...expected, environment: undefined, secretReferences: undefined, databaseAttached: undefined, managedDatabase: undefined, imageUri, imageDigest, image: `${imageUri}@${imageDigest}` };
 });
 const terraformServices = Object.fromEntries(serviceEvidence.map((item, index) => [item.serviceId, { image: item.image, runtime_config_revision_id: item.runtimeConfigRevisionId, public_url: `http://service-${index}.example.test`, task_definition_arn: `arn:aws:ecs:us-east-1:123456789012:task-definition/dg-${index}:1`, ecs_service_arn: `arn:aws:ecs:us-east-1:123456789012:service/dg/dg-${index}`, ecs_service_name: `dg-${index}`, alb_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/${index}`, alb_name: `dg-${index}`, alb_target_group_arn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/${index}`, alb_target_group_name: `dg-${index}`, cloudwatch_log_group_name: `/deployguard/${projectId}/services/${item.serviceId}`, application_container_name: "application" }]));
-const artifact: any = { contractVersion: "deployguard.release-result/v4", action: "deploy", sourceSha, operationId, services: serviceEvidence, terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: terraformServices, database: null } };
+const artifact: any = { contractVersion: "deployguard.release-result/v4", action: "deploy", sourceSha, operationId, services: serviceEvidence, terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: terraformServices, database: null }, awsRuntimeVerification: { contractVersion: "deployguard.aws-runtime-verification/v1", verified: true, verifiedAt: "2026-09-01T00:00:00Z", services: ids.map((serviceId) => ({ serviceId, verified: true })) } };
 
 const valid = service.validatedReleaseEvidence(operation, artifact);
 assert.equal(valid.services.length, 2);
@@ -25,6 +25,7 @@ for (const invalid of [
   { ...artifact, services: artifact.services.slice(0, 1) },
   { ...artifact, services: [artifact.services[0], artifact.services[0]] },
   { ...artifact, terraform: { ...artifact.terraform, services: { [ids[0]]: terraformServices[ids[0]] } } },
+  { ...artifact, awsRuntimeVerification: { ...artifact.awsRuntimeVerification, services: [{ serviceId: ids[0], verified: true }] } },
 ]) assert.throws(() => service.validatedReleaseEvidence(operation, invalid), /complete|does not match/);
 const release: any = { id: "55555555-5555-4555-8555-555555555555", generationId: operationId, deployedByPipelineRunId: operationId, commitSha: sourceSha, metadata: { releaseEvidenceVerified: true, services: valid.services } };
 console.log("MULTI_SERVICE_RELEASE=PASS COMPLETE_SET_REQUIRED=1 RUNTIME_CONFIG_IDS=1 PARTIAL_PROMOTION=0");

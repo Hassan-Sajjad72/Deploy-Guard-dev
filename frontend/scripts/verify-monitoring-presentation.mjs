@@ -37,6 +37,7 @@ assert.match(page, /getApplicationRuntimeMetrics\(projectId, \{ range, serviceId
 assert.match(page, /getApplicationLogStreamUrl\(projectId, serviceId\)/);
 assert.match(api, /params\.set\("serviceId", options\.serviceId\)/);
 assert.match(resolver, /selectedServiceId|requestedServiceId/);
+assert.match(resolver, /resolveApplicationEntrypointServiceId\([\s\S]*project\.applicationEntryPointServiceId/);
 assert.match(logs, /serviceId !== resolved\.serviceId/, "log identity changes when the selected service changes");
 assert.match(page, /metricsState === "no_samples_yet"/);
 for (const item of ["Runtime telemetry", "Last scrape", "AWS observation", "Evidence freshness", "ALB health", "ECS task health", "Grafana"]) assert.match(page, new RegExp(item));

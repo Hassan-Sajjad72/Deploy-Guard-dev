@@ -17,6 +17,7 @@ import { ProjectStableRelease, StableReleaseStatus } from "../orchestration/proj
 import { canonicalEnvironmentName } from "../projects/canonical-environment";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "../projects/project-deployment-generation.entity";
 import { Project, ProjectStatus } from "../projects/project.entity";
+import { resolveApplicationEntrypointServiceId } from "../projects/application-entrypoint";
 import { User, UserRole } from "../users/user.entity";
 import { LiveRuntimeIdentityRecoveryService } from "../projects/current-state/live-runtime-identity-recovery.service";
 
@@ -113,10 +114,16 @@ export class LiveRuntimeResolverService {
     const persistedServices = Array.isArray(manifest.services)
       ? manifest.services.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object")
       : [];
-    const selected = requestedServiceId
-      ? persistedServices.find((service) => service.serviceId === requestedServiceId)
-      : persistedServices.length ? persistedServices.reduce((chosen, service) => String(service.serviceId).localeCompare(String(chosen.serviceId)) < 0 ? service : chosen) : undefined;
+    const defaultServiceId = resolveApplicationEntrypointServiceId(
+      project.applicationEntryPointServiceId,
+      persistedServices,
+    );
+    const selectedServiceId = requestedServiceId || defaultServiceId;
+    const selected = selectedServiceId
+      ? persistedServices.find((service) => service.serviceId === selectedServiceId)
+      : undefined;
     if (requestedServiceId && !selected) throw new BadRequestException("The selected service is not part of the authoritative LIVE generation.");
+    if (!requestedServiceId && !selected) throw new RuntimeIdentityUnavailableException("The authoritative application entrypoint service is unavailable in the LIVE generation.");
     const selectedString = (key: string) => typeof selected?.[key] === "string" ? String(selected[key]) : "";
     const serviceId = selectedString("serviceId");
     const cacheKey = `${project.id}:${serviceId}`;

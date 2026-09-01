@@ -1,6 +1,8 @@
 output "aws_region" { value = var.region }
 output "ecs_cluster_arn" { value = aws_ecs_cluster.project.arn }
 output "ecs_cluster_name" { value = aws_ecs_cluster.project.name }
+output "vpc_id" { value = var.vpc_id }
+output "public_subnet_ids" { value = var.public_subnet_ids }
 output "services" {
   value = { for id, service in var.services : id => {
     name                       = service.name
@@ -16,6 +18,7 @@ output "services" {
     public_url                 = "http://${aws_lb.application[id].dns_name}"
     cloudwatch_log_group_name  = aws_cloudwatch_log_group.application[id].name
     application_container_name = "application"
+    security_group_id           = aws_security_group.application[id].id
   } }
 }
 output "database_efs_file_system_id" { value = local.database_enabled ? aws_efs_file_system.database[0].id : null }
@@ -34,6 +37,10 @@ output "database" {
     efs_access_point_id       = aws_efs_access_point.database[0].id
     credentials_secret_arn    = aws_secretsmanager_secret.database[0].arn
     secret_version_id         = aws_secretsmanager_secret_version.database[0].version_id
+    security_group_id         = aws_security_group.database_runtime[0].id
+    cloud_map_namespace_id    = aws_service_discovery_private_dns_namespace.database[0].id
+    cloud_map_service_id      = aws_service_discovery_service.database[0].id
+    cloud_map_service_arn     = aws_service_discovery_service.database[0].arn
   } : null
   sensitive = true
 }

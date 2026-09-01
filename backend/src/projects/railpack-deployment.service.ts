@@ -670,6 +670,10 @@ export class RailpackDeploymentService {
       return { releaseArtifact: artifact, destroyed: true, destroyVerification };
     }
     if (!artifact.terraform || typeof artifact.terraform !== "object" || !Array.isArray(artifact.services) || !artifact.services.length) throw new Error("The release result artifact does not prove the complete service runtime.");
+    const awsRuntimeVerification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
+    if (!awsRuntimeVerification || awsRuntimeVerification.contractVersion !== "deployguard.aws-runtime-verification/v1" || awsRuntimeVerification.verified !== true || !Array.isArray(awsRuntimeVerification.services)) {
+      throw new Error("The release result artifact does not contain verified AWS runtime evidence.");
+    }
     const terraform = artifact.terraform as Record<string, unknown>;
     const terraformServices = terraform.services && typeof terraform.services === "object" ? terraform.services as Record<string, Record<string, unknown>> : {};
     const encoded = (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.services_base64;
@@ -688,12 +692,18 @@ export class RailpackDeploymentService {
     if (services.length !== expected.services.length || new Set(services.map((service) => service.serviceId)).size !== expected.services.length) {
       throw new Error("Release result does not contain the complete immutable service set.");
     }
+    const verifiedServiceIds = (awsRuntimeVerification.services as Array<Record<string, unknown>>)
+      .filter((service) => service?.verified === true)
+      .map((service) => String(service.serviceId || ""));
+    if (verifiedServiceIds.length !== services.length || new Set(verifiedServiceIds).size !== services.length || services.some((service) => !verifiedServiceIds.includes(service.serviceId))) {
+      throw new Error("AWS runtime verification does not cover the complete immutable service set.");
+    }
     const database = terraform.database && typeof terraform.database === "object" ? terraform.database as Record<string, unknown> : null;
     const attached = expected.services.find((service) => service.databaseAttached);
     if ((attached && (!database || database.attached_service_id !== attached.serviceId || database.engine !== attached.managedDatabase.engine || typeof database.secret_version_id !== "string" || !database.secret_version_id)) || (!attached && database !== null)) {
       throw new Error("Release result does not match the independent managed database runtime contract.");
     }
-    return { releaseArtifact: artifact, services, terraform };
+    return { releaseArtifact: artifact, services, terraform, awsRuntimeVerification };
   }
 
   private async reconcileCompletedRelease(operation: ProjectPipelineRun) {
