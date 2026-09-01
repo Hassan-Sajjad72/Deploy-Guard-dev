@@ -52,7 +52,7 @@ export default function PipelineRecoveryPanel({ operations = [], projectId, refr
   }
 
   return <section className="panel-flat pipeline-recovery-panel">
-    <div className="compact-section-heading"><div><p className="eyebrow">Pipeline & recovery</p><h2>Deployment attempts</h2><p className="muted">DeployGuard records dispatch evidence before GitHub Actions starts. Failure evidence is sanitized before it is shown or analyzed.</p></div></div>
+    <div className="compact-section-heading"><div><p className="eyebrow">Recovery</p><h2>Failed-operation recovery</h2><p className="muted">Retry and troubleshooting actions appear only for eligible failed operations.</p></div></div>
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     {operations.length ? <div className="active-run-list">{operations.map((operation) => <article className="active-run-item" data-operation-status={operation.status} key={operation.id}>
       <span className="active-run-identity"><strong>Attempt {operation.attempt} · {operationLabel(operation)}</strong><small>{["failed", "dispatch_failed"].includes(operation.status) ? operation.failedStageLabel || operation.stageLabel || "Deployment failed" : operation.stageLabel || "Waiting for GitHub Actions"}</small></span>

@@ -31,7 +31,7 @@ assert.ok(destroyed.every((phase) => phase.status === "passed"));
 const pipeline = readFileSync(join(import.meta.dirname, "../src/components/projects/PipelineExecution.jsx"), "utf8");
 const recovery = readFileSync(join(import.meta.dirname, "../src/components/projects/PipelineRecoveryPanel.jsx"), "utf8");
 const overview = readFileSync(join(import.meta.dirname, "../src/components/projects/ProjectOverviewLifecycle.jsx"), "utf8");
-assert.match(pipeline, /latest\?\.stageLabel/);
+assert.match(pipeline, /const stages = latest\?\.workflowStages \|\| \[\]/, "destroy stage evidence remains in the technical timeline");
 assert.match(pipeline, /details\.stageLabel/);
 assert.match(pipeline, /destroyVerificationStatus === "pending"/);
 assert.match(pipeline, /Verification pending/);

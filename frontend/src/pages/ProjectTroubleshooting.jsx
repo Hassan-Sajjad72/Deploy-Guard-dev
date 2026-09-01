@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { followUpTroubleshooting, getTroubleshootingSession, getTroubleshootingSessions, regenerateTroubleshooting, startTroubleshooting } from "../api/platformApi.js";
 import { getGithubActionsDeploymentHistory, getProjectCurrentState } from "../api/projectApi.js";
-import { Card, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
+import { Card, EmptyState, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { subscribeProjectStateChanged } from "../utils/projectStateSync.js";
@@ -78,8 +78,14 @@ export default function ProjectTroubleshooting() {
   const questions = selected?.suggestedQuestions || [];
   const providerStatus = provider?.availability || provider?.mode || "unavailable";
 
+  if (!failedOperations.length && !selected && !error) return <div className="workspace-page troubleshooting-page troubleshooting-empty-page">
+    <PageHeader description="Analyze deployment evidence when a deployment fails." eyebrow="Diagnostics" title="Troubleshooting" />
+    <EmptyState action={<Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>View deployment history</Link>} icon="check" message="DeployGuard can analyze persisted deployment evidence when a deployment fails." title="No failed deployments to analyze" />
+    <p className="troubleshooting-provider-meta">AI provider: {provider?.provider ? label(provider.provider) : "Evidence-only"} · {provider?.available ? "Connected" : label(providerStatus)}</p>
+  </div>;
+
   return <div className="workspace-page troubleshooting-page">
-    <PageHeader context={selected ? `Session ${selected.session.id.slice(0, 8)} · Operation ${selected.session.pipelineRunId.slice(0, 8)}` : "Select an eligible failed operation"} description="Evidence from the exact selected project and operation is sanitized, bounded and analyzed without inferring unavailable AWS or GitHub facts." eyebrow="AI troubleshooting" status={result?.resultMode || providerStatus} title="Failure diagnosis" />
+    <PageHeader context={selected ? `Session ${selected.session.id.slice(0, 8)} · Operation ${selected.session.pipelineRunId.slice(0, 8)}` : "Select an eligible failed operation"} description="Review the failed operation, diagnosis, and supporting evidence." eyebrow="Diagnostics" status="failed" title="Troubleshooting" />
     {error ? <ErrorState message={error} onRetry={() => void load(selected?.session?.id)} /> : null}
     <Card className="troubleshooting-command">
       <div><p className="eyebrow">Provider status</p><h2>{provider?.provider ? `${label(provider.provider)} · ${label(providerStatus)}` : "Evidence-only analysis"}</h2><p>{provider?.message || "Provider status is unavailable. Deterministic evidence-only diagnostics remain available."}</p></div>

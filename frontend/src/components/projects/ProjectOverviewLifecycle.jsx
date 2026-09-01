@@ -73,12 +73,6 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
     developerState: state === "FAILED" || latestOperationFailed ? "failed_application" : state.toLowerCase(),
   });
   const latest = currentState.latestAttempt;
-  const health = authority.applicationHealth || {};
-  const runtimeNotDeployed = currentState?.developerState === "failed_application" && currentState?.progress?.phase === "build";
-  const healthValue = runtimeNotDeployed ? "Not available" : health.status || "Unavailable";
-  const healthDetail = runtimeNotDeployed
-    ? "Runtime was not deployed."
-    : `${health.source?.replaceAll("_", " ") || "No health source"} · ${formatDate(health.observedAt)}`;
 
   useEffect(() => {
     if (!acceptedOperation) return;
@@ -212,9 +206,8 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
 
     <section aria-label="Deployment summary" className="overview-summary-grid">
       <MetricCard detail={copy.message} label="Current state" tone={summaryTone(state)} value={state.replaceAll("_", " ")} />
-      <MetricCard detail={`Commit ${shortCommit(latest?.commit || currentState.commit)}`} label="Latest operation" tone={latest?.status === "failed_application" ? "danger" : "neutral"} value={latest ? `Attempt ${latest.attempt || "—"}` : "No deployment yet"} />
-      <MetricCard detail={latest?.startedAt && latest?.completedAt ? `${formatDate(latest.startedAt)} to ${formatDate(latest.completedAt)}` : "A completed synchronized run is required."} label="Last deployment duration" value={duration(latest?.startedAt, latest?.completedAt)} />
-      <MetricCard detail={healthDetail} label="Application health" tone={runtimeNotDeployed ? "neutral" : health.status === "healthy" ? "success" : health.status === "failed" ? "danger" : "warning"} value={healthValue} />
+      <MetricCard label="Latest operation" tone={latest?.status === "failed_application" ? "danger" : "neutral"} value={latest ? `Attempt ${latest.attempt || "—"}` : "No deployment yet"} />
+      <MetricCard label="Last deployment duration" value={duration(latest?.startedAt, latest?.completedAt)} />
     </section>
 
     {destroyOpen ? <Modal labelledBy="overview-destroy-title" onClose={() => { if (!busy) { setDestroyOpen(false); setDestroyPhrase(""); } }}>
