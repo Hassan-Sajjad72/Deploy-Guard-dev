@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { bulkUpsertProjectServiceEnvVars, connectGithubAppInstallation, createProject, deployGithubActionsDeployment, getGithubConnectionStatus, getGithubRepositories, getGithubRepositoryDirectories, inspectGithubRepository, updateProject, updateProjectBranch, updateProjectDatabaseTier } from "../api/projectApi.js";
 import { ActionBar, Card, IssueCard, ReadinessSummary, StatusChip } from "../components/common/DesignSystem.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
@@ -176,6 +176,7 @@ export default function NewProject() {
     const isCurrent = () => selectionGate.current.isCurrent(ticket);
     setWorking("review");
     setReadiness(null);
+    let existingProjectSettingsId = null;
     try {
       let project; let existingProject = false;
       try {
@@ -189,7 +190,8 @@ export default function NewProject() {
         throw new Error("The existing project belongs to a different repository. Review readiness again.");
       }
       if (existingProject && (project.services?.length !== services.length || services.some((service, index) => project.services?.[index]?.name !== service.name.trim() || project.services?.[index]?.serviceDirectory !== service.serviceDirectory.trim() || Number(project.services?.[index]?.servicePort || 8080) !== Number(service.servicePort)))) {
-        throw new Error("This repository already has a different service configuration. Update its explicit services in Project Settings.");
+        existingProjectSettingsId = project.id;
+        throw new Error("This repository already has a different service configuration. Service name, directory, or port changes must be made under Settings → Services.");
       }
       if (services.length > 1) {
         const selectedIndex = services.findIndex((service) => service.key === applicationEntryPointServiceId);
@@ -220,7 +222,7 @@ export default function NewProject() {
       }
       setReadiness({ level: "ready", deployAllowed: true, requiredInputs: [], message: "Repository, branch, and optional environment are ready for deployment.", project, selection: ticket.selection });
     } catch (caught) {
-      if (isCurrent()) setReadiness({ level: "blocked", message: safeMessage(caught), selection: ticket.selection });
+      if (isCurrent()) setReadiness({ level: "blocked", message: safeMessage(caught), selection: ticket.selection, existingProjectSettingsId });
     } finally {
       if (isCurrent()) setWorking("");
     }
@@ -259,6 +261,7 @@ export default function NewProject() {
       {deployable ? <section className="deploy-review-summary" aria-label="Deployment review"><div><span>Source</span><strong>{repository} · {branch}</strong></div><div><span>Services</span><strong>{services.map((service) => `${service.name} · ${service.serviceDirectory} · :${service.servicePort}`).join(" | ")}</strong></div><div><span>Open application</span><strong>{services.length === 1 ? services[0].name : services.find((service) => service.key === applicationEntryPointServiceId)?.name || "Unavailable"}</strong></div><div><span>Database</span><strong>{database.provider === "managed" ? `${database.engine} → ${services.find((service) => service.key === attachedDatabaseServiceKey)?.name || "Unavailable"}` : "Existing ENV / none managed"}</strong></div></section> : null}
       {readiness ? <ReadinessSummary level={readiness.level} message={readiness.message} requiredInputs={readiness.requiredInputs}>
         <small>No source inspection or framework selection occurs before deployment.</small>
+        {readiness.existingProjectSettingsId ? <Link className="secondary-button" to={`/projects/${readiness.existingProjectSettingsId}/settings`}>Open Project Settings</Link> : null}
       </ReadinessSummary> : null}
       <ActionBar className="new-project-actions" label="Deployment actions">{deployable ? <button className="button" disabled={Boolean(working)} onClick={() => void deploy()} type="button">{working === "deploy" ? "Starting deployment…" : "Deploy"}</button> : <button className="button" disabled={Boolean(working) || !repository || !branch || hasServiceErrors} onClick={() => void reviewReadiness()} type="button">{working === "review" ? "Saving…" : "Continue"}</button>}</ActionBar>
     </Card>}
