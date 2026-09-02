@@ -21,12 +21,18 @@ import { ProjectGenerationServiceRevision } from "../src/projects/project-genera
 import { Project } from "../src/projects/project.entity";
 import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError } from "../src/projects/github-app.service";
 import { terminalStructuredFailureMarker } from "../src/projects/failure-ownership";
+import { QueryFailedError } from "typeorm";
+import { ProjectDeployableService } from "../src/projects/project-deployable-service.entity";
+import { ProjectEnvironmentVariable } from "../src/projects/project-environment-variable.entity";
+import { ProjectDatabaseTier } from "../src/projects/project-database-tier.entity";
+import { ProjectConfigurationSnapshot } from "../src/projects/project-configuration-snapshot.entity";
 
 const user = { id: 7 } as any;
 const project = {
   id: "11111111-1111-4111-8111-111111111111", ownerUserId: 7,
   repositoryUrl: "https://github.com/example/application.git", repositoryFullName: "example/application",
   targetBranch: "main", githubInstallationId: "42", environmentName: "dev",
+  applicationEntryPointServiceId: "77777777-7777-4777-8777-777777777777",
 };
 
 function storedZipEntry(name: string, value: string) {
@@ -273,16 +279,32 @@ async function verifyTerminalFinalizationFailureIsRetryable() {
 
 async function verifyPreDispatchFailure() {
   const saved: any[] = [];
+  const snapshots: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.projects = { findOne: async () => project };
-  service.runs = {
+  const runRepository = {
     findOne: async () => null,
     count: async () => 0,
     create: (row: any) => row,
     save: async (row: any) => { saved.push(structuredClone(row)); return row; },
   };
+  service.runs = runRepository;
   service.config = { get: (key: string, fallback = "") => key === "DEPLOYGUARD_REUSABLE_WORKFLOW" ? "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0123456789abcdef0123456789abcdef01234567" : fallback };
-  service.deployableServices = { find: async () => [{ id: "77777777-7777-4777-8777-777777777777", projectId: project.id, name: "Web", serviceDirectory: ".", position: 0 }] };
+  const serviceRow = { id: project.applicationEntryPointServiceId, projectId: project.id, name: "Web", serviceDirectory: ".", servicePort: 8080, position: 0 };
+  const snapshotRepository = { create: (row: any) => row, save: async (row: any) => { const savedSnapshot = { ...row, id: "88888888-8888-4888-8888-888888888888" }; snapshots.push(structuredClone(savedSnapshot)); return savedSnapshot; } };
+  const manager = {
+    query: async (sql: string) => { assert.match(sql, /pg_advisory_xact_lock/, "admission must acquire the database-backed project configuration lock"); },
+    getRepository: (entity: unknown) => entity === Project ? { findOne: async () => ({ ...project }) }
+      : entity === ProjectPipelineRun ? runRepository
+        : entity === ProjectDeployableService ? { find: async () => [serviceRow] }
+          : entity === ProjectEnvironmentVariable ? { createQueryBuilder: () => ({ addSelect() { return this; }, where() { return this; }, getMany: async () => [] }) }
+            : entity === ProjectDatabaseTier ? { findOne: async () => null }
+              : entity === ProjectConfigurationSnapshot ? snapshotRepository
+                : entity === ProjectEnvironmentRoute ? { findOne: async () => null }
+                  : null,
+  };
+  service.dataSource = { transaction: async (callback: any) => callback(manager) };
+  service.crypto = { decrypt: (value: string) => value, encrypt: (_value: string) => "encrypted-fixture" };
   service.githubApp = {
     tokenForRepository: async () => {
       assert.equal(saved[0]?.status, PipelineRunStatus.QUEUED, "attempt must exist before GitHub authentication");
@@ -299,8 +321,146 @@ async function verifyPreDispatchFailure() {
   assert.equal(failed.metadata.dispatchState, "failed");
   assert.equal(failed.metadata.failureSource, "deployguard_dispatch");
   assert.equal(typeof failed.metadata.safeLog, "string");
+  assert.equal(snapshots.length, 1, "the queued operation is bound to one persisted admitted configuration snapshot");
+  assert.equal(snapshots[0].pipelineRunId, failed.id);
+  assert.equal(failed.configurationSnapshotId, snapshots[0].id);
   assert.equal(isAiTroubleshootingEligible(failed), true, "sanitized dispatch failure must be troubleshooting eligible");
   return failed;
+}
+
+async function verifyAtomicAdmissionAndImmutableConfiguration() {
+  const operations: any[] = [];
+  const snapshots: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  const serviceRow: any = { id: project.applicationEntryPointServiceId, projectId: project.id, name: "Web", serviceDirectory: "apps/a", servicePort: 3000, position: 0 };
+  const variableRows: any[] = [
+    { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", serviceId: serviceRow.id, key: "MODE", value: "encrypted-mode-a", isSecret: false, scope: "runtime", isActive: true },
+    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", serviceId: serviceRow.id, key: "TOKEN", value: "encrypted-secret-a", isSecret: true, scope: "runtime", isActive: true },
+  ];
+  let managedTier: any = { provider: "managed", engine: "postgres", attachedServiceId: serviceRow.id, persistenceEnabled: true, backupEnabled: false, databaseName: "app_fixture", databaseUser: "dg_fixture" };
+  const runRepository = {
+    findOne: async () => operations.find((item) => [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING].includes(item.status)) || null,
+    count: async () => operations.length,
+    create: (row: any) => row,
+    save: async (row: any) => {
+      const index = operations.findIndex((item) => item.id === row.id);
+      if (index < 0) operations.push(row); else operations[index] = row;
+      return row;
+    },
+  };
+  let lockTail = Promise.resolve();
+  service.dataSource = {
+    transaction: async (callback: any) => {
+      let release = () => undefined;
+      let acquired = false;
+      const manager = {
+        query: async (sql: string) => {
+          assert.match(sql, /pg_advisory_xact_lock/);
+          const previous = lockTail;
+          lockTail = new Promise<void>((resolve) => { release = resolve; });
+          await previous;
+          acquired = true;
+        },
+        getRepository: (entity: unknown) => entity === Project ? { findOne: async () => ({ ...project }) }
+          : entity === ProjectPipelineRun ? runRepository
+            : entity === ProjectDeployableService ? { find: async () => [{ ...serviceRow }] }
+              : entity === ProjectEnvironmentVariable ? { createQueryBuilder: () => ({ addSelect() { return this; }, where() { return this; }, getMany: async () => variableRows.map((row) => ({ ...row })) }) }
+                : entity === ProjectDatabaseTier ? { findOne: async () => managedTier ? { ...managedTier } : null }
+                  : entity === ProjectConfigurationSnapshot ? { create: (row: any) => row, save: async (row: any) => { const value = { ...row, id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }; snapshots.push(value); return value; } }
+                    : entity === ProjectEnvironmentRoute ? { findOne: async () => null }
+                      : null,
+      };
+      try { return await callback(manager); }
+      finally { if (acquired) release(); }
+    },
+  };
+  service.projects = { findOne: async () => ({ ...project }) };
+  service.runs = runRepository;
+  service.crypto = {
+    decrypt: (value: string) => value === "encrypted-mode-a" ? "mode-a" : value === "encrypted-secret-a" ? "secret-a" : value,
+    encrypt: (_value: string) => "encrypted-snapshot-payload",
+  };
+  service.config = { get: (key: string, fallback = "") => ({
+    DEPLOYGUARD_REUSABLE_WORKFLOW: "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0123456789abcdef0123456789abcdef01234567",
+    DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN: "arn:aws:iam::123456789012:role/deployguard",
+    DEPLOYGUARD_VPC_ID: "vpc-fixture",
+    DEPLOYGUARD_PUBLIC_SUBNET_IDS: "subnet-a,subnet-b",
+    DEPLOYGUARD_TERRAFORM_STATE_BUCKET: "deployguard-fixture",
+    AWS_REGION: "us-east-1",
+  } as Record<string, string>)[key] || fallback };
+  let releaseFirstCredential = () => undefined;
+  const credentialGate = new Promise<void>((resolve) => { releaseFirstCredential = resolve; });
+  let credentialStarted = () => undefined;
+  const credentialStartedGate = new Promise<void>((resolve) => { credentialStarted = resolve; });
+  let credentialCalls = 0;
+  service.githubApp = {
+    tokenForRepository: async () => {
+      credentialCalls += 1;
+      serviceRow.serviceDirectory = "apps/b";
+      serviceRow.servicePort = 9000;
+      variableRows[0].value = "encrypted-mode-b";
+      variableRows[1].value = "encrypted-secret-b";
+      managedTier = null;
+      credentialStarted();
+      await credentialGate;
+      return { token: "fixture-token" };
+    },
+    ensureWorkflow: async () => ({ registrationBranch: "main" }),
+    oidcTrustSubject: async () => "repo:fixture",
+  };
+  let validatedServices: any[] = [];
+  service.source = {
+    resolveSourceSha: async () => "a".repeat(40),
+    assertDirectoriesAtExactSha: async (input: any) => { validatedServices = input.services; },
+  };
+  service.oidcTrust = { ensureRepositoryAuthorized: async () => undefined };
+  const materializedSecrets: any[] = [];
+  service.runtimeSecrets = { materialize: async (input: any) => {
+    materializedSecrets.push(input);
+    const versionToken = "f".repeat(64);
+    return { versionToken, secretNames: ["TOKEN"], valueFromByName: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:fixture:TOKEN::${versionToken}` } };
+  } };
+  service.runtimeConfigRevisions = { create: (row: any) => row, save: async (row: any) => ({ ...row, id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }) };
+  service.awsCapabilities = { ensure: async () => undefined };
+  let dispatchCalls = 0;
+  let dispatchedInputs: any = null;
+  service.actions = { triggerWorkflow: async (input: any) => { dispatchCalls += 1; dispatchedInputs = input.inputs; return { receipt: { workflowRunId: "123", workflowRunUrl: "https://example.test/run/123" } }; } };
+
+  const first = service.deploy(user, project.id);
+  await credentialStartedGate;
+  const second = await service.deploy(user, project.id);
+  assert.equal(second.deployment.state, "no_op", "the losing concurrent caller returns the canonical already-progressing result");
+  releaseFirstCredential();
+  const accepted = await first;
+  assert.equal(accepted.deployment.state, "accepted");
+  assert.equal(operations.length, 1, "concurrent lifecycle requests persist exactly one authoritative operation");
+  assert.equal(dispatchCalls, 1, "the losing caller never reaches workflow dispatch");
+  assert.equal(credentialCalls, 1, "the losing caller never crosses the first external boundary");
+  assert.deepEqual(validatedServices, [{ serviceId: serviceRow.id, serviceDirectory: "apps/a" }], "directory validation consumes the admitted service snapshot");
+  const runtime = JSON.parse(Buffer.from(dispatchedInputs.services_base64, "base64").toString("utf8"));
+  assert.equal(runtime.services[0].serviceDirectory, "apps/a");
+  assert.equal(runtime.services[0].servicePort, 3000);
+  assert.equal(runtime.services[0].environment.MODE, "mode-a");
+  assert.equal(runtime.services[0].databaseAttached, true);
+  assert.deepEqual(materializedSecrets[0].secretValues, { TOKEN: "secret-a" }, "secret materialization consumes the admitted encrypted snapshot value in memory");
+  assert.equal(snapshots.length, 1);
+  assert.doesNotMatch(JSON.stringify(snapshots[0].sanitizedManifest), /secret-a/, "sanitized snapshot metadata contains no plaintext secret value");
+  assert.equal(snapshots[0].encryptedSecretPayload, "encrypted-snapshot-payload");
+
+  const migration = readFileSync(join(__dirname, "../src/migrations/1787356821000-EnforceSingleActiveRailpackOperation.ts"), "utf8");
+  assert.match(migration, /CREATE UNIQUE INDEX "UQ_project_active_railpack_operation"/);
+  assert.match(migration, /"status" IN \('queued', 'running'\)/);
+  assert.match(migration, /"metadata"->>'executionEngine' = 'railpack'/);
+}
+
+async function verifyActiveOperationUniquenessConflictReturnsCanonicalNoOp() {
+  const canonical = { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", projectId: project.id, status: PipelineRunStatus.QUEUED };
+  const driverError = Object.assign(new Error("duplicate key"), { code: "23505", constraint: "UQ_project_active_railpack_operation" });
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.dataSource = { transaction: async () => { throw new QueryFailedError("INSERT", [], driverError); } };
+  service.runs = { findOne: async () => canonical };
+  const result = await service.admitLifecycleOperation(user, project, "deploy", null, null);
+  assert.equal(result.active, canonical, "a database uniqueness loser resolves to the canonical active operation instead of a generic failure");
 }
 
 function verifyCapabilityFailureIsBoundedAndPreDispatch() {
@@ -748,6 +908,8 @@ async function verifyConcurrentStateReadsShareReconciliation() {
 }
 
 void (async () => {
+  await verifyAtomicAdmissionAndImmutableConfiguration();
+  await verifyActiveOperationUniquenessConflictReturnsCanonicalNoOp();
   const failed = await verifyPreDispatchFailure();
   verifyCapabilityFailureIsBoundedAndPreDispatch();
   await verifyPerActionCapabilitySimulation();

@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException, ServiceUnavailableEx
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash, randomUUID } from "crypto";
-import { DataSource, In, Repository } from "typeorm";
+import { DataSource, EntityManager, In, QueryFailedError, Repository } from "typeorm";
 import { ProjectStableRelease, StableReleaseStatus } from "../orchestration/project-stable-release.entity";
 import { User } from "../users/user.entity";
 import { canonicalEnvironmentName } from "./canonical-environment";
@@ -35,6 +35,8 @@ import { classifyStructuredFailure, terminalStructuredFailureMarker } from "./fa
 import { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
+import { acquireProjectConfigurationAdvisoryLock } from "./project-configuration-lock";
+import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.entity";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -45,6 +47,30 @@ type RollbackTargetIdentity = {
   generationId: string | null;
   sourceSha: string;
   services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; runtimeConfigRevisionId: string; runtimeConfiguration: { servicePort: number; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null } } }>;
+};
+
+type AdmittedEnvironmentVariable = {
+  id: string;
+  serviceId: string;
+  key: string;
+  encryptedValue: string;
+  isSecret: boolean;
+  scope: "build" | "runtime" | "both";
+  isActive: boolean;
+};
+
+type AdmittedDeploymentConfiguration = {
+  project: Project;
+  environmentName: string;
+  applicationEntryPointServiceId: string | null;
+  services: ProjectDeployableService[];
+  variables: AdmittedEnvironmentVariable[];
+  managedDatabase: ProjectDatabaseTier | null;
+};
+
+type LifecycleAdmission = {
+  operation: ProjectPipelineRun;
+  configuration: AdmittedDeploymentConfiguration;
 };
 
 export function promotedServiceRevisions<T extends { serviceId: string }>(
@@ -69,9 +95,6 @@ export class RailpackDeploymentService {
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(ProjectPipelineRun) private readonly runs: Repository<ProjectPipelineRun>,
     @InjectRepository(ProjectStableRelease) private readonly releases: Repository<ProjectStableRelease>,
-    @InjectRepository(ProjectEnvironmentVariable) private readonly variables: Repository<ProjectEnvironmentVariable>,
-    @InjectRepository(ProjectDatabaseTier) private readonly databaseTiers: Repository<ProjectDatabaseTier>,
-    @InjectRepository(ProjectDeployableService) private readonly deployableServices: Repository<ProjectDeployableService>,
     @InjectRepository(ProjectServiceRuntimeConfigRevision) private readonly runtimeConfigRevisions: Repository<ProjectServiceRuntimeConfigRevision>,
     @InjectRepository(ProjectGenerationServiceRevision) private readonly serviceRevisions: Repository<ProjectGenerationServiceRevision>,
     private readonly githubApp: GithubAppService,
@@ -228,33 +251,13 @@ export class RailpackDeploymentService {
   }
 
   private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null) {
-    const project = await this.project(user, projectId);
-    const active = await this.runs.findOne({ where: { projectId, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
-    if (active) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: active } };
-    const environmentName = canonicalEnvironmentName(project);
-    const admittedServiceRows = action === "destroy" ? [] : await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } });
-    if (action !== "destroy") {
-      if (!admittedServiceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
-      try {
-        requireApplicationEntrypointServiceId(project.applicationEntryPointServiceId, action === "rollback" ? rollbackTarget?.services || [] : admittedServiceRows);
-      } catch (error) {
-        throw new ServiceUnavailableException(error instanceof Error ? error.message : "Select an application service before deploying this project.");
-      }
-    }
-    const operationId = randomUUID();
-    const attempt = await this.runs.count({ where: { projectId } }) + 1;
-    const destroyRoute = action === "destroy"
-      ? await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } })
-      : null;
-    // Persist before every external boundary. A rejected caller reconciliation
-    // or GitHub API request is a real DeployGuard operation, even though it
-    // never acquired a GitHub run id.
-    const operation = await this.runs.save(this.runs.create({
-      id: operationId, projectId, triggeredByUserId: user.id, repositoryUrl: project.repositoryUrl, repositoryFullName: project.repositoryFullName,
-      targetBranch: project.targetBranch, generationId: destroyRoute?.liveGenerationId || null, status: PipelineRunStatus.QUEUED,
-      currentStage: "dispatching", startedAt: new Date(), githubWorkflowStatus: "dispatching",
-      metadata: { executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt, ...(rollbackTarget ? { rollbackTarget } : {}), ...(retryOfOperationId ? { retryOfOperationId } : {}) },
-    }));
+    const authorizedProject = await this.project(user, projectId);
+    const admission = await this.admitLifecycleOperation(user, authorizedProject, action, rollbackTarget, retryOfOperationId);
+    if ("active" in admission) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: admission.active } };
+    const { operation, configuration } = admission;
+    const project = configuration.project;
+    const environmentName = configuration.environmentName;
+    const operationId = operation.id;
     try {
       operation.currentStage = "control_plane_release";
       await this.runs.save(operation);
@@ -266,17 +269,15 @@ export class RailpackDeploymentService {
       const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
       operation.currentStage = "source_resolution";
       await this.runs.save(operation);
-      const destroyRelease = action === "destroy" ? await this.authoritativeDestroyRelease(project, environmentName, destroyRoute?.liveGenerationId || null) : null;
+      const destroyRelease = action === "destroy" ? await this.authoritativeDestroyRelease(project, environmentName, operation.generationId) : null;
       const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || ""
         : action === "destroy" ? destroyRelease?.commitSha || ""
           : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
-      const serviceRows = action === "destroy" ? await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } }) : admittedServiceRows;
-      if (!serviceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
       if (action === "deploy") {
         operation.currentStage = "service_directory_validation";
         await this.runs.save(operation);
-        await this.source.assertDirectoriesAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, services: serviceRows.map((service) => ({ serviceId: service.id, serviceDirectory: service.serviceDirectory })), accessToken: credential.token });
+        await this.source.assertDirectoriesAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, services: configuration.services.map((service) => ({ serviceId: service.id, serviceDirectory: service.serviceDirectory })), accessToken: credential.token });
       }
       operation.currentStage = "caller_reconciliation";
       await this.runs.save(operation);
@@ -285,7 +286,7 @@ export class RailpackDeploymentService {
       await this.runs.save(operation);
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
       const immutableTarget = action === "destroy" && destroyRelease ? await this.destroyTarget(destroyRelease) : rollbackTarget;
-      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget);
+      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration);
       const inputs: RailpackWorkflowInputs = {
         deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
         repository_full_name: project.repositoryFullName, repository_branch: project.targetBranch, commit_sha: sourceSha,
@@ -320,6 +321,169 @@ export class RailpackDeploymentService {
       return { deployment: { state: "dispatch_failed", message: "Deployment could not start. DeployGuard failed while starting the GitHub Actions deployment.", operation } };
     }
     return { deployment: { state: "accepted", message: "Railpack deployment dispatched to GitHub Actions.", operation } };
+  }
+
+  private async admitLifecycleOperation(
+    user: User,
+    authorizedProject: Project,
+    action: "deploy" | "rollback" | "destroy",
+    rollbackTarget: RollbackTargetIdentity | null,
+    retryOfOperationId: string | null,
+  ): Promise<LifecycleAdmission | { active: ProjectPipelineRun }> {
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const environmentName = canonicalEnvironmentName(authorizedProject);
+        await acquireProjectConfigurationAdvisoryLock(manager, authorizedProject.id, environmentName);
+        const project = await manager.getRepository(Project).findOne({ where: { id: authorizedProject.id } });
+        if (!project) throw new NotFoundException("Project not found.");
+        if (project.ownerUserId !== user.id) throw new ForbiddenException("Project operations are restricted to the project owner.");
+        if (!project.repositoryFullName) throw new ServiceUnavailableException("Project repository identity is unavailable.");
+        const runs = manager.getRepository(ProjectPipelineRun);
+        const active = await runs.findOne({ where: { projectId: project.id, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
+        if (active) return { active };
+
+        const configuration = await this.captureAdmittedConfiguration(manager, project, environmentName, action);
+        if (action !== "destroy") {
+          if (action === "deploy" && !configuration.services.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
+          try {
+            configuration.applicationEntryPointServiceId = requireApplicationEntrypointServiceId(configuration.applicationEntryPointServiceId, action === "rollback" ? rollbackTarget?.services || [] : configuration.services);
+          } catch (error) {
+            throw new ServiceUnavailableException(error instanceof Error ? error.message : "Select an application service before deploying this project.");
+          }
+        }
+        const operationId = randomUUID();
+        const attempt = await runs.count({ where: { projectId: project.id } }) + 1;
+        const destroyRoute = action === "destroy"
+          ? await manager.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId: project.id, environmentName } })
+          : null;
+        const operation = await runs.save(runs.create({
+          id: operationId, projectId: project.id, triggeredByUserId: user.id, repositoryUrl: project.repositoryUrl, repositoryFullName: project.repositoryFullName,
+          targetBranch: project.targetBranch, generationId: destroyRoute?.liveGenerationId || null, status: PipelineRunStatus.QUEUED,
+          currentStage: "dispatching", startedAt: new Date(), githubWorkflowStatus: "dispatching",
+          metadata: {
+            executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt,
+            applicationEntryPointServiceId: configuration.applicationEntryPointServiceId,
+            ...(rollbackTarget ? { rollbackTarget } : {}), ...(retryOfOperationId ? { retryOfOperationId } : {}),
+          },
+        }));
+        const snapshot = await this.persistAdmittedConfigurationSnapshot(manager, operation, configuration, action);
+        operation.configurationSnapshotId = snapshot.id;
+        operation.metadata = { ...(operation.metadata || {}), admittedConfigurationFingerprint: snapshot.configurationFingerprint };
+        await runs.save(operation);
+        return { operation, configuration };
+      });
+    } catch (error) {
+      if (!this.isActiveRailpackUniquenessConflict(error)) throw error;
+      const active = await this.runs.findOne({ where: { projectId: authorizedProject.id, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
+      if (!active) throw error;
+      return { active };
+    }
+  }
+
+  private async captureAdmittedConfiguration(
+    manager: EntityManager,
+    project: Project,
+    environmentName: string,
+    action: "deploy" | "rollback" | "destroy",
+  ): Promise<AdmittedDeploymentConfiguration> {
+    const services = action === "deploy"
+      ? await manager.getRepository(ProjectDeployableService).find({ where: { projectId: project.id }, order: { position: "ASC" } })
+      : [];
+    const variableRows = action === "deploy"
+      ? await manager.getRepository(ProjectEnvironmentVariable).createQueryBuilder("variable").addSelect("variable.value").where({ projectId: project.id, environment: environmentName, isActive: true }).getMany()
+      : [];
+    const managedDatabase = action === "deploy"
+      ? await manager.getRepository(ProjectDatabaseTier).findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } })
+      : null;
+    return {
+      project: { ...project },
+      environmentName,
+      applicationEntryPointServiceId: project.applicationEntryPointServiceId,
+      services: services.map((service) => ({ ...service })),
+      variables: variableRows.map((variable) => ({
+        id: variable.id,
+        serviceId: variable.serviceId,
+        key: variable.key,
+        encryptedValue: variable.value,
+        isSecret: variable.isSecret,
+        scope: variable.scope || "runtime",
+        isActive: variable.isActive,
+      })),
+      managedDatabase: managedDatabase ? { ...managedDatabase } : null,
+    };
+  }
+
+  private async persistAdmittedConfigurationSnapshot(
+    manager: EntityManager,
+    operation: ProjectPipelineRun,
+    configuration: AdmittedDeploymentConfiguration,
+    action: "deploy" | "rollback" | "destroy",
+  ) {
+    const variables = configuration.variables.map((variable) => ({
+      id: variable.id,
+      serviceId: variable.serviceId,
+      key: variable.key,
+      scope: variable.scope,
+      isSecret: variable.isSecret,
+      isActive: variable.isActive,
+    }));
+    const sanitizedManifest = {
+      schemaVersion: 1,
+      action,
+      project: {
+        id: configuration.project.id,
+        repositoryUrl: configuration.project.repositoryUrl,
+        repositoryFullName: configuration.project.repositoryFullName,
+        targetBranch: configuration.project.targetBranch,
+        githubInstallationId: configuration.project.githubInstallationId,
+        applicationEntryPointServiceId: configuration.applicationEntryPointServiceId,
+      },
+      environmentName: configuration.environmentName,
+      services: configuration.services.map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort, position: service.position })),
+      variables,
+      managedDatabase: configuration.managedDatabase ? {
+        provider: configuration.managedDatabase.provider,
+        engine: configuration.managedDatabase.engine,
+        attachedServiceId: configuration.managedDatabase.attachedServiceId,
+        databaseName: configuration.managedDatabase.databaseName,
+        databaseUser: configuration.managedDatabase.databaseUser,
+        persistenceEnabled: configuration.managedDatabase.persistenceEnabled,
+        backupEnabled: configuration.managedDatabase.backupEnabled,
+      } : null,
+    };
+    const encryptedValues = configuration.variables.map((variable) => ({ serviceId: variable.serviceId, key: variable.key, scope: variable.scope, isSecret: variable.isSecret, encryptedValue: variable.encryptedValue }));
+    const encryptedSecretPayload = encryptedValues.length ? this.crypto.encrypt(JSON.stringify(encryptedValues)) : null;
+    const configurationFingerprint = createHash("sha256").update(JSON.stringify({
+      sanitizedManifest,
+      valueCiphertexts: configuration.variables
+        .map((variable) => ({ id: variable.id, serviceId: variable.serviceId, key: variable.key, encryptedValue: variable.encryptedValue })),
+    })).digest("hex");
+    const key = (variable: AdmittedEnvironmentVariable) => `${variable.serviceId}:${variable.key}`;
+    const snapshots = manager.getRepository(ProjectConfigurationSnapshot);
+    return snapshots.save(snapshots.create({
+      projectId: configuration.project.id,
+      pipelineRunId: operation.id,
+      environment: configuration.environmentName,
+      configurationFingerprint,
+      plainValues: {},
+      buildValues: {},
+      secretReferences: {},
+      bindingRevisions: configuration.managedDatabase ? [sanitizedManifest.managedDatabase as Record<string, unknown>] : [],
+      ownershipManifest: Object.fromEntries(configuration.variables.map((variable) => [key(variable), { serviceId: variable.serviceId, scope: variable.scope, isSecret: variable.isSecret, isActive: variable.isActive }])),
+      sourceRevisions: {},
+      unresolvedRequired: [],
+      prohibitedOverrides: [],
+      duplicateConflicts: [],
+      validationBlockers: [],
+      encryptedSecretPayload,
+      sanitizedManifest,
+    }));
+  }
+
+  private isActiveRailpackUniquenessConflict(error: unknown) {
+    if (!(error instanceof QueryFailedError)) return false;
+    const driverError = (error as QueryFailedError & { driverError?: { code?: string; constraint?: string } }).driverError;
+    return driverError?.code === "23505" && driverError.constraint === "UQ_project_active_railpack_operation";
   }
 
   private async rollbackTarget(release: ProjectStableRelease): Promise<RollbackTargetIdentity> {
@@ -479,7 +643,7 @@ export class RailpackDeploymentService {
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null): Promise<RailpackRuntimeConfiguration> {
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null): Promise<RailpackRuntimeConfiguration> {
     if (action !== "deploy") {
       if (!target?.services.length) throw new ServiceUnavailableException("The lifecycle target does not contain canonical service revisions.");
       const services = target.services.map((service) => ({
@@ -502,10 +666,11 @@ export class RailpackDeploymentService {
       if (action === "destroy" && !projectDeletion?.generationIds.length) throw new ServiceUnavailableException("Destroy requires an exact persisted runtime generation.");
       return { schemaVersion: 3, projectId: project.id, environmentName, operationId, sourceSha, services, ...(projectDeletion ? { projectDeletion } : {}) };
     }
-    const serviceRows = await this.deployableServices.find({ where: { projectId: project.id }, order: { position: "ASC" } });
+    if (!admitted || admitted.project.id !== project.id || admitted.environmentName !== environmentName) throw new ServiceUnavailableException("The admitted deployment configuration is unavailable.");
+    const serviceRows = admitted.services;
     if (!serviceRows.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
-    const rows = await this.variables.createQueryBuilder("variable").addSelect("variable.value").where({ projectId: project.id, environment: environmentName, isActive: true }).getMany();
-    const tier = await this.databaseTiers.findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } });
+    const rows = admitted.variables;
+    const tier = admitted.managedDatabase;
     if (tier && (!tier.attachedServiceId || !serviceRows.some((service) => service.id === tier.attachedServiceId))) throw new ServiceUnavailableException("Managed database attachment does not reference a configured service.");
     if (tier && !isSupportedManagedDatabaseEngine(tier.engine)) throw new ServiceUnavailableException("The configured managed database engine is unsupported. Select PostgreSQL, MySQL, or MongoDB before deploying.");
     const engine = tier?.engine || null;
@@ -526,7 +691,7 @@ export class RailpackDeploymentService {
       for (const row of rows.filter((variable) => variable.serviceId === service.id)) {
         if (["PORT", "HOST"].includes(row.key)) continue;
         if (databaseAttached && managedAliases.includes(row.key)) throw new ServiceUnavailableException(`${row.key} conflicts with the DeployGuard-managed database attached to ${service.name}. Remove the variable or disable the managed database before deployment.`);
-        const value = this.crypto.decrypt(row.value);
+        const value = this.crypto.decrypt(row.encryptedValue);
         const scope = row.scope || "runtime";
         const build = scope === "build" || scope === "both";
         const runtime = scope === "runtime" || scope === "both";
@@ -975,7 +1140,8 @@ export class RailpackDeploymentService {
       const immutableServices = verifiedCandidateServices;
       const endpointProject = await manager.getRepository(Project).findOne({ where: { id: project.id } });
       if (!endpointProject) throw new Error("Project application-entrypoint authority disappeared before release finalization.");
-      const applicationEntryPointServiceId = endpointProject.applicationEntryPointServiceId;
+      const admittedApplicationEntrypoint = current.metadata?.applicationEntryPointServiceId;
+      const applicationEntryPointServiceId = typeof admittedApplicationEntrypoint === "string" ? admittedApplicationEntrypoint : endpointProject.applicationEntryPointServiceId;
       const runtimeConfigIds = immutableServices.map((service) => String(service.runtimeConfigRevisionId));
       const runtimeConfigs = await manager.getRepository(ProjectServiceRuntimeConfigRevision).find({ where: { id: In(runtimeConfigIds) } });
       const runtimeConfigById = new Map(runtimeConfigs.map((revision) => [revision.id, revision]));

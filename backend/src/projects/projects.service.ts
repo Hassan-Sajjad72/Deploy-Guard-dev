@@ -34,6 +34,7 @@ import { normalizeServiceDirectory } from "./deployable-service-path";
 import { DeployableServiceInputDto, UpdateDeployableServiceDto } from "./dto/deployable-service.dto";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
+import { PipelineRunStatus, ProjectPipelineRun } from "./project-pipeline-run.entity";
 
 type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
@@ -272,34 +273,41 @@ export class ProjectsService {
   async createDeployableService(user: User, projectId: string, dto: DeployableServiceInputDto) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const services = await this.deployableServices.find({ where: { projectId }, order: { position: "ASC" } });
-    const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort })), dto]);
-    const service = this.deployableServices.create({ projectId, ...normalized[normalized.length - 1], position: services.length });
-    return this.deployableServices.save(service);
+    return this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const repository = manager.getRepository(ProjectDeployableService);
+      const services = await repository.find({ where: { projectId }, order: { position: "ASC" } });
+      const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort })), dto]);
+      return repository.save(repository.create({ projectId, ...normalized[normalized.length - 1], position: services.length }));
+    });
   }
 
   async updateDeployableService(user: User, projectId: string, serviceId: string, dto: UpdateDeployableServiceDto) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const service = await this.deployableServices.findOne({ where: { id: serviceId, projectId } });
-    if (!service) throw new NotFoundException("Deployable service not found");
-    const all = await this.deployableServices.find({ where: { projectId }, order: { position: "ASC" } });
-    if (dto.position !== undefined && dto.position >= all.length) throw new BadRequestException("Service position is outside the configured service set.");
-    const candidate = all.map((item) => ({
-      name: item.id === serviceId && dto.name !== undefined ? dto.name : item.name,
-      serviceDirectory: item.id === serviceId && dto.serviceDirectory !== undefined ? dto.serviceDirectory : item.serviceDirectory,
-      servicePort: item.id === serviceId && dto.servicePort !== undefined ? dto.servicePort : item.servicePort,
-    }));
-    const normalized = this.normalizeServices(candidate)[all.findIndex((item) => item.id === serviceId)];
-    service.name = normalized.name;
-    service.serviceDirectory = normalized.serviceDirectory;
-    service.servicePort = normalized.servicePort;
-    if (dto.position !== undefined && dto.position !== service.position) {
-      const other = await this.deployableServices.findOne({ where: { projectId, position: dto.position } });
-      if (other) { const old = service.position; service.position = -1; await this.deployableServices.save(service); other.position = old; await this.deployableServices.save(other); }
-      service.position = dto.position;
-    }
-    return this.deployableServices.save(service);
+    return this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const repository = manager.getRepository(ProjectDeployableService);
+      const service = await repository.findOne({ where: { id: serviceId, projectId } });
+      if (!service) throw new NotFoundException("Deployable service not found");
+      const all = await repository.find({ where: { projectId }, order: { position: "ASC" } });
+      if (dto.position !== undefined && dto.position >= all.length) throw new BadRequestException("Service position is outside the configured service set.");
+      const candidate = all.map((item) => ({
+        name: item.id === serviceId && dto.name !== undefined ? dto.name : item.name,
+        serviceDirectory: item.id === serviceId && dto.serviceDirectory !== undefined ? dto.serviceDirectory : item.serviceDirectory,
+        servicePort: item.id === serviceId && dto.servicePort !== undefined ? dto.servicePort : item.servicePort,
+      }));
+      const normalized = this.normalizeServices(candidate)[all.findIndex((item) => item.id === serviceId)];
+      service.name = normalized.name;
+      service.serviceDirectory = normalized.serviceDirectory;
+      service.servicePort = normalized.servicePort;
+      if (dto.position !== undefined && dto.position !== service.position) {
+        const other = await repository.findOne({ where: { projectId, position: dto.position } });
+        if (other) { const old = service.position; service.position = -1; await repository.save(service); other.position = old; await repository.save(other); }
+        service.position = dto.position;
+      }
+      return repository.save(service);
+    });
   }
 
   async deleteDeployableService(user: User, projectId: string, serviceId: string) {
@@ -311,6 +319,12 @@ export class ProjectsService {
       const currentProject = await projects.findOne({ where: { id: projectId } });
       if (!currentProject) throw new NotFoundException("Project not found");
       const serviceRepository = manager.getRepository(ProjectDeployableService);
+      const activeDeployment = await manager.getRepository(ProjectPipelineRun).createQueryBuilder("run")
+        .where("run.projectId = :projectId", { projectId })
+        .andWhere("run.status IN (:...statuses)", { statuses: [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING] })
+        .andWhere("run.metadata->>'executionEngine' = :executionEngine", { executionEngine: "railpack" })
+        .getOne();
+      if (activeDeployment) throw new BadRequestException("A deployable service cannot be removed while a deployment is progressing.");
       const services = await serviceRepository.find({ where: { projectId }, order: { position: "ASC" } });
       if (services.length <= 1) throw new BadRequestException("A deployable project must retain at least one service.");
       const service = services.find((item) => item.id === serviceId);

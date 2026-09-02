@@ -34,9 +34,25 @@ const materializations: any[] = [];
 service.runtimeSecrets = { materialize: async (input: any) => { materializations.push(input); const versionToken = "f".repeat(64); return Object.keys(input.secretValues).length ? { versionToken, secretNames: Object.keys(input.secretValues), valueFromByName: Object.fromEntries(Object.keys(input.secretValues).map((key) => [key, `arn:aws:secretsmanager:us-east-1:123456789012:secret:${input.serviceId}:${key}::${versionToken}`])) } : null; } };
 service.runtimeConfigRevisions = { create: (value: any) => value, save: async (value: any) => ({ ...value, id: value.serviceId === webId ? "55555555-5555-4555-8555-555555555555" : "66666666-6666-4666-8666-666666666666" }) };
 service.dataSource = { getRepository: () => ({ find: async () => [] }) };
+const admitted = () => ({
+  project: { id: projectId },
+  environmentName: "cert-20260831",
+  applicationEntryPointServiceId: webId,
+  services: [
+    { id: webId, projectId, name: "Web", serviceDirectory: "web", servicePort: 3000, position: 0 },
+    { id: apiId, projectId, name: "API", serviceDirectory: "api", servicePort: 8000, position: 1 },
+  ],
+  variables: variables.map((variable, index) => ({ ...variable, id: `variable-${index}`, encryptedValue: variable.value, isActive: true })),
+  managedDatabase: managedTier,
+});
 
 void (async () => {
-  const runtime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", operationId, "a".repeat(40), "deploy", null);
+  await assert.rejects(
+    () => service.runtimeConfiguration({ id: projectId }, "cert-20260831", operationId, "a".repeat(40), "deploy", null),
+    /admitted deployment configuration is unavailable/,
+    "normal deploy runtime construction must never fall back to rereading mutable repositories",
+  );
+  const runtime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", operationId, "a".repeat(40), "deploy", null, admitted());
   assert.equal(runtime.services.length, 2);
   const web = runtime.services.find((item: any) => item.serviceId === webId);
   const api = runtime.services.find((item: any) => item.serviceId === apiId);
@@ -67,7 +83,7 @@ void (async () => {
 
   managedTier = null;
   materializations.length = 0;
-  const unmanagedRuntime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", "77777777-7777-4777-8777-777777777777", "b".repeat(40), "deploy", null);
+  const unmanagedRuntime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", "77777777-7777-4777-8777-777777777777", "b".repeat(40), "deploy", null, admitted());
   for (const item of unmanagedRuntime.services) {
     assert.equal(item.databaseAttached, false);
     assert.deepEqual(item.managedDatabase, { engine: null, aliases: [] });
@@ -80,7 +96,7 @@ void (async () => {
   managedTier = { provider: "managed", engine: "postgres", attachedServiceId: apiId };
   materializations.length = 0;
   await assert.rejects(
-    () => service.runtimeConfiguration({ id: projectId }, "cert-20260831", "99999999-9999-4999-8999-999999999999", "d".repeat(40), "deploy", null),
+    () => service.runtimeConfiguration({ id: projectId }, "cert-20260831", "99999999-9999-4999-8999-999999999999", "d".repeat(40), "deploy", null, admitted()),
     /PGHOST conflicts with the DeployGuard-managed database/,
   );
   assert.equal(materializations.length, 1, "the conflict is detected before materializing the conflicting attached service or Terraform");
@@ -89,7 +105,7 @@ void (async () => {
   managedTier = { provider: "managed", engine: "redis", attachedServiceId: apiId };
   materializations.length = 0;
   await assert.rejects(
-    () => service.runtimeConfiguration({ id: projectId }, "cert-20260831", "88888888-8888-4888-8888-888888888888", "c".repeat(40), "deploy", null),
+    () => service.runtimeConfiguration({ id: projectId }, "cert-20260831", "88888888-8888-4888-8888-888888888888", "c".repeat(40), "deploy", null, admitted()),
     /managed database engine is unsupported/,
   );
   assert.equal(materializations.length, 0, "unsupported managed capabilities fail before secret or infrastructure materialization");
