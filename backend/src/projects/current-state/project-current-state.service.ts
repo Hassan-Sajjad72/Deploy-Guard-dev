@@ -299,6 +299,7 @@ export class ProjectCurrentStateService {
       occurredAt: (latest.completedAt || latest.failedAt || latest.updatedAt).toISOString(),
       startedAt: (latest.startedAt || latest.createdAt).toISOString(),
       completedAt: latest.completedAt ? latest.completedAt.toISOString() : latest.failedAt ? latest.failedAt.toISOString() : null,
+      failureOwner: latest.failureOwner || null,
       workflowStages: Array.isArray(latestMetadata.workflowStages) ? latestMetadata.workflowStages
         .filter((stage): stage is Record<string, unknown> => Boolean(stage) && typeof stage === "object")
         .map((stage) => ({ key: String(stage.key || ""), status: ["passed", "failed", "running", "skipped"].includes(String(stage.status)) ? String(stage.status) as "passed" | "failed" | "running" | "skipped" : "skipped" })) : [],

@@ -1,3 +1,5 @@
+import type { FailureOwner } from "../failure-ownership";
+
 export type CurrentStateStatus =
   | "not_started"
   | "waiting"
@@ -209,6 +211,7 @@ export type DeveloperProjectCurrentState = {
     occurredAt: string | null;
     startedAt?: string | null;
     completedAt?: string | null;
+    failureOwner?: FailureOwner | null;
     workflowStages?: Array<{ key: string; status: "passed" | "failed" | "running" | "skipped" }>;
   } | null;
   stableRelease: {

@@ -25,6 +25,13 @@ function latestOperationFailed(currentState) {
     && currentState?.stateAuthority?.latestCompletedOperation?.outcome === "failed";
 }
 
+export function overviewFailureOwnershipLabel(currentState) {
+  const failed = canonicalOverviewState(currentState) === "FAILED" || latestOperationFailed(currentState);
+  return failed && currentState?.latestAttempt?.failureOwner === "REPOSITORY_APPLICATION"
+    ? "Repository failure"
+    : null;
+}
+
 export function latestOverviewOperationType(currentState) {
   const type = currentState?.latestAttempt?.operationType
     || currentState?.stateAuthority?.activeOperation?.type

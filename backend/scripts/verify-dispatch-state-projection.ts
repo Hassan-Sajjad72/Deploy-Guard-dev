@@ -420,6 +420,7 @@ async function verifyCurrentStateProjection(failed: any, realGithubRun = false) 
   assert.ok(queries.some((query) => query.includes("'railpack'")), "current state must select Railpack operations");
   assert.equal(state.latestAttempt.operationId, failed.id);
   assert.equal(state.latestAttempt.workflowRunId, realGithubRun ? "123" : null);
+  assert.equal(state.latestAttempt.failureOwner, failed.failureOwner || null, "current-state projects only the persisted pipeline-run failure owner");
   assert.equal(state.developerState, "failed_application");
   if (realGithubRun) {
     assert.equal(state.progress.phase, "build", "Railpack build failure must not project as runtime deployment");

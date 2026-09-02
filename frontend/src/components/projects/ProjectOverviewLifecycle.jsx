@@ -17,7 +17,7 @@ import {
   retryGithubActionsDeployment,
 } from "../../api/projectApi.js";
 import { deploymentPhasePresentation } from "../../utils/developerDeploymentPresentation.js";
-import { canonicalOverviewState, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
+import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
 import { DESTROY_CONFIRMATION_PHRASE } from "../../utils/deploymentConfirmation.js";
 
 function formatDate(value) {
@@ -73,6 +73,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
     developerState: state === "FAILED" || latestOperationFailed ? "failed_application" : state.toLowerCase(),
   });
   const latest = currentState.latestAttempt;
+  const failureOwnershipLabel = overviewFailureOwnershipLabel(currentState);
 
   useEffect(() => {
     if (!acceptedOperation) return;
@@ -193,7 +194,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   return <div className="project-overview-lifecycle" data-canonical-overview="true" data-canonical-state={state}>
     <Card className={`overview-lifecycle-card overview-state-${state.toLowerCase()}`}>
       <div className="overview-lifecycle-heading">
-        <div><p className="eyebrow">Current lifecycle</p><h2>{copy.title}</h2><p>{copy.message}</p></div>
+        <div><p className="eyebrow">Current lifecycle</p><h2>{copy.title}</h2>{failureOwnershipLabel ? <StatusChip status="failed" tone="danger">{failureOwnershipLabel}</StatusChip> : null}<p>{copy.message}</p></div>
         <StatusChip status={state} tone={summaryTone(state)}>{state.replaceAll("_", " ")}</StatusChip>
       </div>
       <div aria-label={`Deployment progress ${currentState.progress?.percentage || 0}%`} className="deployment-progress-track"><span style={{ width: `${Math.max(0, Math.min(100, Number(currentState.progress?.percentage || 0)))}%` }} /></div>

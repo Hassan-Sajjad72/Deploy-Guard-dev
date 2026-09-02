@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { canonicalOverviewState, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
+import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
 import { projectStatePresentation } from "../src/utils/projectStatePresentation.js";
 import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPresentation.js";
 
@@ -49,6 +49,12 @@ assert.equal(overviewLifecycleCopy(failedDestroy).title, "Destroy failed");
 assert.equal(overviewLifecycleActions(failedDestroy, true)[1].label, "Retry Failed Destroy");
 assert.equal(overviewLifecycleCopy(failedRollback).title, "Rollback failed");
 assert.equal(overviewLifecycleActions(failedRollback, true)[1].label, "Retry Failed Rollback");
+assert.equal(overviewFailureOwnershipLabel({ ...failedDeploy, latestAttempt: { ...failedDeploy.latestAttempt, failureOwner: "REPOSITORY_APPLICATION" } }), "Repository failure");
+for (const failureOwner of ["DEPLOYGUARD_PLATFORM", "EXTERNAL_PROVIDER", "UNVERIFIED", null, undefined]) {
+  assert.equal(overviewFailureOwnershipLabel({ ...failedDeploy, latestAttempt: { ...failedDeploy.latestAttempt, failureOwner } }), null, `${failureOwner || "missing"} ownership must not add an Overview label`);
+}
+assert.match(lifecycle, /failureOwnershipLabel \? <StatusChip[^>]*>\{failureOwnershipLabel\}<\/StatusChip> : null/, "Overview renders only the authoritative repository-failure label");
+assert.doesNotMatch(lifecycle, /DeployGuard failure/, "Overview does not add a DeployGuard ownership label");
 const setupFailureRail = deploymentPhasePresentation({
   developerState: "failed_application",
   progress: { phase: "build" },
