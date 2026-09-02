@@ -63,11 +63,12 @@ export function reservedVariableError(key: string, service?: ManagedServiceKind 
   };
 }
 
-export function classifyConfigurationVariable(key: string, options: { secret?: boolean; scope?: "build" | "runtime" | "both"; service?: ManagedServiceKind | null } = {}) {
+export function classifyConfigurationVariable(key: string, options: { secret?: boolean; scope?: "build" | "runtime" | "both"; service?: ManagedServiceKind | null; managedService?: boolean } = {}) {
   const normalized = normalizeConfigurationKey(key);
-  const reserved = reservedVariable(normalized, options.service);
+  const alias = serviceAlias(normalized, options.service) || serviceAlias(normalized);
+  const reserved = alias && !options.managedService ? null : reservedVariable(normalized, options.service);
   const publicBuild = isPublicFrontendConfigurationKey(normalized) && ["build", "both"].includes(options.scope || "runtime");
-  const management = reserved?.category === "infrastructure_generated" || Boolean(serviceAlias(normalized, options.service) || serviceAlias(normalized))
+  const management = reserved?.category === "infrastructure_generated" || Boolean(options.managedService && alias)
     ? "infrastructure_generated" as const
     : reserved ? "platform_managed" as const : "user_defined" as const;
   const delivery = !publicBuild && (reserved?.secret || options.secret || isSecretConfigurationKey(normalized))
@@ -133,8 +134,9 @@ export function serviceAlias(key: string, service?: ManagedServiceKind | null) {
   return SERVICE_ALIAS_GROUPS.find((group) => (!service || group.service === service) && group.aliases.includes(normalized));
 }
 
-/** Database connection identity is platform-owned even before a managed
- * database is attached. Storage paths are a separate ownership domain. */
+/** Recognizes connection aliases so ownership can become conditional when a
+ * DeployGuard-managed database is attached. Without that attachment they are
+ * ordinary user-owned application configuration. */
 export function isDeployGuardManagedDatabaseAlias(key: string) {
   const normalized = normalizeConfigurationKey(key);
   return SERVICE_ALIAS_GROUPS.some((group) => group.service !== "storage" && group.aliases.includes(normalized));
@@ -175,11 +177,11 @@ export function provenRepositoryOwnedVariableKeys(evidence: readonly RepositoryE
 
 export function ignoredSubmittedVariableNames(
   keys: readonly string[],
-  options: { service?: ManagedServiceKind | null; managedService?: boolean; repositoryOwnedKeys?: ReadonlySet<string> } = {},
+  options: { service?: ManagedServiceKind | null; managedService?: boolean; allowDatabaseAliases?: boolean; repositoryOwnedKeys?: ReadonlySet<string> } = {},
 ) {
   return [...new Set(keys.map(normalizeConfigurationKey).filter((key) => {
     if (options.repositoryOwnedKeys?.has(key)) return true;
-    if (isDeployGuardManagedDatabaseAlias(key)) return true;
+    if (isDeployGuardManagedDatabaseAlias(key)) return !options.allowDatabaseAliases;
     const alias = serviceAlias(key, options.service);
     if (options.managedService && alias) return true;
     return Boolean(reservedVariable(key, options.service) && !alias);

@@ -51,10 +51,9 @@ export default function ProjectPipeline() {
     return <div className="workspace-page">{error ? <ErrorState message={error} onRetry={load} /> : <LoadingState message="Loading deployments…" />}</div>;
   }
 
-  const reconciliation = currentState.stateAuthority?.reconciliation || {};
   const state = projectStatePresentation(currentState);
   return <div className="workspace-page project-pipeline-page" data-authoritative-state={state.state}>
-    <PageHeader context={`${currentState.repository || project.repositoryFullName} · ${currentState.branch || project.targetBranch} · Source: ${reconciliation.source?.replaceAll("_", " ") || "unavailable"} · ${reconciliation.freshness || "unavailable"}`} eyebrow="Pipeline and recovery" status={state.state} title="Deployment pipeline" />
+    <PageHeader context={`${currentState.repository || project.repositoryFullName} · ${currentState.branch || project.targetBranch}`} eyebrow="Deployments" status={state.state} title="Deployment pipeline" />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     <PipelineExecution canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} operations={operations} projectId={projectId} />
     <PipelineRecoveryPanel operations={operations} projectId={projectId} refreshVersion={recoveryRefreshVersion} />

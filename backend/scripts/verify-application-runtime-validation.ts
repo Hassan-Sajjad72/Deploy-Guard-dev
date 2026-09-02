@@ -9,6 +9,7 @@ import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentati
 
 const root = join(__dirname, "..", "..");
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
+const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-runtime", "verify-runtime.sh"), "utf8");
 const orderedSteps = [
   "Checkout exact application source",
   "Configure AWS credentials through OIDC",
@@ -43,13 +44,15 @@ function executable(path: string, source: string) {
   chmodSync(path, 0o755);
 }
 
-function executeProbe(mode: "success" | "timeout" | "exited" | "run_failure" | "workflow_failure") {
+function executeProbe(mode: "success" | "flask_template_not_found" | "timeout" | "exited" | "run_failure" | "workflow_failure") {
   const directory = mkdtempSync(join(tmpdir(), "deployguard-runtime-validation-"));
   const trace = join(directory, "trace");
   executable(join(directory, "docker"), `#!/usr/bin/env bash
 set -euo pipefail
 printf 'docker %s\\n' "$*" >> "$TRACE_FILE"
 case "$1" in
+  image) printf 'sha256:%064d\n' 0 ;;
+  network) ;;
   run)
     [ "$PROBE_MODE" != run_failure ] || exit 1
     printf 'probe-container\\n'
@@ -64,6 +67,7 @@ case "$1" in
   logs) printf 'bounded probe log\\n' ;;
 esac
 `);
+  executable(join(directory, "aws"), "#!/usr/bin/env bash\nexit 99\n");
   executable(join(directory, "timeout"), `#!/usr/bin/env bash
 printf 'tcp %s\\n' "$*" >> "$TRACE_FILE"
 if [ "$1" = --signal=TERM ]; then
@@ -71,13 +75,15 @@ if [ "$1" = --signal=TERM ]; then
   shift 2
   exec "$@"
 fi
-[ "$PROBE_MODE" = success ] || [ "$PROBE_MODE" = workflow_failure ]
+[ "$PROBE_MODE" = success ] || [ "$PROBE_MODE" = flask_template_not_found ] || [ "$PROBE_MODE" = workflow_failure ]
 `);
   executable(join(directory, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
   const downstream = join(directory, "downstream");
   const deployguard = join(directory, ".deployguard");
   require("node:fs").mkdirSync(deployguard);
-  writeFileSync(join(deployguard, "build-artifacts.json"), JSON.stringify([{ serviceId: "11111111-1111-4111-8111-111111111111", localImage: "registry.example/app:exact-sha" }]), "utf8");
+  const serviceId = "11111111-1111-4111-8111-111111111111";
+  writeFileSync(join(deployguard, "build-artifacts.json"), JSON.stringify([{ serviceId, localImage: "registry.example/app:exact-sha", localImageId: `sha256:${"0".repeat(64)}` }]), "utf8");
+  writeFileSync(join(deployguard, "runtime.json"), JSON.stringify({ services: [{ serviceId, servicePort: 3000, environment: { PORT: "3000", HOST: "0.0.0.0", REQUIRED_RUNTIME_VALUE: "present" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] }), "utf8");
   const suffix = mode === "workflow_failure"
     ? "\nfalse\nprintf 'ECR\\nTerraform\\n' > \"$DOWNSTREAM_FILE\""
     : "\nprintf 'ECR\\nTerraform\\n' > \"$DOWNSTREAM_FILE\"";
@@ -133,32 +139,51 @@ void (async () => {
     previous = position;
   }
   assert.match(validationBlock, /if: success\(\) && inputs\.deployment_action == 'deploy'/);
-  assert.match(validationScript, /--env PORT=8080 --env HOST=0\.0\.0\.0/);
+  assert.match(validationScript, /docker image inspect --format '\{\{\.Id\}\}' "\$image"/);
+  assert.match(validationScript, /\.environment \| to_entries\[\] \| @base64/);
+  assert.match(validationScript, /\.secretReferences \| to_entries\[\] \| @base64/);
+  assert.match(validationScript, /get-secret-value --secret-id "\$secret_id" --version-id "\$version_id"/);
+  assert.match(validationScript, /runtime_args\+=\(--env "\$key"\)/, "runtime values are inherited without appearing in Docker argv");
+  for (const [engine, image, readiness] of [["postgres", "postgres:16", "pg_isready"], ["mysql", "mysql:8", "mysqladmin ping"], ["mongodb", "mongo:8", "mongosh"]]) {
+    assert.match(validationScript, new RegExp(`${engine}\\) database_image=\\"${image}\\"`));
+    assert.match(validationScript, new RegExp(readiness));
+  }
+  assert.match(validationScript, /\.managedDatabase\.aliases\[\]/);
   assert.match(validationScript, /timeout --signal=TERM 45 bash -c/);
-  assert.match(validationScript, /\/dev\/tcp\/\\\$1\/8080/);
+  assert.match(validationScript, /while \[ "\$stable" -lt 5 \]/, "readiness must prove a durable process and port");
+  assert.match(validationScript, /\/dev\/tcp\/\\\$1\/\\\$2/);
   assert.doesNotMatch(validationScript, /\bcurl\b|\bwget\b|https?:\/\//, "pre-publish validation must be TCP-only");
   assert.match(validationScript, /docker logs .*--tail 100[\s\S]*tail -c 12000/);
-  assert.match(validationScript, /Application did not listen on PORT=8080 within 45 seconds\. Bind to 0\.0\.0\.0 and use the PORT environment variable\./);
+  assert.match(validationScript, /Application did not listen on PORT=\$service_port within 45 seconds\. Bind to 0\.0\.0\.0 and use the PORT environment variable\./);
   assert.match(workflow, /name: Clean up application runtime validation[\s\S]*if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*deployguard-runtime-probe-\$\{OPERATION_ID\}-/);
   assert.match(stepBlock("Publish immutable images to ECR", "Select immutable rollback service images"), /if: success\(\)/);
   assert.match(stepBlock("Install Terraform", "Materialize release runtime"), /if: success\(\)/);
-  assert.match(stepBlock("Materialize release runtime", "Publish verified release result"), /curl --fail --show-error --silent --retry 20/, "post-ALB HTTP verification remains unchanged");
+  const deployedReadiness = stepBlock("Materialize release runtime", "Publish verified release result");
+  assert.match(deployedReadiness, /bash \.deployguard\/terraform\/verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/, "post-ALB readiness delegates to the canonical runtime verifier");
+  assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/, "the delegated verifier proves public reachability");
+  assert.doesNotMatch(runtimeVerification, /curl --fail/, "HTTP business status must not decide deployment readiness");
 
   const success = executeProbe("success");
   assert.equal(success.status, 0);
   assert.equal(success.downstream, "ECR\nTerraform\n", "successful TCP validation continues to downstream stages");
-  assert.match(success.trace, /docker run .*--env PORT=8080 --env HOST=0\.0\.0\.0 registry\.example\/app:exact-sha/);
+  assert.match(success.trace, /docker image inspect --format \{\{\.Id\}\} registry\.example\/app:exact-sha/);
+  assert.match(success.trace, /docker run .*--env PORT --env HOST --env REQUIRED_RUNTIME_VALUE --env PORT=3000 --env HOST=0\.0\.0\.0 sha256:0{64}/, "the canonical service port and HOST override inherited values on the exact validated image");
   assert.match(success.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/);
+
+  const templateException = executeProbe("flask_template_not_found");
+  assert.equal(templateException.status, 0, "a stable Flask process listening on the declared port remains deployable when a route raises TemplateNotFound/HTTP 500");
+  assert.equal(templateException.downstream, "ECR\nTerraform\n");
+  assert.doesNotMatch(templateException.trace, /docker logs/, "successful TCP validation does not inspect or reinterpret application exceptions");
 
   for (const mode of ["timeout", "exited", "run_failure", "workflow_failure"] as const) {
     const result = executeProbe(mode);
     assert.notEqual(result.status, 0, `${mode} must fail the composed workflow path`);
     assert.equal(result.downstream, "", `${mode} must not reach ECR or Terraform`);
     assert.match(result.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/, `${mode} must clean up the probe container`);
-    if (mode === "timeout" || mode === "exited") assert.match(result.stderr, /Application did not listen on PORT=8080 within 45 seconds/);
+    if (mode === "timeout" || mode === "exited") assert.match(result.stderr, /Application did not listen on PORT=3000 within 45 seconds/);
   }
   const timeout = executeProbe("timeout");
   assert.match(timeout.trace, /^tcp --signal=TERM 45 bash -c/m, "the entire wait loop has one hard 45-second deadline");
   await verifyStageProjection();
-  console.log("APPLICATION_RUNTIME_VALIDATION=PASS TCP_ONLY=1 TIMEOUT_SECONDS=45 DOWNSTREAM_FAIL_CLOSED=1 CLEANUP_ALL_PATHS=1");
+  console.log("APPLICATION_RUNTIME_VALIDATION=PASS TCP_ONLY=1 FLASK_TEMPLATE_NOT_FOUND_HTTP_500_DEPLOYABLE=1 TIMEOUT_SECONDS=45 DOWNSTREAM_FAIL_CLOSED=1 CLEANUP_ALL_PATHS=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

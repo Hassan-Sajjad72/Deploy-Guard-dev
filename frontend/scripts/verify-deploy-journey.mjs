@@ -16,6 +16,8 @@ assert.deepEqual(managed.ignoredVariableNames, ["ACTIONS_RUNTIME_TOKEN", "AWS_AC
 assert.doesNotMatch(JSON.stringify(managed), /secret-value|token-value|actions-value|region-value|id-value|3000/, "ignored values are discarded at parse time");
 assert.match(managed.warnings.join(" "), /PORT is managed by DeployGuard and was ignored/);
 assert.equal(parseEnvPaste("").entries.length, 0, "an empty .env block is accepted");
+const externalDatabase = parseEnvPaste("DATABASE_URL=postgresql://external.example/app");
+assert.equal(externalDatabase.entries[0].isSecret, true, "external database URLs retain encrypted secret delivery");
 
 const gate = createDeploymentSelectionGate();
 const branchA = gate.begin("Example/Application", "main");
@@ -38,13 +40,24 @@ assert.match(page, /updateProjectBranch\(project\.id, requestedBranch\)/, "an ex
 assert.doesNotMatch(page, /runStackDetection|generatePreflightReport|Detector|Legacy mode|Detect Stack/);
 assert.match(page, /<ReadinessSummary/);
 assert.match(page, /<IssueCard/);
-assert.match(page, /Review readiness/);
+assert.match(page, /deploy-review-summary/);
 assert.match(page, /function deploymentJourney/);
 assert.match(page, /aria-label="Deployment readiness journey"/);
-for (const step of ["Repository", "Branch", "Environment", "Deploy"]) assert.match(page, new RegExp(`label: "${step}"`));
+assert.match(page, /<span>Application port<\/span>/);
+assert.match(page, /DeployGuard manages PORT and HOST automatically/);
+assert.match(page, /servicePort: Number\(servicePort\)/);
+assert.match(page, /existingProjectSettingsId = project\.id/, "the service mismatch preserves the existing project identity");
+assert.match(page, /Service name, directory, or port changes must be made under Settings → Services\./, "the blocker identifies the existing service editor and editable fields");
+assert.match(page, /to=\{`\/projects\/\$\{readiness\.existingProjectSettingsId\}\/settings`\}>Open Project Settings<\/Link>/, "the blocker links directly to the existing project's Settings page");
+assert.doesNotMatch(page, /updateProjectService/, "the deploy journey does not mutate existing service configuration");
+assert.match(page, /No managed database \/ use existing ENV/);
+assert.match(page, /Database configuration conflict/);
+assert.match(page, /MANAGED_DATABASE_ALIASES\[database\.engine\]/);
+for (const step of ["Source", "Services", "Configuration", "Review & Deploy"]) assert.match(page, new RegExp(`label: "${step.replace("&", "&")}"`));
 assert.match(page, /hasReadiness \? "complete"/);
 assert.match(page, /values are not displayed/);
 assert.match(page, /deployGithubActionsDeployment\(readiness\.project\.id\)/, "one canonical Deploy action dispatches only after the repository and optional environment are saved");
+assert.match(page, /deployable \? <button className="button"[\s\S]*: <button className="button"/, "Continue and Deploy are mutually exclusive primary actions");
 assert.match(page, /navigate\(`\/projects\/\$\{readiness\.project\.id\}`\)/, "the journey redirects to the canonical Project page");
 assert.doesNotMatch(page, /archiveProject|createProjectEnvVar|Repository URL/);
 assert.doesNotMatch(page, /\/requirements/);

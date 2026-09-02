@@ -2282,3 +2282,121 @@ a:not(.button):not(.ds-button-primary),
   font-weight: 700;
   opacity: 1;
 }
+
+/* Final product refinement: quiet, dense developer-console hierarchy. */
+:root {
+  --accent: #f5b942;
+  --accent-hover: #ffc85f;
+  --accent-dark: #e5a82f;
+  --accent-soft: rgba(245, 185, 66, .14);
+  --glass-border-active: rgba(245, 185, 66, .44);
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --type-page-title: clamp(1.85rem, 2.5vw, 2.1rem);
+  --type-section-title: clamp(1.18rem, 1.6vw, 1.4rem);
+}
+
+.workspace-page,.page-stack,.grid{gap:var(--space-5)}
+.content{padding:clamp(20px,3vw,36px)}
+.workspace-heading,.ds-page-header{align-items:flex-start}
+.workspace-heading h1,.ds-page-header h1{margin-bottom:var(--space-2)}
+.workspace-heading p:last-child,.ds-page-header .muted{margin-bottom:0;max-width:720px}
+.panel,.panel-flat,.ds-card{padding:clamp(20px,2.4vw,24px)}
+.operational-surface,.pipeline-timeline-card,.pipeline-history-card,.infrastructure-inventory-card,.monitoring-log-card,.troubleshooting-diagnosis{background:rgba(5,22,27,.94)!important;backdrop-filter:blur(28px) saturate(82%)}
+.main-area:has(.project-pipeline-page),.main-area:has(.infrastructure-page),.main-area:has(.monitoring-page){background:rgba(5,18,23,.72)}
+.main-area:has(.project-settings-page),.main-area:has(.new-project-page),.main-area:has(.troubleshooting-page){background:rgba(4,16,20,.82)}
+
+.navbar{min-height:58px}
+.sidebar{padding-block:14px 12px}
+.sidebar-brand-row{padding-bottom:16px}
+.sidebar-section{margin-top:var(--space-4);padding-top:var(--space-3)}
+.nav-link{min-height:40px;padding:8px 10px}
+.nav-link:hover{transform:none}
+
+.button,.ds-button-primary{background:linear-gradient(145deg,rgba(255,255,255,.22),transparent 38%),var(--accent);border-color:rgba(255,221,151,.38);box-shadow:0 10px 24px rgba(229,168,47,.16),inset 0 1px rgba(255,255,255,.4);color:#161109}
+.button:hover:not(:disabled),.ds-button-primary:hover:not(:disabled){background:var(--accent-hover)}
+.eyebrow{color:#f3c768}
+.nav-link.active{background:linear-gradient(100deg,rgba(245,185,66,.18),rgba(255,255,255,.035));border-color:var(--glass-border-active)}
+.nav-link.active::before{background:var(--accent);box-shadow:0 0 14px rgba(245,185,66,.38)}
+.glass-tabs button.is-active,.glass-active{background:linear-gradient(100deg,rgba(245,185,66,.18),rgba(255,255,255,.04))!important;border-color:var(--glass-border-active)!important}
+
+.workspace-stat-strip-compact{grid-template-columns:repeat(4,minmax(0,1fr));padding:var(--space-4)}
+.compact-empty{align-items:baseline;color:var(--ink-soft);display:flex;flex-wrap:wrap;gap:var(--space-2);padding:var(--space-3) 0}
+.compact-empty span{color:var(--muted)}
+.text-danger{color:var(--danger)}
+
+.project-search{align-items:center;background:rgba(5,22,27,.92);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--muted);display:flex;gap:var(--space-2);max-width:560px;padding:0 var(--space-3)}
+.project-search:focus-within{border-color:var(--accent);box-shadow:0 0 0 4px rgba(245,185,66,.1)}
+.project-search input{background:transparent;border:0;color:var(--ink);height:42px;outline:0;width:100%}
+.project-card-facts{grid-template-columns:repeat(3,minmax(0,1fr))}
+
+.overview-lifecycle-card{gap:var(--space-3);padding:20px 24px}
+.overview-lifecycle-card .ds-stage-rail{margin:var(--space-3) 0}
+.overview-actions .overview-action-open{background:var(--accent);border-color:var(--accent);color:#161109}
+.overview-actions .overview-action-redeploy,.overview-actions .overview-action-rollback{background:rgba(255,255,255,.055);border-color:var(--border);color:var(--ink-soft)}
+.overview-actions .overview-action-destroy{background:var(--danger-soft);border-color:rgba(255,120,147,.35);color:var(--danger);margin-inline-start:auto}
+
+.pipeline-identity-card{align-items:center;display:grid;gap:var(--space-4);grid-template-columns:minmax(0,1fr) auto minmax(360px,.8fr);padding:var(--space-4) var(--space-5)}
+.pipeline-identity-card h2,.pipeline-identity-card p{margin-bottom:4px}
+.pipeline-identity-card>dl{display:grid;gap:var(--space-3);grid-template-columns:repeat(3,minmax(0,1fr));margin:0}
+.pipeline-identity-card dl div{display:grid;gap:3px}
+.pipeline-identity-card dt{color:var(--muted);font-size:var(--type-label);font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.pipeline-identity-card dd{font-weight:750;margin:0}
+.pipeline-section-heading p{max-width:720px}
+
+.infrastructure-section-heading p:last-child{max-width:680px}
+.service-runtime-grid article{align-content:start;gap:var(--space-2)}
+.service-runtime-heading{align-items:center;display:flex;gap:var(--space-3);justify-content:space-between}
+.service-runtime-grid article>span{color:var(--muted);font-size:var(--type-meta)}
+.infrastructure-cost-summary{grid-template-columns:minmax(0,420px)}
+.infrastructure-cost-details{margin-top:var(--space-4)}
+.infrastructure-cost-details>summary,.advanced-resource-details>summary,.monitoring-health-details>summary,.settings-service-card>summary{cursor:pointer;list-style:none}
+.infrastructure-cost-details>summary::-webkit-details-marker,.advanced-resource-details>summary::-webkit-details-marker,.monitoring-health-details>summary::-webkit-details-marker,.settings-service-card>summary::-webkit-details-marker{display:none}
+.infrastructure-cost-details>summary{color:var(--accent);font-weight:750}
+.infrastructure-cost-details>.ds-card{margin-top:var(--space-3)}
+.advanced-resource-details>summary,.monitoring-health-details>summary{align-items:center;display:flex;gap:var(--space-4);justify-content:space-between}
+.advanced-resource-details>summary>span:first-child,.monitoring-health-details>summary>span:first-child{display:grid;gap:4px}
+.advanced-resource-details>summary strong,.monitoring-health-details>summary strong{font-size:var(--type-section-title)}
+.advanced-resource-details[open]>summary,.monitoring-health-details[open]>summary{border-bottom:1px solid var(--border);margin-bottom:var(--space-4);padding-bottom:var(--space-4)}
+
+.monitoring-service-selector{align-items:center;display:flex;gap:var(--space-3);max-width:360px}
+.monitoring-service-selector span{font-size:var(--type-meta);font-weight:800;text-transform:uppercase}
+.monitoring-service-selector select{background:rgba(5,22,27,.92);border:1px solid var(--border);border-radius:var(--radius-xs);color:var(--ink);min-height:40px;padding:8px 10px}
+.monitoring-performance-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.monitoring-line-chart{display:grid;gap:var(--space-2)}
+.monitoring-sample-chart{height:190px;width:100%}
+.monitoring-sample-chart line{stroke:rgba(222,239,255,.11);stroke-width:1}
+.monitoring-sample-chart text{fill:var(--muted);font-family:var(--font-sans);font-size:11px}
+.monitoring-sample-chart polyline{stroke:var(--accent);stroke-linecap:round;stroke-linejoin:round;stroke-width:2.5}
+.monitoring-sample-chart circle{fill:var(--surface-strong);stroke:var(--accent);stroke-width:2}
+.monitoring-chart-axis{color:var(--muted);display:flex;font-size:var(--type-meta);justify-content:space-between}
+.monitoring-log-search input{background:rgba(4,15,20,.92);border:1px solid var(--border);border-radius:var(--radius-xs);color:var(--ink);min-height:40px;padding:8px 11px;width:min(100%,420px)}
+
+.project-settings-page>.ds-tabs{position:sticky;top:66px;z-index:20}
+.settings-section-panel{display:grid;gap:var(--space-4);max-width:980px}
+.settings-entrypoint-form{align-items:end;display:grid;gap:var(--space-3);grid-template-columns:minmax(0,1fr) auto}
+.settings-entrypoint-form .field{margin:0}
+.settings-service-list{display:grid;gap:var(--space-3)}
+.settings-service-card{background:rgba(255,255,255,.035);border:1px solid var(--border);border-radius:var(--radius-sm);padding:var(--space-4)}
+.settings-service-card>summary{align-items:center;display:flex;gap:var(--space-4);justify-content:space-between}
+.settings-service-card>summary>span:first-child{display:grid;gap:4px}
+.settings-service-card>summary small{color:var(--muted)}
+.settings-service-card[open]>summary{border-bottom:1px solid var(--border);margin-bottom:var(--space-3);padding-bottom:var(--space-3)}
+.settings-service-selector{max-width:360px}
+.paste-preview{align-items:baseline;display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-3)}
+.paste-preview span{color:var(--muted);font-size:var(--type-meta)}
+.project-settings-page .notification-overview-card{background:rgba(5,22,27,.94);max-width:1100px}
+
+.troubleshooting-empty-page{max-width:820px}
+.troubleshooting-empty-page .ds-empty-state{padding:var(--space-5)}
+.troubleshooting-provider-meta{color:var(--muted);font-size:var(--type-meta);margin:0 var(--space-2)}
+.deploy-review-summary{background:rgba(5,22,27,.9);border:1px solid var(--border);border-radius:var(--radius-sm);display:grid;gap:var(--space-3);padding:var(--space-4)}
+.deploy-review-summary div{display:grid;gap:4px;grid-template-columns:150px minmax(0,1fr)}
+.deploy-review-summary span{color:var(--muted);font-size:var(--type-label);font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.new-project-actions .button{min-width:120px}
+
+@media(max-width:1000px){.pipeline-identity-card{grid-template-columns:minmax(0,1fr) auto}.pipeline-identity-card>dl{grid-column:1/-1}.monitoring-performance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.workspace-stat-strip-compact,.project-card-facts,.monitoring-performance-grid{grid-template-columns:1fr 1fr}.pipeline-identity-card{align-items:start;grid-template-columns:minmax(0,1fr) auto}.pipeline-identity-card>dl{grid-template-columns:1fr}.project-settings-page>.ds-tabs{position:static}.settings-entrypoint-form{grid-template-columns:1fr}.deploy-review-summary div{grid-template-columns:1fr}.overview-actions .overview-action-destroy{margin-inline-start:0;width:100%}}
+@media(max-width:480px){.workspace-stat-strip-compact,.project-card-facts,.monitoring-performance-grid{grid-template-columns:1fr}.overview-lifecycle-card{padding:var(--space-4)}.overview-lifecycle-card .ds-stage-rail{overflow-x:auto;padding-bottom:var(--space-2)}.overview-lifecycle-card .ds-stage-rail li{min-width:76px}.pipeline-identity-card{grid-template-columns:1fr}.pipeline-identity-card>.status-badge{justify-self:start}}

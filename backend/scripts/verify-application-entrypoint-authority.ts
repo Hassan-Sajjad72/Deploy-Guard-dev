@@ -21,6 +21,7 @@ const renamed = { ...frontendHigh, serviceName: "customer-ui" };
 assert.equal(resolveApplicationEntrypointServiceId(frontendHigh.serviceId, [renamed, backendLow]), frontendHigh.serviceId);
 assert.equal(resolveApplicationEntrypointServiceId(frontendHigh.serviceId, [backendLow, renamed]), frontendHigh.serviceId);
 assert.equal(resolveProjectApplicationUrl(frontendHigh.serviceId, [frontendHigh, backendLow]), frontendHigh.publicUrl);
+assert.equal(resolveProjectApplicationUrl(frontendHigh.serviceId, [backendLow]), null, "an independently promoted service does not replace a failed configured application entrypoint");
 assert.equal(resolveProjectApplicationUrl(null, [backendLow, frontendHigh], "https://historical.example.test"), "https://historical.example.test");
 assert.equal(resolveProjectApplicationUrl("11111111-1111-4111-8111-111111111111", [backendLow, frontendHigh], "https://historical.example.test"), null);
 assert.throws(() => requireApplicationEntrypointServiceId("11111111-1111-4111-8111-111111111111", [backendLow, frontendHigh]), /does not belong/);
@@ -28,9 +29,11 @@ assert.throws(() => requireApplicationEntrypointServiceId("11111111-1111-4111-81
 const deployment = read("backend/src/projects/railpack-deployment.service.ts");
 assert.doesNotMatch(deployment, /const canonicalEndpoint|canonicalEndpoint\.publicUrl/);
 assert.doesNotMatch(deployment, /reduce\(\(selected, service\).*localeCompare\(String\(selected\.serviceId\)\)/);
-assert.match(deployment, /requireApplicationEntrypointServiceId\(endpointProject\.applicationEntryPointServiceId, immutableServices\)/);
-assert.match(deployment, /deployedUrl: applicationEndpoint\.publicUrl/g);
-assert.match(deployment, /publicUrls: Object\.fromEntries\(immutableServices\.map/);
+assert.match(deployment, /const admittedApplicationEntrypoint = current\.metadata\?\.applicationEntryPointServiceId/);
+assert.match(deployment, /const applicationEntryPointServiceId = typeof admittedApplicationEntrypoint === "string" \? admittedApplicationEntrypoint : endpointProject\.applicationEntryPointServiceId/);
+assert.match(deployment, /const applicationEndpoint = reconciledServices\.find/);
+assert.match(deployment, /const deployedUrl = applicationEndpoint &&[\s\S]*?\? applicationEndpoint\.publicUrl : null/);
+assert.match(deployment, /metadata: \{ deployedUrl, publicUrls: Object\.fromEntries\(reconciledServices\.map/);
 
 const currentState = read("backend/src/projects/current-state/project-current-state.service.ts");
 assert.match(currentState, /resolveProjectApplicationUrl/);

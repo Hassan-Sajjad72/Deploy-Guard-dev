@@ -13,6 +13,8 @@ const application = parseEnvText("PORT=3000\nVITE_PUBLIC_API=https://example.tes
 assert.equal(application.entries.length, 2);
 assert.equal(application.entries[0].scope, "build");
 assert.equal(application.entries[1].isSecret, true);
+const externalDatabase = parseEnvText("DATABASE_URL=postgresql://external.example/app", [], []);
+assert.deepEqual(externalDatabase.entries.map(({ key }) => key), ["DATABASE_URL"], "database aliases remain user-owned when the backend reports no managed binding");
 
 const panel = await readFile(new URL("../src/components/projects/EnvironmentVariablesPanel.jsx", import.meta.url), "utf8");
 const form = await readFile(new URL("../src/components/projects/EnvVarForm.jsx", import.meta.url), "utf8");
@@ -24,6 +26,6 @@ assert.match(table, /!variable\.protected && !variable\.isRequired/);
 assert.doesNotMatch(table, /variable\.value/);
 assert.doesNotMatch(form, /placeholder="(?:DATABASE_URL|MONGODB_URI)"/);
 assert.doesNotMatch(panel, /DB_HOST=example|DB_NAME=mydb|MONGO(?:DB)?_URI=/);
-assert.match(form, /Database connection aliases are managed from Database settings/);
-assert.match(panel, /Database aliases are managed by DeployGuard/);
+assert.match(form, /Database connection aliases may be supplied here when no conflicting managed database is attached/);
+assert.match(panel, /Database aliases are accepted unless they conflict with a managed database attached here/);
 console.log("Managed environment registry presentation and reserved-variable client guard passed");

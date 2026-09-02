@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ProjectDeployment } from "../../orchestration/project-deployment.entity";
 import { ProjectPipelineEvent } from "../project-pipeline-event.entity";
+import type { ExternalProvider, FailureOwner } from "../failure-ownership";
 
 export type EcsDeploymentDiagnostics = {
   summary?: string;
@@ -11,7 +12,44 @@ export type EcsDeploymentDiagnostics = {
   targetPort?: number;
   logLines?: string[];
   taskEvents?: string[];
+  stopCode?: string;
+  containerReason?: string;
+  targetHealth?: Array<{ state?: string; reason?: string; description?: string }>;
 };
+
+export type EcsDiagnosticsOwnership = { failureOwner: FailureOwner; externalProvider: ExternalProvider | null };
+
+/** Parse only the bounded machine-readable line emitted by the canonical AWS verifier. */
+export function ecsDiagnosticsFromEvidence(value: string): EcsDeploymentDiagnostics | null {
+  const lines = value.split(/\r?\n/).filter((line) => line.includes("DG_ECS_DIAGNOSTICS "));
+  const json = lines.at(-1)?.slice(lines.at(-1)!.indexOf("DG_ECS_DIAGNOSTICS ") + "DG_ECS_DIAGNOSTICS ".length).trim();
+  if (!json || json.length > 8_000) return null;
+  try {
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === "object" ? parsed as EcsDeploymentDiagnostics : null;
+  } catch {
+    return null;
+  }
+}
+
+/** ECS instability is a symptom. Ownership is assigned only from collected evidence. */
+export function classifyEcsDiagnosticsOwnership(diagnostics: EcsDeploymentDiagnostics | null): EcsDiagnosticsOwnership {
+  if (!diagnostics) return { failureOwner: "UNVERIFIED", externalProvider: null };
+  const text = [diagnostics.summary, diagnostics.stoppedTaskReason, diagnostics.containerReason, ...(diagnostics.logLines || [])].filter(Boolean).join(" ");
+  if (typeof diagnostics.containerExitCode === "number" && diagnostics.containerExitCode !== 0) {
+    return { failureOwner: "REPOSITORY_APPLICATION", externalProvider: null };
+  }
+  if (/CannotPullContainerError|image manifest|no basic auth credentials/i.test(text)) {
+    return { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null };
+  }
+  if (/AccessDenied|not authorized to perform|unable to assume/i.test(text)) {
+    return { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null };
+  }
+  if (/missing|required environment variable|bound to localhost|wrong port|health check/i.test(text)) {
+    return { failureOwner: "REPOSITORY_APPLICATION", externalProvider: null };
+  }
+  return { failureOwner: "UNVERIFIED", externalProvider: null };
+}
 
 @Injectable()
 export class EcsDiagnosticsClassifier {

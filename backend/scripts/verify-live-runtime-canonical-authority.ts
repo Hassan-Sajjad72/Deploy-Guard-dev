@@ -8,7 +8,7 @@ import { LogSanitizerService } from "../src/observability/log-sanitizer.service"
 import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
 import { LiveRuntimeIdentityRecoveryService } from "../src/projects/current-state/live-runtime-identity-recovery.service";
 
-const project: any = { id: "11111111-1111-4111-8111-111111111111", environmentName: "dev" };
+const project: any = { id: "11111111-1111-4111-8111-111111111111", environmentName: "dev", applicationEntryPointServiceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
 const sharedRuntime = { region: "us-east-1", ecsClusterArn: "arn:aws:ecs:us-east-1:123456789012:cluster/project", ecsClusterName: "project" };
 const generation: any = { id: "22222222-2222-4222-8222-222222222222", projectId: project.id, environmentName: "dev", status: "live", terraformStateKey: "projects/test/dev/runtime/terraform.tfstate", resourceManifest: { ...sharedRuntime, services: [{ serviceId: "wrong" }], imageUri: "wrong-image" } };
 const release: any = { id: "33333333-3333-4333-8333-333333333333", projectId: project.id, environmentName: "dev", generationId: generation.id, status: "stable", deployedByPipelineRunId: "44444444-4444-4444-8444-444444444444", metadata: { releaseEvidenceVerified: true, runtimeIdentity: { region: "wrong-region", ecsClusterArn: "wrong-cluster", services: [{ serviceId: "wrong" }] } } };
@@ -84,6 +84,9 @@ async function canonicalRevisionRecovery() {
   const resolved = await resolver.resolveProject(project, b);
   assert.equal(resolved.serviceId, b, "requested canonical service is selected without service ordering inference");
   assert.equal(resolved.logGroupName, revision(b, "API").runtimeIdentity.cloudWatchLogGroupName);
+  resolver.cache.clear();
+  const defaultResolved = await resolver.resolveProject(project);
+  assert.equal(defaultResolved.serviceId, b, "default Monitoring resolves the explicit application entrypoint, never service order");
 }
 
 async function attributionAndHealth() {

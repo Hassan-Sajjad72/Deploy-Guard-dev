@@ -11,7 +11,6 @@ variables {
   operation_id      = "22222222-2222-4222-8222-222222222222"
   vpc_id            = "vpc-0123456789abcdef0"
   public_subnet_ids = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
-  platform_port     = 8080
 }
 
 run "one_service_without_database_or_secrets" {
@@ -21,6 +20,7 @@ run "one_service_without_database_or_secrets" {
       "33333333-3333-4333-8333-333333333333" = {
         name                       = "Web", image = "registry/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         runtime_config_revision_id = "44444444-4444-4444-8444-444444444444"
+        service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
         database_attached          = false, managed_database_aliases = [], managed_database_engine = "postgres"
       }
@@ -46,6 +46,17 @@ run "one_service_without_database_or_secrets" {
     condition     = length(output.services) == 1 && output.database_efs_file_system_id == null && output.database_efs_access_point_id == null
     error_message = "Release evidence outputs must represent the exact service set and absent database."
   }
+  assert {
+    condition = (
+      output.services["33333333-3333-4333-8333-333333333333"].transport_probe_container_name == "deployguard-transport-probe" &&
+      output.services["33333333-3333-4333-8333-333333333333"].transport_probe_port == 65535 &&
+      output.services["33333333-3333-4333-8333-333333333333"].platform_health_check_path == "/_deployguard/transport-ready" &&
+      aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].health_check[0].port == "65535" &&
+      aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].health_check[0].path == "/_deployguard/transport-ready" &&
+      jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[1].name == "deployguard-transport-probe"
+    )
+    error_message = "Default ALB readiness must use the platform-owned TCP transport probe, not the developer application route."
+  }
 }
 
 run "two_services_with_generic_runtime_secret" {
@@ -55,14 +66,16 @@ run "two_services_with_generic_runtime_secret" {
       "33333333-3333-4333-8333-333333333333" = {
         name                       = "Web", image = "registry/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         runtime_config_revision_id = "44444444-4444-4444-8444-444444444444"
-        environment                = { PORT = "8080", HOST = "0.0.0.0" }
+        service_port               = 3000
+        environment                = { PORT = "3000", HOST = "0.0.0.0" }
         secret_references          = { API_KEY = "arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/api:API_KEY::aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
         database_attached          = false, managed_database_aliases = [], managed_database_engine = "postgres"
       }
       "55555555-5555-4555-8555-555555555555" = {
         name                       = "Worker", image = "registry/worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         runtime_config_revision_id = "66666666-6666-4666-8666-666666666666"
-        environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
+        service_port               = 8000
+        environment                = { PORT = "8000", HOST = "0.0.0.0" }, secret_references = {}
         database_attached          = false, managed_database_aliases = [], managed_database_engine = "postgres"
       }
     }
@@ -79,6 +92,19 @@ run "two_services_with_generic_runtime_secret" {
     condition     = output.services["33333333-3333-4333-8333-333333333333"].image != output.services["55555555-5555-4555-8555-555555555555"].image
     error_message = "Immutable images must remain service-scoped."
   }
+  assert {
+    condition = (
+      output.services["33333333-3333-4333-8333-333333333333"].service_port == 3000 &&
+      output.services["55555555-5555-4555-8555-555555555555"].service_port == 8000 &&
+      aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].port == 3000 &&
+      aws_lb_target_group.application["55555555-5555-4555-8555-555555555555"].port == 8000 &&
+      jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[0].portMappings[0].containerPort == 3000 &&
+      jsondecode(aws_ecs_task_definition.application["55555555-5555-4555-8555-555555555555"].container_definitions)[0].portMappings[0].containerPort == 8000 &&
+      jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[1].environment[0].value == "3000" &&
+      jsondecode(aws_ecs_task_definition.application["55555555-5555-4555-8555-555555555555"].container_definitions)[1].environment[0].value == "8000"
+    )
+    error_message = "Each service port must remain independent through release output, target group, ECS task definition, and platform transport probe."
+  }
 }
 
 run "postgres_database_attached_to_service_a" {
@@ -88,12 +114,14 @@ run "postgres_database_attached_to_service_a" {
       "33333333-3333-4333-8333-333333333333" = {
         name                       = "Api", image = "registry/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         runtime_config_revision_id = "44444444-4444-4444-8444-444444444444"
+        service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
         database_attached          = true, managed_database_aliases = ["DATABASE_URL", "DB_HOST", "DB_PORT"], managed_database_engine = "postgres"
       }
       "55555555-5555-4555-8555-555555555555" = {
         name                       = "Web", image = "registry/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         runtime_config_revision_id = "66666666-6666-4666-8666-666666666666"
+        service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
         database_attached          = false, managed_database_aliases = [], managed_database_engine = "postgres"
       }
@@ -120,12 +148,14 @@ run "mysql_database_attached_to_service_b" {
       "33333333-3333-4333-8333-333333333333" = {
         name                       = "Web", image = "registry/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         runtime_config_revision_id = "44444444-4444-4444-8444-444444444444"
+        service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
         database_attached          = false, managed_database_aliases = [], managed_database_engine = "postgres"
       }
       "55555555-5555-4555-8555-555555555555" = {
         name                       = "Api", image = "registry/api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         runtime_config_revision_id = "66666666-6666-4666-8666-666666666666"
+        service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
         database_attached          = true, managed_database_aliases = ["MYSQL_URL", "MYSQL_HOST", "MYSQL_PORT"], managed_database_engine = "mysql"
       }
@@ -148,12 +178,14 @@ run "rollback_immutable_images_and_config" {
       "55555555-5555-4555-8555-555555555555" = {
         name                       = "Worker", image = "registry/worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         runtime_config_revision_id = "66666666-6666-4666-8666-666666666666"
+        service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0", RELEASE = "historical" }, secret_references = {}
         database_attached          = false, managed_database_aliases = [], managed_database_engine = "postgres"
       }
       "33333333-3333-4333-8333-333333333333" = {
         name                       = "Web", image = "registry/web@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
         runtime_config_revision_id = "44444444-4444-4444-8444-444444444444"
+        service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0", RELEASE = "historical" }, secret_references = {}
         database_attached          = false, managed_database_aliases = [], managed_database_engine = "postgres"
       }

@@ -34,7 +34,7 @@ function releaseA(): any {
     taskDefinitionArn: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:1",
     ecsServiceArn: "arn:aws:ecs:us-east-1:123456789012:service/dg-cluster/dg-service",
     appPort: 8080,
-    healthCheckPath: "/",
+    healthCheckPath: "/_deployguard/transport-ready",
     deployedAt: new Date("2026-08-29T08:00:00.000Z"),
     metadata: { imageDigest: digestA, releaseEvidenceVerified: true, deployedUrl: "http://dg.example.test", services: [{ serviceId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest: digestA }] },
   };
@@ -122,6 +122,7 @@ async function verifyDeveloperInfrastructureContract() {
 function verifyWorkflowAndUiContract() {
   const root = join(__dirname, "..", "..");
   const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
+  const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-runtime", "verify-runtime.sh"), "utf8");
   const frontend = readFileSync(join(root, "frontend", "src", "components", "projects", "ProjectOverviewLifecycle.jsx"), "utf8");
   const controller = readFileSync(join(root, "backend", "src", "projects", "projects.controller.ts"), "utf8");
   assert.match(frontend, /target\.targetOperationId/);
@@ -131,8 +132,10 @@ function verifyWorkflowAndUiContract() {
   assert.match(workflow, /Select immutable rollback service images[\s\S]*?inputs\.deployment_action == 'rollback'/);
   assert.match(workflow, /rollbackImage[\s\S]*?@sha256:\[0-9a-f\]\{64\}/);
   assert.match(workflow, /terraform -chdir=\.deployguard\/terraform apply/);
-  assert.match(workflow, /aws ecs wait services-stable/);
-  assert.match(workflow, /curl --fail/);
+  assert.match(workflow, /bash \.deployguard\/terraform\/verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
+  assert.match(runtimeVerification, /aws ecs wait services-stable/);
+  assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/);
+  assert.doesNotMatch(runtimeVerification, /curl --fail --show-error --silent --retry 20/);
   assert.match(workflow, /Publish verified release result/);
   const detailsRoute = /@Get\(":projectId\/current-state\/details"\)([\s\S]*?)async getDetailedCurrentState/.exec(controller)?.[1] || "";
   assert.doesNotMatch(detailsRoute, /UserRole\.ADMIN/, "normal Infrastructure details must not require ADMIN");

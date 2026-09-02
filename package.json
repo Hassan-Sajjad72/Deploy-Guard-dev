@@ -6,6 +6,8 @@
     "node": ">=22 <23"
   },
   "scripts": {
+    "certify:live-apps": "npm exec --prefix backend -- ts-node backend/scripts/certify-live-app-matrix.ts",
+    "test:certify-live-apps": "npm exec --prefix backend -- ts-node backend/scripts/verify-live-app-matrix-runner.ts",
     "product:start": "node scripts/local-product.mjs",
     "product:verify": "node scripts/verify-local-product.mjs",
     "test:canonical-backend-environment": "node scripts/verify-canonical-backend-environment.mjs",

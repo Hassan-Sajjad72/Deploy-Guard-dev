@@ -13,7 +13,7 @@ const newProject = readFileSync(new URL("../src/pages/NewProject.jsx", import.me
 const appLayout = readFileSync(new URL("../src/components/layout/AppLayout.jsx", import.meta.url), "utf8");
 const routes = readFileSync(new URL("../src/routes/AppRoutes.jsx", import.meta.url), "utf8");
 
-assert.match(projects, /latestAttempt\?\.operationId/);
+assert.match(projects, /summaries\.filter/);
 assert.match(projects, /projectStatePresentation\(currentState\)/);
 assert.match(projects, /Last activity/);
 assert.match(projects, /project\.activity\?\.lastMeaningfulActivityAt/);

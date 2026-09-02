@@ -5,7 +5,7 @@ import App from "./App.jsx";
 import "./styles.css";
 import "./design-system.css";
 
-document.documentElement.dataset.theme = "light";
+document.documentElement.dataset.theme = "dark";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

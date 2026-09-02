@@ -16,12 +16,12 @@ run "managed_mongodb_with_apply_time_secret_arn_plans" {
     operation_id      = "22222222-2222-4222-8222-222222222222"
     vpc_id            = "vpc-0123456789abcdef0"
     public_subnet_ids = ["subnet-0123456789abcdef0"]
-    platform_port     = 8080
     services = {
       "33333333-3333-4333-8333-333333333333" = {
         name                       = "Backend"
         image                      = "123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         runtime_config_revision_id = "44444444-4444-4444-8444-444444444444"
+        service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0" }
         secret_references          = {}
         database_attached          = true

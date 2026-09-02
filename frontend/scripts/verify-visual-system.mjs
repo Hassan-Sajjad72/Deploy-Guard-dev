@@ -17,7 +17,7 @@ const publicAdminLink = readFileSync(new URL("../src/components/layout/PublicAdm
 const routes = readFileSync(new URL("../src/routes/AppRoutes.jsx", import.meta.url), "utf8");
 
 assert.match(styles, /prefers-reduced-motion/);
-assert.match(main, /dataset\.theme = "light"/);
+assert.match(main, /dataset\.theme = "dark"/);
 for (const component of ["Button", "Card", "MetricCard", "StatusChip", "PageHeader", "Modal", "Banner", "EmptyState", "Skeleton", "DataTable", "CopyValue", "ChartCard", "StageRail", "Tabs", "DetailsDrawer"]) assert.match(primitives, new RegExp(`export function ${component}`));
 for (const component of ["ActionBar", "DataRow", "IssueCard", "ReadinessSummary"]) assert.match(primitives, new RegExp(`export function ${component}`));
 assert.match(canonical, /<StageRail phases=\{phases\}/);
@@ -41,7 +41,7 @@ assert.match(primitives, /metric-card glass-surface-secondary/);
 assert.match(sidebar, /sidebar glass-elevated/);
 assert.match(navbar, /navbar glass-nav/);
 assert.doesNotMatch(navbar, /CommandPalette|command-trigger|Search/);
-assert.match(navbar, /Secure cloud delivery/);
+assert.doesNotMatch(navbar, /Secure cloud delivery/);
 assert.match(enterprise, /Strong technical glass/);
 assert.match(enterprise, /Liquid Glass material correction/);
 assert.match(enterprise, /body::before[\s\S]*radial-gradient[\s\S]*body::after[\s\S]*background-size: 92px 92px/);
@@ -83,7 +83,8 @@ for (const stage of ["Repository", "Build image", "Publish", "Provision", "Run &
 assert.match(enterprise, /\.architecture-panel/);
 assert.match(enterprise, /\.architecture-connector::after[\s\S]*dg-architecture-signal/);
 assert.match(enterprise, /\.pipeline-stage-row\.is-running::before[\s\S]*dg-stage-scan/);
-assert.match(enterprise, /\.monitoring-sample-chart i[\s\S]*dg-chart-rise/);
+assert.match(enterprise, /\.monitoring-sample-chart polyline/);
+assert.match(enterprise, /--accent: #f5b942/i, "amber remains the global interaction accent");
 assert.match(enterprise, /\.deployment-journey/);
 assert.match(enterprise, /@media \(max-width: 680px\)[\s\S]*\.architecture-flow[\s\S]*grid-template-columns: 1fr/);
 

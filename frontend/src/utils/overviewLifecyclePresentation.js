@@ -25,6 +25,13 @@ function latestOperationFailed(currentState) {
     && currentState?.stateAuthority?.latestCompletedOperation?.outcome === "failed";
 }
 
+export function overviewFailureOwnershipLabel(currentState) {
+  const failed = canonicalOverviewState(currentState) === "FAILED" || latestOperationFailed(currentState);
+  return failed && currentState?.latestAttempt?.failureOwner === "REPOSITORY_APPLICATION"
+    ? "Repository failure"
+    : null;
+}
+
 export function latestOverviewOperationType(currentState) {
   const type = currentState?.latestAttempt?.operationType
     || currentState?.stateAuthority?.activeOperation?.type
@@ -38,6 +45,7 @@ function deploymentFailureCopy(phase, workflowRunId) {
   if (phase === "build") return ["Build Application failed", "Build stopped before image publication. View Pipeline for technical evidence."];
   if (phase === "deploy") return ["Deploy Runtime failed", "Runtime deployment did not complete. View Pipeline for technical evidence."];
   if (phase === "verify") return ["Verify Application failed", "Release verification did not complete. View Pipeline for technical evidence."];
+  if (phase === "finalize") return ["Finalize Release failed", "Terminal release evidence validation did not complete. View Pipeline for technical evidence."];
   return ["Deployment failed", "The deployment did not complete. View Pipeline for technical evidence."];
 }
 

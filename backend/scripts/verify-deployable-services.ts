@@ -7,7 +7,9 @@ import { assertRailpackRuntimeConfiguration, RailpackRuntimeConfiguration } from
 
 const root = join(__dirname, "..", "..");
 const workflow = readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8");
+const executableWorkflow = workflow.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
 const migration = readFileSync(join(root, "backend/src/migrations/1787356813000-ProjectDeployableServices.ts"), "utf8");
+const portMigration = readFileSync(join(root, "backend/src/migrations/1787356819000-DeployableServicePort.ts"), "utf8");
 const projectEntity = readFileSync(join(root, "backend/src/projects/project.entity.ts"), "utf8");
 const entrypointMigration = readFileSync(join(root, "backend/src/migrations/1787356818000-ProjectApplicationEntrypoint.ts"), "utf8");
 const newProject = readFileSync(join(root, "frontend/src/pages/NewProject.jsx"), "utf8");
@@ -21,14 +23,17 @@ for (const invalid of ["../api", "apps/../api", "/api", "C:\\api", "api\0escape"
 }
 
 const base: RailpackRuntimeConfiguration = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   projectId: "11111111-1111-4111-8111-111111111111",
   operationId: "22222222-2222-4222-8222-222222222222",
   environmentName: "dev",
   sourceSha: "a".repeat(40),
-  services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "55555555-5555-4555-8555-555555555555", serviceName: "Web", serviceDirectory: ".", environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }],
+  services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "55555555-5555-4555-8555-555555555555", serviceName: "Web", serviceDirectory: ".", servicePort: 8080, buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }],
 };
 assert.doesNotThrow(() => assertRailpackRuntimeConfiguration(base));
+assert.throws(() => assertRailpackRuntimeConfiguration({ ...base, services: [{ ...base.services[0], servicePort: 0, environment: { PORT: "0", HOST: "0.0.0.0" } }] }), /service port/);
+assert.throws(() => assertRailpackRuntimeConfiguration({ ...base, services: [{ ...base.services[0], servicePort: 65536, environment: { PORT: "65536", HOST: "0.0.0.0" } }] }), /service port/);
+assert.throws(() => assertRailpackRuntimeConfiguration({ ...base, services: [{ ...base.services[0], servicePort: 3000 }] }), /platform runtime values/);
 assert.throws(() => assertRailpackRuntimeConfiguration({ ...base, services: [...base.services, { ...base.services[0], serviceId: "44444444-4444-4444-8444-444444444444", serviceName: "web" }] }), /service identity/);
 assert.throws(() => assertRailpackRuntimeConfiguration({ ...base, services: [{ ...base.services[0], serviceDirectory: "../web" }] }), /Service directory|canonical/);
 
@@ -39,8 +44,12 @@ assert.match(migration, /UPDATE "project_environment_variables"[\s\S]*SET "servi
 assert.match(migration, /UPDATE "project_database_tiers"[\s\S]*"attached_service_id"/);
 assert.match(migration, /DROP COLUMN IF EXISTS "app_directory"/);
 assert.match(migration, /UQ_project_deployable_service_name_ci/);
-assert.match(newProject, /name: "Web", serviceDirectory: ""/);
-assert.match(newProject, /name: `Service \$\{current\.length \+ 1\}`, serviceDirectory: ""/);
+assert.match(portMigration, /ADD COLUMN "service_port" integer NOT NULL DEFAULT 8080/);
+assert.match(portMigration, /"service_port" BETWEEN 1 AND 65535/);
+assert.match(newProject, /name: "Web", serviceDirectory: "", servicePort: "8080"/);
+assert.match(newProject, /name: `Service \$\{current\.length \+ 1\}`, serviceDirectory: "", servicePort: "8080"/);
+assert.match(newProject, /<span>Application port<\/span>/);
+assert.match(newProject, /servicePort: Number\(servicePort\)/);
 assert.match(newProject, /function compareDirectoryPresentation/);
 assert.match(newProject, /<option value="">Choose a directory<\/option>\{rankedDirectories\.map/);
 assert.doesNotMatch(newProject, /directoryQueries|matchingDirectories|Search directory suggestions|Repository-relative path/);
@@ -53,8 +62,8 @@ assert.doesNotMatch(newProject, /Install Command|Build Command|Start Command|Fra
 assert.match(source, /assertDirectoriesAtExactSha/);
 assert.match(source, /checkout\.sourceSha\.toLowerCase\(\) !== input\.sourceSha\.toLowerCase\(\)/);
 assert.match(workflow, /fetch-depth: 1/);
-assert.match(workflow, /railpack build --name "\$image" "\$directory"/);
-assert.doesNotMatch(workflow, /sparse-checkout|framework|package-manager|install-command|start-command/i);
+assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$directory"/);
+assert.doesNotMatch(executableWorkflow, /sparse-checkout|framework|package-manager|install-command|start-command/i);
 assert.deepEqual(workspacePackage.workspaces, ["apps/*", "packages/*"]);
 assert.equal(workspacePackage.scripts.start, "npm --workspace @deployguard-fixture/web run start", "the shared-workspace fixture uses repository-owned targeting rather than DeployGuard-generated commands");
 console.log("DEPLOYABLE_SERVICES=PASS DEFAULT_ROOT=1 PATH_AUTHORITY=SERVICE_ONLY EXACT_SHA_DIRECTORY_GATE=1");

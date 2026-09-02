@@ -299,6 +299,7 @@ export class ProjectCurrentStateService {
       occurredAt: (latest.completedAt || latest.failedAt || latest.updatedAt).toISOString(),
       startedAt: (latest.startedAt || latest.createdAt).toISOString(),
       completedAt: latest.completedAt ? latest.completedAt.toISOString() : latest.failedAt ? latest.failedAt.toISOString() : null,
+      failureOwner: latest.failureOwner || null,
       workflowStages: Array.isArray(latestMetadata.workflowStages) ? latestMetadata.workflowStages
         .filter((stage): stage is Record<string, unknown> => Boolean(stage) && typeof stage === "object")
         .map((stage) => ({ key: String(stage.key || ""), status: ["passed", "failed", "running", "skipped"].includes(String(stage.status)) ? String(stage.status) as "passed" | "failed" | "running" | "skipped" : "skipped" })) : [],
@@ -518,8 +519,8 @@ export class ProjectCurrentStateService {
     return { percentage: 20, phase: "prepare", label: "Preparing Destroy" };
   }
 
-  private githubLifecycleProgress(phase: "source" | "prepare" | "build" | "deploy" | "verify") {
-    return { source: 0, prepare: 20, build: 40, deploy: 60, verify: 80 }[phase];
+  private githubLifecycleProgress(phase: "source" | "prepare" | "build" | "deploy" | "verify" | "finalize") {
+    return { source: 0, prepare: 20, build: 40, deploy: 60, verify: 80, finalize: 95 }[phase];
   }
 
   private conciseFailureMessage(errorMessage: unknown) {

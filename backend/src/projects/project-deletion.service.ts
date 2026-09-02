@@ -40,13 +40,7 @@ export class ProjectDeletionService {
           where: { projectId: project.id },
           select: { providerSubscriptionArn: true, providerTopicArn: true },
         }),
-        this.projects.count({
-          where: {
-            id: Not(project.id),
-            repositoryFullName: project.repositoryFullName,
-            targetBranch: project.targetBranch,
-          },
-        }),
+        this.projects.count({ where: { id: Not(project.id), repositoryFullName: project.repositoryFullName } }),
       ]);
 
       await this.sns.deleteProjectResources(project.id, subscriptions);
@@ -54,7 +48,6 @@ export class ProjectDeletionService {
         await this.githubApp.removeManagedWorkflow(
           project.ownerUserId,
           project.repositoryFullName,
-          project.targetBranch,
           project.githubInstallationId,
         );
       }

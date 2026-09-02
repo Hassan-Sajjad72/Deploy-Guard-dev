@@ -76,7 +76,8 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 .overview-lifecycle-heading h2{margin-bottom:var(--space-2)}
 .overview-lifecycle-heading p:last-child{margin-bottom:0;max-width:720px}
 .overview-actions{display:flex;flex-wrap:wrap;gap:var(--space-2)}
-.overview-summary-grid{display:grid;gap:var(--space-3);grid-template-columns:repeat(4,minmax(0,1fr))}
+.overview-summary-grid{display:grid;gap:var(--space-3);grid-template-columns:repeat(3,minmax(0,1fr))}
+.overview-lifecycle-card .ds-stage-rail{grid-template-columns:repeat(6,minmax(0,1fr))}
 .overview-summary-grid .metric-card{box-shadow:none;padding:var(--space-4)}
 .dashboard-summary-line{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 .overview-evidence-line{align-items:center;background:var(--surface-muted);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--ink-soft);display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4);padding:var(--space-3) var(--space-4);font-size:.82rem}
@@ -276,8 +277,11 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 }
 
 /* Iteration 6: read-focused platform administration and audit evidence. */
+.admin-shell::before{background:linear-gradient(rgba(8,12,14,.92),rgba(8,12,14,.96)),radial-gradient(circle at 82% 12%,rgba(244,122,32,.08),transparent 32%)}
+.admin-shell-header{background:rgba(14,18,20,.96);border-color:rgba(244,122,32,.2);box-shadow:0 18px 55px rgba(0,0,0,.34)}
 .admin-console{gap:var(--space-5)}
-.admin-section{display:grid;gap:var(--space-4);min-width:0}
+.admin-section{background:rgba(18,22,24,.96);border-color:rgba(255,255,255,.1);box-shadow:0 22px 60px rgba(0,0,0,.3);display:grid;gap:var(--space-4);min-width:0}
+.admin-error-metadata{color:var(--ink-soft);display:block;margin-top:var(--space-2)}
 .admin-section-heading h2{margin-bottom:var(--space-2)}
 .admin-section-heading p:last-child{margin-bottom:0;max-width:760px}
 .admin-summary-grid{display:grid;gap:var(--space-3);grid-template-columns:repeat(3,minmax(0,1fr))}

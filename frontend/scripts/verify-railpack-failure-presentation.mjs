@@ -28,6 +28,7 @@ assert.deepEqual(deploymentPhasePresentation(failure).map(({ key, status }) => [
   ["publish", "waiting"],
   ["deploy", "waiting"],
   ["verify", "waiting"],
+  ["finalize", "waiting"],
 ]);
 const destroy = {
   developerState: "destroying",
@@ -62,7 +63,7 @@ assert.match(pipeline, /Not created — deployment failed before runtime generat
 assert.match(pipeline, /details\.createdAt \|\| details\.startedAt \|\| details\.failedAt/);
 assert.match(overviewComponent, /detail=\{copy\.message\}/, "Overview must use the concise canonical message, never raw evidence.");
 assert.match(overviewComponent, /value=\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/);
-assert.match(overviewComponent, /Runtime was not deployed\./);
+assert.doesNotMatch(overviewComponent, /label="Application health"|Runtime was not deployed\./, "Overview leaves runtime health to Infrastructure and Monitoring.");
 assert.match(troubleshooting, /Not created — deployment failed before runtime generation\./);
 assert.match(troubleshooting, /operationTimestamp\(operation\)/);
 assert.match(infrastructure, /subscribeProjectStateChanged/);

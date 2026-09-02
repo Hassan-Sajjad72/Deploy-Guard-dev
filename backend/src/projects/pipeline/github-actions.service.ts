@@ -36,6 +36,7 @@ export type GithubActionsDispatchEvidence = {
   workflow: string;
   repository: string;
   ref: string;
+  sourceRef: string;
   inputNames: string[];
   operationId: string | null;
   failedAt: string;
@@ -46,6 +47,7 @@ export type GithubActionsDispatchReceipt = {
   workflow: string;
   repository: string;
   ref: string;
+  sourceRef: string;
   inputNames: string[];
   operationId: string | null;
   apiVersion: "2026-03-10";
@@ -113,11 +115,12 @@ export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryByt
 // actions/upload-artifact preserves the file but strips the uploaded common
 // directory, so `path: terraform/deployguard-result.json` is ZIP-rooted.
 export const DEPLOYGUARD_RESULT_ARTIFACT_ENTRY = "deployguard-result.json";
+export const DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY = "deployguard-failure-evidence.json";
 
 export type GithubActionsWorkflowStage = {
   key: string;
   label: string;
-  status: "failed" | "passed" | "running" | "pending" | "skipped";
+  status: "failed" | "passed" | "running" | "pending" | "skipped" | "unavailable";
   startedAt: string | null;
   completedAt: string | null;
   jobUrl: string | null;
@@ -141,6 +144,7 @@ export class GithubActionsService {
   async triggerWorkflow(input: {
     repositoryFullName: string;
     targetBranch: string;
+    workflowRegistrationBranch: string;
     token?: string;
     inputs?: Record<string, string>;
     excludedWorkflowRunIds?: string[];
@@ -160,9 +164,9 @@ export class GithubActionsService {
     const operationId = input.inputs?.deployment_operation_id || null;
     if (input.inputs && (input.repositoryFullName !== input.inputs.repository_full_name || input.targetBranch !== input.inputs.repository_branch)) {
       const detail = "Dispatch repository and ref do not match the immutable deployment snapshot.";
-      throw new GithubActionsDispatchError("invalid_workflow_inputs", detail, this.failureEvidence("invalid_workflow_inputs", null, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId));
+      throw new GithubActionsDispatchError("invalid_workflow_inputs", detail, this.failureEvidence("invalid_workflow_inputs", null, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch));
     }
-    await this.validateDispatchTarget(input.repositoryFullName, input.targetBranch, workflowFile, token, inputNames, operationId);
+    await this.validateDispatchTarget(input.repositoryFullName, input.targetBranch, input.workflowRegistrationBranch, workflowFile, token, inputNames, operationId);
     let response: Response;
 
     try {
@@ -177,7 +181,7 @@ export class GithubActionsService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            ref: input.targetBranch,
+            ref: input.workflowRegistrationBranch,
             ...(input.inputs ? { inputs: dispatchInputs } : {}),
             return_run_details: true,
           }),
@@ -196,7 +200,7 @@ export class GithubActionsService {
           token
         );
       const detail = this.safeDispatchFailureDetail(responseMessage);
-      throw new GithubActionsDispatchError(diagnosticCode, detail, this.failureEvidence(diagnosticCode, response.status, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId));
+      throw new GithubActionsDispatchError(diagnosticCode, detail, this.failureEvidence(diagnosticCode, response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch));
     }
 
     const dispatchResult = await response.json().catch(() => null) as { workflow_run_id?: number | string; html_url?: string } | null;
@@ -207,7 +211,7 @@ export class GithubActionsService {
       throw new GithubActionsDispatchError(
         "workflow_run_identity_missing",
         detail,
-        this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId),
+        this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch),
       );
     }
     const excludedRunIds = new Set(input.excludedWorkflowRunIds || []);
@@ -218,7 +222,7 @@ export class GithubActionsService {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
         discoveredRunId = await this.findWorkflowRunAfter(
           input.repositoryFullName,
-          input.targetBranch,
+          input.workflowRegistrationBranch,
           dispatchedAt,
           token,
           [...excludedRunIds],
@@ -229,7 +233,7 @@ export class GithubActionsService {
         throw new GithubActionsDispatchError(
           "workflow_run_identity_missing",
           detail,
-          this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.targetBranch, inputNames, operationId),
+          this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch),
         );
       }
       workflowRunId = discoveredRunId;
@@ -242,7 +246,8 @@ export class GithubActionsService {
         httpStatus: response.status,
         workflow: workflowFile,
         repository: input.repositoryFullName,
-        ref: input.targetBranch,
+        ref: input.workflowRegistrationBranch,
+        sourceRef: input.targetBranch,
         inputNames,
         operationId,
         apiVersion: "2026-03-10",
@@ -255,29 +260,30 @@ export class GithubActionsService {
     };
   }
 
-  private async validateDispatchTarget(repository: string, branch: string, workflowFile: string, token: string, inputNames: string[], operationId: string | null) {
+  private async validateDispatchTarget(repository: string, sourceBranch: string, registrationBranch: string, workflowFile: string, token: string, inputNames: string[], operationId: string | null) {
     const checks = [
       { url: `https://api.github.com/repos/${repository}`, code: "repo_not_found_or_permission_denied" as const, detail: "GitHub repository is not accessible to the installation token." },
-      { url: `https://api.github.com/repos/${repository}/branches/${encodeURIComponent(branch)}`, code: "wrong_branch" as const, detail: "The selected GitHub branch does not exist or is not accessible." },
+      { url: `https://api.github.com/repos/${repository}/branches/${encodeURIComponent(sourceBranch)}`, code: "wrong_branch" as const, detail: "The selected GitHub source branch does not exist or is not accessible." },
+      ...(registrationBranch === sourceBranch ? [] : [{ url: `https://api.github.com/repos/${repository}/branches/${encodeURIComponent(registrationBranch)}`, code: "wrong_branch" as const, detail: "The GitHub workflow-registration branch does not exist or is not accessible." }]),
     ];
     for (const check of checks) {
       const response = await fetch(check.url, { headers: this.headers(token) });
       if (!response.ok) {
         const code = response.status === 401 || response.status === 403 ? "token_no_repo_access" : check.code;
-        throw new GithubActionsDispatchError(code, check.detail, this.failureEvidence(code, response.status, check.detail, workflowFile, repository, branch, inputNames, operationId));
+        throw new GithubActionsDispatchError(code, check.detail, this.failureEvidence(code, response.status, check.detail, workflowFile, repository, registrationBranch, inputNames, operationId, sourceBranch));
       }
     }
     const path = workflowFile.includes("/") ? workflowFile : `.github/workflows/${workflowFile}`;
-    const response = await fetch(`https://api.github.com/repos/${repository}/contents/${path}?ref=${encodeURIComponent(branch)}`, { headers: this.headers(token) });
+    const response = await fetch(`https://api.github.com/repos/${repository}/contents/${path}?ref=${encodeURIComponent(registrationBranch)}`, { headers: this.headers(token) });
     if (!response.ok) {
       const detail = "The expected workflow file does not exist on the selected branch.";
-      throw new GithubActionsDispatchError("workflow_file_missing", detail, this.failureEvidence("workflow_file_missing", response.status, detail, workflowFile, repository, branch, inputNames, operationId));
+      throw new GithubActionsDispatchError("workflow_file_missing", detail, this.failureEvidence("workflow_file_missing", response.status, detail, workflowFile, repository, registrationBranch, inputNames, operationId, sourceBranch));
     }
     const body = await response.json() as { content?: string; encoding?: string };
     const content = body.encoding === "base64" && body.content ? Buffer.from(body.content.replace(/\n/g, ""), "base64").toString("utf8") : "";
     if (!/^on:\s*\n\s+workflow_dispatch:\s*$/m.test(content)) {
       const detail = "The expected workflow does not expose workflow_dispatch.";
-      throw new GithubActionsDispatchError("workflow_dispatch_missing", detail, this.failureEvidence("workflow_dispatch_missing", null, detail, workflowFile, repository, branch, inputNames, operationId));
+      throw new GithubActionsDispatchError("workflow_dispatch_missing", detail, this.failureEvidence("workflow_dispatch_missing", null, detail, workflowFile, repository, registrationBranch, inputNames, operationId, sourceBranch));
     }
     const definitions = content.match(/\n    inputs:\n([\s\S]*?)\npermissions:/)?.[1] || "";
     const declared = [...definitions.matchAll(/^\s{6}([a-z][a-z0-9_]*):\s*\{/gm)].map((match) => match[1]).sort();
@@ -285,23 +291,23 @@ export class GithubActionsService {
     const required = expected.filter((name) => !RAILPACK_OPTIONAL_CALLER_INPUT_NAMES.includes(name as typeof RAILPACK_OPTIONAL_CALLER_INPUT_NAMES[number]));
     if (declared.length !== expected.length || declared.some((name, index) => name !== expected[index]) || inputNames.some((name) => !declared.includes(name)) || required.some((name) => !inputNames.includes(name))) {
       const detail = "Generated workflow input names do not match the canonical DeployGuard dispatch contract.";
-      throw new GithubActionsDispatchError("invalid_workflow_inputs", detail, this.failureEvidence("invalid_workflow_inputs", null, detail, workflowFile, repository, branch, inputNames, operationId));
+      throw new GithubActionsDispatchError("invalid_workflow_inputs", detail, this.failureEvidence("invalid_workflow_inputs", null, detail, workflowFile, repository, registrationBranch, inputNames, operationId, sourceBranch));
     }
     const workflowResponse = await fetch(`https://api.github.com/repos/${repository}/actions/workflows/${encodeURIComponent(workflowFile)}`, { headers: this.headers(token) });
     if (!workflowResponse.ok) {
       const code: GithubActionsDiagnosticCode = workflowResponse.status === 401 || workflowResponse.status === 403 ? "token_no_repo_access" : "workflow_file_missing";
       const detail = "GitHub does not expose the expected workflow to the installation token.";
-      throw new GithubActionsDispatchError(code, detail, this.failureEvidence(code, workflowResponse.status, detail, workflowFile, repository, branch, inputNames, operationId));
+      throw new GithubActionsDispatchError(code, detail, this.failureEvidence(code, workflowResponse.status, detail, workflowFile, repository, registrationBranch, inputNames, operationId, sourceBranch));
     }
     const workflow = await workflowResponse.json() as { state?: string };
     if (workflow.state && workflow.state !== "active") {
       const detail = "The expected GitHub Actions workflow is not active.";
-      throw new GithubActionsDispatchError("github_actions_disabled", detail, this.failureEvidence("github_actions_disabled", null, detail, workflowFile, repository, branch, inputNames, operationId));
+      throw new GithubActionsDispatchError("github_actions_disabled", detail, this.failureEvidence("github_actions_disabled", null, detail, workflowFile, repository, registrationBranch, inputNames, operationId, sourceBranch));
     }
   }
 
-  private failureEvidence(classification: GithubActionsDiagnosticCode, httpStatus: number | null, message: string, workflow: string, repository: string, ref: string, inputNames: string[], operationId: string | null): GithubActionsDispatchEvidence {
-    return { classification, httpStatus, message, workflow, repository, ref, inputNames: [...inputNames].sort(), operationId, failedAt: new Date().toISOString() };
+  private failureEvidence(classification: GithubActionsDiagnosticCode, httpStatus: number | null, message: string, workflow: string, repository: string, ref: string, inputNames: string[], operationId: string | null, sourceRef = ref): GithubActionsDispatchEvidence {
+    return { classification, httpStatus, message, workflow, repository, ref, sourceRef, inputNames: [...inputNames].sort(), operationId, failedAt: new Date().toISOString() };
   }
 
   async getWorkflowRun(repositoryFullName: string, workflowRunId: string, token: string) {
@@ -382,23 +388,46 @@ export class GithubActionsService {
    * Collect only bounded evidence for a terminal failure. This deliberately
    * works for bootstrap failures where no deployment artifact exists.
    */
-  async getTerminalFailureEvidence(repository: string, workflowRunId: string, token: string, action: GithubActionsPresentationAction = "deploy"): Promise<GithubActionsTerminalFailureEvidence | null> {
+  async getTerminalFailureEvidence(repository: string, workflowRunId: string, operationId: string, token: string, action: GithubActionsPresentationAction = "deploy"): Promise<GithubActionsTerminalFailureEvidence | null> {
     const response = await this.getWorkflowJobs(repository, workflowRunId, token);
     const jobs = response.jobs || [];
     const failed = jobs.find((job) => String(job.conclusion || "").toLowerCase() === "failure")
       || jobs.find((job) => String(job.status || "").toLowerCase() === "completed" && String(job.conclusion || "").toLowerCase() !== "success");
-    if (!failed) return null;
-    const failedStep = (failed.steps || []).find((step) => String(step.conclusion || "").toLowerCase() === "failure");
+    let persistedFailure: string | null = null;
+    let persistedMarkers: string[] = [];
+    try {
+      const raw = await this.getArtifactEntry(repository, workflowRunId, operationId, token, DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, 512 * 1024);
+      if (raw) {
+        const artifact = JSON.parse(raw) as Record<string, unknown>;
+        const verification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
+        const services = Array.isArray(verification?.services) ? verification.services as Array<Record<string, unknown>> : [];
+        if (artifact.contractVersion === "deployguard.release-failure/v1"
+          && artifact.operationId === operationId
+          && artifact.action === action
+          && verification?.contractVersion === "deployguard.aws-runtime-verification/v1"
+          && verification.verified === false
+          && services.some((service) => service.verified === false && typeof service.failureMarker === "string" && service.failureMarker.startsWith("DG_FAILURE "))) {
+          persistedFailure = JSON.stringify(artifact).slice(-8_000);
+          persistedMarkers = services.flatMap((service) => service.verified === false && typeof service.failureMarker === "string" ? [service.failureMarker.slice(0, 500)] : []);
+        }
+      }
+    } catch {
+      // Failed-workflow job/log metadata remains usable when GitHub has not
+      // finished indexing the bounded diagnostic artifact.
+    }
+    if (!failed && !persistedFailure) return null;
+    const failedStep = (failed?.steps || []).find((step) => String(step.conclusion || "").toLowerCase() === "failure");
     const normalized = (value: unknown) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-    const failedStage = normalized(failedStep?.name) || normalized(failed.name) || "workflow_bootstrap";
+    const failedStage = normalized(failedStep?.name) || normalized(failed?.name) || "workflow_bootstrap";
     const workflowStages = await this.getWorkflowStages(repository, workflowRunId, token, action);
     const summary = [
-      `GitHub Actions job: ${String(failed.name || "workflow bootstrap")}`,
-      `Job status: ${String(failed.status || "completed")}`,
-      `Job conclusion: ${String(failed.conclusion || "failure")}`,
+      `GitHub Actions job: ${String(failed?.name || "workflow bootstrap")}`,
+      `Job status: ${String(failed?.status || "completed")}`,
+      `Job conclusion: ${String(failed?.conclusion || "failure")}`,
       failedStep ? `Failed step: ${String(failedStep.name || "workflow bootstrap")}` : "Failed before a runnable workflow step was recorded.",
     ];
-    if (typeof failed.id === "number") {
+    if (persistedFailure) summary.push(`Persisted terminal verification evidence: ${persistedFailure}`);
+    if (typeof failed?.id === "number") {
       try {
         const log = await this.getJobLog(repository, failed.id, token);
         // Keep the terminal diagnostic area only; sanitation is applied by the
@@ -408,7 +437,8 @@ export class GithubActionsService {
         // Job metadata remains valid bounded evidence when logs are withheld.
       }
     }
-    return { failedStage, rawEvidence: summary.join("\n").slice(0, 16_000), workflowStages };
+    summary.push(...persistedMarkers);
+    return { failedStage, rawEvidence: summary.join("\n").slice(-16_000), workflowStages };
   }
 
   async getResultArtifact(repository: string, workflowRunId: string, operationId: string, token: string) {

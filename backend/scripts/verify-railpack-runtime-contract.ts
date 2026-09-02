@@ -4,13 +4,16 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
-import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
+import { RailpackRuntimeConfiguration, servicesBase64 } from "../src/projects/railpack-workflow-contract";
 import { SERVICE_ALIAS_GROUPS } from "../src/projects/configuration-ownership";
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
 const outputs = readFileSync(join(root, "infrastructure", "railpack-runtime", "outputs.tf"), "utf8");
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
+const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-runtime", "verify-runtime.sh"), "utf8");
+const releaseResultProducer = readFileSync(join(root, "infrastructure", "railpack-runtime", "build-release-result.sh"), "utf8");
+const executableContract = { releaseResultProducer, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform };
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
 const providerLock = readFileSync(join(root, "infrastructure", "railpack-runtime", ".terraform.lock.hcl"), "utf8");
@@ -18,30 +21,35 @@ const pinned = parsePinnedReusableWorkflow("Hassan-Sajjad72/Deploy-Guard-dev/.gi
 const caller = renderDeployguardCallerWorkflow(pinned.reference);
 const jqContract = workflow.match(/jq -e[^']*'\n([\s\S]*?)\n\s*' \.deployguard\/runtime\.json/)?.[1];
 assert.ok(jqContract, "the workflow service-contract jq filter must be extractable");
-const contractFixture = { schemaVersion: 2, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "44444444-4444-4444-8444-444444444444", serviceName: "Web", serviceDirectory: ".", environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::${"b".repeat(64)}` }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
+const contractFixture: RailpackRuntimeConfiguration = { schemaVersion: 3, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "44444444-4444-4444-8444-444444444444", serviceName: "Web", serviceDirectory: ".", servicePort: 8080, buildEnvironment: { PUBLIC_BUILD_MODE: "production" }, buildSecretReferences: { BUILD_TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:BUILD_TOKEN::${"c".repeat(64)}` }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::${"b".repeat(64)}` }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
 const jqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(contractFixture), encoding: "utf8" });
 assert.equal(jqResult.status, 0, `workflow service contract must accept the canonical runtime fixture: ${jqResult.stderr}`);
 const invalidReference = structuredClone(contractFixture);
 invalidReference.services[0].secretReferences.TOKEN = "terraform://database/password";
 const invalidJqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(invalidReference), encoding: "utf8" });
 assert.notEqual(invalidJqResult.status, 0, "the workflow must reject non-ARN secret references before execution");
-for (const [field, key] of [["environment", "DATABASE_URL"], ["secretReferences", "MONGODB_URI"]] as const) {
-  const legacyDatabaseAlias: any = structuredClone(contractFixture);
-  legacyDatabaseAlias.services[0][field][key] = field === "environment"
-    ? "legacy-user-database-value"
-    : `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:${key}::${"c".repeat(64)}`;
-  assert.throws(() => servicesBase64(legacyDatabaseAlias), /runtime (?:environment|secret reference) is invalid/, `legacy ${key} must fail closed before workflow dispatch`);
-}
+const invalidBuildPort: any = structuredClone(contractFixture);
+invalidBuildPort.services[0].buildEnvironment.PORT = "9999";
+assert.throws(() => servicesBase64(invalidBuildPort), /build environment is invalid/, "the platform PORT cannot be overridden at build scope");
+const invalidBuildReference: any = structuredClone(contractFixture);
+invalidBuildReference.services[0].buildSecretReferences.BUILD_TOKEN = "not-an-immutable-secret-reference";
+assert.throws(() => servicesBase64(invalidBuildReference), /build secret reference is invalid/, "build secrets must use immutable Secrets Manager version references");
 const managedDatabaseAliases = [...new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service !== "storage").flatMap((group) => group.aliases))].sort();
 for (const key of managedDatabaseAliases) {
-  assert.match(workflow, new RegExp(`"${key}"`), `the workflow validator must include the canonical managed database alias ${key}`);
   for (const field of ["environment", "secretReferences"] as const) {
-    const legacyDatabaseAlias: any = structuredClone(contractFixture);
-    legacyDatabaseAlias.services[0][field][key] = field === "environment"
-      ? "legacy-user-database-value"
+    const externalDatabaseAlias: any = structuredClone(contractFixture);
+    externalDatabaseAlias.services[0][field][key] = field === "environment"
+      ? "user-supplied-external-database-value"
       : `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:${key}::${"c".repeat(64)}`;
-    const result = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(legacyDatabaseAlias), encoding: "utf8" });
-    assert.notEqual(result.status, 0, `the workflow must reject ${key} from generic ${field} at the execution boundary`);
+    assert.doesNotThrow(() => servicesBase64(externalDatabaseAlias), `external database alias ${key} is ordinary application configuration when no managed database is attached`);
+    const externalResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(externalDatabaseAlias), encoding: "utf8" });
+    assert.equal(externalResult.status, 0, `the workflow must accept external database alias ${key} when no managed database is attached`);
+    const managedConflict: any = structuredClone(externalDatabaseAlias);
+    managedConflict.services[0].databaseAttached = true;
+    managedConflict.services[0].managedDatabase = { engine: "postgres", aliases: [key] };
+    assert.throws(() => servicesBase64(managedConflict), /(?:environment|secret reference) is invalid/, `a managed database must reject the exact ${key} alias it injects`);
+    const managedResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(managedConflict), encoding: "utf8" });
+    assert.notEqual(managedResult.status, 0, `the workflow must reject managed alias ${key} at the execution boundary`);
   }
 }
 const historicalDatabaseVersionId = "terraform-20260830234105178100000005";
@@ -95,18 +103,24 @@ assert.notEqual(executeEcrCleanup(1, 0).status, 0, "a rejected ECR deletion must
 assert.notEqual(executeEcrCleanup(0, 0).status, 0, "an ECR repository still observable after deletion must stop Destroy before release evidence");
 assert.equal(executeEcrCleanup(0, 1).status, 0, "confirmed ECR absence may continue to state cleanup and release evidence");
 assert.match(destroyRuntime, /\.Name == \$serviceSecret[\s\S]*?\.Name == \$legacySecret/, "destroy supports only exact owned service-scoped or historical project-scoped runtime secret namespaces");
+assert.match(destroyRuntime, /describe-secret --secret-id "\$service_secret" --query ARN --output text/, "destroy discovers the exact service secret even when it contains only build-scope values");
 assert.match(destroyRuntime, /\[ "\$repository" = "deployguard-\$\{PROJECT_ID\}" \] \|\| \[ "\$repository" = "deployguard-\$\{compact_project:0:12\}-\$\{compact_service:0:8\}" \]/, "destroy must reject any ECR repository outside the exact legacy or service-scoped DeployGuard namespace");
-assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller)));
+assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), executableContract));
 const staleResultContract = workflow.replace(/^      result_contract_version:.*\n/m, "");
 assert.throws(
-  () => assertReusableWorkflowCompatibility(staleResultContract, pinned, generatedCallerWithKeys(caller)),
+  () => assertReusableWorkflowCompatibility(staleResultContract, pinned, generatedCallerWithKeys(caller), executableContract),
   /result_contract_version/,
   "a reusable workflow with the stale result schema is blocked before dispatch",
 );
 assert.throws(
-  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v4", "# deployguard-result-contract: deployguard.release-result/v3"), pinned, generatedCallerWithKeys(caller)),
-  /does not produce deployguard\.release-result\/v4/,
+  () => assertReusableWorkflowCompatibility(workflow.replace("# deployguard-result-contract: deployguard.release-result/v5", "# deployguard-result-contract: deployguard.release-result/v4"), pinned, generatedCallerWithKeys(caller), executableContract),
+  /does not produce deployguard\.release-result\/v5/,
   "input compatibility alone cannot certify an incompatible result producer",
+);
+assert.throws(
+  () => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { ...executableContract, releaseResultProducer: releaseResultProducer.replace("awsRuntimeVerification:$awsRuntimeVerification", "runtimeVerification:$awsRuntimeVerification") }),
+  /required terminal evidence producer/,
+  "matching contract markers and inputs cannot certify a producer that drops awsRuntimeVerification",
 );
 
 assert.doesNotMatch(terraform, /aws_db_instance|aws_db_subnet_group/);
@@ -120,12 +134,17 @@ assert.match(terraform, /for_each\s+= var\.services/);
 assert.match(terraform, /database_services\s+= \{ for id, service in var\.services/);
 assert.doesNotMatch(terraform, /Resource\s*=\s*"\*"/);
 assert.match(terraform, /image\s*=\s*each\.value\.image/);
-assert.match(terraform, /containerPort\s*=\s*var\.platform_port/);
+assert.match(terraform, /containerPort\s*=\s*each\.value\.service_port/);
 for (const output of [
   "aws_region", "ecs_cluster_arn", "ecs_cluster_name", "services",
   "database_efs_file_system_id", "database_efs_access_point_id", "database",
 ]) assert.match(outputs, new RegExp(`output\\s+"${output}"`), `Railpack release evidence must expose ${output}`);
 assert.match(workflow, /HOST:"0\.0\.0\.0"/);
+assert.match(workflow, /service_port="\$\(jq -r '\.servicePort'/, "pre-Terraform validation consumes the canonical service port");
+assert.match(workflow, /--env PORT="\$service_port"/, "pre-Terraform validation injects each service's own PORT");
+assert.match(workflow, /service_port:\.servicePort/, "Terraform materialization consumes each canonical service port");
+assert.match(workflow, /Select immutable rollback service images[\s\S]*?\{serviceId,serviceName,serviceDirectory,servicePort,runtimeConfigRevisionId/, "rollback release evidence preserves the historical service port");
+assert.doesNotMatch(workflow, /platform_port/, "the obsolete global port is not an executable workflow authority");
 assert.match(workflow, /aws-actions\/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4\.0\.2/);
 assert.match(workflow, /actions\/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4\.2\.2/);
 assert.match(workflow, /hashicorp\/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3\.1\.2/);
@@ -142,30 +161,53 @@ assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials@0a3a7f8c8f
 assert.match(workflow, /control_plane_sha/);
 assert.match(workflow, /result_contract_version: \{ required: true, type: string \}/);
 assert.match(workflow, /RESULT_CONTRACT_VERSION.*inputs\.result_contract_version/);
-assert.match(workflow, /deployguard\.release-result\/v4/);
-for (const message of ["invalid_deployment_action", "invalid_immutable_release_identity", "incompatible_result_contract", "invalid_platform_port", "exact_source_sha_mismatch"]) {
+assert.match(workflow, /deployguard\.release-result\/v5/);
+for (const message of ["invalid_deployment_action", "invalid_immutable_release_identity", "incompatible_result_contract", "exact_source_sha_mismatch"]) {
   assert.match(workflow, new RegExp(`DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=${message}`), `Validate Release must emit structured platform failure evidence for ${message}`);
 }
 assert.match(workflow, /services_base64/);
-assert.match(workflow, /\.services \| to_entries\[\]/);
+assert.match(workflow, /verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
+assert.match(workflow, /build-release-result\.sh[\s\S]*aws-runtime-verification\.json[\s\S]*release-runtime\.json/);
+assert.match(workflow, /name: Preserve terminal verification failure evidence[\s\S]*if: failure\(\) && steps\.runtime\.outcome == 'failure'[\s\S]*deployguard\.release-failure\/v1[\s\S]*awsRuntimeVerification:\$verification\[0\]/, "failed AWS verification materializes a bounded diagnostic artifact without creating a v5 release");
+assert.match(workflow, /name: Publish terminal verification failure evidence[\s\S]*if: failure\(\)[\s\S]*deployguard-failure-evidence\.json/, "failed verification evidence remains retrievable while the workflow stays failed");
+assert.match(runtimeVerification, /\.services \| to_entries\[\]/);
+assert.doesNotMatch(runtimeVerification, /\(verify_service "\$service"\) \|\| true/, "terminal service verification must never be swallowed");
+assert.match(runtimeVerification, /verification_failed=true[\s\S]*exit 1/, "collected service failures must make the verifier return non-zero");
+assert.match(runtimeVerification, /wait_for_target_health[\s\S]*DEPLOYGUARD_TARGET_HEALTH_MAX_ATTEMPTS/, "target health uses bounded state convergence");
+assert.match(runtimeVerification, /all\(\$current\[\];[\s\S]*\.state == "healthy"\)[\s\S]*or \.state == "draining"/, "current ECS task targets must be healthy while only unexpected draining targets are tolerated");
+assert.match(runtimeVerification, /failureMarker:[\s\S]*attach_diagnostics/, "failed terminal verification persists its structured DG_FAILURE and bounded ECS\/ALB diagnostics");
+assert.match(runtimeVerification, /\$task\.containers \/\/ \[\]/, "ECS diagnostics must tolerate absent containers");
+assert.match(releaseResultProducer, /\.awsRuntimeVerification\.verified == true/);
+assert.match(releaseResultProducer, /all\(\.awsRuntimeVerification\.services\[\]; \.verified == true\)/);
 assert.doesNotMatch(workflow, /rollback_image_uri|runtime_environment_base64|runtime_secret_references_base64/);
 assert.match(deploymentService, /result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION/);
 assert.match(deploymentService, /release_contract_incompatible/);
 assert.match(deploymentService, /Destroy requires the authoritative verified deployed release identity/);
-assert.match(workflow, /railpack build --name "\$image" "\$directory"/);
+assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$directory"/);
+assert.match(workflow, /get-secret-value --secret-id "\$secret_id" --version-id "\$version_id"/, "build secrets are fetched by immutable secret version");
+assert.match(workflow, /build_env_args\+=\(--env "\$key"\)/, "Railpack receives build ENV names without raw values in argv");
+assert.doesNotMatch(workflow, /--env "\$key=\$value"/, "Railpack command arguments must not expose secret values");
 assert.match(workflow, /BUILDKIT_IMAGE: moby\/buildkit:v0\.16\.0@sha256:bc1fe18224dbcb92599139db0c745696c48ba9fd4ac24038d1fa81fdd7dcac27/);
 assert.match(workflow, /docker version --format/);
 assert.match(workflow, /docker run --rm --privileged --detach --name "\$BUILDKIT_CONTAINER" "\$BUILDKIT_IMAGE"/);
 assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
-assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build --name "\$image" "\$directory"/);
+assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$directory"/);
 assert.match(workflow, /DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build/);
 assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*?docker rm --force "\$BUILDKIT_CONTAINER"/);
 assert.doesNotMatch(workflow, /moby\/buildkit:latest/);
 assert.match(workflow, /\^\(deploy\|rollback\|destroy\)\$/);
 assert.match(workflow, /key=projects\/\$PROJECT_ID\/\$ENVIRONMENT_NAME\/runtime\/terraform\.tfstate/);
 assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
-assert.match(workflow, /aws ecs wait services-stable/);
-assert.match(workflow, /curl --fail/);
+assert.match(runtimeVerification, /aws ecs wait services-stable/);
+assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/);
+assert.doesNotMatch(runtimeVerification, /curl --fail --show-error --silent --retry 20/, "application HTTP status is outside deployment readiness");
+assert.match(terraform, /platform_health_check_path\s*=\s*"\/_deployguard\/transport-ready"/, "the platform owns its transport-readiness endpoint");
+assert.match(terraform, /name\s*=\s*"deployguard-transport-probe"[\s\S]*?APPLICATION_PORT[\s\S]*?nc -z -w 1 127\.0\.0\.1/, "the task-local probe succeeds only while the declared application port accepts TCP");
+assert.match(terraform, /name\s*=\s*"application"[\s\S]*?awslogs-stream-prefix = "application"/, "developer application errors remain available in the existing runtime log stream");
+assert.match(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*local\.platform_health_check_path[\s\S]*?port\s*=\s*tostring\(local\.transport_probe_ports\[each\.key\]\)[\s\S]*?matcher\s*=\s*"200-299"/, "ALB stability uses DeployGuard transport readiness instead of application response status");
+assert.doesNotMatch(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*"\/"/, "developer root-route semantics are not a default deployment gate");
+assert.match(runtimeVerification, /readinessMode:"platform_transport"/);
+assert.match(releaseResultProducer, /\$outcome\.readinessMode == "platform_transport"/);
 assert.match(workflow, /destroyVerification:\{/);
 assert.match(workflow, /contractVersion:"deployguard\.destroy-result\/v2"/);
 assert.match(workflow, /generationIds:\(\$runtime\[0\]\.projectDeletion\.generationIds\s*\|\s*sort\)/);
@@ -188,6 +230,7 @@ for (const action of [
   "elasticfilesystem:ModifyMountTargetSecurityGroups", "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
   "iam:ListInstanceProfilesForRole", "ecr:DeleteRepository",
 ]) assert.ok(capabilityContract.includes(action), `pinned-provider capability missing: ${action}`);
+assert.match(capabilityContract, /id: "application-secrets"[\s\S]*?secretsmanager:GetSecretValue/, "build secret retrieval is part of explicit AWS admission");
 assert.match(capabilityContract, /servicediscovery:CreatePrivateDnsNamespace/);
 assert.doesNotMatch(capabilityContract, /sharedEcsClusterArn|sharedAlbArn|sharedAlbListenerArn|CreateRule/);
 console.log("RAILPACK_RUNTIME_CONTRACT=PASS");

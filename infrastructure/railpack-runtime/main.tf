@@ -14,17 +14,22 @@ terraform {
 provider "aws" { region = var.region }
 
 locals {
-  project_name        = "dg-${substr(replace(var.project_id, "-", ""), 0, 12)}"
-  database_services   = { for id, service in var.services : id => service if service.database_attached }
-  database_enabled    = length(local.database_services) == 1
-  database_service_id = local.database_enabled ? keys(local.database_services)[0] : null
-  database_service    = local.database_enabled ? values(local.database_services)[0] : null
-  database_engine     = local.database_enabled ? local.database_service.managed_database_engine : "postgres"
-  database_aliases    = local.database_enabled ? local.database_service.managed_database_aliases : []
-  database_port       = local.database_engine == "mysql" ? 3306 : local.database_engine == "mongodb" ? 27017 : 5432
-  database_image      = local.database_engine == "mysql" ? "mysql:8" : local.database_engine == "mongodb" ? "mongo:8" : "postgres:16"
-  database_path       = local.database_engine == "mysql" ? "/var/lib/mysql" : local.database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
-  database_host       = local.database_enabled ? "database.${local.project_name}.internal" : ""
+  project_name               = "dg-${substr(replace(var.project_id, "-", ""), 0, 12)}"
+  database_services          = { for id, service in var.services : id => service if service.database_attached }
+  database_enabled           = length(local.database_services) == 1
+  database_service_id        = local.database_enabled ? keys(local.database_services)[0] : null
+  database_service           = local.database_enabled ? values(local.database_services)[0] : null
+  database_engine            = local.database_enabled ? local.database_service.managed_database_engine : "postgres"
+  database_aliases           = local.database_enabled ? local.database_service.managed_database_aliases : []
+  database_port              = local.database_engine == "mysql" ? 3306 : local.database_engine == "mongodb" ? 27017 : 5432
+  database_image             = local.database_engine == "mysql" ? "mysql:8" : local.database_engine == "mongodb" ? "mongo:8" : "postgres:16"
+  database_path              = local.database_engine == "mysql" ? "/var/lib/mysql" : local.database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
+  database_host              = local.database_enabled ? "database.${local.project_name}.internal" : ""
+  platform_health_check_path = "/_deployguard/transport-ready"
+  transport_probe_image      = "public.ecr.aws/docker/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+  transport_probe_ports = {
+    for id, service in var.services : id => service.service_port == 65535 ? 65534 : 65535
+  }
   tags = {
     ManagedBy              = "DeployGuard"
     DeployGuardProjectId   = var.project_id
@@ -94,8 +99,14 @@ resource "aws_security_group" "application" {
   name_prefix = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}-app-"
   vpc_id      = var.vpc_id
   ingress {
-    from_port       = var.platform_port
-    to_port         = var.platform_port
+    from_port       = each.value.service_port
+    to_port         = each.value.service_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.load_balancer[each.key].id]
+  }
+  ingress {
+    from_port       = local.transport_probe_ports[each.key]
+    to_port         = local.transport_probe_ports[each.key]
     protocol        = "tcp"
     security_groups = [aws_security_group.load_balancer[each.key].id]
   }
@@ -230,13 +241,14 @@ resource "aws_lb" "application" {
 resource "aws_lb_target_group" "application" {
   for_each    = var.services
   name        = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}"
-  port        = var.platform_port
+  port        = each.value.service_port
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = var.vpc_id
   health_check {
-    path    = "/"
-    matcher = "200-399"
+    path    = local.platform_health_check_path
+    port    = tostring(local.transport_probe_ports[each.key])
+    matcher = "200-299"
   }
   tags = merge(local.tags, { DeployGuardServiceId = each.key })
 }
@@ -259,15 +271,29 @@ resource "aws_ecs_task_definition" "application" {
   cpu                      = "512"
   memory                   = "1024"
   execution_role_arn       = aws_iam_role.execution.arn
-  container_definitions = jsonencode([{
-    name             = "application"
-    image            = each.value.image
-    essential        = true
-    portMappings     = [{ containerPort = var.platform_port, hostPort = var.platform_port, protocol = "tcp" }]
-    environment      = [for key, value in merge(each.value.environment, each.value.database_attached ? local.database_environment : {}) : { name = key, value = value }]
-    secrets          = [for key, value in merge(each.value.secret_references, each.value.database_attached ? local.database_secrets : {}) : { name = key, valueFrom = value }]
-    logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.application[each.key].name, awslogs-region = var.region, awslogs-stream-prefix = "application" } }
-  }])
+  container_definitions = jsonencode([
+    {
+      name             = "application"
+      image            = each.value.image
+      essential        = true
+      portMappings     = [{ containerPort = each.value.service_port, hostPort = each.value.service_port, protocol = "tcp" }]
+      environment      = [for key, value in merge(each.value.environment, each.value.database_attached ? local.database_environment : {}) : { name = key, value = value }]
+      secrets          = [for key, value in merge(each.value.secret_references, each.value.database_attached ? local.database_secrets : {}) : { name = key, valueFrom = value }]
+      logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.application[each.key].name, awslogs-region = var.region, awslogs-stream-prefix = "application" } }
+    },
+    {
+      name         = "deployguard-transport-probe"
+      image        = local.transport_probe_image
+      essential    = true
+      portMappings = [{ containerPort = local.transport_probe_ports[each.key], hostPort = local.transport_probe_ports[each.key], protocol = "tcp" }]
+      environment = [
+        { name = "APPLICATION_PORT", value = tostring(each.value.service_port) },
+        { name = "PROBE_PORT", value = tostring(local.transport_probe_ports[each.key]) },
+      ]
+      command          = ["sh", "-ec", "while true; do if nc -z -w 1 127.0.0.1 \"$APPLICATION_PORT\"; then printf 'HTTP/1.1 204 No Content\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n' | nc -l -p \"$PROBE_PORT\" -w 2 || true; else sleep 1; fi; done"]
+      logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.application[each.key].name, awslogs-region = var.region, awslogs-stream-prefix = "deployguard-transport-probe" } }
+    }
+  ])
   tags = merge(local.tags, { DeployGuardServiceId = each.key, DeployGuardRuntimeConfigRevisionId = each.value.runtime_config_revision_id })
 }
 
@@ -352,7 +378,7 @@ resource "aws_ecs_service" "application" {
   load_balancer {
     target_group_arn = aws_lb_target_group.application[each.key].arn
     container_name   = "application"
-    container_port   = var.platform_port
+    container_port   = each.value.service_port
   }
   depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets, aws_ecs_service.database]
   tags       = merge(local.tags, { DeployGuardServiceId = each.key })

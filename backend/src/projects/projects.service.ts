@@ -25,7 +25,7 @@ import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.se
 import { BulkEnvVarsDto } from "./dto/bulk-env-vars.dto";
 import { ProjectActivityService } from "./project-activity.service";
 import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
-import { classifyConfigurationVariable, isDeployGuardManagedDatabaseAlias, isSecretConfigurationKey, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
+import { classifyConfigurationVariable, isDeployGuardManagedDatabaseAlias, isSecretConfigurationKey, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, serviceAlias, SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { acquireProjectConfigurationAdvisoryLock } from "./project-configuration-lock";
 import { GithubAppService } from "./github-app.service";
@@ -34,6 +34,7 @@ import { normalizeServiceDirectory } from "./deployable-service-path";
 import { DeployableServiceInputDto, UpdateDeployableServiceDto } from "./dto/deployable-service.dto";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
+import { PipelineRunStatus, ProjectPipelineRun } from "./project-pipeline-run.entity";
 
 type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
@@ -221,6 +222,7 @@ export class ProjectsService {
         projectId: saved.id,
         name: service.name,
         serviceDirectory: service.serviceDirectory,
+        servicePort: service.servicePort,
         position,
       }));
       await manager.getRepository(ProjectDeployableService).save(services);
@@ -271,32 +273,41 @@ export class ProjectsService {
   async createDeployableService(user: User, projectId: string, dto: DeployableServiceInputDto) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const services = await this.deployableServices.find({ where: { projectId }, order: { position: "ASC" } });
-    const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory })), dto]);
-    const service = this.deployableServices.create({ projectId, ...normalized[normalized.length - 1], position: services.length });
-    return this.deployableServices.save(service);
+    return this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const repository = manager.getRepository(ProjectDeployableService);
+      const services = await repository.find({ where: { projectId }, order: { position: "ASC" } });
+      const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort })), dto]);
+      return repository.save(repository.create({ projectId, ...normalized[normalized.length - 1], position: services.length }));
+    });
   }
 
   async updateDeployableService(user: User, projectId: string, serviceId: string, dto: UpdateDeployableServiceDto) {
     const project = await this.findProject(projectId);
     this.assertCanManage(user, project);
-    const service = await this.deployableServices.findOne({ where: { id: serviceId, projectId } });
-    if (!service) throw new NotFoundException("Deployable service not found");
-    const all = await this.deployableServices.find({ where: { projectId }, order: { position: "ASC" } });
-    if (dto.position !== undefined && dto.position >= all.length) throw new BadRequestException("Service position is outside the configured service set.");
-    const candidate = all.map((item) => ({
-      name: item.id === serviceId && dto.name !== undefined ? dto.name : item.name,
-      serviceDirectory: item.id === serviceId && dto.serviceDirectory !== undefined ? dto.serviceDirectory : item.serviceDirectory,
-    }));
-    const normalized = this.normalizeServices(candidate)[all.findIndex((item) => item.id === serviceId)];
-    service.name = normalized.name;
-    service.serviceDirectory = normalized.serviceDirectory;
-    if (dto.position !== undefined && dto.position !== service.position) {
-      const other = await this.deployableServices.findOne({ where: { projectId, position: dto.position } });
-      if (other) { const old = service.position; service.position = -1; await this.deployableServices.save(service); other.position = old; await this.deployableServices.save(other); }
-      service.position = dto.position;
-    }
-    return this.deployableServices.save(service);
+    return this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
+      const repository = manager.getRepository(ProjectDeployableService);
+      const service = await repository.findOne({ where: { id: serviceId, projectId } });
+      if (!service) throw new NotFoundException("Deployable service not found");
+      const all = await repository.find({ where: { projectId }, order: { position: "ASC" } });
+      if (dto.position !== undefined && dto.position >= all.length) throw new BadRequestException("Service position is outside the configured service set.");
+      const candidate = all.map((item) => ({
+        name: item.id === serviceId && dto.name !== undefined ? dto.name : item.name,
+        serviceDirectory: item.id === serviceId && dto.serviceDirectory !== undefined ? dto.serviceDirectory : item.serviceDirectory,
+        servicePort: item.id === serviceId && dto.servicePort !== undefined ? dto.servicePort : item.servicePort,
+      }));
+      const normalized = this.normalizeServices(candidate)[all.findIndex((item) => item.id === serviceId)];
+      service.name = normalized.name;
+      service.serviceDirectory = normalized.serviceDirectory;
+      service.servicePort = normalized.servicePort;
+      if (dto.position !== undefined && dto.position !== service.position) {
+        const other = await repository.findOne({ where: { projectId, position: dto.position } });
+        if (other) { const old = service.position; service.position = -1; await repository.save(service); other.position = old; await repository.save(other); }
+        service.position = dto.position;
+      }
+      return repository.save(service);
+    });
   }
 
   async deleteDeployableService(user: User, projectId: string, serviceId: string) {
@@ -308,6 +319,12 @@ export class ProjectsService {
       const currentProject = await projects.findOne({ where: { id: projectId } });
       if (!currentProject) throw new NotFoundException("Project not found");
       const serviceRepository = manager.getRepository(ProjectDeployableService);
+      const activeDeployment = await manager.getRepository(ProjectPipelineRun).createQueryBuilder("run")
+        .where("run.projectId = :projectId", { projectId })
+        .andWhere("run.status IN (:...statuses)", { statuses: [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING] })
+        .andWhere("run.metadata->>'executionEngine' = :executionEngine", { executionEngine: "railpack" })
+        .getOne();
+      if (activeDeployment) throw new BadRequestException("A deployable service cannot be removed while a deployment is progressing.");
       const services = await serviceRepository.find({ where: { projectId }, order: { position: "ASC" } });
       if (services.length <= 1) throw new BadRequestException("A deployable project must retain at least one service.");
       const service = services.find((item) => item.id === serviceId);
@@ -503,10 +520,12 @@ export class ProjectsService {
   async getEnvVarSetup(user: User, projectId: string, serviceId?: string) {
     const project = await this.findProject(projectId);
     this.assertCanView(user, project);
+    const service = await this.requireService(project.id, serviceId);
     const [variables, tier] = await Promise.all([
-      this.listEnvVars(user, projectId, serviceId),
+      this.listEnvVars(user, projectId, service.id),
       this.databaseTierRepository.findOne({ where: { projectId } }),
     ]);
+    const managedForService = tier?.provider === DatabaseTierProvider.MANAGED && tier.attachedServiceId === service.id;
     const managedByKey = new Map<string, Record<string, unknown>>();
     for (const variable of variables.filter((item) => item.protected || ["platform", "managed_service", "external_service"].includes(item.owner))) {
       const definition = reservedVariable(variable.key);
@@ -517,7 +536,7 @@ export class ProjectsService {
       managedVariables: [...managedByKey.values()].sort((left, right) => String(left.key).localeCompare(String(right.key))),
       reservedVariables: [
         ...RESERVED_VARIABLE_REGISTRY,
-        ...SERVICE_ALIAS_GROUPS.flatMap((group) => group.aliases.map((key) => reservedVariable(key, group.service)!)),
+        ...(managedForService ? SERVICE_ALIAS_GROUPS.filter((group) => group.service === tier.engine).flatMap((group) => group.aliases.map((key) => reservedVariable(key, group.service)!)) : []),
       ].filter((item, index, items) => items.findIndex((candidate) => candidate.key === item.key) === index),
       missingVariables: [],
       configuration: { databaseProvider: tier?.provider || DatabaseTierProvider.NONE, attachedServiceId: tier?.attachedServiceId || null },
@@ -536,10 +555,10 @@ export class ProjectsService {
     const key = normalizeConfigurationKey(dto.key);
     const environment = canonicalEnvironmentName(project);
     const service = await this.requireService(project.id, requestedServiceId);
-    this.assertDatabaseAliasNotUserWritable(key);
     const result = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, project.id, environment);
-      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [key], manager);
+      await this.assertEnvironmentOwnership(project.id, service.id, key, manager);
+      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, service.id, [key], manager);
       if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
       await this.assertEnvKeyAvailable(project.id, service.id, key, undefined, manager);
       const defaults = this.environmentDefaults(key);
@@ -551,7 +570,7 @@ export class ProjectsService {
         key,
         normalizedKey: key,
         value: encryptedValue,
-        isSecret: dto.isSecret ?? defaults.isSecret,
+        isSecret: defaults.isSecret || dto.isSecret === true,
         scope: dto.scope || defaults.scope,
         isRequired: false,
         environment,
@@ -608,8 +627,8 @@ export class ProjectsService {
       const variable = await this.findEnvVar(project.id, service.id, envId, manager);
       this.assertVariableMutable(variable);
       const submittedKey = normalizeConfigurationKey(dto.key || variable.key);
-      this.assertDatabaseAliasNotUserWritable(submittedKey);
-      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, [submittedKey], manager);
+      await this.assertEnvironmentOwnership(project.id, service.id, submittedKey, manager);
+      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(project.id, service.id, [submittedKey], manager);
       if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
       if (dto.key && submittedKey !== variable.key) {
         const key = submittedKey;
@@ -621,7 +640,7 @@ export class ProjectsService {
         variable.value = this.environmentCrypto.encrypt(dto.value);
         variable.encryptionVersion = 1;
       }
-      if (dto.isSecret !== undefined) variable.isSecret = dto.isSecret;
+      if (dto.isSecret !== undefined || dto.key !== undefined) variable.isSecret = isSecretConfigurationKey(submittedKey) || dto.isSecret === true;
       if (dto.scope !== undefined) variable.scope = dto.scope;
       variable.isRequired = false;
       variable.environment = environment;
@@ -672,8 +691,13 @@ export class ProjectsService {
     const result = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, environment);
       const repository = manager.getRepository(ProjectEnvironmentVariable);
-      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(projectId, normalized.map((item) => item.key), manager);
-      const { accepted } = partitionSubmittedEnvironmentVariables(normalized, { repositoryOwnedKeys: new Set(ignoredVariableNames) });
+      const managedDatabase = await this.managedDatabaseForService(projectId, service.id, manager);
+      if (managedDatabase) {
+        const conflict = normalized.map((item) => item.key).find((key) => Boolean(serviceAlias(key, managedDatabase.engine)));
+        if (conflict) throw new BadRequestException(`${conflict} conflicts with the DeployGuard-managed database attached to this service. Remove the variable or disable the managed database.`);
+      }
+      const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(projectId, service.id, normalized.map((item) => item.key), manager);
+      const { accepted } = partitionSubmittedEnvironmentVariables(normalized, { allowDatabaseAliases: true, repositoryOwnedKeys: new Set(ignoredVariableNames) });
       const duplicateKeys = accepted.map((item) => item.key).filter((key, index, keys) => keys.indexOf(key) !== index);
       if (duplicateKeys.length) throw new BadRequestException(`Duplicate environment variable keys: ${[...new Set(duplicateKeys)].join(", ")}`);
       const existing = await repository.find({ where: { projectId, serviceId: service.id, environment } });
@@ -686,7 +710,7 @@ export class ProjectsService {
         variable.key = item.key;
         variable.normalizedKey = item.key;
         variable.value = encryptedValue;
-        variable.isSecret = item.isSecret ?? defaults.isSecret;
+        variable.isSecret = defaults.isSecret || item.isSecret === true;
         variable.scope = item.scope || defaults.scope;
         variable.isRequired = false;
         variable.environment = environment;
@@ -892,7 +916,7 @@ export class ProjectsService {
   async ensureDeployguardWorkflow(user: User, projectId: string) {
     const project = await this.getProjectEntityForView(user, projectId);
     if (!project.repositoryFullName) throw new BadRequestException("Project repository is not linked.");
-    const workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
+    const workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.githubInstallationId);
     if (project.githubInstallationId !== workflow.installationId) {
       project.githubInstallationId = workflow.installationId;
       await this.projectRepository.save(project);
@@ -927,7 +951,7 @@ export class ProjectsService {
       targetBranch: project.targetBranch,
       environmentName: project.environmentName || "dev",
       applicationEntryPointServiceId: project.applicationEntryPointServiceId || ((project.services || []).length === 1 ? project.services[0].id : null),
-      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, position: service.position })),
+      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort ?? 8080, position: service.position })),
       status: project.status,
       visibility: project.visibility,
       canManage:
@@ -986,20 +1010,22 @@ export class ProjectsService {
     };
   }
 
-  private async assertEnvironmentOwnership(projectId: string, key: string, manager?: EntityManager) {
+  private async assertEnvironmentOwnership(projectId: string, serviceId: string, key: string, manager?: EntityManager) {
     const normalized = normalizeConfigurationKey(key);
+    if (isDeployGuardManagedDatabaseAlias(normalized)) {
+      const managedDatabase = await this.managedDatabaseForService(projectId, serviceId, manager);
+      if (managedDatabase && serviceAlias(normalized, managedDatabase.engine)) throw new BadRequestException(`${normalized} conflicts with the DeployGuard-managed database attached to this service. Remove the variable or disable the managed database.`);
+      return;
+    }
     if (reservedVariable(normalized)) throw new BadRequestException(reservedVariableError(normalized));
   }
 
-  private async ignoredEnvironmentVariableNames(projectId: string, keys: string[], manager?: EntityManager) {
-    void projectId;
-    void manager;
-    return [...new Set(keys.map(normalizeConfigurationKey).filter((key) => key === "PORT" || key === "HOST" || isDeployGuardManagedDatabaseAlias(key)))].sort();
+  private async ignoredEnvironmentVariableNames(projectId: string, serviceId: string, keys: string[], manager?: EntityManager) {
+    return partitionSubmittedEnvironmentVariables(keys.map((key) => ({ key })), { allowDatabaseAliases: true }).ignoredVariableNames;
   }
 
-  private assertDatabaseAliasNotUserWritable(key: string) {
-    const normalized = normalizeConfigurationKey(key);
-    if (isDeployGuardManagedDatabaseAlias(normalized)) throw new BadRequestException(reservedVariableError(normalized));
+  private async managedDatabaseForService(projectId: string, serviceId: string, manager?: EntityManager) {
+    return (manager?.getRepository(ProjectDatabaseTier) || this.databaseTierRepository).findOne({ where: { projectId, provider: DatabaseTierProvider.MANAGED, attachedServiceId: serviceId } });
   }
 
   private assertVariableMutable(variable: ProjectEnvironmentVariable) {
@@ -1045,11 +1071,12 @@ export class ProjectsService {
     if (dto.visibility !== undefined) project.visibility = dto.visibility;
   }
 
-  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "id" | "name" | "serviceDirectory">>) {
-    const values = input?.length ? input : [{ name: "Web", serviceDirectory: "." }];
+  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "id" | "name" | "serviceDirectory" | "servicePort">>) {
+    const values = input?.length ? input : [{ name: "Web", serviceDirectory: ".", servicePort: 8080 }];
     if (values.length > 20) throw new BadRequestException("A project supports at most 20 explicitly configured services.");
-    const services = values.map((value) => ({ id: value.id, name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory) }));
+    const services = values.map((value) => ({ id: value.id, name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory), servicePort: value.servicePort ?? 8080 }));
     if (services.some((service) => !service.name || service.name.length > 80)) throw new BadRequestException("Every service requires a bounded name.");
+    if (services.some((service) => !Number.isInteger(service.servicePort) || service.servicePort < 1 || service.servicePort > 65535)) throw new BadRequestException("Application port must be an integer from 1 to 65535.");
     const ids = services.map((service) => service.id).filter((id): id is string => Boolean(id));
     if (new Set(ids).size !== ids.length) throw new ConflictException("Service identities must be unique within a project.");
     const names = services.map((service) => service.name.toLocaleLowerCase());

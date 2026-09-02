@@ -48,9 +48,7 @@ export default function Navbar({ navigationOpen = false, onOpenNavigation }) {
           ))}
         </nav>
       </div>
-      <div className="user-menu">
-        <span aria-label="DeployGuard secures and automates cloud delivery" className="shell-context"><AppIcon name="pipeline" size={14} />Secure cloud delivery</span>
-      </div>
+      <div aria-hidden="true" className="user-menu" />
     </header>
   );
 }

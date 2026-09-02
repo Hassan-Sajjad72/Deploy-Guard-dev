@@ -1,8 +1,28 @@
+import { createHash } from "crypto";
 import {
   RAILPACK_WORKFLOW_CONTRACT_VERSION,
   RAILPACK_RESULT_CONTRACT_VERSION,
   RAILPACK_WORKFLOW_INPUTS,
 } from "./railpack-workflow-contract";
+
+export const AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION = "deployguard.aws-runtime-verification/v1";
+export const CONTROL_PLANE_EXECUTABLE_PATHS = {
+  releaseResultProducer: "infrastructure/railpack-runtime/build-release-result.sh",
+  runtimeVerifier: "infrastructure/railpack-runtime/verify-runtime.sh",
+  runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
+} as const;
+const CONTROL_PLANE_EXECUTABLE_SHA256 = {
+  workflow: "ccbc2e381879b6b7672876f5c0c7ceed36de473068d95feb3abd619c2f5bf9bf",
+  releaseResultProducer: "cbda8bb60b9bd08ae8c305ce0a036ec5ffab960476aabe0b8e9caaa63cf31b80",
+  runtimeVerifier: "eb202a5f60d4ab79b6a8e0415fdeb7d3aa5e6de3df8c543334eeb03c3ce3b76e",
+  runtimeInfrastructure: "bc4febc3f1a32a07ba259398ea8ef3aa22f3726d7d4bd052e2cc10b7d3686daa",
+} as const;
+
+export type ReusableWorkflowExecutableContract = {
+  releaseResultProducer: string;
+  runtimeVerifier: string;
+  runtimeInfrastructure: string;
+};
 
 export type PinnedReusableWorkflow = {
   owner: string;
@@ -37,10 +57,41 @@ export function generatedCallerWithKeys(workflow: string) {
   return [...block.matchAll(/^      ([a-z][a-z0-9_]*):/gm)].map((match) => match[1]);
 }
 
-export function assertReusableWorkflowCompatibility(workflow: string, pinned: PinnedReusableWorkflow, callerWithKeys?: readonly string[]) {
+function sha256(value: string) { return createHash("sha256").update(value).digest("hex"); }
+
+export function assertReusableWorkflowCompatibility(workflow: string, pinned: PinnedReusableWorkflow, callerWithKeys: readonly string[] | undefined, executable: ReusableWorkflowExecutableContract) {
   const resultContract = workflow.match(/^# deployguard-result-contract: ([a-z0-9./_-]+)$/m)?.[1] || null;
   if (resultContract !== RAILPACK_RESULT_CONTRACT_VERSION) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not produce ${RAILPACK_RESULT_CONTRACT_VERSION} evidence.`);
+  }
+  if (!workflow.includes(`verify-runtime.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/aws-runtime-verification.json`)
+    || !workflow.includes(`build-release-result.sh "$DEPLOYMENT_ACTION" "$RESULT_CONTRACT_VERSION" "$SOURCE_SHA" "$OPERATION_ID" .deployguard/service-artifacts.json .deployguard/terraform-outputs.json .deployguard/aws-runtime-verification.json .deployguard/release-runtime.json`)
+    || !workflow.includes("cp .deployguard/release-runtime.json terraform/deployguard-result.json")
+    || !workflow.includes("deployguard.release-failure/v1")
+    || !workflow.includes("terraform/deployguard-failure-evidence.json")
+    || !workflow.includes("if: failure() && steps.runtime.outcome == 'failure'")
+    || !workflow.includes("service_port:.servicePort")
+    || !workflow.includes('--env PORT="$service_port"')) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not hand verified AWS runtime evidence to the terminal release artifact.`);
+  }
+  if (!executable.releaseResultProducer.includes("awsRuntimeVerification:$awsRuntimeVerification")
+    || !executable.releaseResultProducer.includes(`.awsRuntimeVerification.contractVersion == "${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}"`)
+    || !executable.releaseResultProducer.includes(".servicePort == $release.terraform.services[.serviceId].service_port")
+    || !executable.releaseResultProducer.includes("DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation")) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the required terminal evidence producer.`);
+  }
+  if (!executable.runtimeVerifier.includes(`--arg contractVersion ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}`)
+    || !executable.runtimeVerifier.includes("expected_port=\"$(jq -r '.servicePort' <<<\"$expected\")\"")
+    || !executable.runtimeVerifier.includes('or .state == "draining"')
+    || !executable.runtimeVerifier.includes("failureMarker:")
+    || (!executable.runtimeVerifier.includes("awsRuntimeVerification") && !executable.runtimeVerifier.includes("services:$services"))) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}.`);
+  }
+  if (!executable.runtimeInfrastructure.includes('platform_health_check_path = "/_deployguard/transport-ready"')
+    || !executable.runtimeInfrastructure.includes('name         = "deployguard-transport-probe"')
+    || !executable.runtimeInfrastructure.includes('nc -z -w 1 127.0.0.1')
+    || !executable.runtimeInfrastructure.includes('port    = tostring(local.transport_probe_ports[each.key])')) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement platform-owned transport readiness.`);
   }
   const declared = reusableWorkflowInputDeclarations(workflow);
   const byName = new Map(declared.map((input) => [input.name, input]));
@@ -61,5 +112,16 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     const missing = RAILPACK_WORKFLOW_INPUTS.find((input) => input.required && !caller.has(input.name));
     if (missing) throw new GithubActionsWorkflowContractError(`caller is missing required pinned-workflow input \`${missing.name}\`.`);
   }
-  return { contractVersion: RAILPACK_WORKFLOW_CONTRACT_VERSION, sha: pinned.sha, inputs: declared };
+  const executableHashes = {
+    workflow: sha256(workflow),
+    releaseResultProducer: sha256(executable.releaseResultProducer),
+    runtimeVerifier: sha256(executable.runtimeVerifier),
+    runtimeInfrastructure: sha256(executable.runtimeInfrastructure),
+  };
+  for (const [name, expected] of Object.entries(CONTROL_PLANE_EXECUTABLE_SHA256)) {
+    if (executableHashes[name as keyof typeof executableHashes] !== expected) {
+      throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} executable ${name} is not the backend-certified control-plane release.`);
+    }
+  }
+  return { contractVersion: RAILPACK_WORKFLOW_CONTRACT_VERSION, runtimeVerificationContractVersion: AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION, sha: pinned.sha, inputs: declared, executableHashes };
 }

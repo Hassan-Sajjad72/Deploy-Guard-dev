@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { canonicalOverviewState, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
+import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
 import { projectStatePresentation } from "../src/utils/projectStatePresentation.js";
 import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPresentation.js";
 
@@ -49,6 +49,12 @@ assert.equal(overviewLifecycleCopy(failedDestroy).title, "Destroy failed");
 assert.equal(overviewLifecycleActions(failedDestroy, true)[1].label, "Retry Failed Destroy");
 assert.equal(overviewLifecycleCopy(failedRollback).title, "Rollback failed");
 assert.equal(overviewLifecycleActions(failedRollback, true)[1].label, "Retry Failed Rollback");
+assert.equal(overviewFailureOwnershipLabel({ ...failedDeploy, latestAttempt: { ...failedDeploy.latestAttempt, failureOwner: "REPOSITORY_APPLICATION" } }), "Repository failure");
+for (const failureOwner of ["DEPLOYGUARD_PLATFORM", "EXTERNAL_PROVIDER", "UNVERIFIED", null, undefined]) {
+  assert.equal(overviewFailureOwnershipLabel({ ...failedDeploy, latestAttempt: { ...failedDeploy.latestAttempt, failureOwner } }), null, `${failureOwner || "missing"} ownership must not add an Overview label`);
+}
+assert.match(lifecycle, /failureOwnershipLabel \? <StatusChip[^>]*>\{failureOwnershipLabel\}<\/StatusChip> : null/, "Overview renders only the authoritative repository-failure label");
+assert.doesNotMatch(lifecycle, /DeployGuard failure/, "Overview does not add a DeployGuard ownership label");
 const setupFailureRail = deploymentPhasePresentation({
   developerState: "failed_application",
   progress: { phase: "build" },
@@ -62,13 +68,17 @@ const setupFailureRail = deploymentPhasePresentation({
 });
 assert.deepEqual(
   setupFailureRail.map(({ key, status }) => [key, status]),
-  [["source", "passed"], ["build", "failed"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"]],
+  [["source", "passed"], ["build", "failed"], ["publish", "waiting"], ["deploy", "waiting"], ["verify", "waiting"], ["finalize", "waiting"]],
   "Railpack build failure must not present later deployment phases as completed",
 );
 assert.equal(overviewLifecycleCopy({
   developerState: "failed_application", progress: { phase: "build" }, latestAttempt: { workflowRunId: "33212514809" },
   stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } },
 }).title, "Build Application failed");
+assert.equal(overviewLifecycleCopy({
+  developerState: "failed_application", progress: { phase: "finalize" }, latestAttempt: { workflowRunId: "33464002814" },
+  stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } },
+}).title, "Finalize Release failed");
 const failedDestroyWithStableRuntime = {
   developerState: "live",
   developerMessage: "The latest destroy operation failed. The verified stable release remains live.",
@@ -119,7 +129,16 @@ assert.match(lifecycle, /No previous successful release is available/);
 assert.match(lifecycle, /rollbackError/);
 assert.match(lifecycle, /Repository code will not be rebuilt/);
 assert.match(lifecycle, /<MetricCard/g);
-assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 4, "Overview has exactly four summary cards");
+assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 3, "Overview has exactly three summary cards");
+assert.match(lifecycle, /<MetricCard detail=\{copy\.message\} label="Current state"/, "Current State retains its verified-release message");
+assert.match(lifecycle, /<MetricCard label="Latest operation"[^>]*value=\{latest \? `Attempt \$\{latest\.attempt \|\| "—"\}`/, "Latest Operation contains the attempt only");
+assert.match(lifecycle, /<MetricCard label="Last deployment duration" value=\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/, "Last Deployment Duration contains no secondary timestamp detail");
+assert.doesNotMatch(lifecycle, /label="Application health"/, "Overview does not present runtime health");
+assert.doesNotMatch(lifecycle, /applicationHealth|health\.observedAt|health\.source/, "Overview does not consume detailed runtime health data");
+assert.doesNotMatch(lifecycle, /detail=\{`Commit \$\{shortCommit\(latest/, "Overview does not show a commit beneath Latest Operation");
+assert.doesNotMatch(lifecycle, /\$\{formatDate\(latest\.startedAt\)\} to \$\{formatDate\(latest\.completedAt\)\}/, "Overview does not show a verbose deployment timestamp range");
+assert.match(styles, /\.overview-summary-grid\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/, "Overview summary layout has exactly three desktop cards");
+assert.match(styles, /\.overview-lifecycle-card \.ds-stage-rail\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/, "six deployment phases remain on the primary overview rail row");
 assert.doesNotMatch(overview, /CanonicalDeploymentView|getProjectDetailedCurrentState/);
 assert.match(overview, /subscribeProjectStateChanged/);
 assert.match(lifecycle, /StageRail/);

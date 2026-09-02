@@ -8,6 +8,12 @@ const APPROVED_ACTIONS = new Map<string, string>([
   ["hashicorp/setup-terraform", "b9cd54a3c349d3f38e8881555d616ced269862dd"],
   ["actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"],
 ]);
+const APPROVED_ACTION_OCCURRENCES = new Map<string, number>([
+  ["actions/checkout", 1],
+  ["aws-actions/configure-aws-credentials", 1],
+  ["hashicorp/setup-terraform", 1],
+  ["actions/upload-artifact", 2],
+]);
 
 type ActionReference = { repository: string; sha: string };
 
@@ -18,13 +24,13 @@ function externalActionReferences(workflow: string): ActionReference[] {
 
 function assertApprovedReferences(workflow: string) {
   const references = externalActionReferences(workflow);
-  assert.equal(references.length, APPROVED_ACTIONS.size, "every direct external action must be represented by the approved immutable set");
+  assert.equal(references.length, [...APPROVED_ACTION_OCCURRENCES.values()].reduce((sum, count) => sum + count, 0), "every direct external action call site must be represented by the approved immutable set");
   for (const reference of references) {
     assert.match(reference.sha, /^[0-9a-f]{40}$/, `${reference.repository} must use an immutable 40-character commit SHA`);
     assert.equal(reference.sha, APPROVED_ACTIONS.get(reference.repository), `${reference.repository} is not pinned to its reviewed commit`);
   }
   for (const repository of APPROVED_ACTIONS.keys()) {
-    assert.ok(references.some((reference) => reference.repository === repository), `${repository} is missing from the reusable workflow`);
+    assert.equal(references.filter((reference) => reference.repository === repository).length, APPROVED_ACTION_OCCURRENCES.get(repository), `${repository} call-site count does not match the reviewed workflow`);
   }
   return references;
 }
@@ -53,7 +59,7 @@ async function run() {
   for (const reference of references) {
     assert.equal(await actionMetadataExists(reference), true, `${reference.repository}@${reference.sha} must expose action metadata upstream`);
   }
-  console.log(`External action certification passed: ${references.length}/${APPROVED_ACTIONS.size} approved immutable refs resolve upstream.`);
+  console.log(`External action certification passed: ${references.length} reviewed call sites across ${APPROVED_ACTIONS.size} approved immutable actions resolve upstream.`);
 }
 
 run().catch((error) => {
