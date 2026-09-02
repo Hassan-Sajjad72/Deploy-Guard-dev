@@ -14,20 +14,17 @@ import { AiProviderAdapter } from "./ai-provider.adapter";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { presentPipelineStage } from "../projects/pipeline/pipeline-stage-presenter";
 import { deployguardOperationStagePresentation } from "../projects/pipeline/github-actions-stage-presentation";
-
-export const TROUBLESHOOTING_QUESTIONS = [
-  "What is the first proven failure and which evidence supports it?",
-  "Is this a repository, platform, AWS permission, or runtime-health problem?",
-  "Is Retry safe, and what must be corrected before I retry?",
-  "Did this operation change infrastructure before it failed?",
-  "Does the current generation still have a verified LIVE release?",
-];
+import { TROUBLESHOOTING_QUESTIONS, troubleshootingQuestion, TroubleshootingQuestionType } from "./ai-troubleshooting-contract";
 
 export function isAiTroubleshootingEligible(run: Pick<ProjectPipelineRun, "status" | "githubWorkflowRunId" | "metadata">) {
   if (run.status !== PipelineRunStatus.FAILED || typeof run.metadata?.safeLog !== "string" || !run.metadata.safeLog.trim()) return false;
   // A platform dispatch failure is authoritative evidence even though GitHub
   // never created a run. Do not mislabel it as a GitHub Actions failure.
   return Boolean(run.githubWorkflowRunId) || run.metadata?.dispatchState === "failed";
+}
+
+export function isAiRuntimeTroubleshootingCandidate(run: Pick<ProjectPipelineRun, "status" | "generationId" | "metadata">) {
+  return run.status === PipelineRunStatus.COMPLETED && Boolean(run.generationId) && run.metadata?.releaseEvidenceVerified === true;
 }
 
 @Injectable()
@@ -50,15 +47,16 @@ export class AiTroubleshootingService {
     return this.provider.availability();
   }
 
-  async start(user: User, projectId: string, pipelineRunId: string) {
+  async start(user: User, projectId: string, pipelineRunId: string, serviceId?: string) {
     await this.assertAccess(user, projectId, true);
     const run = await this.runs.findOne({ where: { id: pipelineRunId, projectId } });
     if (!run) throw new NotFoundException("Pipeline run not found for this project.");
-    this.assertFailedGithubActionsRun(run);
+    const collected = await this.evidenceService.collect(projectId, pipelineRunId, user, serviceId);
+    this.assertEligibleRun(run, collected);
     await this.assertRate(user.id, "analysis");
-    const session = await this.sessions.save(this.sessions.create({ userId: user.id, projectId, pipelineRunId, status: "processing", provider: null, model: null, providerMode: "unavailable", initialContext: null, lastError: null, closedAt: null }));
-    await this.audit.record({ actorUser: user, action: "ai.analysis.started", resourceType: "ai_analysis_session", resourceId: session.id, status: "success", metadata: { projectId, pipelineRunId } });
-    return this.generate(session, run, user, null);
+    const session = await this.sessions.save(this.sessions.create({ userId: user.id, projectId, pipelineRunId, status: "processing", provider: null, model: null, providerMode: "unavailable", initialContext: { requestedServiceId: serviceId || null, evidenceSnapshot: collected }, lastError: null, closedAt: null }));
+    await this.audit.record({ actorUser: user, action: "ai.analysis.started", resourceType: "ai_analysis_session", resourceId: session.id, status: "success", metadata: { projectId, pipelineRunId, problemType: collected.context.problemType } });
+    return this.generate(session, run, user, null, null, collected);
   }
 
   async regenerate(user: User, projectId: string, sessionId: string) {
@@ -67,22 +65,25 @@ export class AiTroubleshootingService {
     await this.assertRate(user.id, "analysis");
     const run = await this.runs.findOne({ where: { id: session.pipelineRunId, projectId } });
     if (!run) throw new NotFoundException("Pipeline run not found.");
-    this.assertFailedGithubActionsRun(run);
+    const collected = await this.collectedForSession(session, run, user);
+    this.assertEligibleRun(run, collected);
     await this.audit.record({ actorUser: user, action: "ai.analysis.regenerated", resourceType: "ai_analysis_session", resourceId: session.id, status: "success", metadata: { projectId, pipelineRunId: run.id } });
-    return this.generate(session, run, user, null);
+    return this.generate(session, run, user, null, null, collected);
   }
 
-  async followUp(user: User, projectId: string, sessionId: string, message: string) {
+  async followUp(user: User, projectId: string, sessionId: string, message: string, questionType?: TroubleshootingQuestionType) {
     const session = await this.sessionFor(user, projectId, sessionId, true);
     if (session.closedAt) throw new BadRequestException("This troubleshooting session is closed.");
     await this.assertRate(user.id, "followup");
-    const safeMessage = this.sanitizer.sanitize(message.replace(/[\u0000-\u001F\u007F]/g, " ")).trim().slice(0, 1000);
-    const userMessage = await this.messages.save(this.messages.create({ sessionId, role: "user", content: safeMessage, usageMetadata: null }));
+    const safeMessage = await this.evidenceService.sanitizeUserInput(projectId, message);
+    const question = troubleshootingQuestion(questionType);
+    await this.messages.save(this.messages.create({ sessionId, role: "user", content: safeMessage, usageMetadata: question ? { questionType: question.type } : null }));
     await this.audit.record({ actorUser: user, action: "ai.analysis.follow_up", resourceType: "ai_analysis_session", resourceId: session.id, status: "success", metadata: { projectId, pipelineRunId: session.pipelineRunId } });
     const run = await this.runs.findOne({ where: { id: session.pipelineRunId, projectId } });
     if (!run) throw new NotFoundException("Pipeline run not found.");
-    this.assertFailedGithubActionsRun(run);
-    return this.generate(session, run, user, safeMessage);
+    const collected = await this.collectedForSession(session, run, user);
+    this.assertEligibleRun(run, collected);
+    return this.generate(session, run, user, safeMessage, question?.type || null, collected);
   }
 
   async list(user: User, projectId: string, page = 1, limit = 20) {
@@ -97,19 +98,20 @@ export class AiTroubleshootingService {
 
   async get(user: User, projectId: string, sessionId: string) {
     const session = await this.sessionFor(user, projectId, sessionId, false);
-    const [messages, results, collected, run, provider, project] = await Promise.all([
+    const run = await this.runs.findOne({ where: { id: session.pipelineRunId, projectId } });
+    const [messages, results, collected, provider, project] = await Promise.all([
       this.messages.find({ where: { sessionId }, order: { createdAt: "ASC" }, take: 20 }),
       this.results.find({ where: { sessionId }, order: { revision: "DESC" }, take: 10 }),
-      this.evidenceService.collect(projectId, session.pipelineRunId),
-      this.runs.findOne({ where: { id: session.pipelineRunId, projectId } }),
+      run ? this.collectedForSession(session, run, user) : this.evidenceService.collect(projectId, session.pipelineRunId, user),
       this.provider.availability(),
       this.projects.findOne({ where: { id: projectId } }),
     ]);
     const operationAction = (run?.metadata?.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
     const failedStage = run?.metadata?.failedStage || run?.currentStage;
+    const safeMessages = await Promise.all(messages.map(async (message) => ({ ...message, content: await this.evidenceService.sanitizeUserInput(projectId, message.content) })));
     return {
       session,
-      messages,
+      messages: safeMessages,
       results,
       provider,
       operation: run ? { id: run.id, action: operationAction, commitSha: run.commitSha, generationId: run.generationId, failedStage, failedStageLabel: deployguardOperationStagePresentation(failedStage, operationAction).label, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage, failureOwner: run.failureOwner || "UNVERIFIED", externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId } : null,
@@ -126,14 +128,14 @@ export class AiTroubleshootingService {
     return { id: session.id, status: session.status, closedAt: session.closedAt };
   }
 
-  private async generate(session: AiAnalysisSession, run: ProjectPipelineRun, user: User, followUp: string | null) {
-    const collected = await this.evidenceService.collect(session.projectId, run.id);
+  private async generate(session: AiAnalysisSession, run: ProjectPipelineRun, user: User, followUp: string | null, questionType: TroubleshootingQuestionType | null, collected: Awaited<ReturnType<AiEvidenceService["collect"]>>) {
     const failedEvidence = [...collected.evidence].reverse().find((item) => /fail|error|blocked|denied/i.test(item.text));
     const failedPresentation = presentPipelineStage(failedEvidence?.stage || run.currentStage || "pipeline");
     const [project, conversation] = await Promise.all([
       this.projects.findOne({ where: { id: session.projectId } }),
       this.messages.find({ where: { sessionId: session.id }, order: { createdAt: "DESC" }, take: 6 }),
     ]);
+    const safeConversation = await Promise.all(conversation.reverse().map(async (item) => ({ role: item.role, content: await this.evidenceService.sanitizeUserInput(session.projectId, item.content) })));
     const context = {
       ...collected.context,
       projectId: session.projectId,
@@ -146,7 +148,8 @@ export class AiTroubleshootingService {
       externalProvider: run.externalProvider,
       failureCode: run.failureCode,
       failureServiceId: run.failureServiceId,
-      conversation: conversation.reverse().map((item) => ({ role: item.role, content: this.sanitizer.sanitize(item.content).slice(0, 1000) })),
+      problemType: collected.context.problemType,
+      conversation: safeConversation,
     };
     let output: {
       value: ReturnType<AiEvidencePreprocessorService["fallback"]> | NonNullable<ReturnType<AiEvidencePreprocessorService["validate"]>>;
@@ -155,7 +158,7 @@ export class AiTroubleshootingService {
       model: string | null;
       usage: Record<string, unknown> | null;
     };
-    try { output = await this.provider.analyze(this.preprocessor.buildPrompt(context, collected.evidence, followUp || undefined), { evidence: collected.evidence }); }
+    try { output = await this.provider.analyze(this.preprocessor.buildPrompt(context, collected.evidence, followUp || undefined, questionType), { evidence: collected.evidence, facts: context }); }
     catch (error) {
       session.lastError = error instanceof Error ? this.sanitizer.sanitize(error.message).slice(0, 500) : "AI provider request failed.";
       output = {
@@ -169,18 +172,39 @@ export class AiTroubleshootingService {
     }
     const value = output.value as ReturnType<AiEvidencePreprocessorService["fallback"]>;
     const revision = await this.results.count({ where: { sessionId: session.id } }) + 1;
-    const result = await this.results.save(this.results.create({ sessionId: session.id, summary: value.summary, rootCause: value.rootCause, technicalDetails: value.technicalDetails, remediationSteps: value.remediationSteps, evidenceReferences: value.evidenceReferences, limitations: value.limitations, confidence: value.confidence, resultMode: output.mode, revision }));
-    await this.messages.save(this.messages.create({ sessionId: session.id, role: "assistant", content: value.summary, usageMetadata: output.usage }));
-    session.status = "completed"; session.provider = output.provider; session.model = output.model; session.providerMode = output.mode; session.initialContext = context; if (output.mode === "live") session.lastError = null;
+    const diagnosticDetails = { likelyResponsibility: value.likelyResponsibility, affectedComponent: value.affectedComponent, completedStages: value.completedStages, recommendedAction: value.recommendedAction, retryRecommendation: value.retryRecommendation, problemType: value.problemType };
+    const result = await this.results.save(this.results.create({ sessionId: session.id, summary: value.summary, rootCause: value.rootCause, technicalDetails: value.technicalDetails, remediationSteps: value.remediationSteps, evidenceReferences: value.evidenceReferences, limitations: value.limitations, confidence: value.confidence, resultMode: output.mode, diagnosticDetails, revision }));
+    await this.messages.save(this.messages.create({ sessionId: session.id, role: "assistant", content: this.answer(value, questionType), usageMetadata: { ...(output.usage || {}), ...(questionType ? { questionType } : {}) } }));
+    session.status = "completed"; session.provider = output.provider; session.model = output.model; session.providerMode = output.mode; session.initialContext = { ...(session.initialContext || {}), diagnosticContext: context, evidenceSnapshot: collected }; if (output.mode === "live") session.lastError = null;
     await this.sessions.save(session);
     await this.trimMessages(session.id);
     return { session, result, provider: this.provider.status(), suggestedQuestions: TROUBLESHOOTING_QUESTIONS };
   }
 
-  private assertFailedGithubActionsRun(run: ProjectPipelineRun) {
-    if (!isAiTroubleshootingEligible(run)) {
-      throw new BadRequestException("Troubleshooting requires a failed deployment attempt with sanitized persisted evidence.");
-    }
+  private assertEligibleRun(run: ProjectPipelineRun, collected: Awaited<ReturnType<AiEvidenceService["collect"]>>) {
+    if (isAiTroubleshootingEligible(run)) return;
+    if (isAiRuntimeTroubleshootingCandidate(run) && collected.evidence.some((item) => item.source === "cloudwatch_runtime")) return;
+    throw new BadRequestException(isAiRuntimeTroubleshootingCandidate(run)
+      ? "LIVE runtime troubleshooting requires current generation-correlated CloudWatch application evidence."
+      : "Troubleshooting requires a failed deployment attempt with sanitized persisted evidence.");
+  }
+
+  private async collectedForSession(session: AiAnalysisSession, run: ProjectPipelineRun, user: User) {
+    const snapshot = session.initialContext?.evidenceSnapshot as Awaited<ReturnType<AiEvidenceService["collect"]>> | undefined;
+    if (snapshot?.context?.pipelineRunId === run.id && Array.isArray(snapshot.evidence) && snapshot.groups && typeof snapshot.groups === "object") return snapshot;
+    const serviceId = typeof session.initialContext?.requestedServiceId === "string" ? session.initialContext.requestedServiceId : undefined;
+    const collected = await this.evidenceService.collect(session.projectId, run.id, user, serviceId);
+    session.initialContext = { ...(session.initialContext || {}), requestedServiceId: serviceId || null, evidenceSnapshot: collected };
+    await this.sessions.save(session);
+    return collected;
+  }
+
+  private answer(value: ReturnType<AiEvidencePreprocessorService["fallback"]>, questionType: TroubleshootingQuestionType | null) {
+    if (questionType === "responsibility") return `Likely responsibility: ${value.likelyResponsibility}. ${value.technicalDetails} Confidence: ${Math.round(value.confidence * 100)}%.`;
+    if (questionType === "deployment_progress") return value.completedStages.length ? `Evidence-proven completed stages: ${value.completedStages.map((stage) => stage.stage).join(", ")}. Unresolved problem: ${value.rootCause}` : `No completed stage is proven by the supplied evidence. Unresolved problem: ${value.rootCause}`;
+    if (questionType === "retry_safety") return `Retry recommendation: ${value.retryRecommendation.decision}. ${value.retryRecommendation.reason}`;
+    if (questionType === "remediation") return `${value.recommendedAction} ${value.remediationSteps.join(" ")}`;
+    return value.summary;
   }
 
   private async sessionFor(user: User, projectId: string, id: string, manage: boolean) {

@@ -12,6 +12,7 @@ export class AiAnalysisResult {
   @Column({ type: "text" }) limitations: string;
   @Column({ type: "decimal", precision: 4, scale: 3, default: () => "0.5" }) confidence: number;
   @Column({ default: "fallback", name: "result_mode" }) resultMode: string;
+  @Column({ nullable: true, name: "diagnostic_details", type: "jsonb" }) diagnosticDetails: Record<string, unknown> | null;
   @Column({ default: 1 }) revision: number;
   @CreateDateColumn({ name: "created_at", type: "timestamptz" }) createdAt: Date;
 }

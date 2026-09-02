@@ -53,8 +53,8 @@ assert.match(settings, /updateProjectService[\s\S]*servicePort: Number/, "servic
 assert.match(settings, /EnvironmentVariablesPanel[\s\S]*serviceId=\{selectedService\.id\}/, "service-scoped ENV remains available");
 assert.match(settings, /updateProjectDatabaseTier/, "managed database controls remain available");
 assert.match(settings, /NotificationSettingsPanel/, "notifications remain available in Settings");
-assert.match(troubleshooting, /No failed deployments to analyze/);
-assert.match(troubleshooting, /failedOperations\.length && !selected/, "the healthy troubleshooting view is failure-eligibility aware");
+assert.match(troubleshooting, /No troubleshooting evidence available/);
+assert.match(troubleshooting, /eligibleOperations\.length && !selected/, "the troubleshooting view requires bounded failed-deployment or LIVE runtime evidence");
 assert.match(admin, /data-admin-section="overview"/);
 assert.match(admin, /data-admin-section="users"/);
 assert.match(admin, /data-admin-section="projects"/);

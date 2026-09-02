@@ -20,6 +20,7 @@
     "test:managed-environment": "node scripts/verify-managed-environment.mjs",
     "test:unified-lifecycle": "node scripts/verify-unified-lifecycle.mjs",
     "test:pipeline-recovery": "node scripts/verify-pipeline-recovery.mjs",
+    "test:ai-troubleshooting-ui": "node scripts/verify-ai-troubleshooting-ui.mjs",
     "test:professional-pipeline": "node scripts/verify-professional-pipeline.mjs",
     "test:infrastructure-presentation": "node scripts/verify-infrastructure-presentation.mjs",
     "test:monitoring-presentation": "node scripts/verify-monitoring-presentation.mjs",
@@ -33,7 +34,7 @@
     "test:serialized-project-refresh": "node scripts/verify-serialized-project-refresh.mjs",
     "test:project-page-loading": "node scripts/verify-project-page-loading.mjs",
     "test:rollback-stage-monotonicity": "node scripts/verify-rollback-stage-monotonicity.mjs",
-    "test:full-local-certification": "npm run test:operator-segregation-ui && npm run test:application-surfaces && npm run test:current-state-ui && npm run test:visual-system && npm run test:github-home && npm run test:admin-readability && npm run test:deploy-journey && npm run test:managed-environment && npm run test:unified-lifecycle && npm run test:pipeline-recovery && npm run test:professional-pipeline && npm run test:infrastructure-presentation && npm run test:monitoring-presentation && npm run test:destroy-operation-presentation && npm run test:overview-lifecycle && npm run test:modal-viewport-browser && npm run test:railpack-failure-presentation && npm run test:project-state-sync && npm run test:recovery-ui && npm run test:time-recency-ui && npm run test:serialized-project-refresh && npm run test:project-page-loading && npm run test:rollback-stage-monotonicity",
+    "test:full-local-certification": "npm run test:operator-segregation-ui && npm run test:application-surfaces && npm run test:current-state-ui && npm run test:visual-system && npm run test:github-home && npm run test:admin-readability && npm run test:deploy-journey && npm run test:managed-environment && npm run test:unified-lifecycle && npm run test:pipeline-recovery && npm run test:ai-troubleshooting-ui && npm run test:professional-pipeline && npm run test:infrastructure-presentation && npm run test:monitoring-presentation && npm run test:destroy-operation-presentation && npm run test:overview-lifecycle && npm run test:modal-viewport-browser && npm run test:railpack-failure-presentation && npm run test:project-state-sync && npm run test:recovery-ui && npm run test:time-recency-ui && npm run test:serialized-project-refresh && npm run test:project-page-loading && npm run test:rollback-stage-monotonicity",
     "preview": "vite preview"
     ,"test:full-stack": "playwright test --config playwright.config.js"
   },

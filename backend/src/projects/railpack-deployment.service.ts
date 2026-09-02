@@ -467,6 +467,7 @@ export class RailpackDeploymentService {
       workflowStagesUnavailable: metadata.terminalWorkflowStagesUnavailable === true,
       failureOwner: operation.failureOwner || null, externalProvider: operation.externalProvider || null, failureCode: operation.failureCode || null, failureServiceId: operation.failureServiceId || null, failureServiceName,
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
+      aiRuntimeAnalysisCandidate: operation.status === PipelineRunStatus.COMPLETED && Boolean(operation.generationId) && metadata.releaseEvidenceVerified === true,
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
       workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages
         .filter((stage) => stage && typeof stage === "object" && githubActionsWorkflowStageRelevant((stage as Record<string, unknown>).key, action))

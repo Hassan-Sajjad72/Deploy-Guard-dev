@@ -33,6 +33,8 @@ export class CloudWatchLogsService {
         projectId,
         environmentName: identity.environmentName,
         generationId: identity.generationId,
+        serviceId: identity.serviceId,
+        serviceName: identity.serviceDisplayName,
         logGroupName: identity.logGroupName,
         events: await this.fetch(identity, Number.isFinite(since) ? since : Date.now() - config.logHistoryMinutes * 60_000, limit),
       };
@@ -137,7 +139,7 @@ export class CloudWatchLogsService {
   }
 
   private unavailable(identity: LiveRuntimeIdentity, message: string) {
-    return { available: false, message, projectId: identity.projectId, environmentName: identity.environmentName, generationId: identity.generationId, logGroupName: identity.logGroupName, events: [] as RuntimeLogEvent[] };
+    return { available: false, message, projectId: identity.projectId, environmentName: identity.environmentName, generationId: identity.generationId, serviceId: identity.serviceId, serviceName: identity.serviceDisplayName, logGroupName: identity.logGroupName, events: [] as RuntimeLogEvent[] };
   }
   private client(region: string) { return new CloudWatchLogsClient({ region }); }
   private sleep(ms: number) { return new Promise((resolve) => setTimeout(resolve, ms)); }
