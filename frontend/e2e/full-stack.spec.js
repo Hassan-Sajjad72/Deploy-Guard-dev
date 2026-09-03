@@ -25,112 +25,113 @@ async function mockDirectoryPickerShell(page, repositories) {
   await page.route("**/api/projects/github/repositories", (route) => route.fulfill({ json: { repositories } }));
 }
 
-async function directorySuggestionValues(picker) {
+async function directoryValues(picker) {
   return picker.getByRole("option").evaluateAll((options) => options.map((option) => option.dataset.directory).filter(Boolean));
 }
 
-test("new deployment directory picker autocompletes root and paths while preserving direct manual entry", async ({ page }) => {
-  let createPayload;
-  await mockDirectoryPickerShell(page, [{ id: "simple", fullName: "example/simple", defaultBranch: "main" }]);
-  await page.route("**/api/projects/github/repositories/example/simple", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
-  await page.route("**/api/projects/github/repositories/example/simple/directories?ref=main", (route) => route.fulfill({ json: { directories: [".", "src", "public"] } }));
-  await page.route("**/api/projects", async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    createPayload = route.request().postDataJSON();
-    await route.fulfill({ status: 201, json: { project: { id: "33333333-3333-4333-8333-333333333333", repositoryFullName: "example/simple", targetBranch: "main", applicationEntryPointServiceId: createPayload.services[0].id, services: createPayload.services } } });
-  });
+async function openChild(picker, directory) {
+  await picker.locator(`[data-directory="${directory}"]`).click();
+}
+
+test("new deployment directory picker browses immediate children and explicitly selects parent or root", async ({ page }) => {
+  const directories = [".", ".github", ".github/workflows", "fullstack_20_combination_apps", "fullstack_20_combination_apps/01", "fullstack_20_combination_apps/01/backend", "fullstack_20_combination_apps/01/frontend", "fullstack_20_combination_apps/02", "fullstack_20_combination_apps/02/backend", "fullstack_20_combination_apps/02/frontend"];
+  await mockDirectoryPickerShell(page, [{ id: "tree", fullName: "example/tree", defaultBranch: "main" }]);
+  await page.route("**/api/projects/github/repositories/example/tree", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
+  await page.route("**/api/projects/github/repositories/example/tree/directories?ref=main", (route) => route.fulfill({ json: { directories } }));
 
   await page.goto("/deploy");
-  const repositorySelector = page.locator(".new-project-fields select").first();
-  const branchSelector = page.locator(".new-project-fields select").nth(1);
+  await page.locator(".new-project-fields select").first().selectOption("example/tree");
   const directory = page.getByRole("combobox", { name: "Directory", exact: true });
-
-  await repositorySelector.selectOption("example/simple");
-  await expect(branchSelector).toHaveValue("main");
   await directory.focus();
-  const suggestions = page.getByRole("listbox", { name: "Directory suggestions for Web" });
-  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual([".", "public", "src"]);
-  await suggestions.locator('[data-directory="."]').click();
-  await expect(directory).toHaveValue(".");
-  await directory.fill("src");
-  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual(["src"]);
-  await directory.press("ArrowDown");
-  await directory.press("Enter");
-  await expect(directory).toHaveValue("src");
-  await directory.fill("platform/products/customer/web/application");
-  await expect(directory).toHaveValue("platform/products/customer/web/application");
-  await expect(page.getByLabel("Exact directory path", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Enter path manually" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByRole("region", { name: "Deployment review" })).toBeVisible();
-  expect(createPayload.services[0].serviceDirectory).toBe("platform/products/customer/web/application");
+  let picker = page.getByRole("listbox", { name: "Directories in ." });
+  await expect.poll(() => directoryValues(picker)).toEqual([".github", "fullstack_20_combination_apps"]);
+  await expect(picker.locator('[data-directory*="/01"]')).toHaveCount(0);
+  await openChild(picker, "fullstack_20_combination_apps");
+  picker = page.getByRole("listbox", { name: "Directories in fullstack_20_combination_apps" });
+  await expect.poll(() => directoryValues(picker)).toEqual(["fullstack_20_combination_apps/01", "fullstack_20_combination_apps/02"]);
+  await openChild(picker, "fullstack_20_combination_apps/01");
+  picker = page.getByRole("listbox", { name: "Directories in fullstack_20_combination_apps/01" });
+  await expect.poll(() => directoryValues(picker)).toEqual(["fullstack_20_combination_apps/01/backend", "fullstack_20_combination_apps/01/frontend"]);
+  await openChild(picker, "fullstack_20_combination_apps/01/frontend");
+  await page.getByRole("button", { name: "Use this directory" }).click();
+  await expect(page.locator(".service-directory-selection code")).toHaveText("fullstack_20_combination_apps/01/frontend");
+
+  await directory.focus();
+  await page.getByRole("button", { name: "01", exact: true }).click();
+  await page.getByRole("button", { name: "Use this directory" }).click();
+  await expect(page.locator(".service-directory-selection code")).toHaveText("fullstack_20_combination_apps/01");
+  await directory.focus();
+  await page.getByRole("button", { name: "Repository root", exact: true }).click();
+  await page.getByRole("button", { name: "Use this directory" }).click();
+  await expect(page.locator(".service-directory-selection code")).toHaveText(".");
 });
 
-test("new deployment directory picker searches large monorepos and preserves independent multi-service configuration", async ({ page }) => {
-  const manySiblings = Array.from({ length: 300 }, (_, index) => `apps/product-${String(index).padStart(3, "0")}`);
-  const mainDirectories = [
-    ".", "apps", "apps/admin", "apps/admin/src", "apps/customer", "apps/customer/src", ...manySiblings,
-    "packages", "packages/shared", "services", "services/api", "services/api/src", "services/auth",
-    "platform/products/customer/web/application",
-  ];
+test("new deployment directory picker shows every current-level child, searches it, and navigates back", async ({ page }) => {
+  const products = Array.from({ length: 300 }, (_, index) => `apps/product-${String(index).padStart(3, "0")}`);
+  const directories = [".", "apps", "apps/customer", "apps/customer/web", ...products];
+  await mockDirectoryPickerShell(page, [{ id: "many", fullName: "example/many", defaultBranch: "main" }]);
+  await page.route("**/api/projects/github/repositories/example/many", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
+  await page.route("**/api/projects/github/repositories/example/many/directories?ref=main", (route) => route.fulfill({ json: { directories } }));
+
+  await page.goto("/deploy");
+  await page.locator(".new-project-fields select").first().selectOption("example/many");
+  const directory = page.getByRole("combobox", { name: "Directory", exact: true });
+  await directory.focus();
+  await directory.press("ArrowDown");
+  await directory.press("Enter");
+  let picker = page.getByRole("listbox", { name: "Directories in apps" });
+  await expect(picker.getByRole("option")).toHaveCount(301);
+  await expect(picker).toHaveCSS("overflow-y", "auto");
+  await directory.fill("product-250");
+  await expect.poll(() => directoryValues(picker)).toEqual(["apps/product-250"]);
+  await directory.fill("");
+  await expect(picker.getByRole("option")).toHaveCount(301);
+  await openChild(picker, "apps/customer");
+  picker = page.getByRole("listbox", { name: "Directories in apps/customer" });
+  await openChild(picker, "apps/customer/web");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.getByRole("listbox", { name: "Directories in apps/customer" })).toBeVisible();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.getByRole("listbox", { name: "Directories in apps" })).toBeVisible();
+});
+
+test("new deployment directory picker keeps multi-service selections isolated and persists canonical paths", async ({ page }) => {
+  const directories = [".", "apps", "apps/customer", "apps/customer/web", "services", "services/api"];
   let createPayload;
-  let databasePayload;
-  await mockDirectoryPickerShell(page, [{ id: "monorepo", fullName: "example/monorepo", defaultBranch: "main" }]);
-  await page.route("**/api/projects/github/repositories/example/monorepo", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
-  await page.route("**/api/projects/github/repositories/example/monorepo/directories?ref=main", (route) => route.fulfill({ json: { directories: mainDirectories } }));
+  await mockDirectoryPickerShell(page, [{ id: "multi", fullName: "example/multi", defaultBranch: "main" }]);
+  await page.route("**/api/projects/github/repositories/example/multi", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
+  await page.route("**/api/projects/github/repositories/example/multi/directories?ref=main", (route) => route.fulfill({ json: { directories } }));
   await page.route("**/api/projects", async (route) => {
     if (route.request().method() !== "POST") return route.fallback();
     createPayload = route.request().postDataJSON();
-    await route.fulfill({ status: 201, json: { project: { id: "11111111-1111-4111-8111-111111111111", repositoryFullName: "example/monorepo", targetBranch: "main", applicationEntryPointServiceId: createPayload.applicationEntryPointServiceId, services: createPayload.services } } });
-  });
-  await page.route("**/api/projects/11111111-1111-4111-8111-111111111111/database-tier", async (route) => {
-    databasePayload = route.request().postDataJSON();
-    await route.fulfill({ json: { database: databasePayload } });
+    await route.fulfill({ status: 201, json: { project: { id: "11111111-1111-4111-8111-111111111111", repositoryFullName: "example/multi", targetBranch: "main", applicationEntryPointServiceId: createPayload.applicationEntryPointServiceId, services: createPayload.services } } });
   });
 
   await page.goto("/deploy");
-  await page.locator(".new-project-fields select").first().selectOption("example/monorepo");
-  const directories = page.getByRole("combobox", { name: "Directory", exact: true });
-  await directories.first().fill("api");
-  let suggestionPickers = page.getByRole("listbox");
-  await expect.poll(() => directorySuggestionValues(suggestionPickers.first())).toEqual(["services/api", "services/api/src"]);
-  await expect(suggestionPickers.first().getByRole("option")).toHaveCount(2);
-  const apiSuggestion = suggestionPickers.first().locator('[data-directory="services/api"]');
-  await expect(apiSuggestion.locator("strong")).toHaveText("api");
-  await expect(apiSuggestion.locator("small")).toHaveText("services/api");
-  await apiSuggestion.click();
-  await expect(directories.first()).toHaveValue("services/api");
+  await page.locator(".new-project-fields select").first().selectOption("example/multi");
+  const directoriesByService = page.getByRole("combobox", { name: "Directory", exact: true });
+  await directoriesByService.first().focus();
+  let picker = page.getByRole("listbox", { name: "Directories in ." });
+  await openChild(picker, "apps");
+  picker = page.getByRole("listbox", { name: "Directories in apps" });
+  await openChild(picker, "apps/customer");
+  picker = page.getByRole("listbox", { name: "Directories in apps/customer" });
+  await openChild(picker, "apps/customer/web");
+  await page.getByRole("button", { name: "Use this directory" }).click();
   await page.getByRole("button", { name: "+ Add Service" }).click();
-
-  await directories.nth(1).fill("customer");
-  await expect(directories.first()).toHaveValue("services/api");
-  suggestionPickers = page.getByRole("listbox");
-  await expect.poll(() => directorySuggestionValues(suggestionPickers)).toEqual(["apps/customer", "apps/customer/src", "platform/products/customer/web/application"]);
-  const deepSuggestion = suggestionPickers.locator('[data-directory="platform/products/customer/web/application"]');
-  await expect(deepSuggestion.locator("strong")).toHaveText("application");
-  await expect(deepSuggestion.locator("small")).toHaveText("platform/products/customer/web/application");
-  await suggestionPickers.locator('[data-directory="apps/customer"]').click();
-  await expect(directories.first()).toHaveValue("services/api");
-  await expect(directories.nth(1)).toHaveValue("apps/customer");
-
+  await directoriesByService.nth(1).focus();
+  picker = page.getByRole("listbox", { name: "Directories in ." });
+  await openChild(picker, "services");
+  picker = page.getByRole("listbox", { name: "Directories in services" });
+  await openChild(picker, "services/api");
+  await page.getByRole("button", { name: "Use this directory" }).click();
+  await expect(page.locator(".service-directory-selection code").nth(0)).toHaveText("apps/customer/web");
+  await expect(page.locator(".service-directory-selection code").nth(1)).toHaveText("services/api");
   const applicationService = page.getByRole("combobox", { name: "Application service", exact: true });
   const secondServiceIdentity = await applicationService.locator("option").nth(2).getAttribute("value");
   await applicationService.selectOption(secondServiceIdentity);
-  const ports = page.getByRole("spinbutton", { name: /Application port/ });
-  await ports.first().fill("4173");
-  await ports.nth(1).fill("8000");
-  const databaseControls = page.locator(".settings-simple-form select");
-  await databaseControls.first().selectOption("mysql");
-  await databaseControls.nth(1).selectOption(secondServiceIdentity);
   await page.getByRole("button", { name: "Continue" }).click();
-
-  await expect(page.getByRole("region", { name: "Deployment review" })).toBeVisible();
-  expect(createPayload.services.map(({ serviceDirectory, servicePort }) => ({ serviceDirectory, servicePort }))).toEqual([
-    { serviceDirectory: "services/api", servicePort: 4173 },
-    { serviceDirectory: "apps/customer", servicePort: 8000 },
-  ]);
-  expect(createPayload.applicationEntryPointServiceId).toBe(secondServiceIdentity);
-  expect(databasePayload).toMatchObject({ provider: "managed", engine: "mysql", attachedServiceId: secondServiceIdentity });
+  expect(createPayload.services.map(({ serviceDirectory }) => serviceDirectory)).toEqual(["apps/customer/web", "services/api"]);
 });
 
 test("new deployment directory picker ignores stale repository and branch directory responses", async ({ page }) => {
@@ -177,30 +178,28 @@ test("new deployment directory picker ignores stale repository and branch direct
   await repositorySelector.selectOption("example/b");
   await expect(branchSelector).toHaveValue("main");
   await directory.focus();
-  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual([".", "from-b-main"]);
+  await expect.poll(() => directoryValues(page.getByRole("listbox", { name: "Directories in ." }))).toEqual(["from-b-main"]);
   releaseFirstRepository();
-  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual([".", "from-b-main"]);
+  await expect.poll(() => directoryValues(page.getByRole("listbox", { name: "Directories in ." }))).toEqual(["from-b-main"]);
 
   await page.getByRole("listbox").locator('[data-directory="from-b-main"]').click();
+  await page.getByRole("button", { name: "Use this directory" }).click();
   await directory.fill("from-b");
   await branchSelector.selectOption("release");
   await releaseBranchRequested;
-  await expect(directory).toHaveValue("from-b");
+  await expect(page.locator(".service-directory-selection code")).toHaveText("from-b-main");
   const mainDirectoryResponse = page.waitForResponse((response) => response.url().includes("/example/b/directories?ref=main"));
   await branchSelector.selectOption("main");
   await mainDirectoryResponse;
-  await expect(page.getByText("Type a path or choose a directory suggestion.")).toBeVisible();
   await directory.focus();
-  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual(["from-b-main"]);
+  await expect.poll(() => directoryValues(page.getByRole("listbox", { name: "Directories in ." }))).toEqual(["from-b-main"]);
   releaseBranch();
-  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual(["from-b-main"]);
+  await expect.poll(() => directoryValues(page.getByRole("listbox", { name: "Directories in ." }))).toEqual(["from-b-main"]);
 
-  await directory.fill("from-b");
   await repositorySelector.selectOption("example/a");
-  await expect(directory).toHaveValue("");
-  await expect(page.getByText("Type a path or choose a directory suggestion.")).toBeVisible();
+  await expect(page.locator(".service-directory-selection code")).toHaveText("None selected");
   await directory.focus();
-  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual([".", "from-a"]);
+  await expect.poll(() => directoryValues(page.getByRole("listbox", { name: "Directories in ." }))).toEqual(["from-a"]);
 });
 
 test("new deployment directory picker keeps exact path entry available when directory browsing is unavailable", async ({ page }) => {

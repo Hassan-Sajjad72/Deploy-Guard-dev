@@ -13,6 +13,7 @@ const portMigration = readFileSync(join(root, "backend/src/migrations/1787356819
 const projectEntity = readFileSync(join(root, "backend/src/projects/project.entity.ts"), "utf8");
 const entrypointMigration = readFileSync(join(root, "backend/src/migrations/1787356818000-ProjectApplicationEntrypoint.ts"), "utf8");
 const newProject = readFileSync(join(root, "frontend/src/pages/NewProject.jsx"), "utf8");
+const newProjectStyles = readFileSync(join(root, "frontend/src/styles.css"), "utf8");
 const source = readFileSync(join(root, "backend/src/projects/repository-source.service.ts"), "utf8");
 const workspacePackage = JSON.parse(readFileSync(join(root, "backend/fixtures/railpack-native-workspace/package.json"), "utf8")) as { workspaces: string[]; scripts: { start: string } };
 
@@ -50,13 +51,18 @@ assert.match(newProject, /name: "Web", serviceDirectory: "", servicePort: "8080"
 assert.match(newProject, /name: `Service \$\{current\.length \+ 1\}`, serviceDirectory: "", servicePort: "8080"/);
 assert.match(newProject, /<span>Application port<\/span>/);
 assert.match(newProject, /servicePort: Number\(servicePort\)/);
-assert.match(newProject, /function compareDirectoryPresentation/);
-assert.match(newProject, /const DIRECTORY_SUGGESTION_LIMIT = 7/);
-assert.match(newProject, /function matchingDirectories/);
+assert.match(newProject, /function immediateChildDirectories/);
+assert.match(newProject, /currentDirectory === "\."/);
+assert.match(newProject, /function directoryBreadcrumbs/);
+assert.match(newProject, /function parentDirectory/);
 assert.match(newProject, /function directoryLeaf/);
 assert.match(newProject, /role="combobox"/);
 assert.match(newProject, /role="listbox"/);
-assert.match(newProject, /value=\{service\.serviceDirectory\}/);
+assert.match(newProject, /Use this directory/);
+assert.match(newProject, /onValueChange\(browseDirectory\)/);
+assert.match(newProject, /serviceDirectory, servicePort/);
+assert.match(newProjectStyles, /max-height:224px;overflow-y:auto/);
+assert.doesNotMatch(newProject, /DIRECTORY_SUGGESTION_LIMIT|matchingDirectories|\.slice\(0,\s*\d+\)/);
 assert.doesNotMatch(newProject, /manualEntry|Exact directory path|Selected path|Enter path manually/);
 assert.doesNotMatch(newProject, /<span>Search directory suggestions<\/span>|<span>Directory suggestions<\/span>/);
 assert.match(newProject, /\+ Add Service/);
