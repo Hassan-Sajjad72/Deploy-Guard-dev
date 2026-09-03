@@ -157,7 +157,7 @@ run "mysql_database_attached_to_service_b" {
         runtime_config_revision_id = "66666666-6666-4666-8666-666666666666"
         service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
-        database_attached          = true, managed_database_aliases = ["MYSQL_URL", "MYSQL_HOST", "MYSQL_PORT"], managed_database_engine = "mysql"
+        database_attached          = true, managed_database_aliases = ["DB_HOST", "DATABASE_HOST", "MYSQL_HOST", "DB_PORT", "DATABASE_PORT", "MYSQL_PORT", "DB_USER", "DATABASE_USER", "MYSQL_USER", "DB_PASSWORD", "DATABASE_PASSWORD", "MYSQL_PASSWORD", "DB_NAME", "DATABASE_NAME", "MYSQL_DATABASE", "DATABASE_URL", "MYSQL_URL"], managed_database_engine = "mysql"
       }
     }
   }
@@ -169,6 +169,29 @@ run "mysql_database_attached_to_service_b" {
     condition     = length(aws_ecs_task_definition.application) == 2 && length(aws_ecs_task_definition.database) == 1
     error_message = "The database must remain independent from both application task definitions."
   }
+  assert {
+    condition = (
+      alltrue([for alias in ["DB_HOST", "DATABASE_HOST", "MYSQL_HOST", "DB_PORT", "DATABASE_PORT", "MYSQL_PORT", "DB_USER", "DATABASE_USER", "MYSQL_USER", "DB_NAME", "DATABASE_NAME", "MYSQL_DATABASE"] : contains(keys(local.database_environment), alias)]) &&
+      alltrue([for alias in ["DB_PASSWORD", "DATABASE_PASSWORD", "MYSQL_PASSWORD", "DATABASE_URL", "MYSQL_URL"] : contains(keys(local.database_secrets), alias)])
+    )
+    error_message = "Every DeployGuard-owned MySQL alias must be prepared for injection into the attached application task definition."
+  }
+}
+
+run "incomplete_mysql_aliases_are_rejected" {
+  command = plan
+  variables {
+    services = {
+      "55555555-5555-4555-8555-555555555555" = {
+        name                       = "Api", image = "registry/api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        runtime_config_revision_id = "66666666-6666-4666-8666-666666666666"
+        service_port               = 8080
+        environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
+        database_attached          = true, managed_database_aliases = ["MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_URL"], managed_database_engine = "mysql"
+      }
+    }
+  }
+  expect_failures = [var.services]
 }
 
 run "rollback_immutable_images_and_config" {

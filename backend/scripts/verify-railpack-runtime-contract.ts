@@ -8,7 +8,7 @@ import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, parsePinn
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
 import { MANAGED_DATABASE_ENGINE_PROFILES, ManagedDatabaseEngine } from "../src/projects/managed-database-engine";
 import { RailpackRuntimeConfiguration, servicesBase64 } from "../src/projects/railpack-workflow-contract";
-import { SERVICE_ALIAS_GROUPS } from "../src/projects/configuration-ownership";
+import { aliasesFor, SERVICE_ALIAS_GROUPS } from "../src/projects/configuration-ownership";
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
@@ -39,6 +39,18 @@ assert.throws(() => servicesBase64(invalidBuildPort), /build environment is inva
 const invalidBuildReference: any = structuredClone(contractFixture);
 invalidBuildReference.services[0].buildSecretReferences.BUILD_TOKEN = "not-an-immutable-secret-reference";
 assert.throws(() => servicesBase64(invalidBuildReference), /build secret reference is invalid/, "build secrets must use immutable Secrets Manager version references");
+const managedMysqlAliases = (["host", "port", "username", "password", "database", "url"] as const).flatMap((property) => aliasesFor("mysql", property)).sort();
+const completeMysqlFixture: any = structuredClone(contractFixture);
+completeMysqlFixture.services[0].databaseAttached = true;
+completeMysqlFixture.services[0].managedDatabase = { engine: "mysql", aliases: managedMysqlAliases };
+assert.doesNotThrow(() => servicesBase64(completeMysqlFixture), "the complete DeployGuard-owned MySQL alias set must be admitted");
+const completeMysqlJqResult = spawnSync("jq", ["-e", "--arg", "project", completeMysqlFixture.projectId, "--arg", "operation", completeMysqlFixture.operationId, "--arg", "sha", completeMysqlFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(completeMysqlFixture), encoding: "utf8" });
+assert.equal(completeMysqlJqResult.status, 0, `workflow service contract must admit the complete MySQL alias set: ${completeMysqlJqResult.stderr}`);
+const incompleteMysqlFixture: any = structuredClone(completeMysqlFixture);
+incompleteMysqlFixture.services[0].managedDatabase.aliases = managedMysqlAliases.filter((alias) => alias !== "MYSQL_DATABASE");
+assert.throws(() => servicesBase64(incompleteMysqlFixture), /Managed MySQL runtime aliases are incomplete/, "the backend must reject a managed MySQL snapshot missing MYSQL_DATABASE before dispatch");
+const incompleteMysqlJqResult = spawnSync("jq", ["-e", "--arg", "project", incompleteMysqlFixture.projectId, "--arg", "operation", incompleteMysqlFixture.operationId, "--arg", "sha", incompleteMysqlFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(incompleteMysqlFixture), encoding: "utf8" });
+assert.notEqual(incompleteMysqlJqResult.status, 0, "the workflow must reject a managed MySQL runtime snapshot missing MYSQL_DATABASE before Terraform materialization");
 const managedDatabaseAliases = [...new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service !== "storage").flatMap((group) => group.aliases))].sort();
 for (const key of managedDatabaseAliases) {
   for (const field of ["environment", "secretReferences"] as const) {

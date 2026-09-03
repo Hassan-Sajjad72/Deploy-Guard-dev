@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { aliasesFor } from "./configuration-ownership";
 import { normalizeServiceDirectory } from "./deployable-service-path";
 
 export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v4";
@@ -30,6 +31,7 @@ const KEY = /^[A-Z][A-Z0-9_]{0,127}$/;
 const SECRET_VALUE_FROM = /^arn:(?:aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$/;
 const SECRETS_MANAGER_VERSION_ID = /^[A-Za-z0-9-]{32,64}$/;
 const IMMUTABLE_IMAGE = /^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i;
+const MANAGED_MYSQL_RUNTIME_ALIASES = (["host", "port", "username", "password", "database", "url"] as const).flatMap((property) => aliasesFor("mysql", property)).sort();
 
 export function immutableRailpackServiceImageTag(commitSha: string, operationId: string, serviceId: string) {
   if (!SHA.test(commitSha) || !UUID.test(operationId) || !UUID.test(serviceId)) throw new Error("Railpack service release identity is invalid.");
@@ -57,6 +59,7 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     if (service.managedDatabase.secretVersionId != null && !SECRETS_MANAGER_VERSION_ID.test(service.managedDatabase.secretVersionId)) throw new Error("Railpack managed database secret-version identity is invalid.");
     if (service.databaseAttached) databaseAttachments += 1;
     if (service.databaseAttached && (!service.managedDatabase.engine || !service.managedDatabase.aliases.length)) throw new Error("Attached managed database configuration is incomplete.");
+    if (service.databaseAttached && service.managedDatabase.engine === "mysql" && (service.managedDatabase.aliases.length !== MANAGED_MYSQL_RUNTIME_ALIASES.length || [...new Set(service.managedDatabase.aliases)].sort().join("\0") !== MANAGED_MYSQL_RUNTIME_ALIASES.join("\0"))) throw new Error("Managed MySQL runtime aliases are incomplete.");
     if (!service.databaseAttached && (service.managedDatabase.engine !== null || service.managedDatabase.aliases.length)) throw new Error("Database configuration may only be present on its attached service.");
     if (service.rollbackImage && !IMMUTABLE_IMAGE.test(service.rollbackImage)) throw new Error("Railpack rollback service image is invalid.");
   }
