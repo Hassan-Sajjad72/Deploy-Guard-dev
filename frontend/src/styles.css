@@ -345,7 +345,7 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 .new-project-connection p,.new-project-form-heading p:last-child{margin:0;max-width:720px}
 .new-project-fields{display:grid;gap:var(--space-3);grid-template-columns:repeat(2,minmax(0,1fr))}
 .new-project-fields .field,.new-project-form>.field{margin:0}
-.service-directory-field{align-content:start}.service-directory-browser{display:grid;gap:7px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.service-directory-browser .field{margin:0}.service-directory-browser-status{display:block}
+.service-directory-field{align-content:start}.service-directory-combobox{position:relative}.service-directory-options{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);display:grid;left:0;list-style:none;margin:5px 0 0;max-height:220px;overflow-y:auto;padding:4px;position:absolute;right:0;z-index:20}.service-directory-options li{border-radius:8px;cursor:pointer;font-size:.84rem;overflow-wrap:anywhere;padding:8px 10px}.service-directory-options li:hover,.service-directory-options li.is-active{background:var(--accent-soft);color:var(--accent-dark)}.service-directory-options li[aria-selected="true"]{font-weight:800}.service-directory-options li.is-empty{color:var(--muted);cursor:default}.service-directory-selection{align-items:center;background:var(--surface-muted);border:1px solid var(--border);border-radius:var(--radius-sm);display:flex;gap:var(--space-2);justify-content:space-between;min-width:0;padding:7px 9px}.service-directory-selection span{color:var(--muted);font-size:.72rem;font-weight:800;text-transform:uppercase}.service-directory-selection code{font-size:.78rem;overflow-wrap:anywhere;text-align:right}.service-directory-fallback{align-items:flex-start;display:flex;gap:var(--space-2);justify-content:space-between}.service-directory-fallback .subtle-button{flex:0 0 auto;min-height:34px;padding:6px 10px}.service-directory-browser-status{display:block}
 .new-project-form textarea{line-height:1.5;resize:vertical}
 .new-project-form small{color:var(--muted);line-height:1.45}
 .deployment-readiness{border:1px solid var(--border);border-radius:var(--radius-sm);display:grid;gap:var(--space-3);padding:var(--space-4)}
@@ -358,7 +358,7 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 @media(max-width:1024px){.project-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){
   .project-card-grid,.new-project-fields{grid-template-columns:1fr}
-  .service-directory-browser{grid-template-columns:1fr}
+  .service-directory-fallback{align-items:stretch;flex-direction:column}.service-directory-fallback .subtle-button{width:100%}
   .project-card-heading{gap:var(--space-2)}
   .project-card-facts{grid-template-columns:1fr}
   .new-project-actions{align-items:stretch;flex-direction:column}

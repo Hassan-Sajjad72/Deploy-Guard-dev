@@ -35,7 +35,7 @@ function compareDirectoryPresentation(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-const DIRECTORY_SUGGESTION_LIMIT = 80;
+const DIRECTORY_SUGGESTION_LIMIT = 8;
 
 function matchingDirectories(directories, query) {
   const search = query.trim().toLocaleLowerCase();
@@ -45,17 +45,59 @@ function matchingDirectories(directories, query) {
 
 function ServiceDirectoryPicker({ browseError, browsing, directories, disabled, onQueryChange, onSelect, onValueChange, query, service }) {
   const suggestions = useMemo(() => matchingDirectories(directories, query), [directories, query]);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [manualEntry, setManualEntry] = useState(false);
+  const [open, setOpen] = useState(false);
   const helpId = `service-directory-help-${service.key}`;
-  const suggestionsDisabled = disabled || browsing || Boolean(browseError);
-  return <div className="field service-directory-field">
+  const listboxId = `service-directory-options-${service.key}`;
+  const searchDisabled = disabled || browsing || Boolean(browseError);
+
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [query, directories]);
+
+  useEffect(() => {
+    if (browsing || browseError) setOpen(false);
+    if (!browseError) setManualEntry(false);
+  }, [browseError, browsing]);
+
+  function selectDirectory(directory) {
+    onSelect(directory);
+    setActiveIndex(-1);
+    setOpen(false);
+  }
+
+  function handleSearchKeyDown(event) {
+    if (event.key === "Escape") {
+      setOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => {
+        if (!suggestions.length) return -1;
+        if (event.key === "ArrowDown") return current >= suggestions.length - 1 ? 0 : current + 1;
+        return current <= 0 ? suggestions.length - 1 : current - 1;
+      });
+      return;
+    }
+    if (event.key === "Enter" && open && activeIndex >= 0) {
+      event.preventDefault();
+      selectDirectory(suggestions[activeIndex]);
+    }
+  }
+
+  return <div className="field service-directory-field" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) { setOpen(false); setActiveIndex(-1); } }}>
     <span>Directory</span>
-    <input aria-describedby={helpId} aria-label="Directory" disabled={disabled} maxLength="512" onChange={(event) => onValueChange(event.target.value)} placeholder="Exact repository-relative path" value={service.serviceDirectory} />
-    <small id={helpId}>This exact path will be deployed. Choose a suggestion below or enter a path manually.</small>
-    <div className="service-directory-browser">
-      <label className="field"><span>Search directory suggestions</span><input disabled={suggestionsDisabled} onChange={(event) => onQueryChange(event.target.value)} placeholder="Filter by any part of the path" value={query} /></label>
-      <label className="field"><span>Directory suggestions</span><select disabled={suggestionsDisabled} onChange={(event) => onSelect(event.target.value)} value=""><option value="">{browsing ? "Loading directories…" : browseError ? "Browsing unavailable" : suggestions.length ? "Choose a matching directory" : "No matching directories"}</option>{suggestions.map((directory) => <option key={directory} value={directory}>{directory === "." ? "Repository root (.)" : directory}</option>)}</select></label>
-    </div>
-    {browseError ? <small className="service-directory-browser-status" role="status">Directory browsing is unavailable. Enter an exact repository-relative path; DeployGuard will validate it before deployment.</small> : directories.length > DIRECTORY_SUGGESTION_LIMIT && !query.trim() ? <small className="service-directory-browser-status">Showing the first {DIRECTORY_SUGGESTION_LIMIT} directories. Search the full path to narrow the list.</small> : null}
+    {manualEntry ? <input aria-describedby={helpId} aria-label="Exact directory path" disabled={disabled} maxLength="512" onChange={(event) => onValueChange(event.target.value)} placeholder="Repository-relative path" value={service.serviceDirectory} /> : <div className="service-directory-combobox">
+      <input aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined} aria-autocomplete="list" aria-controls={listboxId} aria-describedby={helpId} aria-expanded={open && !searchDisabled} aria-label="Directory" disabled={searchDisabled} onChange={(event) => { onQueryChange(event.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onKeyDown={handleSearchKeyDown} placeholder={browsing ? "Loading directories…" : browseError ? "Directory browsing unavailable" : "Search repository directories"} role="combobox" value={query} />
+      {open && !searchDisabled ? <ul aria-label={`Directory suggestions for ${service.name || "service"}`} className="service-directory-options" id={listboxId} role="listbox">{suggestions.length ? suggestions.map((directory, index) => <li aria-selected={directory === service.serviceDirectory} className={index === activeIndex ? "is-active" : ""} id={`${listboxId}-${index}`} key={directory} onClick={() => selectDirectory(directory)} onMouseDown={(event) => event.preventDefault()} role="option">{directory === "." ? "Repository root (.)" : directory}</li>) : <li aria-disabled="true" className="is-empty" role="option">No matching directories</li>}</ul> : null}
+    </div>}
+    <small id={helpId}>{manualEntry ? "Enter the exact repository-relative path. DeployGuard validates it before deployment." : "Search by any part of a repository-relative path, then choose a match."}</small>
+    <div className="service-directory-selection"><span>Selected path</span><code>{service.serviceDirectory || "None selected"}</code></div>
+    {browseError ? <div className="service-directory-fallback"><small role="status">Directory browsing is unavailable for this repository.</small>{manualEntry ? null : <button className="subtle-button" disabled={disabled} onClick={() => setManualEntry(true)} type="button">Enter path manually</button>}</div> : directories.length > DIRECTORY_SUGGESTION_LIMIT && !query.trim() ? <small className="service-directory-browser-status">Showing {DIRECTORY_SUGGESTION_LIMIT} suggestions. Type to search all returned paths.</small> : null}
   </div>;
 }
 

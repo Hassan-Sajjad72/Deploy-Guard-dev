@@ -51,11 +51,13 @@ assert.match(newProject, /name: `Service \$\{current\.length \+ 1\}`, serviceDir
 assert.match(newProject, /<span>Application port<\/span>/);
 assert.match(newProject, /servicePort: Number\(servicePort\)/);
 assert.match(newProject, /function compareDirectoryPresentation/);
-assert.match(newProject, /const DIRECTORY_SUGGESTION_LIMIT = 80/);
+assert.match(newProject, /const DIRECTORY_SUGGESTION_LIMIT = 8/);
 assert.match(newProject, /function matchingDirectories/);
-assert.match(newProject, /Search directory suggestions/);
-assert.match(newProject, /Exact repository-relative path/);
-assert.match(newProject, /Directory browsing is unavailable/);
+assert.match(newProject, /role="combobox"/);
+assert.match(newProject, /role="listbox"/);
+assert.match(newProject, /Selected path/);
+assert.match(newProject, /Enter path manually/);
+assert.doesNotMatch(newProject, /<span>Search directory suggestions<\/span>|<span>Directory suggestions<\/span>/);
 assert.match(newProject, /\+ Add Service/);
 assert.match(newProject, /Application service/);
 assert.match(newProject, /applicationEntryPointServiceId/);
