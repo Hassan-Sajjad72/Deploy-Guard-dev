@@ -318,7 +318,18 @@ jobs:
                     | del(.change.before_sensitive, .change.after_sensitive)
                   ))
                 ' > .deployguard/terraform/deployguard-cost-plan.json
-            terraform -chdir=.deployguard/terraform apply -input=false -auto-approve deployguard.tfplan || { echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2; exit 1; }
+            apply_failure_marker=.deployguard/terraform/.deployguard-apply-failure
+            rm -f "$apply_failure_marker"
+            if ! terraform -chdir=.deployguard/terraform apply -input=false -auto-approve deployguard.tfplan; then
+              if [ -s "$apply_failure_marker" ]; then
+                tail -n 1 "$apply_failure_marker" >&2
+              else
+                echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2
+              fi
+              rm -f "$apply_failure_marker"
+              exit 1
+            fi
+            rm -f "$apply_failure_marker"
             terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value=.value.value)' > .deployguard/terraform-outputs.json
             if [ "$DEPLOYMENT_ACTION" = rollback ]; then
               expected_database_version="$(jq -r '[.services[] | select(.databaseAttached == true) | .managedDatabase.secretVersionId // empty] | first // empty' .deployguard/runtime.json)"
