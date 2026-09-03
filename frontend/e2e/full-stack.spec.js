@@ -25,36 +25,45 @@ async function mockDirectoryPickerShell(page, repositories) {
   await page.route("**/api/projects/github/repositories", (route) => route.fulfill({ json: { repositories } }));
 }
 
-async function directorySuggestionLabels(picker) {
-  return picker.getByRole("option").allTextContents();
+async function directorySuggestionValues(picker) {
+  return picker.getByRole("option").evaluateAll((options) => options.map((option) => option.dataset.directory).filter(Boolean));
 }
 
-test("new deployment directory picker searches, selects root and paths, and keeps the canonical selection explicit", async ({ page }) => {
+test("new deployment directory picker autocompletes root and paths while preserving direct manual entry", async ({ page }) => {
+  let createPayload;
   await mockDirectoryPickerShell(page, [{ id: "simple", fullName: "example/simple", defaultBranch: "main" }]);
   await page.route("**/api/projects/github/repositories/example/simple", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
   await page.route("**/api/projects/github/repositories/example/simple/directories?ref=main", (route) => route.fulfill({ json: { directories: [".", "src", "public"] } }));
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    createPayload = route.request().postDataJSON();
+    await route.fulfill({ status: 201, json: { project: { id: "33333333-3333-4333-8333-333333333333", repositoryFullName: "example/simple", targetBranch: "main", applicationEntryPointServiceId: createPayload.services[0].id, services: createPayload.services } } });
+  });
 
   await page.goto("/deploy");
   const repositorySelector = page.locator(".new-project-fields select").first();
   const branchSelector = page.locator(".new-project-fields select").nth(1);
   const directory = page.getByRole("combobox", { name: "Directory", exact: true });
-  const selectedPath = page.locator(".service-directory-selection code");
 
   await repositorySelector.selectOption("example/simple");
   await expect(branchSelector).toHaveValue("main");
   await directory.focus();
   const suggestions = page.getByRole("listbox", { name: "Directory suggestions for Web" });
-  await expect.poll(() => directorySuggestionLabels(suggestions)).toEqual(["Repository root (.)", "public", "src"]);
-  await suggestions.getByRole("option", { name: "Repository root (.)", exact: true }).click();
-  await expect(selectedPath).toHaveText(".");
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual([".", "public", "src"]);
+  await suggestions.locator('[data-directory="."]').click();
+  await expect(directory).toHaveValue(".");
   await directory.fill("src");
-  await expect(selectedPath).toHaveText(".");
-  await expect.poll(() => directorySuggestionLabels(suggestions)).toEqual(["src"]);
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual(["src"]);
   await directory.press("ArrowDown");
   await directory.press("Enter");
-  await expect(selectedPath).toHaveText("src");
-  await expect(directory).toHaveValue("");
+  await expect(directory).toHaveValue("src");
+  await directory.fill("platform/products/customer/web/application");
+  await expect(directory).toHaveValue("platform/products/customer/web/application");
+  await expect(page.getByLabel("Exact directory path", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Enter path manually" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("region", { name: "Deployment review" })).toBeVisible();
+  expect(createPayload.services[0].serviceDirectory).toBe("platform/products/customer/web/application");
 });
 
 test("new deployment directory picker searches large monorepos and preserves independent multi-service configuration", async ({ page }) => {
@@ -82,24 +91,27 @@ test("new deployment directory picker searches large monorepos and preserves ind
   await page.goto("/deploy");
   await page.locator(".new-project-fields select").first().selectOption("example/monorepo");
   const directories = page.getByRole("combobox", { name: "Directory", exact: true });
-  const selectedPaths = page.locator(".service-directory-selection code");
   await directories.first().fill("api");
   let suggestionPickers = page.getByRole("listbox");
-  await expect.poll(() => directorySuggestionLabels(suggestionPickers.first())).toEqual(["services/api", "services/api/src"]);
+  await expect.poll(() => directorySuggestionValues(suggestionPickers.first())).toEqual(["services/api", "services/api/src"]);
   await expect(suggestionPickers.first().getByRole("option")).toHaveCount(2);
-  await suggestionPickers.first().getByRole("option", { name: "services/api", exact: true }).click();
-  await expect(selectedPaths.first()).toHaveText("services/api");
+  const apiSuggestion = suggestionPickers.first().locator('[data-directory="services/api"]');
+  await expect(apiSuggestion.locator("strong")).toHaveText("api");
+  await expect(apiSuggestion.locator("small")).toHaveText("services/api");
+  await apiSuggestion.click();
+  await expect(directories.first()).toHaveValue("services/api");
   await page.getByRole("button", { name: "+ Add Service" }).click();
 
-  await directories.first().fill("api");
   await directories.nth(1).fill("customer");
-  await expect(directories.first()).toHaveValue("api");
-  await expect(selectedPaths.first()).toHaveText("services/api");
+  await expect(directories.first()).toHaveValue("services/api");
   suggestionPickers = page.getByRole("listbox");
-  await expect.poll(() => directorySuggestionLabels(suggestionPickers)).toEqual(["apps/customer", "apps/customer/src", "platform/products/customer/web/application"]);
-  await suggestionPickers.getByRole("option", { name: "apps/customer", exact: true }).click();
-  await expect(selectedPaths.first()).toHaveText("services/api");
-  await expect(selectedPaths.nth(1)).toHaveText("apps/customer");
+  await expect.poll(() => directorySuggestionValues(suggestionPickers)).toEqual(["apps/customer", "apps/customer/src", "platform/products/customer/web/application"]);
+  const deepSuggestion = suggestionPickers.locator('[data-directory="platform/products/customer/web/application"]');
+  await expect(deepSuggestion.locator("strong")).toHaveText("application");
+  await expect(deepSuggestion.locator("small")).toHaveText("platform/products/customer/web/application");
+  await suggestionPickers.locator('[data-directory="apps/customer"]').click();
+  await expect(directories.first()).toHaveValue("services/api");
+  await expect(directories.nth(1)).toHaveValue("apps/customer");
 
   const applicationService = page.getByRole("combobox", { name: "Application service", exact: true });
   const secondServiceIdentity = await applicationService.locator("option").nth(2).getAttribute("value");
@@ -160,35 +172,35 @@ test("new deployment directory picker ignores stale repository and branch direct
   const repositorySelector = page.locator(".new-project-fields select").first();
   const branchSelector = page.locator(".new-project-fields select").nth(1);
   const directory = page.getByRole("combobox", { name: "Directory", exact: true });
-  const selectedPath = page.locator(".service-directory-selection code");
   await repositorySelector.selectOption("example/a");
   await firstRepositoryRequested;
   await repositorySelector.selectOption("example/b");
   await expect(branchSelector).toHaveValue("main");
   await directory.focus();
-  await expect.poll(() => directorySuggestionLabels(page.getByRole("listbox"))).toEqual(["Repository root (.)", "from-b-main"]);
+  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual([".", "from-b-main"]);
   releaseFirstRepository();
-  await expect.poll(() => directorySuggestionLabels(page.getByRole("listbox"))).toEqual(["Repository root (.)", "from-b-main"]);
+  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual([".", "from-b-main"]);
 
-  await page.getByRole("option", { name: "from-b-main", exact: true }).click();
+  await page.getByRole("listbox").locator('[data-directory="from-b-main"]').click();
   await directory.fill("from-b");
   await branchSelector.selectOption("release");
   await releaseBranchRequested;
-  await expect(directory).toHaveValue("");
+  await expect(directory).toHaveValue("from-b");
+  const mainDirectoryResponse = page.waitForResponse((response) => response.url().includes("/example/b/directories?ref=main"));
   await branchSelector.selectOption("main");
-  await expect(directory).toBeEnabled();
+  await mainDirectoryResponse;
+  await expect(page.getByText("Type a path or choose a directory suggestion.")).toBeVisible();
   await directory.focus();
-  await expect.poll(() => directorySuggestionLabels(page.getByRole("listbox"))).toEqual(["Repository root (.)", "from-b-main"]);
+  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual(["from-b-main"]);
   releaseBranch();
-  await expect.poll(() => directorySuggestionLabels(page.getByRole("listbox"))).toEqual(["Repository root (.)", "from-b-main"]);
+  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual(["from-b-main"]);
 
   await directory.fill("from-b");
   await repositorySelector.selectOption("example/a");
   await expect(directory).toHaveValue("");
-  await expect(selectedPath).toHaveText("None selected");
-  await expect(directory).toBeEnabled();
+  await expect(page.getByText("Type a path or choose a directory suggestion.")).toBeVisible();
   await directory.focus();
-  await expect.poll(() => directorySuggestionLabels(page.getByRole("listbox"))).toEqual(["Repository root (.)", "from-a"]);
+  await expect.poll(() => directorySuggestionValues(page.getByRole("listbox"))).toEqual([".", "from-a"]);
 });
 
 test("new deployment directory picker keeps exact path entry available when directory browsing is unavailable", async ({ page }) => {
@@ -204,12 +216,13 @@ test("new deployment directory picker keeps exact path entry available when dire
 
   await page.goto("/deploy");
   await page.locator(".new-project-fields select").first().selectOption("example/large");
-  await expect(page.getByText("Directory browsing is unavailable for this repository.")).toBeVisible();
+  await expect(page.getByText("Suggestions are unavailable. Enter the exact repository-relative path.")).toBeVisible();
   await expect(page.getByLabel("Exact directory path", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Enter path manually" }).click();
-  const directory = page.getByLabel("Exact directory path", { exact: true });
+  await expect(page.getByRole("button", { name: "Enter path manually" })).toHaveCount(0);
+  const directory = page.getByRole("combobox", { name: "Directory", exact: true });
+  await expect(directory).toBeEnabled();
   await directory.fill("products/customer/application");
-  await expect(page.locator(".service-directory-selection code")).toHaveText("products/customer/application");
+  await expect(directory).toHaveValue("products/customer/application");
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("region", { name: "Deployment review" })).toBeVisible();
   expect(createPayload.services[0].serviceDirectory).toBe("products/customer/application");
