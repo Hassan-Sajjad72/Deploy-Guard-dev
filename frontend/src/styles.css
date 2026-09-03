@@ -345,6 +345,7 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 .new-project-connection p,.new-project-form-heading p:last-child{margin:0;max-width:720px}
 .new-project-fields{display:grid;gap:var(--space-3);grid-template-columns:repeat(2,minmax(0,1fr))}
 .new-project-fields .field,.new-project-form>.field{margin:0}
+.service-directory-field{align-content:start}.service-directory-browser{display:grid;gap:7px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.service-directory-browser .field{margin:0}.service-directory-browser-status{display:block}
 .new-project-form textarea{line-height:1.5;resize:vertical}
 .new-project-form small{color:var(--muted);line-height:1.45}
 .deployment-readiness{border:1px solid var(--border);border-radius:var(--radius-sm);display:grid;gap:var(--space-3);padding:var(--space-4)}
@@ -357,6 +358,7 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 @media(max-width:1024px){.project-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){
   .project-card-grid,.new-project-fields{grid-template-columns:1fr}
+  .service-directory-browser{grid-template-columns:1fr}
   .project-card-heading{gap:var(--space-2)}
   .project-card-facts{grid-template-columns:1fr}
   .new-project-actions{align-items:stretch;flex-direction:column}

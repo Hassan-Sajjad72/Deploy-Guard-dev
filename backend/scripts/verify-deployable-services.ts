@@ -51,8 +51,11 @@ assert.match(newProject, /name: `Service \$\{current\.length \+ 1\}`, serviceDir
 assert.match(newProject, /<span>Application port<\/span>/);
 assert.match(newProject, /servicePort: Number\(servicePort\)/);
 assert.match(newProject, /function compareDirectoryPresentation/);
-assert.match(newProject, /<option value="">Choose a directory<\/option>\{rankedDirectories\.map/);
-assert.doesNotMatch(newProject, /directoryQueries|matchingDirectories|Search directory suggestions|Repository-relative path/);
+assert.match(newProject, /const DIRECTORY_SUGGESTION_LIMIT = 80/);
+assert.match(newProject, /function matchingDirectories/);
+assert.match(newProject, /Search directory suggestions/);
+assert.match(newProject, /Exact repository-relative path/);
+assert.match(newProject, /Directory browsing is unavailable/);
 assert.match(newProject, /\+ Add Service/);
 assert.match(newProject, /Application service/);
 assert.match(newProject, /applicationEntryPointServiceId/);

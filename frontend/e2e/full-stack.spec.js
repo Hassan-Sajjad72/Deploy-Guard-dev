@@ -19,76 +19,193 @@ async function expectJson(response, status = 200) {
   return response.json();
 }
 
-test("new deployment directory picker ranks roots before descendants and preserves exact selections", async ({ page }) => {
-  const mainDirectories = [
-    ".", ".github", ".github/workflows", "backend", "backend/config", "backend/controllers", "backend/middleware", "backend/models",
-    "backend/node_modules", "backend/node_modules/a", "backend/node_modules/b", "backend/node_modules/c", "backend/node_modules/d", "backend/node_modules/e",
-    "frontend", "frontend/app", "frontend/components", "frontend/src",
-  ];
-  let releaseDirectoryRequest;
-  const releaseDirectoryRequested = new Promise((resolve) => { releaseDirectoryRequest = resolve; });
-  let releaseDirectories;
-  const releaseDirectoriesReleased = new Promise((resolve) => { releaseDirectories = resolve; });
-
+async function mockDirectoryPickerShell(page, repositories) {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: "1", name: "Directory Picker Tester", role: "developer" } } }));
   await page.route("**/api/projects/github/status", (route) => route.fulfill({ json: { connected: true } }));
-  await page.route("**/api/projects/github/repositories", (route) => route.fulfill({ json: { repositories: [{ id: "example-app", fullName: "example/app", defaultBranch: "main" }] } }));
-  await page.route("**/api/projects/github/repositories/example/app", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main", "release"] } } }));
-  await page.route("**/api/projects/github/repositories/example/app/directories?ref=*", async (route) => {
-    const ref = new URL(route.request().url()).searchParams.get("ref");
-    if (ref === "release") {
-      releaseDirectoryRequest();
-      await releaseDirectoriesReleased;
-      await route.fulfill({ json: { directories: [".", "apps/release"] } });
-      return;
-    }
-    await route.fulfill({ json: { directories: mainDirectories } });
+  await page.route("**/api/projects/github/repositories", (route) => route.fulfill({ json: { repositories } }));
+}
+
+async function directorySuggestionValues(picker) {
+  return picker.locator("option").evaluateAll((options) => options.map((option) => option.value).filter(Boolean));
+}
+
+test("new deployment directory picker supports simple repositories, root, suggestions, and exact manual paths", async ({ page }) => {
+  await mockDirectoryPickerShell(page, [{ id: "simple", fullName: "example/simple", defaultBranch: "main" }]);
+  await page.route("**/api/projects/github/repositories/example/simple", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
+  await page.route("**/api/projects/github/repositories/example/simple/directories?ref=main", (route) => route.fulfill({ json: { directories: [".", "src", "public"] } }));
+
+  await page.goto("/deploy");
+  const repositorySelector = page.locator(".new-project-fields select").first();
+  const branchSelector = page.locator(".new-project-fields select").nth(1);
+  const directory = page.getByLabel("Directory", { exact: true });
+  const search = page.getByLabel("Search directory suggestions", { exact: true });
+  const suggestions = page.locator(".service-directory-field select");
+
+  await repositorySelector.selectOption("example/simple");
+  await expect(branchSelector).toHaveValue("main");
+  await expect(suggestions).toHaveAccessibleName("Directory suggestions");
+  await expect(suggestions.getByRole("option", { name: "Repository root (.)", exact: true })).toHaveCount(1);
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual([".", "public", "src"]);
+  await suggestions.selectOption(".");
+  await expect(directory).toHaveValue(".");
+  await search.fill("src");
+  await expect(directory).toHaveValue(".");
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual(["src"]);
+  await suggestions.selectOption("src");
+  await expect(directory).toHaveValue("src");
+  await expect(search).toHaveValue("");
+  await directory.fill("platform/products/customer/web/application");
+  await expect(directory).toHaveValue("platform/products/customer/web/application");
+});
+
+test("new deployment directory picker searches large monorepos and preserves independent multi-service configuration", async ({ page }) => {
+  const manySiblings = Array.from({ length: 300 }, (_, index) => `apps/product-${String(index).padStart(3, "0")}`);
+  const mainDirectories = [
+    ".", "apps", "apps/admin", "apps/admin/src", "apps/customer", "apps/customer/src", ...manySiblings,
+    "packages", "packages/shared", "services", "services/api", "services/api/src", "services/auth",
+    "platform/products/customer/web/application",
+  ];
+  let createPayload;
+  let databasePayload;
+  await mockDirectoryPickerShell(page, [{ id: "monorepo", fullName: "example/monorepo", defaultBranch: "main" }]);
+  await page.route("**/api/projects/github/repositories/example/monorepo", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
+  await page.route("**/api/projects/github/repositories/example/monorepo/directories?ref=main", (route) => route.fulfill({ json: { directories: mainDirectories } }));
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    createPayload = route.request().postDataJSON();
+    await route.fulfill({ status: 201, json: { project: { id: "11111111-1111-4111-8111-111111111111", repositoryFullName: "example/monorepo", targetBranch: "main", applicationEntryPointServiceId: createPayload.applicationEntryPointServiceId, services: createPayload.services } } });
+  });
+  await page.route("**/api/projects/11111111-1111-4111-8111-111111111111/database-tier", async (route) => {
+    databasePayload = route.request().postDataJSON();
+    await route.fulfill({ json: { database: databasePayload } });
   });
 
   await page.goto("/deploy");
-  const directories = page.getByRole("combobox", { name: "Directory", exact: true });
-  await expect(directories).toHaveCount(1);
-  await expect(directories.first()).toHaveValue("");
-  await expect(directories.first().locator("option:checked")).toHaveText("Choose a directory");
-  await expect(directories.first().locator("option[value='.']")).toHaveText("Repository root (.)");
-
-  const repositorySelector = page.locator(".new-project-fields select").first();
-  const branchSelector = page.locator(".new-project-fields select").nth(1);
-  await repositorySelector.selectOption("example/app");
-  await expect(directories.first().locator("option[value='frontend']")).toHaveCount(1);
-  const initialOrder = await directories.first().locator("option:not([value=''])").evaluateAll((options) => options.map((option) => option.value));
-  expect(initialOrder).toEqual([".", ".github", "backend", "frontend", ".github/workflows", "backend/config", "backend/controllers", "backend/middleware", "backend/models", "backend/node_modules", "frontend/app", "frontend/components", "frontend/src", "backend/node_modules/a", "backend/node_modules/b", "backend/node_modules/c", "backend/node_modules/d", "backend/node_modules/e"]);
-  expect(initialOrder.indexOf("frontend")).toBeLessThan(initialOrder.indexOf("backend/config"));
-  expect(initialOrder.indexOf("frontend")).toBeLessThan(initialOrder.indexOf("backend/node_modules/a"));
-
-  await directories.first().selectOption("backend");
-  await expect(directories.first()).toHaveValue("backend");
-  await directories.first().selectOption("frontend");
-  await expect(directories.first()).toHaveValue("frontend");
-  await directories.first().selectOption(".");
-  await expect(directories.first()).toHaveValue(".");
+  await page.locator(".new-project-fields select").first().selectOption("example/monorepo");
+  const directories = page.getByLabel("Directory", { exact: true });
+  const searches = page.getByLabel("Search directory suggestions", { exact: true });
+  const suggestionPickers = page.locator(".service-directory-field select");
+  await searches.first().fill("api");
+  await expect.poll(() => directorySuggestionValues(suggestionPickers.first())).toEqual(["services/api", "services/api/src"]);
+  await expect(suggestionPickers.first().locator("option")).toHaveCount(3);
+  await suggestionPickers.first().selectOption("services/api");
+  await expect(directories.first()).toHaveValue("services/api");
   await page.getByRole("button", { name: "+ Add Service" }).click();
-  await expect(directories).toHaveCount(2);
-  await expect(directories.nth(1)).toHaveValue("");
-  await expect(directories.nth(1).locator("option:checked")).toHaveText("Choose a directory");
-  const applicationService = page.getByRole("combobox", { name: "Application service", exact: true });
-  await expect(applicationService).toHaveValue("");
-  await expect(applicationService.locator("option")).toHaveCount(3);
 
-  await directories.first().selectOption("backend");
-  await directories.nth(1).selectOption("frontend");
-  await expect(directories.first()).toHaveValue("backend");
-  await expect(directories.nth(1)).toHaveValue("frontend");
+  await searches.first().fill("api");
+  await searches.nth(1).fill("customer");
+  await expect.poll(() => directorySuggestionValues(suggestionPickers.first())).toEqual(["services/api", "services/api/src"]);
+  await expect.poll(() => directorySuggestionValues(suggestionPickers.nth(1))).toEqual(["apps/customer", "apps/customer/src", "platform/products/customer/web/application"]);
+  await suggestionPickers.nth(1).selectOption("apps/customer");
+  await expect(directories.first()).toHaveValue("services/api");
+  await expect(directories.nth(1)).toHaveValue("apps/customer");
+
+  const applicationService = page.getByRole("combobox", { name: "Application service", exact: true });
   const secondServiceIdentity = await applicationService.locator("option").nth(2).getAttribute("value");
   await applicationService.selectOption(secondServiceIdentity);
-  await expect(applicationService).toHaveValue(secondServiceIdentity);
+  const ports = page.getByRole("spinbutton", { name: /Application port/ });
+  await ports.first().fill("4173");
+  await ports.nth(1).fill("8000");
+  const databaseControls = page.locator(".settings-simple-form select");
+  await databaseControls.first().selectOption("mysql");
+  await databaseControls.nth(1).selectOption(secondServiceIdentity);
+  await page.getByRole("button", { name: "Continue" }).click();
 
+  await expect(page.getByRole("region", { name: "Deployment review" })).toBeVisible();
+  expect(createPayload.services.map(({ serviceDirectory, servicePort }) => ({ serviceDirectory, servicePort }))).toEqual([
+    { serviceDirectory: "services/api", servicePort: 4173 },
+    { serviceDirectory: "apps/customer", servicePort: 8000 },
+  ]);
+  expect(createPayload.applicationEntryPointServiceId).toBe(secondServiceIdentity);
+  expect(databasePayload).toMatchObject({ provider: "managed", engine: "mysql", attachedServiceId: secondServiceIdentity });
+});
+
+test("new deployment directory picker ignores stale repository and branch directory responses", async ({ page }) => {
+  let firstRepositoryRequest;
+  const firstRepositoryRequested = new Promise((resolve) => { firstRepositoryRequest = resolve; });
+  let releaseFirstRepository;
+  const firstRepositoryReleased = new Promise((resolve) => { releaseFirstRepository = resolve; });
+  let releaseBranchRequest;
+  const releaseBranchRequested = new Promise((resolve) => { releaseBranchRequest = resolve; });
+  let releaseBranch;
+  const releaseBranchReleased = new Promise((resolve) => { releaseBranch = resolve; });
+  let firstRepositoryCalls = 0;
+
+  await mockDirectoryPickerShell(page, [
+    { id: "a", fullName: "example/a", defaultBranch: "main" },
+    { id: "b", fullName: "example/b", defaultBranch: "main" },
+  ]);
+  await page.route("**/api/projects/github/repositories/example/a", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
+  await page.route("**/api/projects/github/repositories/example/b", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main", "release"] } } }));
+  await page.route("**/api/projects/github/repositories/example/a/directories?ref=main", async (route) => {
+    firstRepositoryCalls += 1;
+    if (firstRepositoryCalls === 1) {
+      firstRepositoryRequest();
+      await firstRepositoryReleased;
+    }
+    await route.fulfill({ json: { directories: [".", "from-a"] } });
+  });
+  await page.route("**/api/projects/github/repositories/example/b/directories?ref=*", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("ref") === "release") {
+      releaseBranchRequest();
+      await releaseBranchReleased;
+      await route.fulfill({ json: { directories: [".", "from-b-release"] } });
+      return;
+    }
+    await route.fulfill({ json: { directories: [".", "from-b-main"] } });
+  });
+
+  await page.goto("/deploy");
+  const repositorySelector = page.locator(".new-project-fields select").first();
+  const branchSelector = page.locator(".new-project-fields select").nth(1);
+  const directory = page.getByLabel("Directory", { exact: true });
+  const search = page.getByLabel("Search directory suggestions", { exact: true });
+  const suggestions = page.locator(".service-directory-field select");
+  await repositorySelector.selectOption("example/a");
+  await firstRepositoryRequested;
+  await repositorySelector.selectOption("example/b");
+  await expect(branchSelector).toHaveValue("main");
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual([".", "from-b-main"]);
+  releaseFirstRepository();
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual([".", "from-b-main"]);
+
+  await suggestions.selectOption("from-b-main");
+  await search.fill("from-b");
   await branchSelector.selectOption("release");
-  await releaseDirectoryRequested;
+  await releaseBranchRequested;
+  await expect(search).toHaveValue("");
   await branchSelector.selectOption("main");
-  await expect(directories.locator("option[value='frontend']")).toHaveCount(2);
-  releaseDirectories();
-  await expect(directories.locator("option[value='apps/release']")).toHaveCount(0);
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual([".", "from-b-main"]);
+  releaseBranch();
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual([".", "from-b-main"]);
+
+  await search.fill("from-b");
+  await repositorySelector.selectOption("example/a");
+  await expect(directory).toHaveValue("");
+  await expect(search).toHaveValue("");
+  await expect.poll(() => directorySuggestionValues(suggestions)).toEqual([".", "from-a"]);
+});
+
+test("new deployment directory picker keeps exact path entry available when directory browsing is unavailable", async ({ page }) => {
+  let createPayload;
+  await mockDirectoryPickerShell(page, [{ id: "large", fullName: "example/large", defaultBranch: "main" }]);
+  await page.route("**/api/projects/github/repositories/example/large", (route) => route.fulfill({ json: { repository: { defaultBranch: "main", branches: ["main"] } } }));
+  await page.route("**/api/projects/github/repositories/example/large/directories?ref=main", (route) => route.fulfill({ status: 400, json: { message: "Repository tree is too large to browse safely. Enter the repository-relative service directory explicitly." } }));
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    createPayload = route.request().postDataJSON();
+    await route.fulfill({ status: 201, json: { project: { id: "22222222-2222-4222-8222-222222222222", repositoryFullName: "example/large", targetBranch: "main", applicationEntryPointServiceId: createPayload.services[0].id, services: createPayload.services } } });
+  });
+
+  await page.goto("/deploy");
+  await page.locator(".new-project-fields select").first().selectOption("example/large");
+  await expect(page.getByText("Directory browsing is unavailable. Enter an exact repository-relative path; DeployGuard will validate it before deployment.")).toBeVisible();
+  const directory = page.getByLabel("Directory", { exact: true });
+  await directory.fill("products/customer/application");
+  await expect(page.getByLabel("Search directory suggestions", { exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("region", { name: "Deployment review" })).toBeVisible();
+  expect(createPayload.services[0].serviceDirectory).toBe("products/customer/application");
 });
 
 test("real browser configuration, persistence-facing responses, navigation, reload, and authorization", async ({ page, request, browser }) => {

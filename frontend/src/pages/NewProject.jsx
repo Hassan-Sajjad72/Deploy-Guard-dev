@@ -28,13 +28,35 @@ function deploymentJourney(repository, branch, readiness, working, deployable) {
 function compareDirectoryPresentation(left, right) {
   if (left === ".") return right === "." ? 0 : -1;
   if (right === ".") return 1;
-  const depthDifference = left.split("/").length - right.split("/").length;
-  if (depthDifference) return depthDifference;
   const leftFolded = left.toLocaleLowerCase();
   const rightFolded = right.toLocaleLowerCase();
   if (leftFolded < rightFolded) return -1;
   if (leftFolded > rightFolded) return 1;
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+const DIRECTORY_SUGGESTION_LIMIT = 80;
+
+function matchingDirectories(directories, query) {
+  const search = query.trim().toLocaleLowerCase();
+  return (search ? directories.filter((directory) => directory.toLocaleLowerCase().includes(search)) : directories)
+    .slice(0, DIRECTORY_SUGGESTION_LIMIT);
+}
+
+function ServiceDirectoryPicker({ browseError, browsing, directories, disabled, onQueryChange, onSelect, onValueChange, query, service }) {
+  const suggestions = useMemo(() => matchingDirectories(directories, query), [directories, query]);
+  const helpId = `service-directory-help-${service.key}`;
+  const suggestionsDisabled = disabled || browsing || Boolean(browseError);
+  return <div className="field service-directory-field">
+    <span>Directory</span>
+    <input aria-describedby={helpId} aria-label="Directory" disabled={disabled} maxLength="512" onChange={(event) => onValueChange(event.target.value)} placeholder="Exact repository-relative path" value={service.serviceDirectory} />
+    <small id={helpId}>This exact path will be deployed. Choose a suggestion below or enter a path manually.</small>
+    <div className="service-directory-browser">
+      <label className="field"><span>Search directory suggestions</span><input disabled={suggestionsDisabled} onChange={(event) => onQueryChange(event.target.value)} placeholder="Filter by any part of the path" value={query} /></label>
+      <label className="field"><span>Directory suggestions</span><select disabled={suggestionsDisabled} onChange={(event) => onSelect(event.target.value)} value=""><option value="">{browsing ? "Loading directories…" : browseError ? "Browsing unavailable" : suggestions.length ? "Choose a matching directory" : "No matching directories"}</option>{suggestions.map((directory) => <option key={directory} value={directory}>{directory === "." ? "Repository root (.)" : directory}</option>)}</select></label>
+    </div>
+    {browseError ? <small className="service-directory-browser-status" role="status">Directory browsing is unavailable. Enter an exact repository-relative path; DeployGuard will validate it before deployment.</small> : directories.length > DIRECTORY_SUGGESTION_LIMIT && !query.trim() ? <small className="service-directory-browser-status">Showing the first {DIRECTORY_SUGGESTION_LIMIT} directories. Search the full path to narrow the list.</small> : null}
+  </div>;
 }
 
 const MANAGED_DATABASE_ALIASES = {
@@ -54,8 +76,11 @@ export default function NewProject() {
   const [branch, setBranch] = useState("");
   const [branches, setBranches] = useState([]);
   const [services, setServices] = useState([{ key: crypto.randomUUID(), name: "Web", serviceDirectory: "", servicePort: "8080", envPaste: "" }]);
+  const [directoryQueries, setDirectoryQueries] = useState({});
   const [applicationEntryPointServiceId, setApplicationEntryPointServiceId] = useState("");
   const [directories, setDirectories] = useState(["."]);
+  const [directoryBrowseError, setDirectoryBrowseError] = useState("");
+  const [directoriesLoading, setDirectoriesLoading] = useState(false);
   const [database, setDatabase] = useState({ provider: "none", engine: "postgres", attachedServiceKey: "" });
   const [readiness, setReadiness] = useState(null);
   const [savedEnvironmentCount, setSavedEnvironmentCount] = useState(0);
@@ -103,7 +128,11 @@ export default function NewProject() {
     setRepository(value);
     setBranch("");
     setBranches([]);
+    setDirectoryQueries({});
     setDirectories(["."]);
+    setDirectoryBrowseError("");
+    setDirectoriesLoading(false);
+    setServices((current) => current.map((service) => ({ ...service, serviceDirectory: "" })));
     setReadiness(null);
     setSavedEnvironmentCount(0);
     setIgnoredEnvironmentNames([]);
@@ -117,9 +146,17 @@ export default function NewProject() {
       directoryTicket = selectionGate.current.begin(value, nextBranch);
       setBranch(nextBranch);
       if (nextBranch) {
-        const response = await getGithubRepositoryDirectories(value, nextBranch);
-        if (!selectionGate.current.isCurrent(directoryTicket)) return;
-        setDirectories(response.directories || ["."]);
+        setDirectoriesLoading(true);
+        try {
+          const response = await getGithubRepositoryDirectories(value, nextBranch);
+          if (!selectionGate.current.isCurrent(directoryTicket)) return;
+          setDirectories(response.directories || ["."]);
+        } catch (caught) {
+          if (!selectionGate.current.isCurrent(directoryTicket)) return;
+          setDirectoryBrowseError(safeMessage(caught));
+        } finally {
+          if (selectionGate.current.isCurrent(directoryTicket)) setDirectoriesLoading(false);
+        }
       }
     } catch (caught) {
       if (!selectionGate.current.isCurrent(directoryTicket)) return;
@@ -134,14 +171,19 @@ export default function NewProject() {
     setReadiness(null);
     setSavedEnvironmentCount(0);
     setIgnoredEnvironmentNames([]);
+    setDirectoryQueries({});
     setDirectories(["."]);
+    setDirectoryBrowseError("");
+    setDirectoriesLoading(Boolean(repository && value));
     if (repository && value) {
       try {
         const response = await getGithubRepositoryDirectories(repository, value);
         if (!selectionGate.current.isCurrent(directoryTicket)) return;
         setDirectories(response.directories || ["."]);
       } catch (caught) {
-        if (selectionGate.current.isCurrent(directoryTicket)) setReadiness({ level: "blocked", message: safeMessage(caught) });
+        if (selectionGate.current.isCurrent(directoryTicket)) setDirectoryBrowseError(safeMessage(caught));
+      } finally {
+        if (selectionGate.current.isCurrent(directoryTicket)) setDirectoriesLoading(false);
       }
     }
   }
@@ -159,6 +201,7 @@ export default function NewProject() {
   function removeService(key) {
     const remaining = services.filter((service) => service.key !== key);
     setServices(remaining);
+    setDirectoryQueries((current) => Object.fromEntries(Object.entries(current).filter(([serviceKey]) => serviceKey !== key)));
     if (remaining.length === 1 || applicationEntryPointServiceId === key) setApplicationEntryPointServiceId("");
     if (readiness) setReadiness(null);
   }
@@ -166,6 +209,12 @@ export default function NewProject() {
   function changeApplicationService(serviceId) {
     setApplicationEntryPointServiceId(serviceId);
     if (readiness) setReadiness(null);
+  }
+
+  function chooseServiceDirectory(key, value) {
+    if (!value) return;
+    changeService(key, "serviceDirectory", value);
+    setDirectoryQueries((current) => ({ ...current, [key]: "" }));
   }
 
   async function reviewReadiness() {
@@ -253,7 +302,7 @@ export default function NewProject() {
       <div className="new-project-fields"><label className="field"><span>Authorized repository</span><select disabled={working === "deploy"} onChange={(event) => void chooseRepository(event.target.value)} value={repository}><option value="">Select a repository</option>{repositories.map((item) => <option key={item.id || item.fullName} value={item.fullName}>{item.fullName}</option>)}</select></label><label className="field"><span>Branch</span><select disabled={!repository || working === "deploy"} onChange={(event) => void changeBranch(event.target.value)} value={branch}><option value="">Select a branch</option>{branches.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>
       <section className="deployable-services-editor"><div className="compact-section-heading"><div><p className="eyebrow">Services</p><h3>Applications to deploy</h3><p>Choose each runnable application explicitly. Railpack determines how it is built.</p></div><button className="secondary-button" disabled={Boolean(working) || services.length >= 20} onClick={addService} type="button">+ Add Service</button></div>
         {services.length > 1 ? <label className="field"><span>Application service</span><select disabled={Boolean(working)} onChange={(event) => changeApplicationService(event.target.value)} value={applicationEntryPointServiceId}><option value="">Choose the service Open Application should open</option>{services.map((service) => <option key={service.key} value={service.key}>{service.name} — {service.serviceDirectory || "Choose a directory"}</option>)}</select></label> : null}
-        {parsedServices.map(({ service, parsed }, index) => <article className="panel-flat deployable-service-editor" key={service.key}><div className="compact-section-heading"><strong>Service {index + 1}</strong>{services.length > 1 ? <button className="danger-text-button" disabled={Boolean(working)} onClick={() => removeService(service.key)} type="button">Remove</button> : null}</div><div className="new-project-fields"><label className="field"><span>Name</span><input disabled={Boolean(working)} maxLength="80" onChange={(event) => changeService(service.key, "name", event.target.value)} value={service.name} /></label><label className="field"><span>Directory</span><select disabled={Boolean(working)} onChange={(event) => changeService(service.key, "serviceDirectory", event.target.value)} value={service.serviceDirectory}><option value="">Choose a directory</option>{rankedDirectories.map((directory) => <option key={directory} value={directory}>{directory === "." ? "Repository root (.)" : directory}</option>)}</select></label><label className="field"><span>Application port</span><input disabled={Boolean(working)} inputMode="numeric" max="65535" min="1" onChange={(event) => changeService(service.key, "servicePort", event.target.value)} type="number" value={service.servicePort} /><small>Port your application listens on. DeployGuard manages PORT and HOST automatically.</small></label></div><label className="field"><span>Optional .env for {service.name || `Service ${index + 1}`}</span><textarea disabled={Boolean(working)} onChange={(event) => changeService(service.key, "envPaste", event.target.value)} placeholder={"# Optional\nAPI_URL=https://example.test"} rows="5" value={service.envPaste} /><small>Encrypted and injected only into this service.</small></label>{parsed.errors.map((message) => <IssueCard key={message} severity="danger" title="Invalid environment input"><p>{message}</p></IssueCard>)}{parsed.warnings?.map((message) => <IssueCard key={message} severity="warning" title="Input ignored"><p>{message}</p></IssueCard>)}</article>)}
+        {parsedServices.map(({ service, parsed }, index) => <article className="panel-flat deployable-service-editor" key={service.key}><div className="compact-section-heading"><strong>Service {index + 1}</strong>{services.length > 1 ? <button className="danger-text-button" disabled={Boolean(working)} onClick={() => removeService(service.key)} type="button">Remove</button> : null}</div><div className="new-project-fields"><label className="field"><span>Name</span><input disabled={Boolean(working)} maxLength="80" onChange={(event) => changeService(service.key, "name", event.target.value)} value={service.name} /></label><ServiceDirectoryPicker browseError={directoryBrowseError} browsing={directoriesLoading} directories={rankedDirectories} disabled={Boolean(working)} onQueryChange={(value) => setDirectoryQueries((current) => ({ ...current, [service.key]: value }))} onSelect={(value) => chooseServiceDirectory(service.key, value)} onValueChange={(value) => changeService(service.key, "serviceDirectory", value)} query={directoryQueries[service.key] || ""} service={service} /><label className="field"><span>Application port</span><input disabled={Boolean(working)} inputMode="numeric" max="65535" min="1" onChange={(event) => changeService(service.key, "servicePort", event.target.value)} type="number" value={service.servicePort} /><small>Port your application listens on. DeployGuard manages PORT and HOST automatically.</small></label></div><label className="field"><span>Optional .env for {service.name || `Service ${index + 1}`}</span><textarea disabled={Boolean(working)} onChange={(event) => changeService(service.key, "envPaste", event.target.value)} placeholder={"# Optional\nAPI_URL=https://example.test"} rows="5" value={service.envPaste} /><small>Encrypted and injected only into this service.</small></label>{parsed.errors.map((message) => <IssueCard key={message} severity="danger" title="Invalid environment input"><p>{message}</p></IssueCard>)}{parsed.warnings?.map((message) => <IssueCard key={message} severity="warning" title="Input ignored"><p>{message}</p></IssueCard>)}</article>)}
       </section>
       <section className="panel-flat settings-simple-form"><div><p className="eyebrow">Database</p><h3>Database</h3><p className="muted">Use existing ENV for an external database, or let DeployGuard manage one database for one service.</p></div><label className="field"><span>Database</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => event.target.value === "none" ? { ...current, provider: "none" } : { ...current, provider: "managed", engine: event.target.value })} value={database.provider === "managed" ? database.engine : "none"}><option value="none">No managed database / use existing ENV</option><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option><option value="mongodb">MongoDB</option></select></label>{database.provider === "managed" ? services.length > 1 ? <label className="field"><span>Attach database to</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => ({ ...current, attachedServiceKey: event.target.value }))} value={database.attachedServiceKey || services[0].key}>{services.map((service) => <option key={service.key} value={service.key}>{service.name}</option>)}</select></label> : <p className="muted">The database will connect to {services[0]?.name || "Web"}.</p> : null}{managedDatabaseConflicts.length ? <IssueCard severity="danger" title="Database configuration conflict"><p>Remove {managedDatabaseConflicts.join(", ")} from the selected service ENV, or choose “No managed database / use existing ENV”.</p></IssueCard> : null}</section>
       {ignoredEnvironmentNames.map((key) => <IssueCard key={key} severity="warning" title="Platform-managed value"><p>{key} is managed by DeployGuard and was ignored.</p></IssueCard>)}
