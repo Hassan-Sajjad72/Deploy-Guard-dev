@@ -236,6 +236,7 @@ for (const engine of ["postgres", "mysql", "mongodb"] as ManagedDatabaseEngine[]
   assert.ok(normalizedTerraform.includes(profile.healthCheck[1]), `${engine} ECS readiness must remain aligned with the canonical managed-database health command`);
 }
 assert.match(terraform, /healthCheck\s+=\s+\{[\s\S]*?command\s+=\s+local\.database_health_check/, "the managed database container must expose engine health to ECS");
+assert.match(terraform, /resource "aws_ecs_service" "database"[\s\S]*?deployment_minimum_healthy_percent\s*=\s*0[\s\S]*?deployment_maximum_percent\s*=\s*100/, "the singleton managed database must stop its prior task before replacement so two processes never contend for persistent storage");
 assert.doesNotMatch(terraform, /terraform_data" "database_readiness|database_readiness_command/, "Terraform must not own the procedural managed-database readiness decision");
 assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?desired_count\s+=\s+each\.value\.database_attached\s+\?\s+0\s+:\s+1/, "only the database-attached application starts at zero");
 assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?lifecycle\s*\{[\s\S]*?ignore_changes\s+=\s+\[desired_count\]/, "Terraform must not undo DeployGuard's post-readiness application scale-up");

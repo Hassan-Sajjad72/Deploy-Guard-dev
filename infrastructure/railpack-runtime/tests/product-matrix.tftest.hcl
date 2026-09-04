@@ -134,6 +134,10 @@ run "postgres_database_attached_to_service_a" {
     }
   }
   assert {
+    condition     = aws_ecs_service.database[0].deployment_minimum_healthy_percent == 0 && aws_ecs_service.database[0].deployment_maximum_percent == 100
+    error_message = "A singleton managed database must stop its prior task before replacement to prevent concurrent access to persistent storage."
+  }
+  assert {
     condition     = length(aws_ecs_service.database) == 1 && length(aws_efs_file_system.database) == 1 && length(aws_efs_access_point.database) == 1 && length(aws_service_discovery_private_dns_namespace.database) == 1
     error_message = "Managed PostgreSQL must be an independent persistent runtime with Cloud Map identity."
   }

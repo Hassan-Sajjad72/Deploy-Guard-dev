@@ -15,7 +15,7 @@ const CONTROL_PLANE_EXECUTABLE_SHA256 = {
   workflow: "27e14f13daa90ddc3f7e1ecc48f0defbf301975376625817b0fca008b8aba9dd",
   releaseResultProducer: "cbda8bb60b9bd08ae8c305ce0a036ec5ffab960476aabe0b8e9caaa63cf31b80",
   runtimeVerifier: "b9f0e6c1e0be1acdf73ab0f78468dcbcab8ffe54be5f6d99b92149960c88f35a",
-  runtimeInfrastructure: "8d2c4d2623164b76b67adea95d772a944d018700c000ce46e21e21c6b024b172",
+  runtimeInfrastructure: "2bd683d6c9e44acf2c561975a022d9572d2060992dd2a1b3dd63aa783ef2b1fe",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {

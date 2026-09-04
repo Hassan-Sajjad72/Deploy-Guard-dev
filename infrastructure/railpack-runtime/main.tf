@@ -378,12 +378,14 @@ resource "aws_ecs_task_definition" "database" {
   tags = local.database_tags
 }
 resource "aws_ecs_service" "database" {
-  count           = local.database_enabled ? 1 : 0
-  name            = "${local.project_name}-database"
-  cluster         = aws_ecs_cluster.project.id
-  task_definition = aws_ecs_task_definition.database[0].arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  count                              = local.database_enabled ? 1 : 0
+  name                               = "${local.project_name}-database"
+  cluster                            = aws_ecs_cluster.project.id
+  task_definition                    = aws_ecs_task_definition.database[0].arn
+  desired_count                      = 1
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+  launch_type                        = "FARGATE"
   network_configuration {
     subnets         = var.public_subnet_ids
     security_groups = [aws_security_group.database_runtime[0].id]
