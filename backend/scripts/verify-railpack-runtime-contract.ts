@@ -234,6 +234,10 @@ assert.match(terraform, /healthCheck\s+=\s+\{[\s\S]*?command\s+=\s+local\.databa
 assert.match(terraform, /resource "terraform_data" "database_readiness"[\s\S]*?triggers_replace[\s\S]*?var\.operation_id[\s\S]*?command\s+=\s+local\.database_readiness_command/, "every operation must cross the managed-database readiness barrier");
 assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?depends_on\s+=\s+\[[^\]]*terraform_data\.database_readiness/, "application service creation must wait for the database readiness barrier");
 assert.match(terraform, /resource "terraform_data" "database_readiness"[\s\S]*?count\s+=\s+local\.database_enabled\s+\?\s+1\s+:\s+0/, "projects without managed databases must not create a readiness barrier");
+assert.match(terraform, /mysql_grant_reconciler_name\s+=\s+"deployguard-mysql-grant-reconciler"/, "managed MySQL must name its grant reconciler explicitly");
+assert.match(terraform, /CREATE USER IF NOT EXISTS 'deployguard'@'%'[\s\S]*?ALTER USER 'deployguard'@'%'[\s\S]*?GRANT ALL PRIVILEGES ON \\`application\\`\.\* TO 'deployguard'@'%'/, "managed MySQL must reconcile the application account for changing ECS task IPs");
+assert.match(terraform, /local\.database_engine == "mysql" \? \[\{/, "the MySQL grant reconciler must exist only for managed MySQL");
+assert.match(terraform, /dependsOn\s+=\s+\[\{ containerName = "database", condition = "HEALTHY" \}\][\s\S]*?MYSQL_ROOT_PASSWORD/, "the MySQL grant reconciler must wait for database health and receive only managed credentials");
 assert.match(workflow, /deployguard-apply-failure[\s\S]*?DG_TERRAFORM_APPLY_FAILED/, "Terraform apply must preserve a more specific readiness failure marker");
 assert.doesNotMatch(databaseReadiness, /DG_ECS_STABILITY_FAILED/, "database prerequisite failure must not be attributed to application ECS convergence");
 assert.deepEqual(
@@ -241,12 +245,16 @@ assert.deepEqual(
   { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: "DG_MANAGED_DATABASE_READINESS_FAILED", failureServiceId: "33333333-3333-4333-8333-333333333333" },
 );
 assert.deepEqual(
+  classifyStructuredFailure("managed_database_readiness", "DG_FAILURE serviceId=33333333-3333-4333-8333-333333333333 code=DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED stage=managed_database_readiness"),
+  { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: "DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED", failureServiceId: "33333333-3333-4333-8333-333333333333" },
+);
+assert.deepEqual(
   classifyStructuredFailure("ecs_stability", 'DG_ECS_DIAGNOSTICS {"containerExitCode":1,"stoppedTaskReason":"Essential container exited"}\nDG_FAILURE serviceId=33333333-3333-4333-8333-333333333333 code=DG_ECS_STABILITY_FAILED stage=ecs_stability'),
   { failureOwner: "REPOSITORY_APPLICATION", externalProvider: null, failureCode: "DG_ECS_STABILITY_FAILED", failureServiceId: "33333333-3333-4333-8333-333333333333" },
   "a genuine application failure after database readiness must retain application ECS failure semantics",
 );
 
-function executeDatabaseReadiness(engine: ManagedDatabaseEngine, mode: "later_ready" | "never_ready") {
+function executeDatabaseReadiness(engine: ManagedDatabaseEngine, mode: "later_ready" | "never_ready" | "mysql_grant_pending" | "mysql_grant_failed") {
   const directory = mkdtempSync(join(tmpdir(), "deployguard-database-readiness-"));
   const bin = join(directory, "bin");
   const marker = join(directory, "failure-marker");
@@ -259,8 +267,16 @@ case "$1 $2" in
   "ecs list-tasks") printf '%s\\n' '{"taskArns":["database-task"]}' ;;
   "ecs describe-tasks")
     count=0; [ ! -f "$READINESS_COUNTER" ] || count="$(<"$READINESS_COUNTER")"; count=$((count + 1)); printf '%s' "$count" > "$READINESS_COUNTER"
-    health=UNKNOWN; [ "$READINESS_MODE" != later_ready ] || [ "$count" -lt 2 ] || health=HEALTHY
-    jq -cn --arg task "$DATABASE_TASK_DEFINITION_ARN" --arg health "$health" '{tasks:[{taskDefinitionArn:$task,lastStatus:"RUNNING",healthStatus:$health,containers:[{name:"database",lastStatus:"RUNNING",healthStatus:$health}]}]}' ;;
+    health=UNKNOWN; [ "$READINESS_MODE" != later_ready ] && [ "$READINESS_MODE" != mysql_grant_pending ] && [ "$READINESS_MODE" != mysql_grant_failed ] || [ "$count" -lt 2 ] || health=HEALTHY
+    grant='[]'
+    if [ "$DATABASE_ENGINE" = mysql ] && [ "$health" = HEALTHY ]; then
+      case "$READINESS_MODE" in
+        later_ready) grant='[{"name":"deployguard-mysql-grant-reconciler","lastStatus":"STOPPED","exitCode":0}]' ;;
+        mysql_grant_pending) grant='[{"name":"deployguard-mysql-grant-reconciler","lastStatus":"RUNNING","exitCode":null}]' ;;
+        mysql_grant_failed) grant='[{"name":"deployguard-mysql-grant-reconciler","lastStatus":"STOPPED","exitCode":1,"reason":"grant failed"}]' ;;
+      esac
+    fi
+    jq -cn --arg task "$DATABASE_TASK_DEFINITION_ARN" --arg health "$health" --argjson grant "$grant" '{tasks:[{taskDefinitionArn:$task,lastStatus:"RUNNING",healthStatus:$health,containers:([{name:"database",lastStatus:"RUNNING",healthStatus:$health}] + $grant)}]}' ;;
   *) exit 2 ;;
 esac
 `, "utf8");
@@ -283,11 +299,18 @@ esac
     },
   });
   const attempts = Number(readFileSync(counter, "utf8"));
-  const failureMarker = mode === "never_ready" ? readFileSync(marker, "utf8").trim() : null;
+  const failureMarker = result.status === 0 ? null : readFileSync(marker, "utf8").trim();
   rmSync(directory, { recursive: true, force: true });
   return { result, attempts, failureMarker };
 }
 
+const mysqlGrantPending = executeDatabaseReadiness("mysql", "mysql_grant_pending");
+assert.notEqual(mysqlGrantPending.result.status, 0, "a healthy MySQL container must not release applications before the host-grant reconciliation completes");
+assert.equal(mysqlGrantPending.attempts, 3, "MySQL grant reconciliation remains bounded by the database readiness policy");
+assert.match(mysqlGrantPending.failureMarker || "", /code=DG_MANAGED_DATABASE_READINESS_FAILED stage=managed_database_readiness/);
+const mysqlGrantFailed = executeDatabaseReadiness("mysql", "mysql_grant_failed");
+assert.notEqual(mysqlGrantFailed.result.status, 0, "a failed MySQL host-grant reconciliation must block dependent application services");
+assert.match(mysqlGrantFailed.failureMarker || "", /code=DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED stage=managed_database_readiness/);
 for (const engine of ["postgres", "mysql", "mongodb"] as ManagedDatabaseEngine[]) {
   const converged = executeDatabaseReadiness(engine, "later_ready");
   assert.equal(converged.result.status, 0, `${engine} readiness must continue until the engine becomes healthy: ${converged.result.stderr}`);

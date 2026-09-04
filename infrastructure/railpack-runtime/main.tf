@@ -14,17 +14,30 @@ terraform {
 provider "aws" { region = var.region }
 
 locals {
-  project_name               = "dg-${substr(replace(var.project_id, "-", ""), 0, 12)}"
-  database_services          = { for id, service in var.services : id => service if service.database_attached }
-  database_enabled           = length(local.database_services) == 1
-  database_service_id        = local.database_enabled ? keys(local.database_services)[0] : null
-  database_service           = local.database_enabled ? values(local.database_services)[0] : null
-  database_engine            = local.database_enabled ? local.database_service.managed_database_engine : "postgres"
-  database_aliases           = local.database_enabled ? local.database_service.managed_database_aliases : []
-  database_port              = local.database_engine == "mysql" ? 3306 : local.database_engine == "mongodb" ? 27017 : 5432
-  database_image             = local.database_engine == "mysql" ? "mysql:8" : local.database_engine == "mongodb" ? "mongo:8" : "postgres:16"
-  database_path              = local.database_engine == "mysql" ? "/var/lib/mysql" : local.database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
-  database_health_check      = local.database_engine == "mysql" ? ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u\"$MYSQL_USER\" -p\"$MYSQL_PASSWORD\" --silent"] : local.database_engine == "mongodb" ? ["CMD-SHELL", "mongosh --quiet --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null"] : ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+  project_name                = "dg-${substr(replace(var.project_id, "-", ""), 0, 12)}"
+  database_services           = { for id, service in var.services : id => service if service.database_attached }
+  database_enabled            = length(local.database_services) == 1
+  database_service_id         = local.database_enabled ? keys(local.database_services)[0] : null
+  database_service            = local.database_enabled ? values(local.database_services)[0] : null
+  database_engine             = local.database_enabled ? local.database_service.managed_database_engine : "postgres"
+  database_aliases            = local.database_enabled ? local.database_service.managed_database_aliases : []
+  database_port               = local.database_engine == "mysql" ? 3306 : local.database_engine == "mongodb" ? 27017 : 5432
+  database_image              = local.database_engine == "mysql" ? "mysql:8" : local.database_engine == "mongodb" ? "mongo:8" : "postgres:16"
+  database_path               = local.database_engine == "mysql" ? "/var/lib/mysql" : local.database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
+  database_health_check       = local.database_engine == "mysql" ? ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u\"$MYSQL_USER\" -p\"$MYSQL_PASSWORD\" --silent"] : local.database_engine == "mongodb" ? ["CMD-SHELL", "mongosh --quiet --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null"] : ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+  mysql_grant_reconciler_name = "deployguard-mysql-grant-reconciler"
+  mysql_grant_reconciler_command = ["sh", "-ec", <<-EOT
+    set -eu
+    ready=false
+    for _ in $$(seq 1 90); do
+      if MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysqladmin --protocol=TCP -h 127.0.0.1 -uroot ping --silent; then ready=true; break; fi
+      sleep 2
+    done
+    [ "$$ready" = true ] || exit 1
+    MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -e "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$$MYSQL_PASSWORD'; ALTER USER 'deployguard'@'%' IDENTIFIED BY '$$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON \`application\`.* TO 'deployguard'@'%'; FLUSH PRIVILEGES;"
+    MYSQL_PWD="$$MYSQL_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -udeployguard -e "SELECT 1" application
+  EOT
+  ]
   database_host              = local.database_enabled ? "database.${local.project_name}.internal" : ""
   database_readiness_command = <<-EOT
     set -euo pipefail
@@ -75,20 +88,36 @@ locals {
           lastStatus:(.lastStatus // null),
           healthStatus:(.healthStatus // null),
           stopCode:(.stopCode // null),
-          databaseContainer:([.containers[]? | select(.name == "database") | {
-            lastStatus:(.lastStatus // null),
-            healthStatus:(.healthStatus // null),
-            exitCode:(.exitCode // null)
-          }] | first // null)
-        }]}
-      ' <<<"$tasks")"
+      databaseContainer:([.containers[]? | select(.name == "database") | {
+        lastStatus:(.lastStatus // null),
+        healthStatus:(.healthStatus // null),
+        exitCode:(.exitCode // null)
+      }] | first // null),
+      mysqlGrantReconciler:([.containers[]? | select(.name == "deployguard-mysql-grant-reconciler") | {
+        lastStatus:(.lastStatus // null),
+        exitCode:(.exitCode // null),
+        reason:(.reason // null)
+      }] | first // null)
+    }]}
+  ' <<<"$tasks")"
 
-      if jq -e --arg taskDefinition "$task_definition" '
+      if [ "$engine" = mysql ] && jq -e --arg taskDefinition "$task_definition" '
+        any(.tasks[]?;
+          .taskDefinitionArn == $taskDefinition
+          and any(.containers[]?; .name == "deployguard-mysql-grant-reconciler" and .lastStatus == "STOPPED" and (.exitCode // 1) != 0)
+        )
+      ' <<<"$tasks" >/dev/null; then
+        jq -cn --argjson observation "$last_observation" '{diagnosticCode:"MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED",observation:$observation}' | sed 's/^/DG_DATABASE_DIAGNOSTICS /' >&2
+        emit_failure DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED
+      fi
+
+      if jq -e --arg taskDefinition "$task_definition" --arg engine "$engine" '
         any(.tasks[]?;
           .taskDefinitionArn == $taskDefinition
           and .lastStatus == "RUNNING"
           and .healthStatus == "HEALTHY"
           and any(.containers[]?; .name == "database" and .lastStatus == "RUNNING" and .healthStatus == "HEALTHY")
+          and ($engine != "mysql" or any(.containers[]?; .name == "deployguard-mysql-grant-reconciler" and .lastStatus == "STOPPED" and .exitCode == 0))
         )
       ' <<<"$tasks" >/dev/null; then
         printf 'DG_MANAGED_DATABASE_READY serviceId=%s engine=%s attempts=%s\n' "$service_id" "$engine" "$attempt"
@@ -403,7 +432,7 @@ resource "aws_ecs_task_definition" "database" {
   cpu                      = "512"
   memory                   = "1024"
   execution_role_arn       = aws_iam_role.execution.arn
-  container_definitions = jsonencode([{
+  container_definitions = jsonencode(concat([{
     name         = "database"
     image        = local.database_image
     essential    = true
@@ -419,7 +448,15 @@ resource "aws_ecs_task_definition" "database" {
       startPeriod = 30
     }
     logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.region, awslogs-stream-prefix = "database" } }
-  }])
+    }], local.database_engine == "mysql" ? [{
+    name             = local.mysql_grant_reconciler_name
+    image            = local.database_image
+    essential        = false
+    dependsOn        = [{ containerName = "database", condition = "HEALTHY" }]
+    command          = local.mysql_grant_reconciler_command
+    secrets          = [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }]
+    logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.region, awslogs-stream-prefix = "mysql-grant-reconciler" } }
+  }] : []))
   volume {
     name = "database"
     efs_volume_configuration {

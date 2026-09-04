@@ -27,7 +27,7 @@ export function classifyStructuredFailure(stage: string, safeEvidence: string): 
   const marker = terminalStructuredFailureMarker(safeEvidence);
   const serviceId = marker.serviceId;
   const code = marker.code || "DG_FAILURE_UNVERIFIED";
-  if (["DG_SERVICE_DIRECTORY_INVALID", "DG_WORKFLOW_CONTRACT_INVALID", "DG_CONTROL_PLANE_VERSION_MISMATCH", "DG_TERRAFORM_MATERIALIZATION_FAILED", "DG_TERRAFORM_VALIDATE_FAILED", "DG_MANAGED_DATABASE_READINESS_FAILED"].includes(code)) return { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: code, failureServiceId: serviceId };
+  if (["DG_SERVICE_DIRECTORY_INVALID", "DG_WORKFLOW_CONTRACT_INVALID", "DG_CONTROL_PLANE_VERSION_MISMATCH", "DG_TERRAFORM_MATERIALIZATION_FAILED", "DG_TERRAFORM_VALIDATE_FAILED", "DG_MANAGED_DATABASE_READINESS_FAILED", "DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED"].includes(code)) return { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: code, failureServiceId: serviceId };
   if (["DG_SERVICE_DIRECTORY_MISSING", "DG_RAILPACK_BUILD_FAILED", "DG_APPLICATION_RUNTIME_FAILED"].includes(code)) return { failureOwner: "REPOSITORY_APPLICATION", externalProvider: null, failureCode: code, failureServiceId: serviceId };
   if (code === "DG_RAILPACK_PREREQUISITE_FAILED") return { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "railpack", failureCode: code, failureServiceId: serviceId };
   if (code === "DG_ECS_STABILITY_FAILED") return { ...classifyEcsDiagnosticsOwnership(ecsDiagnosticsFromEvidence(safeEvidence)), failureCode: code, failureServiceId: serviceId };
