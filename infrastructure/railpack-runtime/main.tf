@@ -29,13 +29,13 @@ locals {
   mysql_grant_reconciler_command = ["sh", "-ec", <<-EOT
     set -eu
     ready=false
-    for _ in $$(seq 1 90); do
-      if MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysqladmin --protocol=TCP -h 127.0.0.1 -uroot ping --silent; then ready=true; break; fi
+    for _ in $(seq 1 90); do
+      if MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin --protocol=TCP -h 127.0.0.1 -uroot ping --silent; then ready=true; break; fi
       sleep 2
     done
-    [ "$$ready" = true ] || exit 1
-    MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -e "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$$MYSQL_PASSWORD'; ALTER USER 'deployguard'@'%' IDENTIFIED BY '$$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON \`application\`.* TO 'deployguard'@'%'; FLUSH PRIVILEGES;"
-    MYSQL_PWD="$$MYSQL_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -udeployguard -e "SELECT 1" application
+    [ "$ready" = true ] || exit 1
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -e "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON \`application\`.* TO 'deployguard'@'%'; FLUSH PRIVILEGES;"
+    MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -udeployguard -e "SELECT 1" application
   EOT
   ]
   database_host              = local.database_enabled ? "database.${local.project_name}.internal" : ""

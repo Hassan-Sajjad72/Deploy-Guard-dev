@@ -12,6 +12,10 @@ import { aliasesFor, SERVICE_ALIAS_GROUPS } from "../src/projects/configuration-
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
+const mysqlGrantReconcilerCommand = terraform.match(/mysql_grant_reconciler_command = \["sh", "-ec", <<-EOT\n([\s\S]*?)\n  EOT/)?.[1] || "";
+assert.ok(mysqlGrantReconcilerCommand, "the managed MySQL grant reconciler command must be extractable");
+const mysqlGrantSyntax = spawnSync("sh", ["-n"], { input: mysqlGrantReconcilerCommand, encoding: "utf8" });
+assert.equal(mysqlGrantSyntax.status, 0, `the managed MySQL grant reconciler must be valid POSIX shell: ${mysqlGrantSyntax.stderr}`);
 const outputs = readFileSync(join(root, "infrastructure", "railpack-runtime", "outputs.tf"), "utf8");
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
 const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-runtime", "verify-runtime.sh"), "utf8");
