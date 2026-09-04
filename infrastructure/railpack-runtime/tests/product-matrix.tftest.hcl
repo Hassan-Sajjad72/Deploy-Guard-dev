@@ -190,6 +190,10 @@ run "mysql_database_attached_to_service_b" {
     condition = (
       strcontains(join("\n", local.mysql_database_command), "[ ! -d /var/lib/mysql/mysql ]") &&
       strcontains(join("\n", local.mysql_database_command), "ALTER USER 'root'@'localhost'") &&
+      strcontains(join("\n", local.mysql_database_command), "CREATE DATABASE IF NOT EXISTS application;") &&
+      strcontains(join("\n", local.mysql_database_command), "GRANT ALL PRIVILEGES ON application.* TO 'deployguard'@'%';") &&
+      !strcontains(join("\n", local.mysql_database_command), "`") &&
+      !strcontains(join("\n", local.mysql_grant_reconciler_command), "`") &&
       strcontains(join("\n", local.mysql_database_command), "--init-file=\"$bootstrap\"")
     )
     error_message = "Managed MySQL must recover persisted administrative credentials without replacing fresh-volume initialization."

@@ -35,9 +35,10 @@ locals {
     umask 077
     printf '%s\n' \
       "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';" \
+      "CREATE DATABASE IF NOT EXISTS application;" \
       "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD';" \
       "ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD';" \
-      "GRANT ALL PRIVILEGES ON \\`application\\`.* TO 'deployguard'@'%';" \
+      "GRANT ALL PRIVILEGES ON application.* TO 'deployguard'@'%';" \
       "FLUSH PRIVILEGES;" > "$bootstrap"
     chown mysql:mysql "$bootstrap"
     exec docker-entrypoint.sh mysqld --init-file="$bootstrap"
@@ -51,7 +52,7 @@ locals {
       sleep 2
     done
     [ "$ready" = true ] || exit 1
-    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -uroot -e "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON \`application\`.* TO 'deployguard'@'%'; FLUSH PRIVILEGES;"
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -uroot -e "CREATE DATABASE IF NOT EXISTS application; CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON application.* TO 'deployguard'@'%'; FLUSH PRIVILEGES;"
     MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -udeployguard -e "SELECT 1" application
   EOT
   ]
