@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash, randomUUID } from "crypto";
@@ -16,7 +16,7 @@ import { GithubActionsDispatchError, GithubActionsService } from "./pipeline/git
 import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
 import { Project } from "./project.entity";
 import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
-import { DEPLOYGUARD_DEFAULT_SERVICE_PORT, effectiveServicePort } from "./railpack-release";
+import { effectiveServicePort } from "./railpack-release";
 import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
 import { isSupportedManagedDatabaseEngine } from "./managed-database-engine";
 import { aliasesFor } from "./configuration-ownership";
@@ -37,6 +37,10 @@ import { ProjectGenerationServiceRevision } from "./project-generation-service-r
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
 import { acquireProjectConfigurationAdvisoryLock } from "./project-configuration-lock";
 import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.entity";
+import { ServicePortResolutionError } from "./service-port-resolver";
+import { decideDeploymentRecovery, DeploymentRecoveryDecision } from "./deployment-recovery-decision";
+import { ManagedDatabaseReconciliationReport, ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
+import { AuditLogService } from "../audit-log/audit-log.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -73,6 +77,14 @@ type LifecycleAdmission = {
   configuration: AdmittedDeploymentConfiguration;
 };
 
+type DeployAdmissionContext = {
+  requestedMode: "DEPLOY" | "RETRY" | "RESET_FRESH";
+  databaseReconciliation: ManagedDatabaseReconciliationReport | null;
+  recoveryDecision: DeploymentRecoveryDecision | null;
+  resetAt: string | null;
+  resetDatabaseIdentity: boolean;
+};
+
 export function promotedServiceRevisions<T extends { serviceId: string }>(
   verifiedCandidates: readonly T[],
   expectedServiceIds: readonly string[],
@@ -84,7 +96,7 @@ export function promotedServiceRevisions<T extends { serviceId: string }>(
   });
 }
 
-/** Explicit-service Railpack deployment admission; it does not inspect application source. */
+/** Explicit-service Railpack admission; bounded port evidence is resolved before Railpack owns build/start interpretation. */
 @Injectable()
 export class RailpackDeploymentService {
   private readonly reconciliationInFlight = new Map<string, Promise<void>>();
@@ -109,9 +121,11 @@ export class RailpackDeploymentService {
     private readonly dataSource: DataSource,
     private readonly costEvidence: GithubActionsCostEvidenceService,
     private readonly projectDeletion: ProjectDeletionService,
+    private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
+    private readonly audit: AuditLogService,
   ) {}
 
-  async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy"); }
+  async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy", null, null, "DEPLOY"); }
   async retry(user: User, projectId: string) {
     const project = await this.project(user, projectId);
     const previous = await this.runs.findOne({ where: { projectId, status: PipelineRunStatus.FAILED }, order: { createdAt: "DESC" } });
@@ -151,12 +165,14 @@ export class RailpackDeploymentService {
       }
     }
     const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
-    return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null);
+    return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null, action === "deploy" ? "RETRY" : "DEPLOY");
   }
   async resetAndDeployFresh(user: User, projectId: string, confirmationPhrase: string, _request?: unknown) {
     const project = await this.project(user, projectId);
     if (confirmationPhrase !== project.name) throw new ForbiddenException("Type the project name to confirm a fresh deployment.");
-    return this.dispatch(user, projectId, "deploy");
+    const report = await this.managedDatabaseReconciliation.reconcile(project);
+    const resetAt = this.resetFreshAt(report);
+    return this.dispatch(user, projectId, "deploy", null, null, "RESET_FRESH", resetAt, report, _request);
   }
   async destroy(user: User, projectId: string, confirmationPhrase: string) {
     await this.project(user, projectId);
@@ -250,12 +266,77 @@ export class RailpackDeploymentService {
     await Promise.all(active.map((operation) => this.reconcile(operation)));
   }
 
-  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null) {
+  private async managedDatabaseAdmission(project: Project, requestedMode: DeployAdmissionContext["requestedMode"], resetAt: string | null, reconciled?: ManagedDatabaseReconciliationReport | null): Promise<DeployAdmissionContext> {
+    const report = reconciled || await this.managedDatabaseReconciliation.reconcile(project);
+    const persistentPreviouslyEstablished = Boolean(
+      report.evidence.expectedStorageIdentity
+      || report.evidence.currentFileSystem
+      || report.evidence.terraformDatabaseAddresses.length,
+    );
+    const recoveryDecision = decideDeploymentRecovery({
+      requestedMode,
+      persistentPreviouslyEstablished,
+      currentPersistentResourcePresent: Boolean(report.evidence.currentFileSystem?.available && report.evidence.currentFileSystem.owned),
+      recoveryEvidenceAvailable: Boolean(report.evidence.usableRecoveryPointArn),
+      resetSupersedesPersistentGeneration: requestedMode === "RESET_FRESH" && Boolean(resetAt),
+    });
+    const explicitlyReset = requestedMode === "RESET_FRESH" && Boolean(resetAt) && recoveryDecision.deploymentAllowed;
+    if (!report.deploymentAllowed && !explicitlyReset) {
+      throw new ConflictException({
+        code: report.state,
+        message: report.message,
+        deploymentAllowed: false,
+        recoveryAvailable: report.recoveryAvailable,
+        resetAllowed: report.resetAllowed,
+      });
+    }
+    if (!recoveryDecision.deploymentAllowed) {
+      throw new ConflictException({ code: recoveryDecision.recoveryState, message: recoveryDecision.reason, deploymentAllowed: false });
+    }
+    return {
+      requestedMode,
+      databaseReconciliation: report,
+      recoveryDecision,
+      resetAt,
+      resetDatabaseIdentity: requestedMode === "RESET_FRESH" && Boolean(resetAt) && !report.deploymentAllowed,
+    };
+  }
+
+  private resetFreshAt(report: ManagedDatabaseReconciliationReport) {
+    if (report.deploymentAllowed) return null;
+    if (!report.resetAllowed || report.recoveryAvailable) {
+      throw new ConflictException({
+        code: report.state,
+        message: report.recoveryAvailable
+          ? "Managed database recovery evidence exists. Restore it before deploying instead of resetting it."
+          : report.message,
+        deploymentAllowed: false,
+      });
+    }
+    if (report.evidence.currentFileSystem?.available || report.evidence.usableRecoveryPointArn) {
+      throw new ConflictException("Reset & Deploy Fresh cannot supersede retained database storage or recovery evidence.");
+    }
+    return new Date().toISOString();
+  }
+
+  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null, requestedMode: DeployAdmissionContext["requestedMode"] = "DEPLOY", resetAt: string | null = null, reconciled?: ManagedDatabaseReconciliationReport | null, request?: unknown) {
     const authorizedProject = await this.project(user, projectId);
-    const admission = await this.admitLifecycleOperation(user, authorizedProject, action, rollbackTarget, retryOfOperationId);
+    const deployAdmission = action === "deploy" ? await this.managedDatabaseAdmission(authorizedProject, requestedMode, resetAt, reconciled) : null;
+    const admission = await this.admitLifecycleOperation(user, authorizedProject, action, rollbackTarget, retryOfOperationId, deployAdmission);
     if ("active" in admission) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: admission.active } };
     const { operation, configuration } = admission;
     const project = configuration.project;
+    if (deployAdmission?.resetDatabaseIdentity) {
+      await this.audit.record({
+        actorUser: user,
+        action: "MANAGED_DATABASE_RESET_RECONCILED",
+        resourceType: "project",
+        resourceId: project.id,
+        status: "success",
+        metadata: { previousReconciliationState: deployAdmission.databaseReconciliation?.state, cloudResourcesDeleted: false, resetAt },
+        req: request as any,
+      });
+    }
     const environmentName = configuration.environmentName;
     const operationId = operation.id;
     try {
@@ -275,9 +356,17 @@ export class RailpackDeploymentService {
           : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
       if (action === "deploy") {
-        operation.currentStage = "service_directory_validation";
+        const configuredServices = configuration.services.map((service) => ({ serviceId: service.id, serviceDirectory: service.serviceDirectory }));
+        operation.currentStage = "service_port_resolution";
         await this.runs.save(operation);
-        await this.source.assertDirectoriesAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, services: configuration.services.map((service) => ({ serviceId: service.id, serviceDirectory: service.serviceDirectory })), accessToken: credential.token });
+        const resolvedPorts = await this.source.resolveServicePortsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, services: configuredServices, accessToken: credential.token });
+        const portsByService = new Map(resolvedPorts.map((result) => [result.serviceId, result.servicePort]));
+        for (const service of configuration.services) {
+          const resolved = portsByService.get(service.id);
+          if (!resolved) throw new ServicePortResolutionError("DG_SERVICE_PORT_UNRESOLVED", service.id, []);
+          service.servicePort = resolved;
+        }
+        await this.sealResolvedDeploymentConfiguration(operation, configuration);
       }
       operation.currentStage = "caller_reconciliation";
       await this.runs.save(operation);
@@ -329,6 +418,7 @@ export class RailpackDeploymentService {
     action: "deploy" | "rollback" | "destroy",
     rollbackTarget: RollbackTargetIdentity | null,
     retryOfOperationId: string | null,
+    deployAdmission: DeployAdmissionContext | null,
   ): Promise<LifecycleAdmission | { active: ProjectPipelineRun }> {
     try {
       return await this.dataSource.transaction(async (manager) => {
@@ -342,7 +432,19 @@ export class RailpackDeploymentService {
         const active = await runs.findOne({ where: { projectId: project.id, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
         if (active) return { active };
 
+        if (action === "deploy" && deployAdmission?.resetDatabaseIdentity) {
+          await this.reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission);
+        }
         const configuration = await this.captureAdmittedConfiguration(manager, project, environmentName, action);
+        if (action === "deploy" && configuration.managedDatabase) {
+          if (!deployAdmission?.databaseReconciliation || !deployAdmission.recoveryDecision?.deploymentAllowed) throw new ConflictException("Managed database admission evidence is unavailable.");
+          const admittedTierUpdatedAt = configuration.managedDatabase.updatedAt?.toISOString?.() || null;
+          if (deployAdmission.resetDatabaseIdentity) {
+            if (configuration.managedDatabase.status !== DatabaseTierStatus.PENDING || configuration.managedDatabase.activeGenerationId) throw new ConflictException("Managed database reset identity was not sealed for fresh deployment admission.");
+          } else if (admittedTierUpdatedAt !== deployAdmission.databaseReconciliation.tierUpdatedAt) {
+            throw new ConflictException("Managed database configuration changed during deployment admission. Retry with current state.");
+          }
+        }
         if (action !== "destroy") {
           if (action === "deploy" && !configuration.services.length) throw new ServiceUnavailableException("The project has no configured deployable service.");
           try {
@@ -363,6 +465,12 @@ export class RailpackDeploymentService {
           metadata: {
             executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt,
             applicationEntryPointServiceId: configuration.applicationEntryPointServiceId,
+            ...(deployAdmission ? {
+              requestedDeploymentMode: deployAdmission.requestedMode,
+              deploymentRecoveryMode: deployAdmission.recoveryDecision?.deploymentMode || null,
+              managedDatabaseReconciliationState: deployAdmission.databaseReconciliation?.state || null,
+              resetFreshAt: deployAdmission.resetAt,
+            } : {}),
             ...(rollbackTarget ? { rollbackTarget } : {}), ...(retryOfOperationId ? { retryOfOperationId } : {}),
           },
         }));
@@ -378,6 +486,31 @@ export class RailpackDeploymentService {
       if (!active) throw error;
       return { active };
     }
+  }
+
+  private async reconcileResetFreshDatabaseIdentity(manager: EntityManager, user: User, project: Project, admission: DeployAdmissionContext) {
+    const report = admission.databaseReconciliation;
+    if (!report || !admission.resetAt || !admission.resetDatabaseIdentity) throw new ConflictException("Managed database reset admission evidence is unavailable.");
+    const tiers = manager.getRepository(ProjectDatabaseTier);
+    const tier = await tiers.findOne({ where: { projectId: project.id, provider: DatabaseTierProvider.MANAGED } });
+    if (!tier) throw new ConflictException("Managed database configuration changed before reset could complete.");
+    const currentUpdatedAt = tier.updatedAt?.toISOString?.() || null;
+    if (currentUpdatedAt !== report.tierUpdatedAt) throw new ConflictException("Managed database configuration changed during reset reconciliation. Retry with current state.");
+    tier.status = DatabaseTierStatus.PENDING;
+    tier.activeGenerationId = null;
+    tier.efsFileSystemId = null;
+    tier.efsAccessPointId = null;
+    tier.credentialsSecretArn = null;
+    tier.databaseUrlSecretArn = null;
+    tier.lastError = "An operator explicitly started a fresh deployment after managed database loss or stale metadata was verified.";
+    tier.restoreMetadata = {
+      kind: "data_lost_reset",
+      resetAt: admission.resetAt,
+      resetByUserId: user.id,
+      previousReconciliationState: report.state,
+      cloudResourcesDeleted: false,
+    };
+    await tiers.save(tier);
   }
 
   private async captureAdmittedConfiguration(
@@ -399,7 +532,7 @@ export class RailpackDeploymentService {
       project: { ...project },
       environmentName,
       applicationEntryPointServiceId: project.applicationEntryPointServiceId,
-      services: services.map((service) => ({ ...service })),
+      services: services.map((service) => ({ ...service, servicePort: null })),
       variables: variableRows.map((variable) => ({
         id: variable.id,
         serviceId: variable.serviceId,
@@ -478,6 +611,33 @@ export class RailpackDeploymentService {
       encryptedSecretPayload,
       sanitizedManifest,
     }));
+  }
+
+  private async sealResolvedDeploymentConfiguration(operation: ProjectPipelineRun, configuration: AdmittedDeploymentConfiguration) {
+    await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, configuration.project.id, configuration.environmentName);
+      const snapshots = manager.getRepository(ProjectConfigurationSnapshot);
+      const snapshot = operation.configurationSnapshotId ? await snapshots.findOne({ where: { id: operation.configurationSnapshotId, pipelineRunId: operation.id } }) : null;
+      if (!snapshot) throw new ServiceUnavailableException("The admitted deployment configuration snapshot is unavailable.");
+      const sanitizedManifest = { ...snapshot.sanitizedManifest, services: configuration.services.map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort, position: service.position })) };
+      snapshot.sanitizedManifest = sanitizedManifest;
+      snapshot.configurationFingerprint = createHash("sha256").update(JSON.stringify({
+        sanitizedManifest,
+        valueCiphertexts: configuration.variables.map((variable) => ({ id: variable.id, serviceId: variable.serviceId, key: variable.key, encryptedValue: variable.encryptedValue })),
+      })).digest("hex");
+      await snapshots.save(snapshot);
+      const repository = manager.getRepository(ProjectDeployableService);
+      const current = await repository.find({ where: { projectId: configuration.project.id } });
+      for (const resolved of configuration.services) {
+        const service = current.find((candidate) => candidate.id === resolved.id && candidate.name === resolved.name && candidate.serviceDirectory === resolved.serviceDirectory);
+        if (service) {
+          service.servicePort = resolved.servicePort;
+          await repository.save(service);
+        }
+      }
+      operation.metadata = { ...(operation.metadata || {}), admittedConfigurationFingerprint: snapshot.configurationFingerprint };
+      await manager.getRepository(ProjectPipelineRun).save(operation);
+    });
   }
 
   private isActiveRailpackUniquenessConflict(error: unknown) {
@@ -603,7 +763,11 @@ export class RailpackDeploymentService {
       return { stage: stage || "workflow_dispatch", message: error.safeDetail || "DeployGuard could not dispatch the GitHub Actions workflow.", evidence: error.evidence || { classification: error.diagnosticCode } };
     }
     if (error instanceof RepositorySourceError) {
-      return { stage: stage || "source_resolution", message: error.message.slice(0, 500), evidence: { classification: "repository_configuration", safeDetail: error.safeDetail } };
+      const evidenceStage = error.safeDetail.match(/(?:^|\s)stage=([a-z0-9_]+)/i)?.[1];
+      return { stage: evidenceStage || stage || "source_resolution", message: error.message.slice(0, 500), evidence: { classification: "repository_configuration", safeDetail: error.safeDetail } };
+    }
+    if (error instanceof ServicePortResolutionError) {
+      return { stage: "service_port_resolution", message: error.safeDetail.slice(0, 500), evidence: { classification: "repository_configuration", code: error.code, serviceId: error.serviceId, sources: error.evidence.map((item) => item.source) } };
     }
     const message = error instanceof Error ? error.message : "DeployGuard could not start the deployment.";
     return { stage: stage || "dispatching", message: message.slice(0, 500), evidence: { classification: "deployguard_dispatch_failure" } };
@@ -1228,7 +1392,7 @@ export class RailpackDeploymentService {
         operationId: current.id,
         commitSha: current.commitSha || "",
         healthCheckPath: DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH,
-        appPort: effectiveServicePort(applicationEndpoint?.servicePort ?? DEPLOYGUARD_DEFAULT_SERVICE_PORT),
+        appPort: effectiveServicePort(applicationEndpoint?.servicePort),
         metadata: { deployedUrl, publicUrls: Object.fromEntries(reconciledServices.map((service) => [String(service.serviceId), service.publicUrl])), services: reconciledServices, serviceOutcomes, releaseEvidenceVerified: true, deploymentAction: action, runtimeIdentity },
       });
       current.generationId = generation.id;

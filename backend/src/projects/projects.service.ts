@@ -222,7 +222,7 @@ export class ProjectsService {
         projectId: saved.id,
         name: service.name,
         serviceDirectory: service.serviceDirectory,
-        servicePort: service.servicePort,
+        servicePort: null,
         position,
       }));
       await manager.getRepository(ProjectDeployableService).save(services);
@@ -277,7 +277,7 @@ export class ProjectsService {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
       const repository = manager.getRepository(ProjectDeployableService);
       const services = await repository.find({ where: { projectId }, order: { position: "ASC" } });
-      const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort })), dto]);
+      const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory })), dto]);
       return repository.save(repository.create({ projectId, ...normalized[normalized.length - 1], position: services.length }));
     });
   }
@@ -295,12 +295,12 @@ export class ProjectsService {
       const candidate = all.map((item) => ({
         name: item.id === serviceId && dto.name !== undefined ? dto.name : item.name,
         serviceDirectory: item.id === serviceId && dto.serviceDirectory !== undefined ? dto.serviceDirectory : item.serviceDirectory,
-        servicePort: item.id === serviceId && dto.servicePort !== undefined ? dto.servicePort : item.servicePort,
       }));
       const normalized = this.normalizeServices(candidate)[all.findIndex((item) => item.id === serviceId)];
+      const directoryChanged = normalized.serviceDirectory !== service.serviceDirectory;
       service.name = normalized.name;
       service.serviceDirectory = normalized.serviceDirectory;
-      service.servicePort = normalized.servicePort;
+      if (directoryChanged) service.servicePort = null;
       if (dto.position !== undefined && dto.position !== service.position) {
         const other = await repository.findOne({ where: { projectId, position: dto.position } });
         if (other) { const old = service.position; service.position = -1; await repository.save(service); other.position = old; await repository.save(other); }
@@ -434,7 +434,9 @@ export class ProjectsService {
       current.repositoryProvider = "github";
       current.targetBranch = nextBranch;
       current.status = ProjectStatus.CONFIGURED;
-      return repository.save(current);
+      const saved = await repository.save(current);
+      await manager.getRepository(ProjectDeployableService).update({ projectId }, { servicePort: null });
+      return saved;
     });
 
     await this.auditLogService.record({
@@ -484,7 +486,9 @@ export class ProjectsService {
       this.assertCanManage(user, current);
       current.targetBranch = dto.targetBranch;
       current.status = ProjectStatus.CONFIGURED;
-      return repository.save(current);
+      const saved = await repository.save(current);
+      await manager.getRepository(ProjectDeployableService).update({ projectId }, { servicePort: null });
+      return saved;
     });
 
     await this.auditLogService.record({
@@ -951,7 +955,7 @@ export class ProjectsService {
       targetBranch: project.targetBranch,
       environmentName: project.environmentName || "dev",
       applicationEntryPointServiceId: project.applicationEntryPointServiceId || ((project.services || []).length === 1 ? project.services[0].id : null),
-      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort ?? 8080, position: service.position })),
+      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort, position: service.position })),
       status: project.status,
       visibility: project.visibility,
       canManage:
@@ -1071,12 +1075,11 @@ export class ProjectsService {
     if (dto.visibility !== undefined) project.visibility = dto.visibility;
   }
 
-  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "id" | "name" | "serviceDirectory" | "servicePort">>) {
-    const values = input?.length ? input : [{ name: "Web", serviceDirectory: ".", servicePort: 8080 }];
+  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "id" | "name" | "serviceDirectory">>) {
+    const values = input?.length ? input : [{ name: "Web", serviceDirectory: "." }];
     if (values.length > 20) throw new BadRequestException("A project supports at most 20 explicitly configured services.");
-    const services = values.map((value) => ({ id: value.id, name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory), servicePort: value.servicePort ?? 8080 }));
+    const services = values.map((value) => ({ id: value.id, name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory), servicePort: null as number | null }));
     if (services.some((service) => !service.name || service.name.length > 80)) throw new BadRequestException("Every service requires a bounded name.");
-    if (services.some((service) => !Number.isInteger(service.servicePort) || service.servicePort < 1 || service.servicePort > 65535)) throw new BadRequestException("Application port must be an integer from 1 to 65535.");
     const ids = services.map((service) => service.id).filter((id): id is string => Boolean(id));
     if (new Set(ids).size !== ids.length) throw new ConflictException("Service identities must be unique within a project.");
     const names = services.map((service) => service.name.toLocaleLowerCase());

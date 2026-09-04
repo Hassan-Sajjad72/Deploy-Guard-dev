@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -15,8 +15,8 @@ const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", 
 const outputs = readFileSync(join(root, "infrastructure", "railpack-runtime", "outputs.tf"), "utf8");
 const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
 const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-runtime", "verify-runtime.sh"), "utf8");
-const databaseReadiness = (terraform.match(/database_readiness_command\s*=\s*<<-EOT\n([\s\S]*?)\n\s*EOT/)?.[1] || "").replaceAll("$${", "${");
-assert.ok(databaseReadiness, "the executable managed-database readiness command must be extractable from Terraform");
+const databaseReadiness = runtimeVerification.match(/managed_database_failure\(\) \{[\s\S]*?\n\}\n\ncluster=/)?.[0].replace(/\ncluster=$/, "") || "";
+assert.ok(databaseReadiness, "the executable managed-database readiness boundary must be extractable from the runtime verifier");
 const releaseResultProducer = readFileSync(join(root, "infrastructure", "railpack-runtime", "build-release-result.sh"), "utf8");
 const executableContract = { releaseResultProducer, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform };
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
@@ -231,14 +231,25 @@ for (const engine of ["postgres", "mysql", "mongodb"] as ManagedDatabaseEngine[]
   assert.ok(normalizedTerraform.includes(profile.healthCheck[1]), `${engine} ECS readiness must remain aligned with the canonical managed-database health command`);
 }
 assert.match(terraform, /healthCheck\s+=\s+\{[\s\S]*?command\s+=\s+local\.database_health_check/, "the managed database container must expose engine health to ECS");
-assert.match(terraform, /resource "terraform_data" "database_readiness"[\s\S]*?triggers_replace[\s\S]*?var\.operation_id[\s\S]*?command\s+=\s+local\.database_readiness_command/, "every operation must cross the managed-database readiness barrier");
-assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?depends_on\s+=\s+\[[^\]]*terraform_data\.database_readiness/, "application service creation must wait for the database readiness barrier");
-assert.match(terraform, /resource "terraform_data" "database_readiness"[\s\S]*?count\s+=\s+local\.database_enabled\s+\?\s+1\s+:\s+0/, "projects without managed databases must not create a readiness barrier");
+assert.doesNotMatch(terraform, /terraform_data" "database_readiness|database_readiness_command/, "Terraform must not own the procedural managed-database readiness decision");
+assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?desired_count\s+=\s+each\.value\.database_attached\s+\?\s+0\s+:\s+1/, "only the database-attached application starts at zero");
+assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?lifecycle\s*\{[\s\S]*?ignore_changes\s+=\s+\[desired_count\]/, "Terraform must not undo DeployGuard's post-readiness application scale-up");
+assert.doesNotMatch(terraform, /resource "aws_ecs_service" "application"[\s\S]*?depends_on\s+=\s+\[[^\]]*database/, "application service resource creation must not retain a global database gate");
+assert.match(runtimeVerification, /wait_for_managed_database_readiness[\s\S]*?aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/, "DeployGuard must release only the attached ECS service after database readiness");
+const verifyDatabase = runtimeVerification.match(/verify_database\(\) \{[\s\S]*?\n\}\n\ndatabase_failed=/)?.[0] || "";
+assert.ok(verifyDatabase, "the managed-database release orchestration must be extractable");
+assert.ok(
+  verifyDatabase.indexOf('wait_for_managed_database_readiness "$database_id"') < verifyDatabase.indexOf('release_database_attached_service "$database_id"'),
+  "the attached application scale-up must occur strictly after managed-database readiness",
+);
+assert.equal((runtimeVerification.match(/aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/g) || []).length, 1, "the runtime boundary has one explicit attached-service release action");
 assert.match(terraform, /mysql_grant_reconciler_name\s+=\s+"deployguard-mysql-grant-reconciler"/, "managed MySQL must name its grant reconciler explicitly");
 assert.match(terraform, /CREATE USER IF NOT EXISTS 'deployguard'@'%'[\s\S]*?ALTER USER 'deployguard'@'%'[\s\S]*?GRANT ALL PRIVILEGES ON \\`application\\`\.\* TO 'deployguard'@'%'/, "managed MySQL must reconcile the application account for changing ECS task IPs");
 assert.match(terraform, /local\.database_engine == "mysql" \? \[\{/, "the MySQL grant reconciler must exist only for managed MySQL");
 assert.match(terraform, /dependsOn\s+=\s+\[\{ containerName = "database", condition = "HEALTHY" \}\][\s\S]*?MYSQL_ROOT_PASSWORD/, "the MySQL grant reconciler must wait for database health and receive only managed credentials");
-assert.match(workflow, /deployguard-apply-failure[\s\S]*?DG_TERRAFORM_APPLY_FAILED/, "Terraform apply must preserve a more specific readiness failure marker");
+assert.doesNotMatch(workflow, /deployguard-apply-failure/, "managed-database readiness evidence must no longer be tunneled through Terraform apply failure handling");
+assert.match(workflow, /terraform .* plan .*DG_TERRAFORM_PLAN_FAILED stage=terraform_plan/, "Terraform plan failures must not be mislabeled as apply failures");
+assert.doesNotMatch(workflow.match(/terraform .* plan[^\n]+/)?.[0] || "", /DG_TERRAFORM_APPLY_FAILED/, "Terraform plan and apply failure boundaries remain distinct");
 assert.doesNotMatch(databaseReadiness, /DG_ECS_STABILITY_FAILED/, "database prerequisite failure must not be attributed to application ECS convergence");
 assert.deepEqual(
   classifyStructuredFailure("managed_database_readiness", "DG_FAILURE serviceId=33333333-3333-4333-8333-333333333333 code=DG_MANAGED_DATABASE_READINESS_FAILED stage=managed_database_readiness"),
@@ -259,6 +270,7 @@ function executeDatabaseReadiness(engine: ManagedDatabaseEngine, mode: "later_re
   const bin = join(directory, "bin");
   const marker = join(directory, "failure-marker");
   const counter = join(directory, "counter");
+  const releaseCounter = join(directory, "release-counter");
   mkdirSync(bin);
   const aws = join(bin, "aws");
   writeFileSync(aws, `#!/usr/bin/env bash
@@ -277,50 +289,92 @@ case "$1 $2" in
       esac
     fi
     jq -cn --arg task "$DATABASE_TASK_DEFINITION_ARN" --arg health "$health" --argjson grant "$grant" '{tasks:[{taskDefinitionArn:$task,lastStatus:"RUNNING",healthStatus:$health,containers:([{name:"database",lastStatus:"RUNNING",healthStatus:$health}] + $grant)}]}' ;;
+  "ecs update-service") printf '1' >> "$RELEASE_COUNTER"; printf '%s\n' '{"service":{"serviceName":"application","desiredCount":1}}' ;;
   *) exit 2 ;;
 esac
 `, "utf8");
   chmodSync(aws, 0o755);
-  const result = spawnSync("bash", ["-c", databaseReadiness], {
+  const result = spawnSync("bash", ["-c", `
+set -euo pipefail
+append_outcome() { printf 'DG_FAILURE serviceId=%s code=%s stage=%s\n' "$1" "$3" "$5" > "$FAILURE_MARKER"; }
+attach_diagnostics() { :; }
+sanitize() { cat; }
+configuration_failure() { return 1; }
+provider_failure() { return 1; }
+${databaseReadiness}
+wait_for_managed_database_readiness "33333333-3333-4333-8333-333333333333" cluster database "database-task-definition:1" "$DATABASE_ENGINE"
+release_database_attached_service "33333333-3333-4333-8333-333333333333" cluster application
+`], {
     encoding: "utf8",
     env: {
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
-      DATABASE_CLUSTER_NAME: "cluster",
-      DATABASE_SERVICE_NAME: "database",
       DATABASE_TASK_DEFINITION_ARN: "database-task-definition:1",
-      DATABASE_ATTACHED_SERVICE_ID: "33333333-3333-4333-8333-333333333333",
       DATABASE_ENGINE: engine,
       DEPLOYGUARD_DATABASE_READINESS_MAX_ATTEMPTS: "3",
       DEPLOYGUARD_DATABASE_READINESS_INTERVAL_SECONDS: "0",
-      DEPLOYGUARD_FAILURE_MARKER_PATH: marker,
+      FAILURE_MARKER: marker,
       READINESS_COUNTER: counter,
+      RELEASE_COUNTER: releaseCounter,
       READINESS_MODE: mode,
     },
   });
   const attempts = Number(readFileSync(counter, "utf8"));
   const failureMarker = result.status === 0 ? null : readFileSync(marker, "utf8").trim();
+  const releases = existsSync(releaseCounter) ? readFileSync(releaseCounter, "utf8").length : 0;
   rmSync(directory, { recursive: true, force: true });
-  return { result, attempts, failureMarker };
+  return { result, attempts, failureMarker, releases };
 }
 
 const mysqlGrantPending = executeDatabaseReadiness("mysql", "mysql_grant_pending");
 assert.notEqual(mysqlGrantPending.result.status, 0, "a healthy MySQL container must not release applications before the host-grant reconciliation completes");
 assert.equal(mysqlGrantPending.attempts, 3, "MySQL grant reconciliation remains bounded by the database readiness policy");
+assert.equal(mysqlGrantPending.releases, 0, "a pending MySQL grant never releases the attached application");
 assert.match(mysqlGrantPending.failureMarker || "", /code=DG_MANAGED_DATABASE_READINESS_FAILED stage=managed_database_readiness/);
 const mysqlGrantFailed = executeDatabaseReadiness("mysql", "mysql_grant_failed");
 assert.notEqual(mysqlGrantFailed.result.status, 0, "a failed MySQL host-grant reconciliation must block dependent application services");
+assert.equal(mysqlGrantFailed.releases, 0, "a rejected MySQL grant never releases the attached application");
 assert.match(mysqlGrantFailed.failureMarker || "", /code=DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED stage=managed_database_readiness/);
 for (const engine of ["postgres", "mysql", "mongodb"] as ManagedDatabaseEngine[]) {
   const converged = executeDatabaseReadiness(engine, "later_ready");
   assert.equal(converged.result.status, 0, `${engine} readiness must continue until the engine becomes healthy: ${converged.result.stderr}`);
   assert.equal(converged.attempts, 2, `${engine} readiness must not release the application on the first unhealthy observation`);
+  assert.equal(converged.releases, 1, `${engine} readiness releases the attached application exactly once after convergence`);
   const timedOut = executeDatabaseReadiness(engine, "never_ready");
   assert.notEqual(timedOut.result.status, 0, `${engine} readiness must fail after its bounded deadline`);
   assert.equal(timedOut.attempts, 3, `${engine} readiness must stop at the configured bound`);
+  assert.equal(timedOut.releases, 0, `${engine} timeout must leave the attached application stopped`);
   assert.match(timedOut.failureMarker || "", /code=DG_MANAGED_DATABASE_READINESS_FAILED stage=managed_database_readiness/);
   assert.doesNotMatch(timedOut.result.stderr, /DG_ECS_STABILITY_FAILED/);
 }
+
+const serviceVerificationLoop = runtimeVerification.match(/verification_failed="\$database_failed"[\s\S]*?done < <\(jq -c '\.services \| to_entries\[\]' "\$outputs"\)/)?.[0] || "";
+assert.ok(serviceVerificationLoop, "the database/service failure-isolation loop must be extractable");
+function executeServiceIsolation(databasePresent: boolean) {
+  const directory = mkdtempSync(join(tmpdir(), "deployguard-database-isolation-"));
+  const outputsPath = join(directory, "outputs.json");
+  const observedPath = join(directory, "verified-services");
+  writeFileSync(outputsPath, JSON.stringify({ services: {
+    "33333333-3333-4333-8333-333333333333": {},
+    "55555555-5555-4555-8555-555555555555": {},
+  } }), "utf8");
+  const result = spawnSync("bash", ["-c", `
+set -euo pipefail
+outputs="$1"; observed="$2"
+database_failed="$3"; database_id="33333333-3333-4333-8333-333333333333"
+verify_service() { jq -r '.key' <<<"$1" >> "$observed"; }
+${serviceVerificationLoop}
+`, "_", outputsPath, observedPath, databasePresent ? "true" : "false"], { encoding: "utf8" });
+  const verified = existsSync(observedPath) ? readFileSync(observedPath, "utf8").trim().split("\n") : [];
+  rmSync(directory, { recursive: true, force: true });
+  return { result, verified };
+}
+const isolatedDatabaseFailure = executeServiceIsolation(true);
+assert.equal(isolatedDatabaseFailure.result.status, 0, isolatedDatabaseFailure.result.stderr);
+assert.deepEqual(isolatedDatabaseFailure.verified, ["55555555-5555-4555-8555-555555555555"], "database failure skips only the attached service and still verifies unrelated services");
+const noDatabasePath = executeServiceIsolation(false);
+assert.equal(noDatabasePath.result.status, 0, noDatabasePath.result.stderr);
+assert.deepEqual(noDatabasePath.verified.sort(), ["33333333-3333-4333-8333-333333333333", "55555555-5555-4555-8555-555555555555"], "no-database deployments bypass the database barrier and verify every service");
 assert.match(workflow, /destroyVerification:\{/);
 assert.match(workflow, /contractVersion:"deployguard\.destroy-result\/v2"/);
 assert.match(workflow, /generationIds:\(\$runtime\[0\]\.projectDeletion\.generationIds\s*\|\s*sort\)/);

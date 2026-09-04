@@ -205,11 +205,18 @@ jobs:
                 printf -v "$key" '%s' "$value"; export "${key?}"; runtime_names+=("$key"); runtime_args+=(--env "$key")
               done < <(jq -r '.managedDatabase.aliases[]' <<<"$service")
             fi
-            docker run --detach --name "$container" --network "$network" "${runtime_args[@]}" --env PORT="$service_port" --env HOST=0.0.0.0 "$expected_image_id" >/dev/null
+            if docker run --detach --name "$container" --network "$network" --publish "127.0.0.1:${service_port}:${service_port}" "${runtime_args[@]}" --env PORT="$service_port" --env HOST=0.0.0.0 "$expected_image_id" >/dev/null 2>&1; then
+              host_port="$service_port"
+            else
+              docker rm -f "$container" >/dev/null 2>&1 || true
+              docker run --detach --name "$container" --network "$network" --publish "127.0.0.1::${service_port}" "${runtime_args[@]}" --env PORT="$service_port" --env HOST=0.0.0.0 "$expected_image_id" >/dev/null 2>&1 || { echo "DG_FAILURE serviceId=$service_id code=DG_LOCAL_HOST_PORT_ALLOCATION_FAILED stage=local_host_port_allocation" >&2; exit 1; }
+              host_port="$(docker port "$container" "${service_port}/tcp" 2>/dev/null | awk -F: 'NR==1 {print $NF}')"
+              [[ "$host_port" =~ ^[0-9]+$ ]] && [ "$host_port" -ge 1 ] && [ "$host_port" -le 65535 ] || { echo "DG_FAILURE serviceId=$service_id code=DG_LOCAL_HOST_PORT_ALLOCATION_FAILED stage=local_host_port_allocation" >&2; exit 1; }
+            fi
             ready=false
-            # The inner Bash receives the container/IP as positional parameters; expansion here would be wrong.
+            # The inner Bash receives the container/temporary host port as positional parameters; expansion here would be wrong.
             # shellcheck disable=SC2016
-            if timeout --signal=TERM 45 bash -c 'stable=0; while [ "$stable" -lt 5 ]; do running="$(docker inspect --format "{{.State.Running}}" "$1" 2>/dev/null || true)"; [ "$running" = true ] || exit 1; ip="$(docker inspect --format "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" "$1" 2>/dev/null || true)"; if [ -n "$ip" ] && timeout 1 bash -c "exec 3<>/dev/tcp/\$1/\$2" _ "$ip" "$2" 2>/dev/null; then stable=$((stable + 1)); else stable=0; fi; sleep 1; done' _ "$container" "$service_port"; then ready=true; fi
+            if timeout --signal=TERM 45 bash -c 'stable=0; while [ "$stable" -lt 5 ]; do running="$(docker inspect --format "{{.State.Running}}" "$1" 2>/dev/null || true)"; [ "$running" = true ] || exit 1; if timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/\$1" _ "$2" 2>/dev/null; then stable=$((stable + 1)); else stable=0; fi; sleep 1; done' _ "$container" "$host_port"; then ready=true; fi
             if [ "$ready" != true ]; then docker logs "$container" --tail 100 2>&1 | sed -E 's/((password|passwd|token|secret|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/Ig' | tr -cd '\11\12\15\40-\176' | tail -c 12000 >&2 || true; echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime" >&2; echo "Application did not listen on PORT=$service_port within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable." >&2; exit 1; fi
             docker rm --force "$container" >/dev/null
             unset 'containers[${#containers[@]}-1]'
@@ -303,7 +310,7 @@ jobs:
             fi
             jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" --slurpfile runtime .deployguard/runtime.json '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,destroyed:true,destroyVerification:{contractVersion:"deployguard.destroy-result/v2",deploymentOperationId:$operationId,projectId:$projectId,environmentName:$environmentName,generationIds:($runtime[0].projectDeletion.generationIds|sort),status:"project_delete_ready",generationResourcesRemoved:true,projectResourcesRemoved:true,terraformStateArtifactsRemoved:true,sharedPlatformUntouched:true,verifiedAt:(now|todateiso8601)}}' > .deployguard/release-runtime.json
           else
-            terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan || { echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2; exit 1; }
+            terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan || { echo 'DG_FAILURE code=DG_TERRAFORM_PLAN_FAILED stage=terraform_plan' >&2; exit 1; }
             terraform -chdir=.deployguard/terraform show -json deployguard.tfplan \
               | jq '
                   def redact($value; $mask):
@@ -319,18 +326,10 @@ jobs:
                     | del(.change.before_sensitive, .change.after_sensitive)
                   ))
                 ' > .deployguard/terraform/deployguard-cost-plan.json
-            apply_failure_marker=.deployguard/terraform/.deployguard-apply-failure
-            rm -f "$apply_failure_marker"
             if ! terraform -chdir=.deployguard/terraform apply -input=false -auto-approve deployguard.tfplan; then
-              if [ -s "$apply_failure_marker" ]; then
-                tail -n 1 "$apply_failure_marker" >&2
-              else
-                echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2
-              fi
-              rm -f "$apply_failure_marker"
+              echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2
               exit 1
             fi
-            rm -f "$apply_failure_marker"
             terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value=.value.value)' > .deployguard/terraform-outputs.json
             if [ "$DEPLOYMENT_ACTION" = rollback ]; then
               expected_database_version="$(jq -r '[.services[] | select(.databaseAttached == true) | .managedDatabase.secretVersionId // empty] | first // empty' .deployguard/runtime.json)"

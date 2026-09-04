@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-type MockProject = { id: string; name: string; repositoryFullName: string; targetBranch: string; environmentName: string; applicationEntryPointServiceId: string; services: Array<{ id: string; name: string; serviceDirectory: string; servicePort: number }> };
+type MockProject = { id: string; name: string; repositoryFullName: string; targetBranch: string; environmentName: string; applicationEntryPointServiceId: string; services: Array<{ id: string; name: string; serviceDirectory: string; servicePort?: number | null }> };
 const projects: MockProject[] = [];
 const states = new Map<string, { operationId: string; type: "deploy" | "destroy"; polls: number }>();
 const deployCounts = new Map<string, number>();
@@ -104,7 +104,6 @@ async function main() {
     repository: `fixture/app-${index + 1}`,
     branch: "main",
     serviceDirectory: ".",
-    servicePort: 3000,
     env: { [`APP_${index + 1}`]: `value-${index + 1}` },
   }))));
   const { exitCode, stdout, stderr, output } = await run(matrix, report, ["--destroy"]);
@@ -126,7 +125,6 @@ async function main() {
     repository: projects[0].repositoryFullName,
     branch: projects[0].targetBranch,
     serviceDirectory: ".",
-    servicePort: 3000,
   }]));
   const destroyCountBeforeExisting = destroyCounts.get(projects[0].id) || 0;
   const existingDefault = await run(existingMatrix, join(temporary, "existing-default.json"), ["--destroy"]);

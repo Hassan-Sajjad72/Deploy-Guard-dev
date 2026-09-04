@@ -43,6 +43,10 @@ run "one_service_without_database_or_secrets" {
     error_message = "No runtime-secret IAM policy is allowed when no secret exists."
   }
   assert {
+    condition     = aws_ecs_service.application["33333333-3333-4333-8333-333333333333"].desired_count == 1
+    error_message = "A service without a managed database must start independently at its intended desired count."
+  }
+  assert {
     condition     = length(output.services) == 1 && output.database_efs_file_system_id == null && output.database_efs_access_point_id == null
     error_message = "Release evidence outputs must represent the exact service set and absent database."
   }
@@ -139,6 +143,13 @@ run "postgres_database_attached_to_service_a" {
     condition     = nonsensitive(output.database).attached_service_id == "33333333-3333-4333-8333-333333333333" && nonsensitive(output.database).engine == "postgres" && nonsensitive(output.database).port == 5432
     error_message = "Database evidence must preserve attachment ownership and PostgreSQL identity."
   }
+  assert {
+    condition = (
+      aws_ecs_service.application["33333333-3333-4333-8333-333333333333"].desired_count == 0 &&
+      aws_ecs_service.application["55555555-5555-4555-8555-555555555555"].desired_count == 1
+    )
+    error_message = "Only the PostgreSQL-attached application may wait at zero while unrelated services start independently."
+  }
 }
 
 run "mysql_database_attached_to_service_b" {
@@ -168,6 +179,13 @@ run "mysql_database_attached_to_service_b" {
   assert {
     condition     = length(aws_ecs_task_definition.application) == 2 && length(aws_ecs_task_definition.database) == 1
     error_message = "The database must remain independent from both application task definitions."
+  }
+  assert {
+    condition = (
+      aws_ecs_service.application["33333333-3333-4333-8333-333333333333"].desired_count == 1 &&
+      aws_ecs_service.application["55555555-5555-4555-8555-555555555555"].desired_count == 0
+    )
+    error_message = "Only the MySQL-attached application may wait at zero independent of service ordering."
   }
   assert {
     condition = (

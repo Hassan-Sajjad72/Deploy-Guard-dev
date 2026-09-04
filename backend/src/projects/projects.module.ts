@@ -48,6 +48,7 @@ import { LiveRuntimeIdentityRecoveryService } from "./current-state/live-runtime
 import { ProjectDeployableService } from "./project-deployable-service.entity";
 import { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
+import { ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
 
 @Module({
   imports: [
@@ -84,6 +85,7 @@ import { ProjectGenerationServiceRevision } from "./project-generation-service-r
     SharedPlatformFoundationService,
     ProductStartSchemaIntegrityService,
     LiveRuntimeIdentityRecoveryService,
+    ManagedDatabaseReconciliationService,
   ],
   exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService, LiveRuntimeIdentityRecoveryService],
 })

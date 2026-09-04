@@ -39,99 +39,6 @@ locals {
   EOT
   ]
   database_host              = local.database_enabled ? "database.${local.project_name}.internal" : ""
-  database_readiness_command = <<-EOT
-    set -euo pipefail
-    cluster="$DATABASE_CLUSTER_NAME"
-    service="$DATABASE_SERVICE_NAME"
-    task_definition="$DATABASE_TASK_DEFINITION_ARN"
-    service_id="$DATABASE_ATTACHED_SERVICE_ID"
-    engine="$DATABASE_ENGINE"
-    failure_marker_path="$DEPLOYGUARD_FAILURE_MARKER_PATH"
-    max_attempts="$DEPLOYGUARD_DATABASE_READINESS_MAX_ATTEMPTS"
-    interval_seconds="$DEPLOYGUARD_DATABASE_READINESS_INTERVAL_SECONDS"
-
-    [ -n "$cluster" ] && [ -n "$service" ] && [ -n "$task_definition" ] && [ -n "$service_id" ] && [ -n "$failure_marker_path" ] || exit 2
-    [[ "$engine" =~ ^(postgres|mysql|mongodb)$ ]] || exit 2
-    [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || exit 2
-    [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || exit 2
-    rm -f "$failure_marker_path"
-
-    emit_failure() {
-      local code="$1" marker
-      marker="DG_FAILURE serviceId=$service_id code=$code stage=managed_database_readiness"
-      printf '%s\n' "$marker" > "$failure_marker_path"
-      printf '%s\n' "$marker" >&2
-      exit 1
-    }
-
-    provider_failure() {
-      local operation="$1"
-      jq -cn --arg operation "$operation" '{diagnosticCode:"AWS_OBSERVATION_FAILED",operation:$operation}' | sed 's/^/DG_DATABASE_DIAGNOSTICS /' >&2
-      emit_failure DG_AWS_PROVIDER_FAILED
-    }
-
-    last_observation='{"tasks":[]}'
-    for ((attempt=1; attempt<=max_attempts; attempt++)); do
-      task_arns="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service" --desired-status RUNNING --output json 2>/dev/null)" || provider_failure ecs_list_tasks
-      jq -e '.taskArns | type == "array"' <<<"$task_arns" >/dev/null 2>&1 || provider_failure ecs_list_tasks
-
-      if [ "$(jq '.taskArns | length' <<<"$task_arns")" -gt 0 ]; then
-        mapfile -t running_task_arns < <(jq -r '.taskArns[]' <<<"$task_arns")
-        tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "$${running_task_arns[@]}" --output json 2>/dev/null)" || provider_failure ecs_describe_tasks
-        jq -e '.tasks | type == "array"' <<<"$tasks" >/dev/null 2>&1 || provider_failure ecs_describe_tasks
-      else
-        tasks='{"tasks":[]}'
-      fi
-
-      last_observation="$(jq -c --arg taskDefinition "$task_definition" '
-        {tasks:[.tasks[]? | select(.taskDefinitionArn == $taskDefinition) | {
-          lastStatus:(.lastStatus // null),
-          healthStatus:(.healthStatus // null),
-          stopCode:(.stopCode // null),
-      databaseContainer:([.containers[]? | select(.name == "database") | {
-        lastStatus:(.lastStatus // null),
-        healthStatus:(.healthStatus // null),
-        exitCode:(.exitCode // null)
-      }] | first // null),
-      mysqlGrantReconciler:([.containers[]? | select(.name == "deployguard-mysql-grant-reconciler") | {
-        lastStatus:(.lastStatus // null),
-        exitCode:(.exitCode // null),
-        reason:(.reason // null)
-      }] | first // null)
-    }]}
-  ' <<<"$tasks")"
-
-      if [ "$engine" = mysql ] && jq -e --arg taskDefinition "$task_definition" '
-        any(.tasks[]?;
-          .taskDefinitionArn == $taskDefinition
-          and any(.containers[]?; .name == "deployguard-mysql-grant-reconciler" and .lastStatus == "STOPPED" and (.exitCode // 1) != 0)
-        )
-      ' <<<"$tasks" >/dev/null; then
-        jq -cn --argjson observation "$last_observation" '{diagnosticCode:"MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED",observation:$observation}' | sed 's/^/DG_DATABASE_DIAGNOSTICS /' >&2
-        emit_failure DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED
-      fi
-
-      if jq -e --arg taskDefinition "$task_definition" --arg engine "$engine" '
-        any(.tasks[]?;
-          .taskDefinitionArn == $taskDefinition
-          and .lastStatus == "RUNNING"
-          and .healthStatus == "HEALTHY"
-          and any(.containers[]?; .name == "database" and .lastStatus == "RUNNING" and .healthStatus == "HEALTHY")
-          and ($engine != "mysql" or any(.containers[]?; .name == "deployguard-mysql-grant-reconciler" and .lastStatus == "STOPPED" and .exitCode == 0))
-        )
-      ' <<<"$tasks" >/dev/null; then
-        printf 'DG_MANAGED_DATABASE_READY serviceId=%s engine=%s attempts=%s\n' "$service_id" "$engine" "$attempt"
-        exit 0
-      fi
-
-      [ "$attempt" -eq "$max_attempts" ] || sleep "$interval_seconds"
-    done
-
-    jq -cn --arg engine "$engine" --argjson attempts "$max_attempts" --argjson observation "$last_observation" \
-      '{diagnosticCode:"MANAGED_DATABASE_READINESS_TIMEOUT",engine:$engine,attempts:$attempts,observation:$observation}' \
-      | sed 's/^/DG_DATABASE_DIAGNOSTICS /' >&2
-    emit_failure DG_MANAGED_DATABASE_READINESS_FAILED
-  EOT
   platform_health_check_path = "/_deployguard/transport-ready"
   transport_probe_image      = "public.ecr.aws/docker/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
   transport_probe_ports = {
@@ -485,34 +392,12 @@ resource "aws_ecs_service" "database" {
   depends_on = [aws_efs_mount_target.database, aws_iam_role_policy.runtime_secrets]
   tags       = local.database_tags
 }
-resource "terraform_data" "database_readiness" {
-  count = local.database_enabled ? 1 : 0
-  triggers_replace = [
-    var.operation_id,
-    aws_ecs_task_definition.database[0].arn,
-  ]
-  provisioner "local-exec" {
-    command     = local.database_readiness_command
-    interpreter = ["/bin/bash", "-c"]
-    environment = {
-      DATABASE_CLUSTER_NAME                           = aws_ecs_cluster.project.name
-      DATABASE_SERVICE_NAME                           = aws_ecs_service.database[0].name
-      DATABASE_TASK_DEFINITION_ARN                    = aws_ecs_task_definition.database[0].arn
-      DATABASE_ATTACHED_SERVICE_ID                    = local.database_service_id
-      DATABASE_ENGINE                                 = local.database_engine
-      DEPLOYGUARD_DATABASE_READINESS_MAX_ATTEMPTS     = "60"
-      DEPLOYGUARD_DATABASE_READINESS_INTERVAL_SECONDS = "5"
-      DEPLOYGUARD_FAILURE_MARKER_PATH                 = "${path.module}/.deployguard-apply-failure"
-    }
-  }
-  depends_on = [aws_ecs_service.database]
-}
 resource "aws_ecs_service" "application" {
   for_each        = var.services
   name            = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}"
   cluster         = aws_ecs_cluster.project.id
   task_definition = aws_ecs_task_definition.application[each.key].arn
-  desired_count   = 1
+  desired_count   = each.value.database_attached ? 0 : 1
   launch_type     = "FARGATE"
   network_configuration {
     subnets          = var.public_subnet_ids
@@ -524,6 +409,9 @@ resource "aws_ecs_service" "application" {
     container_name   = "application"
     container_port   = each.value.service_port
   }
-  depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets, terraform_data.database_readiness]
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+  depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets]
   tags       = merge(local.tags, { DeployGuardServiceId = each.key })
 }

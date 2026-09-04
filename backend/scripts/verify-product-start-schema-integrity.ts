@@ -11,6 +11,7 @@ import { RemoveRetiredRepositoryAnalysisSchema1787356810000 } from "../src/migra
 import { ProjectDeployableServices1787356813000 } from "../src/migrations/1787356813000-ProjectDeployableServices";
 import { RepairDeployableServiceUuidDefault1787356817000 } from "../src/migrations/1787356817000-RepairDeployableServiceUuidDefault";
 import { DeployableServicePort1787356819000 } from "../src/migrations/1787356819000-DeployableServicePort";
+import { AutomaticServicePortAuthority1787356822000 } from "../src/migrations/1787356822000-AutomaticServicePortAuthority";
 import { assertProductStartSchemaIntegrity } from "../src/projects/product-start-schema-integrity.service";
 
 const database = `deployguard_product_start_${randomUUID().replaceAll("-", "")}`;
@@ -106,6 +107,7 @@ void (async () => {
   await new ProjectDeployableServices1787356813000().up(runner);
   await new RepairDeployableServiceUuidDefault1787356817000().up(runner);
   await new DeployableServicePort1787356819000().up(runner);
+  await new AutomaticServicePortAuthority1787356822000().up(runner);
   await runner.release();
 
   await assertProductStartSchemaIntegrity(testDatabase);
@@ -116,7 +118,7 @@ void (async () => {
     [generatedProjectId],
   );
   assert.match(generatedServices[0]?.id || "", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, "fresh project service insert must generate its UUID in PostgreSQL");
-  assert.equal(generatedServices[0]?.service_port, 8080, "legacy/fresh services without an explicit port default safely to 8080");
+  assert.equal(generatedServices[0]?.service_port, null, "fresh services remain unresolved until exact-source port resolution seals the deployment contract");
   const retired = await testDatabase.query(`
     SELECT table_name FROM information_schema.tables
     WHERE table_schema = 'public' AND table_name = ANY($1::text[])

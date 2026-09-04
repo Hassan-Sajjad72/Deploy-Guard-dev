@@ -282,6 +282,7 @@ async function verifyPreDispatchFailure() {
   const snapshots: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.projects = { findOne: async () => project };
+  service.managedDatabaseReconciliation = { reconcile: async () => ({ state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: false, persistenceEnabled: false, expectedStorageIdentity: false, bindingStatus: null, bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }) };
   const runRepository = {
     findOne: async () => null,
     count: async () => 0,
@@ -332,6 +333,7 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   const operations: any[] = [];
   const snapshots: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.managedDatabaseReconciliation = { reconcile: async () => ({ state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: true, persistenceEnabled: true, expectedStorageIdentity: false, bindingStatus: "pending", bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }) };
   const serviceRow: any = { id: project.applicationEntryPointServiceId, projectId: project.id, name: "Web", serviceDirectory: "apps/a", servicePort: 3000, position: 0 };
   const variableRows: any[] = [
     { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", serviceId: serviceRow.id, key: "MODE", value: "encrypted-mode-a", isSecret: false, scope: "runtime", isActive: true },
@@ -363,10 +365,10 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
         },
         getRepository: (entity: unknown) => entity === Project ? { findOne: async () => ({ ...project }) }
           : entity === ProjectPipelineRun ? runRepository
-            : entity === ProjectDeployableService ? { find: async () => [{ ...serviceRow }] }
+            : entity === ProjectDeployableService ? { find: async () => [{ ...serviceRow }], save: async (row: any) => row }
               : entity === ProjectEnvironmentVariable ? { createQueryBuilder: () => ({ addSelect() { return this; }, where() { return this; }, getMany: async () => variableRows.map((row) => ({ ...row })) }) }
                 : entity === ProjectDatabaseTier ? { findOne: async () => managedTier ? { ...managedTier } : null }
-                  : entity === ProjectConfigurationSnapshot ? { create: (row: any) => row, save: async (row: any) => { const value = { ...row, id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }; snapshots.push(value); return value; } }
+                  : entity === ProjectConfigurationSnapshot ? { create: (row: any) => row, findOne: async () => snapshots[0] || null, save: async (row: any) => { const value = { ...row, id: row.id || "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }; if (!row.id) snapshots.push(value); else snapshots[0] = value; return value; } }
                     : entity === ProjectEnvironmentRoute ? { findOne: async () => null }
                       : null,
       };
@@ -411,7 +413,7 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   let validatedServices: any[] = [];
   service.source = {
     resolveSourceSha: async () => "a".repeat(40),
-    assertDirectoriesAtExactSha: async (input: any) => { validatedServices = input.services; },
+    resolveServicePortsAtExactSha: async (input: any) => { validatedServices = input.services; return input.services.map((item: any) => ({ serviceId: item.serviceId, servicePort: 3000, evidence: { priority: 2, source: "fixture" } })); },
   };
   service.oidcTrust = { ensureRepositoryAuthorized: async () => undefined };
   const materializedSecrets: any[] = [];

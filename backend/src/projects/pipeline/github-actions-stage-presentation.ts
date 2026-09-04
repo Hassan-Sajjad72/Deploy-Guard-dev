@@ -13,6 +13,11 @@ const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
   workflow_dispatch: "Prepare Source",
   workflow_bootstrap: "Prepare Source",
   workflow_run_discovery: "GitHub Actions run was not created",
+  source_resolution: "Resolve Source",
+  service_directory_validation: "Validate Service Directories",
+  service_port_resolution: "Resolve Application Ports",
+  local_host_port_allocation: "Allocate Validation Port",
+  caller_reconciliation: "Prepare Source",
   github_actions: "Prepare Source",
   checkout_application: "Checkout Source",
   derive_immutable_release_identity: "Prepare Source",
@@ -113,8 +118,8 @@ export function githubActionsFailureLifecyclePhase(failedStage: unknown, action:
   const key = githubActionsStagePresentation(failedStage).key;
   if (action === "deploy" && ["publish_verified_release_result", "release_evidence_pending", "release_evidence_validation", "release_finalization"].includes(key)) return "finalize";
   if (action === "destroy" && (key.includes("evidence") || key.includes("verify") || key === "publish_verified_release_result")) return "verify";
-  if (["workflow_bootstrap", "set_up_job", "workflow_dispatch", "configure_aws_credentials_through_oidc", "checkout_exact_application_source", "validate_immutable_release_input"].includes(key)) return "source";
-  if (BUILD_PHASE_FAILURE_STAGES.has(key) || key.includes("build")) return "build";
+  if (["workflow_bootstrap", "set_up_job", "workflow_dispatch", "source_resolution", "service_directory_validation", "service_port_resolution", "caller_reconciliation", "configure_aws_credentials_through_oidc", "checkout_exact_application_source", "validate_immutable_release_input"].includes(key)) return "source";
+  if (BUILD_PHASE_FAILURE_STAGES.has(key) || key === "local_host_port_allocation" || key.includes("build")) return "build";
   if (key === "publish_verified_release_result" || key.includes("evidence") || key.includes("finalization")) return "verify";
   if (key.includes("health") || key.includes("verify")) return "verify";
   return "deploy";

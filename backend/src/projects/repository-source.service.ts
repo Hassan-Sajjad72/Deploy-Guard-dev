@@ -4,6 +4,7 @@ import { lstat, mkdtemp, realpath, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
+import { resolveServicePorts } from "./service-port-resolver";
 
 const execFileAsync = promisify(execFile);
 
@@ -14,7 +15,7 @@ export class RepositorySourceError extends Error {
   }
 }
 
-/** Repository transport only; Railpack alone interprets application source. */
+/** Repository transport plus bounded canonical-directory validation and application-port resolution. */
 @Injectable()
 export class RepositorySourceService {
   private readonly logger = new Logger(RepositorySourceService.name);
@@ -67,6 +68,30 @@ export class RepositorySourceService {
         }
         if (resolved !== root && !resolved.startsWith(`${root}/`)) throw new RepositorySourceError(`Configured service directory '${directory}' escapes the repository.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_INVALID stage=service_directory_validation`);
       }
+    } finally {
+      await this.cleanup(checkout.workspacePath);
+    }
+  }
+
+  async resolveServicePortsAtExactSha(input: { repositoryUrl: string; branch: string; sourceSha: string; services: Array<{ serviceId: string; serviceDirectory: string }>; accessToken?: string | null }) {
+    if (!/^[0-9a-f]{40}$/i.test(input.sourceSha)) throw new RepositorySourceError("Exact source identity is invalid.", "source SHA was invalid");
+    const checkout = await this.checkout({ repositoryUrl: input.repositoryUrl, branch: input.branch, accessToken: input.accessToken });
+    try {
+      if (checkout.sourceSha.toLowerCase() !== input.sourceSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed while resolving application ports. Retry against the new exact SHA.", "source SHA changed before service port resolution");
+      const root = await realpath(checkout.workspacePath);
+      for (const service of input.services) {
+        const candidate = service.serviceDirectory === "." ? root : join(root, ...service.serviceDirectory.split("/"));
+        let resolved: string;
+        try {
+          resolved = await realpath(candidate);
+          const entry = await lstat(resolved);
+          if (!entry.isDirectory()) throw new Error("not-directory");
+        } catch {
+          throw new RepositorySourceError(`Configured service directory '${service.serviceDirectory}' does not exist at source ${input.sourceSha.slice(0, 12)}.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_MISSING stage=service_directory_validation`);
+        }
+        if (resolved !== root && !resolved.startsWith(`${root}/`)) throw new RepositorySourceError(`Configured service directory '${service.serviceDirectory}' escapes the repository.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_INVALID stage=service_directory_validation`);
+      }
+      return resolveServicePorts(root, input.services);
     } finally {
       await this.cleanup(checkout.workspacePath);
     }
