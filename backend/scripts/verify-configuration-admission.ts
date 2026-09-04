@@ -79,6 +79,7 @@ const root = join(__dirname, "..", "..");
 const controlPlaneFiles: Record<string, string> = {
   ".github/workflows/deployguard-reusable.yml": readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8"),
   "infrastructure/railpack-runtime/build-release-result.sh": readFileSync(join(root, "infrastructure/railpack-runtime/build-release-result.sh"), "utf8"),
+  "infrastructure/railpack-runtime/register-release-task-definitions.sh": readFileSync(join(root, "infrastructure/railpack-runtime/register-release-task-definitions.sh"), "utf8"),
   "infrastructure/railpack-runtime/verify-runtime.sh": readFileSync(join(root, "infrastructure/railpack-runtime/verify-runtime.sh"), "utf8"),
   "infrastructure/railpack-runtime/main.tf": readFileSync(join(root, "infrastructure/railpack-runtime/main.tf"), "utf8"),
 };
@@ -95,7 +96,7 @@ async function validateControlPlane(overrides: Partial<Record<keyof typeof contr
   return calls;
 }
 const validControlPlaneCalls = await validateControlPlane();
-assert.equal(validControlPlaneCalls.length, 4, "valid admission verifies the workflow, terminal-evidence executables, and runtime infrastructure at the exact SHA");
+assert.equal(validControlPlaneCalls.length, 5, "valid admission verifies the workflow, direct ECS release executable, terminal-evidence executables, and runtime infrastructure at the exact SHA");
 await assert.rejects(
   () => validateControlPlane({ "infrastructure/railpack-runtime/build-release-result.sh": controlPlaneFiles["infrastructure/railpack-runtime/build-release-result.sh"].replace("awsRuntimeVerification:$awsRuntimeVerification", "runtimeVerification:$awsRuntimeVerification") }),
   (error: any) => error instanceof ControlPlaneCompatibilityError && error.diagnosticCode === CONTROL_PLANE_VERSION_MISMATCH,

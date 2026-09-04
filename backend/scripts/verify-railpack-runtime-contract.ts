@@ -26,7 +26,8 @@ const runtimeVerification = readFileSync(join(root, "infrastructure", "railpack-
 const databaseReadiness = runtimeVerification.match(/managed_database_failure\(\) \{[\s\S]*?\n\}\n\ncluster=/)?.[0].replace(/\ncluster=$/, "") || "";
 assert.ok(databaseReadiness, "the executable managed-database readiness boundary must be extractable from the runtime verifier");
 const releaseResultProducer = readFileSync(join(root, "infrastructure", "railpack-runtime", "build-release-result.sh"), "utf8");
-const executableContract = { releaseResultProducer, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform };
+const releaseOnlyTaskDefinitions = readFileSync(join(root, "infrastructure", "railpack-runtime", "register-release-task-definitions.sh"), "utf8");
+const executableContract = { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform };
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
 const providerLock = readFileSync(join(root, "infrastructure", "railpack-runtime", ".terraform.lock.hcl"), "utf8");
@@ -185,6 +186,9 @@ assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f
 assert.doesNotMatch(workflow, /aws-actions\/configure-aws-credentials@0a3a7f8c8f8b37f3c7d2b23fe4cdd20b3b8a2746/);
 assert.match(workflow, /control_plane_sha/);
 assert.match(workflow, /result_contract_version: \{ required: true, type: string \}/);
+assert.match(workflow, /release_only: \{ required: true, type: string \}/);
+assert.match(workflow, /RELEASE_ONLY.*inputs\.release_only/);
+assert.match(workflow, /if \[ "\$RELEASE_ONLY" = true \]; then[\s\S]*?register-release-task-definitions\.sh[\s\S]*?verify-runtime\.sh[\s\S]*?build-release-result\.sh/, "release-only deployments must register immutable ECS revisions and keep the existing verification/evidence path");
 assert.match(workflow, /RESULT_CONTRACT_VERSION.*inputs\.result_contract_version/);
 assert.match(workflow, /deployguard\.release-result\/v5/);
 for (const message of ["invalid_deployment_action", "invalid_immutable_release_identity", "incompatible_result_contract", "exact_source_sha_mismatch"]) {
@@ -243,7 +247,10 @@ assert.match(terraform, /healthCheck\s+=\s+\{[\s\S]*?command\s+=\s+local\.databa
 assert.match(terraform, /resource "aws_ecs_service" "database"[\s\S]*?deployment_minimum_healthy_percent\s*=\s*0[\s\S]*?deployment_maximum_percent\s*=\s*100/, "the singleton managed database must stop its prior task before replacement so two processes never contend for persistent storage");
 assert.doesNotMatch(terraform, /terraform_data" "database_readiness|database_readiness_command/, "Terraform must not own the procedural managed-database readiness decision");
 assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?desired_count\s+=\s+each\.value\.database_attached\s+\?\s+0\s+:\s+1/, "only the database-attached application starts at zero");
-assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?lifecycle\s*\{[\s\S]*?ignore_changes\s+=\s+\[desired_count\]/, "Terraform must not undo DeployGuard's post-readiness application scale-up");
+assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?lifecycle\s*\{[\s\S]*?ignore_changes\s+=\s+\[desired_count, task_definition\]/, "Terraform must not undo DeployGuard's post-readiness application scale-up or direct ECS release revision");
+assert.match(releaseOnlyTaskDefinitions, /aws ecs register-task-definition[\s\S]*?aws ecs update-service/, "release-only deployments must register then activate one immutable ECS task definition per service");
+assert.match(releaseOnlyTaskDefinitions, /desired_count.*= "1"[\s\S]*?inactive_service_requires_terraform/, "release-only deployments must fail closed when an active service is not already established");
+assert.match(releaseOnlyTaskDefinitions, /service_port_changed_requires_terraform/, "topology changes must remain on the Terraform bootstrap path");
 assert.doesNotMatch(terraform, /resource "aws_ecs_service" "application"[\s\S]*?depends_on\s+=\s+\[[^\]]*database/, "application service resource creation must not retain a global database gate");
 assert.match(runtimeVerification, /wait_for_managed_database_readiness[\s\S]*?aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/, "DeployGuard must release only the attached ECS service after database readiness");
 const verifyDatabase = runtimeVerification.match(/verify_database\(\) \{[\s\S]*?\n\}\n\ndatabase_failed=/)?.[0] || "";

@@ -376,6 +376,10 @@ export class RailpackDeploymentService {
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
       const immutableTarget = action === "destroy" && destroyRelease ? await this.destroyTarget(destroyRelease) : rollbackTarget;
       const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration);
+      // A direct ECS release is deliberately limited to an already-LIVE
+      // topology.  Any first deployment or topology change remains on the
+      // existing Terraform bootstrap path until that path has made it LIVE.
+      const releaseOnly = action === "deploy" && await this.releaseOnlyRedeployEligible(project.id, environmentName, configuration, runtime);
       const inputs: RailpackWorkflowInputs = {
         deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
         repository_full_name: project.repositoryFullName, repository_branch: project.targetBranch, commit_sha: sourceSha,
@@ -384,6 +388,7 @@ export class RailpackDeploymentService {
         vpc_id: this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
         terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"),
         control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
+        release_only: releaseOnly ? "true" : "false",
       };
       operation.commitSha = sourceSha;
       operation.imageTag = null;
@@ -391,7 +396,7 @@ export class RailpackDeploymentService {
       await this.runs.save(operation);
       await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled: runtime.services.some((service) => service.databaseAttached) });
       operation.currentStage = "workflow_dispatch";
-      operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", configuredControlPlaneSha: inputs.control_plane_sha, workflowRegistrationBranch: caller.registrationBranch, immutableDispatchInputs: inputs, immutableDispatchFingerprint: immutableRailpackDispatchFingerprint(inputs) };
+      operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", configuredControlPlaneSha: inputs.control_plane_sha, workflowRegistrationBranch: caller.registrationBranch, releaseStrategy: releaseOnly ? "direct_ecs" : "terraform_bootstrap", immutableDispatchInputs: inputs, immutableDispatchFingerprint: immutableRailpackDispatchFingerprint(inputs) };
       await this.runs.save(operation);
       const dispatched = await this.actions.triggerWorkflow({ repositoryFullName: project.repositoryFullName, targetBranch: project.targetBranch, workflowRegistrationBranch: caller.registrationBranch, token: credential.token, inputs });
       operation.githubWorkflowRunId = dispatched.receipt.workflowRunId;
@@ -893,6 +898,52 @@ export class RailpackDeploymentService {
       services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, servicePort, runtimeConfigRevisionId: revision.id, buildEnvironment, buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
     }
     return { schemaVersion: 3, projectId: project.id, environmentName, operationId, sourceSha, services: services.sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
+  }
+
+  /**
+   * Direct ECS releases may replace an immutable task definition only when
+   * Terraform has already established the exact service topology.  This is a
+   * deliberately conservative gate: a missing/legacy release record or any
+   * service, port, directory, or database-shape change stays on Terraform.
+   */
+  private async releaseOnlyRedeployEligible(projectId: string, environmentName: string, configuration: AdmittedDeploymentConfiguration, runtime: RailpackRuntimeConfiguration) {
+    try {
+      const route = await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } });
+      if (!route?.liveGenerationId) return false;
+      const live = await this.serviceRevisions.find({ where: { generationId: route.liveGenerationId } });
+      if (live.length !== runtime.services.length || !live.length) return false;
+      const liveRuntimeConfigIds = live.map((revision) => revision.runtimeConfigRevisionId);
+      const liveRuntimeConfigs = await this.runtimeConfigRevisions.find({ where: { id: In(liveRuntimeConfigIds) } });
+      if (liveRuntimeConfigs.length !== live.length) return false;
+      const runtimeConfigById = new Map(liveRuntimeConfigs.map((revision) => [revision.id, revision]));
+      const liveByService = new Map(live.map((revision) => [revision.serviceId, revision]));
+      const sameAliases = (left: unknown, right: unknown) => Array.isArray(left) && Array.isArray(right)
+        && [...left].map(String).sort().join("\0") === [...right].map(String).sort().join("\0");
+      for (const service of runtime.services) {
+        const prior = liveByService.get(service.serviceId);
+        const priorRuntime = prior && runtimeConfigById.get(prior.runtimeConfigRevisionId);
+        if (!prior || !priorRuntime
+          || prior.serviceName !== service.serviceName
+          || prior.serviceDirectory !== service.serviceDirectory
+          || Number((prior.runtimeIdentity as Record<string, unknown>)?.servicePort) !== service.servicePort) return false;
+        const database = priorRuntime.databaseConfiguration as Record<string, unknown>;
+        if (database?.attached !== service.databaseAttached
+          || (database?.engine || null) !== service.managedDatabase.engine
+          || !sameAliases(database?.aliases, service.managedDatabase.aliases)) return false;
+      }
+      const attached = runtime.services.find((service) => service.databaseAttached);
+      if (!attached) return true;
+      const tier = configuration.managedDatabase;
+      return Boolean(tier
+        && tier.status === DatabaseTierStatus.READY
+        && tier.activeGenerationId === route.liveGenerationId
+        && tier.attachedServiceId === attached.serviceId
+        && tier.engine === attached.managedDatabase.engine);
+    } catch {
+      // The direct path is an optimization.  If its read-only live-topology
+      // proof is unavailable, retain the certified Terraform bootstrap path.
+      return false;
+    }
   }
 
   private async reconcile(operation: ProjectPipelineRun) {

@@ -441,7 +441,9 @@ resource "aws_ecs_service" "application" {
     container_port   = each.value.service_port
   }
   lifecycle {
-    ignore_changes = [desired_count]
+    # Terraform creates and destroys this service, but DeployGuard owns its
+    # post-bootstrap desired count and immutable ECS release revision.
+    ignore_changes = [desired_count, task_definition]
   }
   depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets]
   tags       = merge(local.tags, { DeployGuardServiceId = each.key })

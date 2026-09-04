@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { aliasesFor } from "./configuration-ownership";
 import { normalizeServiceDirectory } from "./deployable-service-path";
 
-export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v4";
+export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v5";
 export const RAILPACK_RESULT_CONTRACT_VERSION = "deployguard.release-result/v5";
 export const DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH = "/_deployguard/transport-ready";
 export const RAILPACK_WORKFLOW_INPUTS = [
@@ -15,6 +15,7 @@ export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "public_subnet_ids", required: true, type: "string" }, { name: "terraform_state_bucket", required: true, type: "string" },
   { name: "control_plane_sha", required: true, type: "string" },
   { name: "result_contract_version", required: true, type: "string" },
+  { name: "release_only", required: true, type: "string" },
 ] as const;
 export type RailpackWorkflowInputName = typeof RAILPACK_WORKFLOW_INPUTS[number]["name"];
 export type RailpackWorkflowInputs = Record<RailpackWorkflowInputName, string>;

@@ -8,18 +8,21 @@ import {
 export const AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION = "deployguard.aws-runtime-verification/v1";
 export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   releaseResultProducer: "infrastructure/railpack-runtime/build-release-result.sh",
+  releaseOnlyTaskDefinitions: "infrastructure/railpack-runtime/register-release-task-definitions.sh",
   runtimeVerifier: "infrastructure/railpack-runtime/verify-runtime.sh",
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "27e14f13daa90ddc3f7e1ecc48f0defbf301975376625817b0fca008b8aba9dd",
+  workflow: "f9dfb1d1a0ec742e8ffa0c70e39e262d02741414292c5e86995010804ec0e81c",
   releaseResultProducer: "cbda8bb60b9bd08ae8c305ce0a036ec5ffab960476aabe0b8e9caaa63cf31b80",
+  releaseOnlyTaskDefinitions: "62aa371c25dc926df8c6173023ed6dc5c7753485aae6967cce6cfa0ad1e14673",
   runtimeVerifier: "b9f0e6c1e0be1acdf73ab0f78468dcbcab8ffe54be5f6d99b92149960c88f35a",
-  runtimeInfrastructure: "cd53f733a7c70aeef11fd642d35608ae7305506acea4ae18194bc79de9c9c81d",
+  runtimeInfrastructure: "9622ebfd2cd58d596d879506bc139a4ae19d3b8161d197405ee436df0040e28b",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {
   releaseResultProducer: string;
+  releaseOnlyTaskDefinitions: string;
   runtimeVerifier: string;
   runtimeInfrastructure: string;
 };
@@ -82,6 +85,14 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.releaseResultProducer.includes("DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation")) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the required terminal evidence producer.`);
   }
+  if (!workflow.includes("register-release-task-definitions.sh")
+    || !workflow.includes('if [ "$RELEASE_ONLY" = true ]; then')
+    || !executable.releaseOnlyTaskDefinitions.includes("aws ecs register-task-definition")
+    || !executable.releaseOnlyTaskDefinitions.includes("aws ecs update-service")
+    || !executable.releaseOnlyTaskDefinitions.includes("active_task_definition_topology_mismatch")
+    || !executable.releaseOnlyTaskDefinitions.includes("service_port_changed_requires_terraform")) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the direct ECS release-only boundary.`);
+  }
   if (!executable.runtimeVerifier.includes(`--arg contractVersion ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}`)
     || !executable.runtimeVerifier.includes("expected_port=\"$(jq -r '.servicePort' <<<\"$expected\")\"")
     || !executable.runtimeVerifier.includes('or .state == "draining"')
@@ -96,7 +107,7 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.runtimeInfrastructure.includes('nc -z -w 1 127.0.0.1')
     || !executable.runtimeInfrastructure.includes('port    = tostring(local.transport_probe_ports[each.key])')
     || !executable.runtimeInfrastructure.includes('desired_count   = each.value.database_attached ? 0 : 1')
-    || !executable.runtimeInfrastructure.includes('ignore_changes = [desired_count]')
+    || !executable.runtimeInfrastructure.includes('ignore_changes = [desired_count, task_definition]')
     || executable.runtimeInfrastructure.includes('terraform_data.database_readiness')) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement platform-owned transport and managed-database release readiness.`);
   }
@@ -122,6 +133,7 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
   const executableHashes = {
     workflow: sha256(workflow),
     releaseResultProducer: sha256(executable.releaseResultProducer),
+    releaseOnlyTaskDefinitions: sha256(executable.releaseOnlyTaskDefinitions),
     runtimeVerifier: sha256(executable.runtimeVerifier),
     runtimeInfrastructure: sha256(executable.runtimeInfrastructure),
   };

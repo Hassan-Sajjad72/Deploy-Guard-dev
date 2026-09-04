@@ -20,6 +20,7 @@ on:
       terraform_state_bucket: { required: true, type: string }
       control_plane_sha: { required: true, type: string }
       result_contract_version: { required: true, type: string }
+      release_only: { required: true, type: string }
 
 permissions:
   contents: read
@@ -42,6 +43,7 @@ jobs:
       SERVICES_BASE64: ${{ inputs.services_base64 }}
       CONTROL_PLANE_SHA: ${{ inputs.control_plane_sha }}
       RESULT_CONTRACT_VERSION: ${{ inputs.result_contract_version }}
+      RELEASE_ONLY: ${{ inputs.release_only }}
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
@@ -60,6 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_deployment_action' >&2; exit 1; }
+          [[ "$RELEASE_ONLY" =~ ^(true|false)$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_release_only_mode' >&2; exit 1; }
+          { [ "$RELEASE_ONLY" = false ] || [ "$DEPLOYMENT_ACTION" = deploy ]; } || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=release_only_requires_deploy' >&2; exit 1; }
           [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ && "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_immutable_release_identity' >&2; exit 1; }
           [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v5 ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=incompatible_result_contract' >&2; exit 1; }
           mkdir -p .deployguard
@@ -309,6 +313,14 @@ jobs:
               exit 1
             fi
             jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" --slurpfile runtime .deployguard/runtime.json '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,destroyed:true,destroyVerification:{contractVersion:"deployguard.destroy-result/v2",deploymentOperationId:$operationId,projectId:$projectId,environmentName:$environmentName,generationIds:($runtime[0].projectDeletion.generationIds|sort),status:"project_delete_ready",generationResourcesRemoved:true,projectResourcesRemoved:true,terraformStateArtifactsRemoved:true,sharedPlatformUntouched:true,verifiedAt:(now|todateiso8601)}}' > .deployguard/release-runtime.json
+          elif [ "$RELEASE_ONLY" = true ]; then
+            # Terraform remains the bootstrap/topology/destroy authority.  A
+            # release-only redeploy updates only the active ECS task revision.
+            terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value=.value.value)' > .deployguard/terraform-outputs.json
+            bash .deployguard/terraform/register-release-task-definitions.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/service-artifacts.json > .deployguard/terraform-outputs.release-only.json
+            mv .deployguard/terraform-outputs.release-only.json .deployguard/terraform-outputs.json
+            bash .deployguard/terraform/verify-runtime.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/aws-runtime-verification.json
+            bash .deployguard/terraform/build-release-result.sh "$DEPLOYMENT_ACTION" "$RESULT_CONTRACT_VERSION" "$SOURCE_SHA" "$OPERATION_ID" .deployguard/service-artifacts.json .deployguard/terraform-outputs.json .deployguard/aws-runtime-verification.json .deployguard/release-runtime.json
           else
             terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan || { echo 'DG_FAILURE code=DG_TERRAFORM_PLAN_FAILED stage=terraform_plan' >&2; exit 1; }
             terraform -chdir=.deployguard/terraform show -json deployguard.tfplan \
