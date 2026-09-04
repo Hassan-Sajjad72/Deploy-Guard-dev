@@ -188,6 +188,14 @@ run "mysql_database_attached_to_service_b" {
   }
   assert {
     condition = (
+      strcontains(join("\n", local.mysql_database_command), "[ ! -d /var/lib/mysql/mysql ]") &&
+      strcontains(join("\n", local.mysql_database_command), "ALTER USER 'root'@'localhost'") &&
+      strcontains(join("\n", local.mysql_database_command), "--init-file=\"$bootstrap\"")
+    )
+    error_message = "Managed MySQL must recover persisted administrative credentials without replacing fresh-volume initialization."
+  }
+  assert {
+    condition = (
       aws_ecs_service.application["33333333-3333-4333-8333-333333333333"].desired_count == 1 &&
       aws_ecs_service.application["55555555-5555-4555-8555-555555555555"].desired_count == 0
     )

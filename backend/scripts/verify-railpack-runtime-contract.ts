@@ -12,6 +12,10 @@ import { aliasesFor, SERVICE_ALIAS_GROUPS } from "../src/projects/configuration-
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
+const mysqlDatabaseCommand = terraform.match(/mysql_database_command = \["sh", "-ec", <<-EOT\n([\s\S]*?)\n  EOT/)?.[1] || "";
+assert.ok(mysqlDatabaseCommand, "the managed MySQL database bootstrap command must be extractable");
+const mysqlDatabaseSyntax = spawnSync("sh", ["-n"], { input: mysqlDatabaseCommand, encoding: "utf8" });
+assert.equal(mysqlDatabaseSyntax.status, 0, `the managed MySQL database bootstrap must be valid POSIX shell: ${mysqlDatabaseSyntax.stderr}`);
 const mysqlGrantReconcilerCommand = terraform.match(/mysql_grant_reconciler_command = \["sh", "-ec", <<-EOT\n([\s\S]*?)\n  EOT/)?.[1] || "";
 assert.ok(mysqlGrantReconcilerCommand, "the managed MySQL grant reconciler command must be extractable");
 const mysqlGrantSyntax = spawnSync("sh", ["-n"], { input: mysqlGrantReconcilerCommand, encoding: "utf8" });
@@ -250,6 +254,10 @@ assert.ok(
 );
 assert.equal((runtimeVerification.match(/aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/g) || []).length, 1, "the runtime boundary has one explicit attached-service release action");
 assert.match(terraform, /mysql_grant_reconciler_name\s+=\s+"deployguard-mysql-grant-reconciler"/, "managed MySQL must name its grant reconciler explicitly");
+assert.match(mysqlDatabaseCommand, /if \[ ! -d \/var\/lib\/mysql\/mysql \]; then[\s\S]*?exec docker-entrypoint\.sh mysqld[\s\S]*?--init-file="\$bootstrap"/, "fresh MySQL storage must use normal initialization while persisted storage receives the administrative bootstrap");
+assert.match(mysqlDatabaseCommand, /ALTER USER 'root'@'localhost' IDENTIFIED BY '\$MYSQL_ROOT_PASSWORD'/, "persisted MySQL must deterministically reconcile the administrative credential from the current managed secret");
+assert.match(mysqlDatabaseCommand, /CREATE USER IF NOT EXISTS 'deployguard'@'%'[\s\S]*?ALTER USER 'deployguard'@'%'[\s\S]*?GRANT ALL PRIVILEGES ON [^\n]*application[^\n]* TO 'deployguard'@'%'/, "the server-owned bootstrap must restore the dynamic-task-IP application grant before readiness verification");
+assert.match(mysqlDatabaseCommand, /umask 077[\s\S]*?chown mysql:mysql "\$bootstrap"/, "the secret-bearing bootstrap must be private and readable only by the MySQL runtime account");
 assert.match(terraform, /CREATE USER IF NOT EXISTS 'deployguard'@'%'[\s\S]*?ALTER USER 'deployguard'@'%'[\s\S]*?GRANT ALL PRIVILEGES ON \\`application\\`\.\* TO 'deployguard'@'%'/, "managed MySQL must reconcile the application account for changing ECS task IPs");
 assert.match(terraform, /mysql --protocol=SOCKET --socket=\/var\/run\/mysqld\/mysqld\.sock -uroot -e "SELECT 1"[\s\S]*?mysql --protocol=SOCKET --socket=\/var\/run\/mysqld\/mysqld\.sock -uroot/, "managed MySQL grant reconciliation must prove authenticated SQL readiness over the task-local root socket so persisted host grants cannot block repair");
 assert.match(terraform, /dynamic "volume"[\s\S]*?content \{ name = "mysql-runtime" \}/, "managed MySQL must define a task-local socket volume");

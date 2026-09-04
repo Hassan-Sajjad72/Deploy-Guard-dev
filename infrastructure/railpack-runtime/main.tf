@@ -26,6 +26,23 @@ locals {
   database_path               = local.database_engine == "mysql" ? "/var/lib/mysql" : local.database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
   database_health_check       = local.database_engine == "mysql" ? ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u\"$MYSQL_USER\" -p\"$MYSQL_PASSWORD\" --silent"] : local.database_engine == "mongodb" ? ["CMD-SHELL", "mongosh --quiet --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null"] : ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
   mysql_grant_reconciler_name = "deployguard-mysql-grant-reconciler"
+  mysql_database_command = ["sh", "-ec", <<-EOT
+    set -eu
+    if [ ! -d /var/lib/mysql/mysql ]; then
+      exec docker-entrypoint.sh mysqld
+    fi
+    bootstrap=/tmp/deployguard-mysql-bootstrap.sql
+    umask 077
+    printf '%s\n' \
+      "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';" \
+      "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD';" \
+      "ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD';" \
+      "GRANT ALL PRIVILEGES ON \\`application\\`.* TO 'deployguard'@'%';" \
+      "FLUSH PRIVILEGES;" > "$bootstrap"
+    chown mysql:mysql "$bootstrap"
+    exec docker-entrypoint.sh mysqld --init-file="$bootstrap"
+  EOT
+  ]
   mysql_grant_reconciler_command = ["sh", "-ec", <<-EOT
     set -eu
     ready=false
@@ -342,7 +359,7 @@ resource "aws_ecs_task_definition" "database" {
   cpu                      = "512"
   memory                   = "1024"
   execution_role_arn       = aws_iam_role.execution.arn
-  container_definitions = jsonencode(concat([{
+  container_definitions = jsonencode(concat([merge({
     name         = "database"
     image        = local.database_image
     essential    = true
@@ -361,7 +378,7 @@ resource "aws_ecs_task_definition" "database" {
       startPeriod = 30
     }
     logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.region, awslogs-stream-prefix = "database" } }
-    }], local.database_engine == "mysql" ? [{
+    }, local.database_engine == "mysql" ? { command = local.mysql_database_command } : {})], local.database_engine == "mysql" ? [{
     name             = local.mysql_grant_reconciler_name
     image            = local.database_image
     essential        = false
