@@ -102,6 +102,8 @@ run "two_services_with_generic_runtime_secret" {
       output.services["55555555-5555-4555-8555-555555555555"].service_port == 8000 &&
       aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].port == 3000 &&
       aws_lb_target_group.application["55555555-5555-4555-8555-555555555555"].port == 8000 &&
+      aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].name == "dg-111111111111-33333333-3000" &&
+      aws_lb_target_group.application["55555555-5555-4555-8555-555555555555"].name == "dg-111111111111-55555555-8000" &&
       jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[0].portMappings[0].containerPort == 3000 &&
       jsondecode(aws_ecs_task_definition.application["55555555-5555-4555-8555-555555555555"].container_definitions)[0].portMappings[0].containerPort == 8000 &&
       jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[1].environment[0].value == "3000" &&

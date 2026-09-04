@@ -254,7 +254,7 @@ resource "aws_lb" "application" {
 }
 resource "aws_lb_target_group" "application" {
   for_each    = var.services
-  name        = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}"
+  name        = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}-${each.value.service_port}"
   port        = each.value.service_port
   protocol    = "HTTP"
   target_type = "ip"
@@ -263,6 +263,9 @@ resource "aws_lb_target_group" "application" {
     path    = local.platform_health_check_path
     port    = tostring(local.transport_probe_ports[each.key])
     matcher = "200-299"
+  }
+  lifecycle {
+    create_before_destroy = true
   }
   tags = merge(local.tags, { DeployGuardServiceId = each.key })
 }

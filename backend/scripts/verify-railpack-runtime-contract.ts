@@ -222,6 +222,7 @@ assert.match(terraform, /platform_health_check_path\s*=\s*"\/_deployguard\/trans
 assert.match(terraform, /name\s*=\s*"deployguard-transport-probe"[\s\S]*?APPLICATION_PORT[\s\S]*?nc -z -w 1 127\.0\.0\.1/, "the task-local probe succeeds only while the declared application port accepts TCP");
 assert.match(terraform, /name\s*=\s*"application"[\s\S]*?awslogs-stream-prefix = "application"/, "developer application errors remain available in the existing runtime log stream");
 assert.match(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*local\.platform_health_check_path[\s\S]*?port\s*=\s*tostring\(local\.transport_probe_ports\[each\.key\]\)[\s\S]*?matcher\s*=\s*"200-299"/, "ALB stability uses DeployGuard transport readiness instead of application response status");
+assert.match(terraform, /resource "aws_lb_target_group" "application"[\s\S]*?name\s*=\s*"\$\{local\.project_name\}-\$\{substr\(replace\(each\.key, "-", ""\), 0, 8\)\}-\$\{each\.value\.service_port\}"[\s\S]*?lifecycle\s*\{[\s\S]*?create_before_destroy\s*=\s*true/, "service-port changes must create a distinctly named target group before retiring the listener's current target group");
 assert.doesNotMatch(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*"\/"/, "developer root-route semantics are not a default deployment gate");
 assert.match(runtimeVerification, /readinessMode:"platform_transport"/);
 assert.match(releaseResultProducer, /\$outcome\.readinessMode == "platform_transport"/);
