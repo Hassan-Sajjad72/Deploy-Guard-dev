@@ -30,7 +30,7 @@ locals {
     set -eu
     ready=false
     for _ in $(seq 1 90); do
-      if MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -uroot ping --silent; then ready=true; break; fi
+      if MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -uroot -e "SELECT 1" >/dev/null 2>&1; then ready=true; break; fi
       sleep 2
     done
     [ "$ready" = true ] || exit 1
