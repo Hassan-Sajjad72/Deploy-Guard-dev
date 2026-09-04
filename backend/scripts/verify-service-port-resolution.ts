@@ -80,6 +80,7 @@ try {
   const settings = readFileSync(join(root, "frontend/src/pages/ProjectSettings.jsx"), "utf8");
   const dto = readFileSync(join(root, "backend/src/projects/dto/deployable-service.dto.ts"), "utf8");
   const deployment = readFileSync(join(root, "backend/src/projects/railpack-deployment.service.ts"), "utf8");
+  const repositorySource = readFileSync(join(root, "backend/src/projects/repository-source.service.ts"), "utf8");
 
   assert.match(workflow, /--publish "127\.0\.0\.1:\$\{service_port\}:\$\{service_port\}"/);
   assert.match(workflow, /--publish "127\.0\.0\.1::\$\{service_port\}"/);
@@ -91,6 +92,7 @@ try {
   assert.match(deployment, /resolveServicePortsAtExactSha/);
   assert.match(deployment, /service\.servicePort = resolved/);
   assert.match(deployment, /sealResolvedDeploymentConfiguration\(operation, configuration\)/);
+  assert.match(repositorySource, /return await resolveServicePorts\(root, input\.services\);/, "the exact-SHA checkout remains present until asynchronous port resolution completes");
   assert.match(deployment, /snapshot\.sanitizedManifest = sanitizedManifest/);
   assert.doesNotMatch(newProject, /<span>Application port<\/span>|servicePort: Number/);
   assert.doesNotMatch(settings, /<span>Application port<\/span>|servicePort: Number/);

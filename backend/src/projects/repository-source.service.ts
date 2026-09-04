@@ -91,7 +91,7 @@ export class RepositorySourceService {
         }
         if (resolved !== root && !resolved.startsWith(`${root}/`)) throw new RepositorySourceError(`Configured service directory '${service.serviceDirectory}' escapes the repository.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_INVALID stage=service_directory_validation`);
       }
-      return resolveServicePorts(root, input.services);
+      return await resolveServicePorts(root, input.services);
     } finally {
       await this.cleanup(checkout.workspacePath);
     }
