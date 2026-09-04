@@ -30,11 +30,11 @@ locals {
     set -eu
     ready=false
     for _ in $(seq 1 90); do
-      if MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin --protocol=TCP -h 127.0.0.1 -uroot ping --silent; then ready=true; break; fi
+      if MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -uroot ping --silent; then ready=true; break; fi
       sleep 2
     done
     [ "$ready" = true ] || exit 1
-    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -uroot -e "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON \`application\`.* TO 'deployguard'@'%'; FLUSH PRIVILEGES;"
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -uroot -e "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON \`application\`.* TO 'deployguard'@'%'; FLUSH PRIVILEGES;"
     MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -udeployguard -e "SELECT 1" application
   EOT
   ]
@@ -347,9 +347,12 @@ resource "aws_ecs_task_definition" "database" {
     image        = local.database_image
     essential    = true
     portMappings = [{ containerPort = local.database_port, hostPort = local.database_port, protocol = "tcp" }]
-    mountPoints  = [{ sourceVolume = "database", containerPath = local.database_path, readOnly = false }]
-    environment  = local.database_engine == "mysql" ? [{ name = "MYSQL_DATABASE", value = "application" }, { name = "MYSQL_USER", value = "deployguard" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_DATABASE", value = "application" }, { name = "MONGO_INITDB_ROOT_USERNAME", value = "deployguard" }] : [{ name = "POSTGRES_DB", value = "application" }, { name = "POSTGRES_USER", value = "deployguard" }]
-    secrets      = local.database_engine == "mysql" ? [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : [{ name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }]
+    mountPoints = concat(
+      [{ sourceVolume = "database", containerPath = local.database_path, readOnly = false }],
+      local.database_engine == "mysql" ? [{ sourceVolume = "mysql-runtime", containerPath = "/var/run/mysqld", readOnly = false }] : [],
+    )
+    environment = local.database_engine == "mysql" ? [{ name = "MYSQL_DATABASE", value = "application" }, { name = "MYSQL_USER", value = "deployguard" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_DATABASE", value = "application" }, { name = "MONGO_INITDB_ROOT_USERNAME", value = "deployguard" }] : [{ name = "POSTGRES_DB", value = "application" }, { name = "POSTGRES_USER", value = "deployguard" }]
+    secrets     = local.database_engine == "mysql" ? [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : [{ name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }]
     healthCheck = {
       command     = local.database_health_check
       interval    = 5
@@ -364,6 +367,7 @@ resource "aws_ecs_task_definition" "database" {
     essential        = false
     dependsOn        = [{ containerName = "database", condition = "HEALTHY" }]
     command          = local.mysql_grant_reconciler_command
+    mountPoints      = [{ sourceVolume = "mysql-runtime", containerPath = "/var/run/mysqld", readOnly = false }]
     secrets          = [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }]
     logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.region, awslogs-stream-prefix = "mysql-grant-reconciler" } }
   }] : []))
@@ -374,6 +378,10 @@ resource "aws_ecs_task_definition" "database" {
       transit_encryption = "ENABLED"
       authorization_config { access_point_id = aws_efs_access_point.database[0].id }
     }
+  }
+  dynamic "volume" {
+    for_each = local.database_engine == "mysql" ? [1] : []
+    content { name = "mysql-runtime" }
   }
   tags = local.database_tags
 }

@@ -251,6 +251,9 @@ assert.ok(
 assert.equal((runtimeVerification.match(/aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/g) || []).length, 1, "the runtime boundary has one explicit attached-service release action");
 assert.match(terraform, /mysql_grant_reconciler_name\s+=\s+"deployguard-mysql-grant-reconciler"/, "managed MySQL must name its grant reconciler explicitly");
 assert.match(terraform, /CREATE USER IF NOT EXISTS 'deployguard'@'%'[\s\S]*?ALTER USER 'deployguard'@'%'[\s\S]*?GRANT ALL PRIVILEGES ON \\`application\\`\.\* TO 'deployguard'@'%'/, "managed MySQL must reconcile the application account for changing ECS task IPs");
+assert.match(terraform, /mysqladmin --protocol=SOCKET --socket=\/var\/run\/mysqld\/mysqld\.sock -uroot[\s\S]*?mysql --protocol=SOCKET --socket=\/var\/run\/mysqld\/mysqld\.sock -uroot/, "managed MySQL grant reconciliation must use the task-local root socket so persisted host grants cannot block repair");
+assert.match(terraform, /dynamic "volume"[\s\S]*?content \{ name = "mysql-runtime" \}/, "managed MySQL must define a task-local socket volume");
+assert.equal((terraform.match(/sourceVolume = "mysql-runtime", containerPath = "\/var\/run\/mysqld"/g) || []).length, 2, "the managed MySQL database and grant reconciler must both mount the task-local socket volume");
 assert.match(terraform, /local\.database_engine == "mysql" \? \[\{/, "the MySQL grant reconciler must exist only for managed MySQL");
 assert.match(terraform, /dependsOn\s+=\s+\[\{ containerName = "database", condition = "HEALTHY" \}\][\s\S]*?MYSQL_ROOT_PASSWORD/, "the MySQL grant reconciler must wait for database health and receive only managed credentials");
 assert.doesNotMatch(workflow, /deployguard-apply-failure/, "managed-database readiness evidence must no longer be tunneled through Terraform apply failure handling");
