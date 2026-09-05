@@ -38,9 +38,11 @@ assert.doesNotMatch(execution, /Redeploy|destroyGithubActionsDeployment|deployGi
 assert.match(execution, /Advanced run details/);
 assert.match(execution, /workflowRunId/);
 assert.match(recovery, /Sanitized failure evidence/);
-assert.match(recovery, /startTroubleshooting/);
-assert.match(recovery, /operation\.aiAnalysisEligible/);
-assert.match(recovery, /AI troubleshooting requires a failed deployment attempt with sanitized persisted evidence/);
+assert.match(recovery, /DeployGuard diagnosis/);
+assert.match(recovery, /diagnosis\.rootCauseCode/);
+assert.match(recovery, /diagnosis\.remediationSteps/);
+assert.match(recovery, /retryLabel\(diagnosis\)/);
+assert.doesNotMatch(recovery, /startTroubleshooting|aiAnalysisEligible|AI troubleshooting|Analyze failure|Ask AI/);
 assert.doesNotMatch(recovery, /CloudWatch|Redis|BullMQ/);
 assert.match(backend, /workflowStages: Array\.isArray\(metadata\.workflowStages\)/);
 

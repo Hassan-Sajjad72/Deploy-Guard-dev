@@ -16,7 +16,6 @@ export default function ProjectPipeline() {
   const [project, setProject] = useState(null);
   const [currentState, setCurrentState] = useState(null);
   const [operations, setOperations] = useState([]);
-  const [recoveryRefreshVersion, setRecoveryRefreshVersion] = useState(0);
   const [error, setError] = useState("");
 
   const load = useSerializedProjectRefresh(projectId, useCallback(async (requestedProjectId, isCurrent) => {
@@ -30,7 +29,6 @@ export default function ProjectPipeline() {
       setProject(projectResponse.project);
       setCurrentState(current);
       setOperations(history.operations || []);
-      setRecoveryRefreshVersion((version) => version + 1);
       setError("");
     } catch (caught) {
       if (!isCurrent()) return;
@@ -56,6 +54,6 @@ export default function ProjectPipeline() {
     <PageHeader context={`${currentState.repository || project.repositoryFullName} · ${currentState.branch || project.targetBranch}`} eyebrow="Deployments" status={state.state} title="Deployment pipeline" />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     <PipelineExecution canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} operations={operations} projectId={projectId} />
-    <PipelineRecoveryPanel operations={operations} projectId={projectId} refreshVersion={recoveryRefreshVersion} />
+    <PipelineRecoveryPanel operations={operations} />
   </div>;
 }

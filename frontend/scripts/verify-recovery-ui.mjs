@@ -12,9 +12,9 @@ for (const source of [overview, pipeline]) {
   assert.doesNotMatch(source, /recoveryIssue|currentRecoveryIssue|previousDeploymentIssue|resumeProjectRecovery|retryPipelineRun|cancelPipelineRun/);
 }
 assert.match(canonical, /retryGithubActionsDeployment/);
-assert.match(recovery, /const failures = next\.filter/);
-assert.match(recovery, /Analyze failure/);
+assert.match(recovery, /DeployGuard diagnosis/);
 assert.match(recovery, /Sanitized failure evidence/);
+assert.doesNotMatch(recovery, /Ask AI|Analyze failure|AI troubleshooting|startTroubleshooting|aiAnalysisEligible/);
 assert.doesNotMatch(recovery, /CloudWatch|Redis|BullMQ|DeploymentRecoveryCard/);
 assert.doesNotMatch(routes, /ProjectRecovery/);
 assert.match(routes, /path="\/projects\/:projectId\/pipeline"/);
