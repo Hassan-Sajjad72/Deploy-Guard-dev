@@ -335,9 +335,10 @@ async function verifyUnsupportedDeploymentContractBlocksBeforeWorkflowOrAws() {
   let workflowRegistrationCalls = 0;
   let awsCapabilityCalls = 0;
   let workflowDispatchCalls = 0;
+  let managedDatabaseReconciliationCalls = 0;
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.projects = { findOne: async () => project };
-  service.managedDatabaseReconciliation = { reconcile: async () => ({ state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: false, persistenceEnabled: false, expectedStorageIdentity: false, bindingStatus: null, bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }) };
+  service.managedDatabaseReconciliation = { reconcile: async () => { managedDatabaseReconciliationCalls += 1; return { state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: false, persistenceEnabled: false, expectedStorageIdentity: false, bindingStatus: null, bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }; } };
   const runs = { findOne: async () => null, count: async () => 0, create: (row: any) => row, save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
   service.runs = runs;
   service.config = { get: (key: string, fallback = "") => key === "DEPLOYGUARD_REUSABLE_WORKFLOW" ? "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0123456789abcdef0123456789abcdef01234567" : fallback };
@@ -349,7 +350,7 @@ async function verifyUnsupportedDeploymentContractBlocksBeforeWorkflowOrAws() {
       : entity === ProjectPipelineRun ? runs
         : entity === ProjectDeployableService ? { find: async () => [serviceRow] }
           : entity === ProjectEnvironmentVariable ? { createQueryBuilder: () => ({ addSelect() { return this; }, where() { return this; }, getMany: async () => [] }) }
-            : entity === ProjectDatabaseTier ? { findOne: async () => null }
+            : entity === ProjectDatabaseTier ? { findOne: async () => ({ projectId: project.id, provider: "managed", engine: "postgres", attachedServiceId: serviceRow.id, updatedAt: new Date("2026-09-05T00:00:00.000Z") }) }
               : entity === ProjectConfigurationSnapshot ? { create: (row: any) => row, save: async (row: any) => { const value = { ...row, id: "88888888-8888-4888-8888-888888888888" }; snapshots.push(value); return value; } }
                 : entity === ProjectEnvironmentRoute ? { findOne: async () => null }
                   : null,
@@ -373,6 +374,7 @@ async function verifyUnsupportedDeploymentContractBlocksBeforeWorkflowOrAws() {
   assert.equal(workflowRegistrationCalls, 0, "unsupported contracts must not construct a reusable-workflow dispatch");
   assert.equal(awsCapabilityCalls, 0, "unsupported contracts must not reach AWS capability verification");
   assert.equal(workflowDispatchCalls, 0, "unsupported contracts must never dispatch GitHub Actions");
+  assert.equal(managedDatabaseReconciliationCalls, 0, "unsupported contracts must not read managed-database EFS, Secrets Manager, or Terraform state");
   assert.equal(saved.at(-1).failureCode, "DG_DEPLOYMENT_CONTRACT_UNSUPPORTED");
   assert.equal(saved.at(-1).metadata.failedStage, "deployment_contract_admission");
   assert.equal(snapshots.length, 1, "blocked contract admission remains attached to the immutable configuration snapshot");

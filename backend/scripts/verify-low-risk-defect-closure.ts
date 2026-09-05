@@ -123,7 +123,9 @@ async function main() {
   assert.match(workflow, /terraform .* plan .*\|\| \{ echo 'DG_FAILURE code=DG_TERRAFORM_PLAN_FAILED stage=terraform_plan'/);
   assert.match(workflow, /terraform .* apply[\s\S]{0,500}DG_TERRAFORM_APPLY_FAILED stage=terraform_apply/);
   assert.doesNotMatch(workflow.match(/terraform .* plan[^\n]+/)?.[0] || "", /DG_TERRAFORM_APPLY_FAILED/);
-  assert.match(deployment, /managedDatabaseAdmission\(authorizedProject, requestedMode, resetAt, reconciled\)/);
+  const buildTargetResolution = deployment.indexOf("resolveBuildTargetsAtExactSha");
+  assert.ok(buildTargetResolution >= 0 && deployment.indexOf("managedDatabaseReconciliation.reconcile(project)", buildTargetResolution) > buildTargetResolution, "exact-SHA BuildTarget compatibility precedes managed-database cloud reconciliation");
+  assert.match(deployment, /managedDatabaseAdmission\(project, requestedMode, effectiveResetAt, report\)/);
   assert.ok(deployment.indexOf("if (active) return { active };") < deployment.indexOf("reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission)"), "reset mutation occurs only after same-project active-operation admission is checked");
   assert.match(deployment, /managedDatabaseReconciliationState/);
   assert.match(deployment, /cloudResourcesDeleted: false/);

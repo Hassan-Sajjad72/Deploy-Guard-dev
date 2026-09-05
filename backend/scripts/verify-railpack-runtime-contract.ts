@@ -59,7 +59,9 @@ assert.doesNotThrow(() => servicesBase64(workspaceClientFixture), "a second work
 assert.notEqual(workspaceServerFixture.services[0].buildTarget.execution.buildCommand, workspaceClientFixture.services[0].buildTarget.execution.buildCommand, "server and client cannot collapse to one root workspace command");
 const invalidWorkspaceExecution: any = structuredClone(workspaceServerFixture);
 invalidWorkspaceExecution.services[0].buildTarget.execution.startCommand = null;
-assert.throws(() => servicesBase64(invalidWorkspaceExecution), /Railpack build target is invalid/, "a workspace payload without package-specific start execution is blocked before workflow dispatch");
+assert.doesNotThrow(() => servicesBase64(invalidWorkspaceExecution), "a resolver-authorized static workspace payload preserves Railpack's native no-start behavior");
+const staticWorkspaceJqResult = spawnSync("jq", ["-e", "--arg", "project", invalidWorkspaceExecution.projectId, "--arg", "operation", invalidWorkspaceExecution.operationId, "--arg", "sha", invalidWorkspaceExecution.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(invalidWorkspaceExecution), encoding: "utf8" });
+assert.equal(staticWorkspaceJqResult.status, 0, `workflow must admit a canonical static workspace payload: ${staticWorkspaceJqResult.stderr}`);
 const genericWorkspaceExecution: any = structuredClone(workspaceServerFixture);
 genericWorkspaceExecution.services[0].buildTarget.execution.buildCommand = "pnpm run build";
 assert.throws(() => servicesBase64(genericWorkspaceExecution), /Railpack build target is invalid/, "a generic root workspace command is blocked before workflow dispatch");
@@ -246,7 +248,7 @@ assert.doesNotMatch(workflow, /rollback_image_uri|runtime_environment_base64|run
 assert.match(deploymentService, /result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION/);
 assert.match(deploymentService, /release_contract_incompatible/);
 assert.match(deploymentService, /Destroy requires the authoritative verified deployed release identity/);
-assert.match(workflow, /execution_args\+=\(--build-cmd "\$build_command" --start-cmd "\$start_command"\)/, "workspace execution commands must be consumed by Railpack");
+assert.match(workflow, /execution_args\+=\(--build-cmd "\$build_command"\)[\s\S]*execution_args\+=\(--start-cmd "\$start_command"\)/, "workspace execution commands must be consumed by Railpack while static targets retain no start override");
 assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name "\$image" "\$build_root"/);
 assert.match(workflow, /buildTargetRevisionId/);
 assert.match(workflow, /get-secret-value --secret-id "\$secret_id" --version-id "\$version_id"/, "build secrets are fetched by immutable secret version");

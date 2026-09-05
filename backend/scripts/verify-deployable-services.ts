@@ -80,7 +80,7 @@ assert.match(source, /resolveServicePortsAtExactSha/);
 assert.match(source, /checkout\.sourceSha\.toLowerCase\(\) !== input\.sourceSha\.toLowerCase\(\)/);
 assert.match(workflow, /fetch-depth: 1/);
 assert.match(workflow, /buildTargetRevisionId/);
-assert.match(workflow, /execution_args\+=\(--build-cmd "\$build_command" --start-cmd "\$start_command"\)/);
+assert.match(workflow, /execution_args\+=\(--build-cmd "\$build_command"\)[\s\S]*execution_args\+=\(--start-cmd "\$start_command"\)/);
 assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name "\$image" "\$build_root"/);
 assert.match(workflow, /DG_BUILD_TARGET_INVALID/);
 assert.doesNotMatch(executableWorkflow, /sparse-checkout|framework|package-manager|install-command|start-command/i);

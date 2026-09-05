@@ -175,9 +175,10 @@ export class RailpackDeploymentService {
   async resetAndDeployFresh(user: User, projectId: string, confirmationPhrase: string, _request?: unknown) {
     const project = await this.project(user, projectId);
     if (confirmationPhrase !== project.name) throw new ForbiddenException("Type the project name to confirm a fresh deployment.");
-    const report = await this.managedDatabaseReconciliation.reconcile(project);
-    const resetAt = this.resetFreshAt(report);
-    return this.dispatch(user, projectId, "deploy", null, null, "RESET_FRESH", resetAt, report, _request);
+    // Compatibility admission deliberately precedes every cloud read, including
+    // reset reconciliation.  The reset decision is made later from the same
+    // immutable admitted configuration after exact-SHA topology is accepted.
+    return this.dispatch(user, projectId, "deploy", null, null, "RESET_FRESH", null, null, _request);
   }
   async destroy(user: User, projectId: string, confirmationPhrase: string) {
     await this.project(user, projectId);
@@ -326,22 +327,13 @@ export class RailpackDeploymentService {
 
   private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null, requestedMode: DeployAdmissionContext["requestedMode"] = "DEPLOY", resetAt: string | null = null, reconciled?: ManagedDatabaseReconciliationReport | null, request?: unknown) {
     const authorizedProject = await this.project(user, projectId);
-    const deployAdmission = action === "deploy" ? await this.managedDatabaseAdmission(authorizedProject, requestedMode, resetAt, reconciled) : null;
-    const admission = await this.admitLifecycleOperation(user, authorizedProject, action, rollbackTarget, retryOfOperationId, deployAdmission);
+    // Capture the immutable local configuration first.  Source compatibility is
+    // the pre-cloud boundary; managed DB reconciliation happens only after it.
+    let deployAdmission: DeployAdmissionContext | null = null;
+    const admission = await this.admitLifecycleOperation(user, authorizedProject, action, rollbackTarget, retryOfOperationId, null);
     if ("active" in admission) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: admission.active } };
     const { operation, configuration } = admission;
     const project = configuration.project;
-    if (deployAdmission?.resetDatabaseIdentity) {
-      await this.audit.record({
-        actorUser: user,
-        action: "MANAGED_DATABASE_RESET_RECONCILED",
-        resourceType: "project",
-        resourceId: project.id,
-        status: "success",
-        metadata: { previousReconciliationState: deployAdmission.databaseReconciliation?.state, cloudResourcesDeleted: false, resetAt },
-        req: request as any,
-      });
-    }
     const environmentName = configuration.environmentName;
     const operationId = operation.id;
     try {
@@ -382,6 +374,15 @@ export class RailpackDeploymentService {
         const requirementAdmission = await this.source.resolveRequirementsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, targets: resolved.targets, variables: configuration.variables.map(({ serviceId, key, isSecret, scope }) => ({ serviceId, key, isSecret, scope })), managedDatabase: configuration.managedDatabase?.attachedServiceId && isSupportedManagedDatabaseEngine(configuration.managedDatabase.engine) ? { engine: configuration.managedDatabase.engine, attachedServiceId: configuration.managedDatabase.attachedServiceId } : null, accessToken: credential.token });
         await this.sealRequirementAdmission(operation, configuration, targetRevisions, sourceSha, requirementAdmission);
         if (requirementAdmission.status !== "READY") throw new DeploymentRequirementAdmissionError(requirementAdmission);
+        const report = reconciled || await this.managedDatabaseReconciliation.reconcile(project);
+        const effectiveResetAt = requestedMode === "RESET_FRESH" && !resetAt ? this.resetFreshAt(report) : resetAt;
+        deployAdmission = await this.managedDatabaseAdmission(project, requestedMode, effectiveResetAt, report);
+        if (deployAdmission.resetDatabaseIdentity) {
+          await this.dataSource.transaction((manager) => this.reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission!));
+          await this.audit.record({ actorUser: user, action: "MANAGED_DATABASE_RESET_RECONCILED", resourceType: "project", resourceId: project.id, status: "success", metadata: { previousReconciliationState: deployAdmission.databaseReconciliation?.state, cloudResourcesDeleted: false, resetAt: effectiveResetAt }, req: request as any });
+        }
+        operation.metadata = { ...(operation.metadata || {}), requestedDeploymentMode: deployAdmission.requestedMode, deploymentRecoveryMode: deployAdmission.recoveryDecision?.deploymentMode || null, managedDatabaseReconciliationState: deployAdmission.databaseReconciliation?.state || null, resetFreshAt: deployAdmission.resetAt };
+        await this.runs.save(operation);
         await this.sealResolvedDeploymentConfiguration(operation, configuration);
       }
       operation.currentStage = "caller_reconciliation";
@@ -490,7 +491,7 @@ export class RailpackDeploymentService {
           await this.reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission);
         }
         const configuration = await this.captureAdmittedConfiguration(manager, project, environmentName, action);
-        if (action === "deploy" && configuration.managedDatabase) {
+        if (action === "deploy" && configuration.managedDatabase && deployAdmission) {
           if (!deployAdmission?.databaseReconciliation || !deployAdmission.recoveryDecision?.deploymentAllowed) throw new ConflictException("Managed database admission evidence is unavailable.");
           const admittedTierUpdatedAt = configuration.managedDatabase.updatedAt?.toISOString?.() || null;
           if (deployAdmission.resetDatabaseIdentity) {
