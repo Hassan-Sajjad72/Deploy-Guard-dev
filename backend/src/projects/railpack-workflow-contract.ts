@@ -68,9 +68,11 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
         // A null start command is an immutable, resolver-authorized static
         // application fact.  Railpack must retain its native static behavior.
         && (execution?.startCommand === expectedWorkspaceCommands?.start || execution?.startCommand === null);
-      const standaloneExecution = ["JS_STANDALONE", "PYTHON_STANDALONE"].includes(target.contract)
+      const standaloneExecution = target.contract === "JS_STANDALONE"
+        && execution?.packageTarget === null && ["npm", "pnpm", "yarn", "bun"].includes(execution?.packageManager || "") && execution?.buildCommand === null && execution?.startCommand === null;
+      const pythonStandaloneExecution = target.contract === "PYTHON_STANDALONE"
         && execution?.packageTarget === null && execution?.packageManager === null && execution?.buildCommand === null && execution?.startCommand === null;
-      if (target.resolverVersion !== "deployguard.build-target/v2" || target.status !== "resolved" || target.serviceDirectory !== service.serviceDirectory || !/^[0-9a-f]{64}$/.test(target.fingerprint) || (!workspaceExecution && !standaloneExecution)) throw new Error("Railpack build target is invalid.");
+      if (target.resolverVersion !== "deployguard.build-target/v2" || target.status !== "resolved" || target.serviceDirectory !== service.serviceDirectory || !/^[0-9a-f]{64}$/.test(target.fingerprint) || (!workspaceExecution && !standaloneExecution && !pythonStandaloneExecution)) throw new Error("Railpack build target is invalid.");
     }
     if (!service.buildEnvironment || typeof service.buildEnvironment !== "object" || Array.isArray(service.buildEnvironment) || !service.buildSecretReferences || typeof service.buildSecretReferences !== "object" || Array.isArray(service.buildSecretReferences) || !service.environment || typeof service.environment !== "object" || Array.isArray(service.environment) || !service.secretReferences || typeof service.secretReferences !== "object" || Array.isArray(service.secretReferences)) throw new Error("Railpack build/runtime references are invalid.");
     for (const [key, item] of Object.entries(service.buildEnvironment)) if (!KEY.test(key) || typeof item !== "string" || ["PORT", "HOST"].includes(key) || (service.databaseAttached && service.managedDatabase.aliases.includes(key))) throw new Error("Railpack build environment is invalid.");

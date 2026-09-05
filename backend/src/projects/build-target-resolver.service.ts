@@ -62,7 +62,8 @@ export class BuildTargetResolverService {
     }
     if (servicePackage) {
       if (dependencies.length) throw this.unsupported(input.serviceId, "A standalone JavaScript service may not depend on a local sibling outside its selected service boundary.", { dependencyPaths: dependencies.map((path) => repositoryPath(canonicalRoot, path)) });
-      return this.target({ sourceSha: input.sourceSha, serviceDirectory, workspaceRoot: serviceDirectory, buildRoot: serviceDirectory, installRoot: serviceDirectory, packageIdentity: servicePackage.name || null, contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: null, buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", evidence: { serviceManifest: true, python: null, workspace: null, dependencyCount: 0 } });
+      const packageManager = await this.packageManager(servicePath, servicePackage, false, input.serviceId);
+      return this.target({ sourceSha: input.sourceSha, serviceDirectory, workspaceRoot: serviceDirectory, buildRoot: serviceDirectory, installRoot: serviceDirectory, packageIdentity: servicePackage.name || null, contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager, buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", evidence: { serviceManifest: true, python: null, workspace: null, packageManager, packageManagerMarkers: await this.packageManagerMarkers(servicePath, servicePackage), dependencyCount: 0 } });
     }
     if (python.kind) {
       const external = dependencies.filter((path) => !inside(servicePath, path));
@@ -85,8 +86,8 @@ export class BuildTargetResolverService {
       if (!manifestWorkspace.declared && !pnpm.exists) continue;
       if (!manifestWorkspace.valid || !pnpm.valid) throw this.unsupported(serviceId, "Workspace ownership is uncertain because its declaration cannot be parsed.", { workspaceRoot: repositoryPath(root, candidate) });
       const patterns = [...new Set([...manifestWorkspace.patterns, ...pnpm.patterns])].sort();
-      const markers = [pnpm.exists && "pnpm-workspace.yaml", manifest?.packageManager && "packageManager", ...(await this.lockfileMarkers(candidate))].filter(Boolean) as string[];
-      const evidence: RootEvidence = { root: candidate, workspacePatterns: patterns, manager: await this.workspaceManager(candidate, manifest, pnpm.exists, serviceId), markers: [...new Set(markers)].sort() };
+      const markers = [pnpm.exists && "pnpm-workspace.yaml", ...(await this.packageManagerMarkers(candidate, manifest))].filter(Boolean) as string[];
+      const evidence: RootEvidence = { root: candidate, workspacePatterns: patterns, manager: await this.packageManager(candidate, manifest, pnpm.exists, serviceId), markers: [...new Set(markers)].sort() };
       const serviceRelative = repositoryPath(candidate, servicePath);
       if ((serviceRelative === "." && Boolean(manifest?.name)) || workspaceMember(serviceRelative, patterns)) owners.push(evidence);
     }
@@ -102,12 +103,13 @@ export class BuildTargetResolverService {
     try { const document = parseDocument(await readFile(path, "utf8")); const value = document.toJS() as { packages?: unknown }; if (document.errors.length || !Array.isArray(value?.packages) || value.packages.some((item) => typeof item !== "string" || !item.trim())) return { exists: true, valid: false, patterns: [] as string[] }; return { exists: true, valid: true, patterns: value.packages.map((item) => (item as string).trim()) }; } catch { return { exists: true, valid: false, patterns: [] as string[] }; }
   }
   private async lockfileMarkers(root: string) { const markers: string[] = []; for (const name of ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"]) if (await exists(join(root, name))) markers.push(name); return markers; }
-  private async workspaceManager(root: string, manifest: PackageManifest | null, pnpmWorkspace: boolean, serviceId: string): Promise<PackageManager> {
+  private async packageManagerMarkers(root: string, manifest: PackageManifest | null) { return [manifest?.packageManager && "packageManager", ...(await this.lockfileMarkers(root))].filter(Boolean) as string[]; }
+  private async packageManager(root: string, manifest: PackageManifest | null, pnpmWorkspace: boolean, serviceId: string): Promise<PackageManager> {
     const evidence = new Set<PackageManager>(); const declared = String(manifest?.packageManager || "").trim().match(/^(npm|pnpm|yarn|bun)@/i)?.[1]?.toLowerCase() as PackageManager | undefined;
-    if (manifest?.packageManager && !declared) throw this.unsupported(serviceId, "The repository packageManager declaration is unsupported or invalid.", { workspaceRoot: root });
+    if (manifest?.packageManager && !declared) throw this.unsupported(serviceId, "The packageManager declaration is unsupported or invalid.", { packageManagerRoot: root });
     if (declared) evidence.add(declared); if (pnpmWorkspace) evidence.add("pnpm");
     const locks = await this.lockfileMarkers(root); if (locks.some((name) => name === "package-lock.json" || name === "npm-shrinkwrap.json")) evidence.add("npm"); if (locks.includes("pnpm-lock.yaml")) evidence.add("pnpm"); if (locks.includes("yarn.lock")) evidence.add("yarn"); if (locks.some((name) => name === "bun.lock" || name === "bun.lockb")) evidence.add("bun");
-    if (evidence.size > 1) throw this.unsupported(serviceId, "Repository package-manager evidence conflicts.", { workspaceRoot: root, managers: [...evidence].sort() }); return [...evidence][0] || "npm";
+    if (evidence.size > 1) throw this.unsupported(serviceId, "Repository package-manager evidence conflicts.", { packageManagerRoot: root, managers: [...evidence].sort() }); return [...evidence][0] || "npm";
   }
   private async workspacePackages(evidence: RootEvidence, serviceId: string) {
     const packages: Array<{ name: string; path: string }> = []; for (const path of await this.manifests(evidence.root)) { const packagePath = dirname(path); const manifest = await json<PackageManifest>(path); if (manifest?.name && (repositoryPath(evidence.root, packagePath) === "." || workspaceMember(repositoryPath(evidence.root, packagePath), evidence.workspacePatterns))) packages.push({ name: manifest.name, path: packagePath }); }
