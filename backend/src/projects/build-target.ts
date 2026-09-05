@@ -2,9 +2,16 @@ import { createHash } from "crypto";
 import { normalizeServiceDirectory } from "./deployable-service-path";
 
 /** Immutable, source-SHA scoped build admission owned by DeployGuard. */
-export const BUILD_TARGET_RESOLVER_VERSION = "deployguard.build-target/v1";
+export const BUILD_TARGET_RESOLVER_VERSION = "deployguard.build-target/v2";
 export type BuildTargetStatus = "resolved" | "ambiguous" | "unsupported" | "invalid";
 export type BuildTargetStrategy = "isolated" | "workspace" | "python_local" | "override";
+export type DeploymentContract = "JS_STANDALONE" | "JS_WORKSPACE_MEMBER" | "PYTHON_STANDALONE";
+export type BuildTargetExecution = {
+  packageTarget: string | null;
+  packageManager: "npm" | "pnpm" | "yarn" | "bun" | null;
+  buildCommand: string | null;
+  startCommand: string | null;
+};
 export type BuildTargetOverride = {
   buildRoot?: string;
   workspaceRoot?: string;
@@ -22,6 +29,8 @@ export type CanonicalBuildTarget = {
   buildRoot: string;
   installRoot: string;
   packageIdentity: string | null;
+  contract: DeploymentContract;
+  execution: BuildTargetExecution;
   dependencyPaths: string[];
   strategy: BuildTargetStrategy;
   status: BuildTargetStatus;
@@ -37,6 +46,12 @@ export function canonicalBuildTarget(value: Omit<CanonicalBuildTarget, "fingerpr
     workspaceRoot: normalizeServiceDirectory(value.workspaceRoot),
     buildRoot: normalizeServiceDirectory(value.buildRoot),
     installRoot: normalizeServiceDirectory(value.installRoot),
+    execution: {
+      packageTarget: value.execution.packageTarget,
+      packageManager: value.execution.packageManager,
+      buildCommand: value.execution.buildCommand,
+      startCommand: value.execution.startCommand,
+    },
     dependencyPaths: [...new Set(value.dependencyPaths.map(normalizeServiceDirectory))].sort(),
     override: value.override ? Object.fromEntries(Object.entries(value.override).sort(([a], [b]) => a.localeCompare(b))) : null,
   };
@@ -45,13 +60,5 @@ export function canonicalBuildTarget(value: Omit<CanonicalBuildTarget, "fingerpr
 
 export function assertBuildTargetOverride(value: unknown): BuildTargetOverride | null {
   if (value == null) return null;
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Build-target override must be an object.");
-  const allowed = new Set(["buildRoot", "workspaceRoot", "installRoot", "selectedPackage", "buildCommand", "startCommand", "railpackConfigPath"]);
-  const result: BuildTargetOverride = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (!allowed.has(key) || typeof raw !== "string" || !raw.trim() || raw.length > 1024) throw new Error("Build-target override contains an invalid value.");
-    if (["buildRoot", "workspaceRoot", "installRoot", "railpackConfigPath"].includes(key)) (result as Record<string, string>)[key] = normalizeServiceDirectory(raw);
-    else (result as Record<string, string>)[key] = raw.trim();
-  }
-  return result;
+  throw new Error("Build-target overrides are unsupported by the DeployGuard v1 deployment contract.");
 }
