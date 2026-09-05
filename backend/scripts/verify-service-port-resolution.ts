@@ -89,7 +89,7 @@ try {
   assert.match(terraform, /network_mode\s*=\s*"awsvpc"/);
   assert.match(terraform, /containerPort = each\.value\.service_port, hostPort = each\.value\.service_port/);
   assert.doesNotMatch(terraform, /dynamic.*host.*port/is, "ECS does not remap ports across independent awsvpc tasks");
-  assert.match(deployment, /resolveServicePortsAtExactSha/);
+  assert.match(deployment, /resolveBuildTargetsAtExactSha/, "ports are resolved from the same exact-SHA checkout as canonical BuildTargets");
   assert.match(deployment, /service\.servicePort = resolved/);
   assert.match(deployment, /sealResolvedDeploymentConfiguration\(operation, configuration\)/);
   assert.match(repositorySource, /return await resolveServicePorts\(root, input\.services\);/, "the exact-SHA checkout remains present until asynchronous port resolution completes");

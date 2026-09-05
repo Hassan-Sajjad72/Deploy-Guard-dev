@@ -26,7 +26,7 @@ assert.match(outputs, /service_port/);
 assert.match(outputs, /transport_probe_container_name/);
 assert.match(outputs, /platform_health_check_path/);
 assert.match(outputs, /cloud_map_service_id/);
-assert.match(workflow, /while IFS= read -r service; do[\s\S]*railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$directory"/);
+assert.match(workflow, /while IFS= read -r service; do[\s\S]*railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$build_root"/);
 assert.match(workflow, /while IFS= read -r artifact; do[\s\S]*service_port="\$\(jq -r '\.servicePort'[\s\S]*docker run --detach[\s\S]*--env PORT="\$service_port"[\s\S]*--env HOST=0\.0\.0\.0/);
 assert.match(workflow, /verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
 const verifier = readFileSync(join(root, "infrastructure/railpack-runtime/verify-runtime.sh"), "utf8");
