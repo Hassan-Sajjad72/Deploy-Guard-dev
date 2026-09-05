@@ -70,6 +70,42 @@ async function main() {
   assert.equal(collector.owned([{ Key: "ManagedBy", Value: "DeployGuard" }, { Key: "DeployGuardProjectId", Value: projectId }, { Key: "Environment", Value: "production" }, { Key: "DeployGuardResource", Value: "managed-database" }], projectId, "dev"), false, "another environment's database evidence cannot affect this environment");
   assert.equal(collector.owned([{ Key: "ManagedBy", Value: "DeployGuard" }, { Key: "DeployGuardProjectId", Value: "99999999-9999-4999-8999-999999999999" }, { Key: "Environment", Value: "dev" }, { Key: "DeployGuardResource", Value: "managed-database" }], projectId, "dev"), false, "another project's database evidence cannot affect this project");
 
+  // DatabaseTierService persists a newly configured managed tier as PENDING.
+  // Reconcile the actual service path with no durable cloud or state evidence
+  // for each supported engine; PENDING alone must not manufacture stale state.
+  for (const engine of ["postgres", "mysql", "mongodb"] as const) {
+    collector.tiers = { findOne: async () => ({
+      projectId, provider: DatabaseTierProvider.MANAGED, persistenceEnabled: true,
+      status: DatabaseTierStatus.PENDING, efsFileSystemId: null, efsAccessPointId: null,
+      activeGenerationId: null, engine, attachedServiceId: "33333333-3333-4333-8333-333333333333", updatedAt: new Date("2026-09-06T00:00:00.000Z"),
+    }) };
+    collector.fileSystems = async () => [];
+    collector.secretPresent = async () => false;
+    collector.terraformDatabaseAddresses = async () => [];
+    const fresh = await collector.reconcile(project);
+    assert.equal(fresh.evidence.bindingStatus, DatabaseTierStatus.PENDING, `${engine} preserves the configured pending lifecycle status as evidence`);
+    assert.equal(fresh.state, State.HEALTHY, `${engine} fresh pending managed tier is healthy`);
+    assert.equal(fresh.deploymentAllowed, true, `${engine} fresh pending managed tier admits first provisioning`);
+    assert.equal(fresh.resetAllowed, false, `${engine} fresh pending managed tier is never reset-eligible`);
+  }
+  collector.secretPresent = async () => true;
+  const staleOwnedSecret = await collector.reconcile(project);
+  assert.equal(staleOwnedSecret.state, State.STALE_METADATA, "an exact project/environment-owned managed database secret remains stale metadata");
+  collector.secretPresent = async () => false;
+  collector.terraformDatabaseAddresses = async () => ["aws_efs_file_system.database"];
+  const staleTerraformState = await collector.reconcile(project);
+  assert.equal(staleTerraformState.state, State.STALE_METADATA, "an exact project/environment Terraform database address remains stale metadata");
+  collector.terraformDatabaseAddresses = async () => [];
+  const freshEvidence = {
+    managed: true, persistenceEnabled: true, expectedStorageIdentity: false,
+    bindingStatus: DatabaseTierStatus.PENDING, bindingFileSystemId: null, bindingAccessPointId: null,
+    currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false,
+    terraformDatabaseAddresses: [], usableRecoveryPointArn: null,
+  };
+  assert.equal(classifyManagedDatabase(freshEvidence).state, State.HEALTHY, "PENDING alone is not stale metadata");
+  assert.equal(classifyManagedDatabase({ ...freshEvidence, passwordSecretPresent: true, urlSecretPresent: true }).state, State.STALE_METADATA, "a durable owned managed-database secret remains stale metadata");
+  assert.equal(classifyManagedDatabase({ ...freshEvidence, terraformDatabaseAddresses: ["aws_efs_file_system.database"] }).state, State.STALE_METADATA, "a durable Terraform database address remains stale metadata");
+
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.managedDatabaseReconciliation = { reconcile: async () => report() };
   const healthy = await service.managedDatabaseAdmission(project, "DEPLOY", null);
@@ -141,7 +177,7 @@ async function main() {
   assert.match(terraform, /'deployguard'@'%'/, "the existing MySQL dynamic task-IP grant remains intact");
   assert.deepEqual(classifyStructuredFailure("terraform_plan", "DG_FAILURE code=DG_TERRAFORM_PLAN_FAILED stage=terraform_plan"), { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: "DG_TERRAFORM_PLAN_FAILED", failureServiceId: null });
   assert.deepEqual(classifyStructuredFailure("terraform_apply", "DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply"), { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", failureCode: "DG_TERRAFORM_APPLY_FAILED", failureServiceId: null });
-  console.log("LOW_RISK_DEFECT_CLOSURE=PASS DB_ADMISSION_STATES=5 PROJECT_ENVIRONMENT_ISOLATION=1 RESET_FRESH_RECONCILED=1 HEALTHY_DB_PRESERVED=1 TERRAFORM_PLAN_APPLY_SEPARATED=1");
+  console.log("LOW_RISK_DEFECT_CLOSURE=PASS DB_ADMISSION_STATES=5 FRESH_PENDING_ENGINES=3 PROJECT_ENVIRONMENT_ISOLATION=1 RESET_FRESH_RECONCILED=1 HEALTHY_DB_PRESERVED=1 TERRAFORM_PLAN_APPLY_SEPARATED=1");
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -6,7 +6,7 @@ import { BadRequestException, ServiceUnavailableException } from "@nestjs/common
 import { ConfigService } from "@nestjs/config";
 import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError, GithubAppService, canonicalDeployguardReusableWorkflow, renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
 import { DatabaseTierService } from "../src/projects/database-tier.service";
-import { DatabaseTierProvider, ProjectDatabaseTier } from "../src/projects/project-database-tier.entity";
+import { DatabaseTierProvider, DatabaseTierStatus, ProjectDatabaseTier } from "../src/projects/project-database-tier.entity";
 import { ProjectEnvironmentVariable } from "../src/projects/project-environment-variable.entity";
 import { ProjectDeployableService } from "../src/projects/project-deployable-service.entity";
 import { isSupportedManagedDatabaseEngine, managedDatabaseEngine } from "../src/projects/managed-database-engine";
@@ -158,6 +158,7 @@ async function updateDatabase(services: any[], dto: any, conflictingKeys: string
 const singleService = [{ id: "22222222-2222-4222-8222-222222222222", position: 0 }];
 const singleManaged = await updateDatabase(singleService, { provider: DatabaseTierProvider.MANAGED, engine: "postgres", persistenceEnabled: true });
 assert.equal(singleManaged.saved.attachedServiceId, singleService[0].id, "a single-service managed database attaches automatically");
+assert.equal(singleManaged.saved.status, DatabaseTierStatus.PENDING, "a newly configured managed database persists the non-durable pending lifecycle status");
 const multiServices = [...singleService, { id: "33333333-3333-4333-8333-333333333333", position: 1 }];
 await assert.rejects(() => updateDatabase(multiServices, { provider: DatabaseTierProvider.MANAGED, engine: "mysql", persistenceEnabled: true }), /Select the service/);
 const explicitManaged = await updateDatabase(multiServices, { provider: DatabaseTierProvider.MANAGED, engine: "mysql", persistenceEnabled: true, attachedServiceId: multiServices[1].id });
