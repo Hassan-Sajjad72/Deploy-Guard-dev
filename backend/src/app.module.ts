@@ -44,6 +44,7 @@ import { Project } from "./projects/project.entity";
 import { ProjectDeployableService } from "./projects/project-deployable-service.entity";
 import { ProjectServiceRuntimeConfigRevision } from "./projects/project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "./projects/project-generation-service-revision.entity";
+import { ProjectBuildTargetRevision } from "./projects/project-build-target-revision.entity";
 import { ProjectsModule } from "./projects/projects.module";
 import { ProjectTerraformLock } from "./state-management/project-terraform-lock.entity";
 import { ProjectTerraformState } from "./state-management/project-terraform-state.entity";
@@ -80,7 +81,7 @@ import { ObservabilityModule } from "./observability/observability.module";
         // Historical deployment/audit rows remain readable. Registering an
         // entity does not activate its retired mutation provider.
         entities: [
-          User, AuditLog, Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, GithubAppInstallation, ProjectEnvironmentVariable,
+          User, AuditLog, Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, ProjectBuildTargetRevision, GithubAppInstallation, ProjectEnvironmentVariable,
           ProjectDatabaseTier,
           ProjectServiceBinding, ProjectConfigurationSnapshot,
           ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
