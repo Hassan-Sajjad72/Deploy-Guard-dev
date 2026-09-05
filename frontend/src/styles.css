@@ -172,6 +172,8 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 .pipeline-recovery-panel .active-run-item{align-items:start;display:grid;grid-template-columns:minmax(220px,1fr) auto}
 .pipeline-recovery-panel .active-run-item>.state,.pipeline-recovery-panel .pipeline-safe-evidence{grid-column:1/-1;width:100%}
 .pipeline-safe-evidence pre{background:var(--ink);border-radius:var(--radius-sm);color:var(--on-strong);max-height:360px;padding:var(--space-4)}
+.pipeline-failure-diagnosis{background:var(--surface-raised);border:1px solid var(--border);border-left:4px solid var(--danger);border-radius:var(--radius-md);display:grid;gap:var(--space-3);grid-column:1/-1;padding:var(--space-5)}
+.pipeline-failure-diagnosis h3,.pipeline-failure-diagnosis h4,.pipeline-failure-diagnosis p{margin:0}
 
 @media(max-width:900px){
   .pipeline-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}

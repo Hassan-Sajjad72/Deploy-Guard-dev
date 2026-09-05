@@ -31,7 +31,7 @@ import { githubActionsDestroyEvidenceFromValue } from "./github-actions-destroy-
 import { ProjectDeletionService } from "./project-deletion.service";
 import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
 import { ProjectDeployableService } from "./project-deployable-service.entity";
-import { classifyStructuredFailure, terminalStructuredFailureMarker } from "./failure-ownership";
+import { classifyStructuredFailure, ExternalProvider, FailureOwner, terminalStructuredFailureMarker } from "./failure-ownership";
 import { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
@@ -45,6 +45,8 @@ import { BuildTargetResolutionError } from "./build-target-resolver.service";
 import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
 import { CanonicalBuildTarget } from "./build-target";
 import { DeploymentRequirementAdmissionError, RequirementAdmission } from "./deployment-requirement-resolver.service";
+import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
+import { failureDiagnosticFromMetadata } from "./failure-diagnostics/failure-diagnostic.types";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -128,6 +130,7 @@ export class RailpackDeploymentService {
     private readonly projectDeletion: ProjectDeletionService,
     private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
     private readonly audit: AuditLogService,
+    private readonly failureDiagnostics: FailureDiagnosticService,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy", null, null, "DEPLOY"); }
@@ -222,7 +225,7 @@ export class RailpackDeploymentService {
   async latest(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
     const operation = await this.runs.findOne({ where: { projectId }, order: { createdAt: "DESC" } });
-    return { deployment: operation };
+    return { deployment: operation ? { ...operation, diagnosis: failureDiagnosticFromMetadata(operation.metadata) } : null };
   }
   async history(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
@@ -428,11 +431,14 @@ export class RailpackDeploymentService {
       await this.runs.save(operation);
     } catch (error) {
       const failure = this.dispatchFailure(error, operation.currentStage);
-      operation.status = PipelineRunStatus.FAILED; operation.currentStage = "dispatch_failed"; operation.githubWorkflowStatus = "not_dispatched"; operation.failedAt = new Date(); operation.errorMessage = failure.message;
       const ownership = classifyStructuredFailure(failure.stage, `${failure.message} ${JSON.stringify(failure.evidence)}`);
-      operation.failureOwner = ownership.failureOwner; operation.externalProvider = ownership.externalProvider; operation.failureCode = ownership.failureCode; operation.failureServiceId = ownership.failureServiceId;
-      operation.metadata = { ...(operation.metadata || {}), dispatchState: "failed", failureSource: "deployguard_dispatch", failedStage: failure.stage, safeLog: failure.message, dispatchFailure: failure.evidence };
-      await this.runs.save(operation);
+      operation.githubWorkflowStatus = "not_dispatched";
+      await this.captureTerminalFailure(operation, {
+        stage: failure.stage, message: failure.message, safeEvidence: failure.message,
+        owner: ownership.failureOwner, provider: ownership.externalProvider, code: ownership.failureCode, serviceId: ownership.failureServiceId,
+        evidenceSource: "deployguard_dispatch",
+        metadata: { dispatchState: "failed", failureSource: "deployguard_dispatch", dispatchFailure: failure.evidence },
+      });
       if (error instanceof BuildTargetResolutionError) return { deployment: { state: "blocked", code: error.code, stage: failure.stage, message: error.message, operation } };
       if (error instanceof DeploymentRequirementAdmissionError) return { deployment: { state: error.admission.status === "INPUT_REQUIRED" ? "input_required" : "blocked", message: error.message, requirements: error.admission, operation } };
       return { deployment: { state: "dispatch_failed", message: "Deployment could not start. DeployGuard failed while starting the GitHub Actions deployment.", operation } };
@@ -850,16 +856,79 @@ export class RailpackDeploymentService {
     return { stage: stage || "dispatching", message: message.slice(0, 500), evidence: { classification: "deployguard_dispatch_failure" } };
   }
 
+  /** The only terminal ProjectPipelineRun failure writer and diagnostic intake. */
+  private async captureTerminalFailure(operation: ProjectPipelineRun, failure: {
+    stage: string;
+    message: string;
+    safeEvidence: string;
+    owner: FailureOwner;
+    provider: ExternalProvider | null;
+    code: string;
+    serviceId: string | null;
+    evidenceSource: string;
+    evidenceEventId?: string | null;
+    metadata?: Record<string, unknown>;
+  }) {
+    const failedAt = new Date();
+    // A few executable contract fixtures construct the service prototype
+    // without Nest. Production always supplies these providers; keeping the
+    // fallback inside this same intake preserves one diagnostic path there too.
+    const sanitizer = this.sanitizer || new LogSanitizerService();
+    const diagnostics = this.failureDiagnostics || new FailureDiagnosticService(sanitizer);
+    const safeEvidence = sanitizer.sanitize(failure.safeEvidence)
+      .replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 12_000)
+      || "No safe terminal evidence was available.";
+    operation.status = PipelineRunStatus.FAILED;
+    operation.currentStage = failure.stage;
+    operation.failedAt = failedAt;
+    operation.errorMessage = sanitizer.sanitize(failure.message).slice(0, 2_000);
+    operation.failureOwner = failure.owner;
+    operation.externalProvider = failure.provider;
+    operation.failureCode = failure.code || "DG_FAILURE_UNVERIFIED";
+    operation.failureServiceId = failure.serviceId;
+    const metadata: Record<string, unknown> = {
+      ...(operation.metadata || {}),
+      ...(failure.metadata || {}),
+      failedStage: failure.stage,
+      safeLog: safeEvidence,
+    };
+    const serviceName = this.failureServiceName(metadata, failure.serviceId);
+    metadata.failureDiagnostic = diagnostics.diagnose({
+      operationId: operation.id,
+      deploymentAction: (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy",
+      sourceSha: operation.commitSha,
+      failureStage: failure.stage,
+      terminalFailureCode: operation.failureCode,
+      failureOwner: operation.failureOwner,
+      externalProvider: operation.externalProvider,
+      serviceId: operation.failureServiceId,
+      serviceName,
+      errorMessage: operation.errorMessage,
+      safeEvidence,
+      evidenceSource: failure.evidenceSource,
+      evidenceEventId: failure.evidenceEventId,
+      failedAt,
+      workflowStages: metadata.workflowStages,
+    });
+    operation.metadata = metadata;
+    await this.runs.save(operation);
+    return operation;
+  }
+
+  private failureServiceName(metadata: Record<string, unknown>, serviceId: string | null) {
+    if (!serviceId) return null;
+    try {
+      const encoded = (metadata.immutableDispatchInputs as Record<string, unknown> | undefined)?.services_base64;
+      const contract = typeof encoded === "string" ? JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as RailpackRuntimeConfiguration : null;
+      return contract?.services.find((service) => service.serviceId === serviceId)?.serviceName || null;
+    } catch { return null; }
+  }
+
   private presentOperation(operation: ProjectPipelineRun) {
     const metadata = operation.metadata || {};
     const action = (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
     const dispatchFailed = metadata.dispatchState === "failed" && !operation.githubWorkflowRunId;
-    let failureServiceName: string | null = null;
-    try {
-      const encoded = (metadata.immutableDispatchInputs as Record<string, unknown> | undefined)?.services_base64;
-      const contract = typeof encoded === "string" ? JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as RailpackRuntimeConfiguration : null;
-      failureServiceName = contract?.services.find((service) => service.serviceId === operation.failureServiceId)?.serviceName || null;
-    } catch { failureServiceName = null; }
+    const failureServiceName = this.failureServiceName(metadata, operation.failureServiceId);
     return {
       id: operation.id, attempt: String(metadata.attempt || 1), retryOfOperationId: typeof metadata.retryOfOperationId === "string" ? metadata.retryOfOperationId : null,
       deploymentAction: action, status: dispatchFailed ? "dispatch_failed" : operation.status,
@@ -871,6 +940,7 @@ export class RailpackDeploymentService {
       errorMessage: operation.errorMessage || null, githubRunCreated: Boolean(operation.githubWorkflowRunId),
       workflowStagesUnavailable: metadata.terminalWorkflowStagesUnavailable === true,
       failureOwner: operation.failureOwner || null, externalProvider: operation.externalProvider || null, failureCode: operation.failureCode || null, failureServiceId: operation.failureServiceId || null, failureServiceName,
+      diagnosis: failureDiagnosticFromMetadata(metadata),
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       aiRuntimeAnalysisCandidate: operation.status === PipelineRunStatus.COMPLETED && Boolean(operation.generationId) && metadata.releaseEvidenceVerified === true,
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
@@ -1139,15 +1209,16 @@ export class RailpackDeploymentService {
           const failureEvidence = await this.terminalFailureEvidence(project.repositoryFullName, operation.githubWorkflowRunId, operation.id, credential.token, action);
           const marker = terminalStructuredFailureMarker(failureEvidence?.safeLog || "");
           const failedStage = marker.stage || failureEvidence?.failedStage || "release_failed";
-          operation.status = PipelineRunStatus.FAILED;
-          operation.currentStage = failedStage;
-          operation.errorMessage = failureEvidence?.safeLog || `GitHub Actions concluded: ${conclusion || "failure"}.`;
+          const terminalMessage = failureEvidence?.safeLog || `GitHub Actions concluded: ${conclusion || "failure"}.`;
           const ownership = classifyStructuredFailure(failedStage, failureEvidence?.safeLog || "");
-          operation.failureOwner = ownership.failureOwner; operation.externalProvider = ownership.externalProvider; operation.failureCode = ownership.failureCode; operation.failureServiceId = ownership.failureServiceId;
-          operation.metadata = {
-            ...(operation.metadata || {}), workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
-            ...(failureEvidence ? { failedStage, safeLog: failureEvidence.safeLog, workflowStages: terminalStages.length ? terminalStages : failureEvidence.workflowStages, failureSource: "github_actions" } : terminalStages.length ? { failedStage, workflowStages: terminalStages, failureSource: "github_actions" } : {}),
-          };
+          await this.captureTerminalFailure(operation, {
+            stage: failedStage, message: terminalMessage, safeEvidence: terminalMessage,
+            owner: ownership.failureOwner, provider: ownership.externalProvider, code: ownership.failureCode, serviceId: ownership.failureServiceId,
+            evidenceSource: "github_actions", evidenceEventId: operation.githubWorkflowRunId,
+            metadata: { workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
+              ...(failureEvidence ? { workflowStages: terminalStages.length ? terminalStages : failureEvidence.workflowStages } : terminalStages.length ? { workflowStages: terminalStages } : {}),
+              failureSource: "github_actions" },
+          });
         }
       } else {
         // Job metadata is available while the workflow runs; logs remain
@@ -1172,39 +1243,31 @@ export class RailpackDeploymentService {
       .replace(/[\u0000-\u001F\u007F]/g, " ")
       .trim()
       .slice(0, 2_000);
-    operation.status = PipelineRunStatus.FAILED;
-    operation.currentStage = "release_finalization";
-    operation.failedAt = new Date();
-    operation.errorMessage = "DeployGuard could not finalize the verified release.";
-    operation.failureOwner = "DEPLOYGUARD_PLATFORM"; operation.externalProvider = null; operation.failureCode = "DG_RELEASE_FINALIZATION_FAILED"; operation.failureServiceId = null;
-    operation.metadata = {
-      ...(operation.metadata || {}),
+    await this.captureTerminalFailure(operation, {
+      stage: "release_finalization", message: "DeployGuard could not finalize the verified release.", safeEvidence: detail || "DeployGuard could not finalize the verified release.",
+      owner: "DEPLOYGUARD_PLATFORM", provider: null, code: "DG_RELEASE_FINALIZATION_FAILED", serviceId: null,
+      evidenceSource: "deployguard_reconciliation",
+      metadata: {
       ...evidence,
       workflowConclusion: "success",
       workflowUpdatedAt: new Date().toISOString(),
       releaseEvidenceValidated: true,
-      failedStage: "release_finalization",
       failureSource: "deployguard_reconciliation",
       failureCategory: "release_finalization",
-      safeLog: detail || "DeployGuard could not finalize the verified release.",
-    };
-    await this.runs.save(operation);
+      },
+    });
   }
 
   private async persistTerminalEvidenceFailure(operation: ProjectPipelineRun, error: unknown) {
     const detail = this.sanitizer.sanitize(error instanceof Error ? error.message : "Incompatible terminal release evidence.")
       .replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 2_000);
-    operation.status = PipelineRunStatus.FAILED;
-    operation.currentStage = "release_evidence_validation";
-    operation.failedAt = new Date();
+    await this.captureTerminalFailure(operation, {
+      stage: "release_evidence_validation", message: "DeployGuard rejected incompatible terminal release evidence.", safeEvidence: detail || "The terminal result did not match the expected immutable release contract.",
+      owner: "DEPLOYGUARD_PLATFORM", provider: null, code: "DG_WORKFLOW_CONTRACT_INVALID", serviceId: null,
+      evidenceSource: "deployguard_reconciliation",
+      metadata: { workflowConclusion: "success", workflowUpdatedAt: new Date().toISOString(), failureSource: "deployguard_reconciliation", failureCategory: "release_contract_incompatible" },
+    });
     operation.completedAt = operation.completedAt || operation.failedAt;
-    operation.errorMessage = "DeployGuard rejected incompatible terminal release evidence.";
-    operation.failureOwner = "DEPLOYGUARD_PLATFORM"; operation.externalProvider = null; operation.failureCode = "DG_WORKFLOW_CONTRACT_INVALID"; operation.failureServiceId = null;
-    operation.metadata = {
-      ...(operation.metadata || {}), workflowConclusion: "success", workflowUpdatedAt: new Date().toISOString(),
-      failedStage: "release_evidence_validation", failureSource: "deployguard_reconciliation",
-      failureCategory: "release_contract_incompatible", safeLog: detail || "The terminal result did not match the expected immutable release contract.",
-    };
     await this.runs.save(operation);
   }
 
@@ -1630,21 +1693,18 @@ export class RailpackDeploymentService {
   private async persistDestroyCleanupFailure(operation: ProjectPipelineRun, verification: Record<string, unknown>, error: unknown) {
     const detail = this.sanitizer.sanitize(error instanceof Error ? error.message : "Unknown project deletion cleanup error")
       .replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 2_000);
-    operation.status = PipelineRunStatus.FAILED;
-    operation.currentStage = "project_delete_cleanup";
-    operation.failedAt = new Date();
-    operation.errorMessage = "DeployGuard could not complete verified project deletion cleanup.";
-    operation.metadata = {
-      ...(operation.metadata || {}),
+    await this.captureTerminalFailure(operation, {
+      stage: "project_delete_cleanup", message: "DeployGuard could not complete verified project deletion cleanup.", safeEvidence: detail || "DeployGuard could not complete verified project deletion cleanup.",
+      owner: "DEPLOYGUARD_PLATFORM", provider: null, code: "DG_PROJECT_DELETE_CLEANUP_FAILED", serviceId: null,
+      evidenceSource: "deployguard_reconciliation",
+      metadata: {
       destroyVerification: verification,
       destroyEvidenceValidated: true,
       workflowConclusion: "success",
-      failedStage: "project_delete_cleanup",
       failureSource: "deployguard_reconciliation",
       failureCategory: "project_delete_incomplete",
-      safeLog: detail || "DeployGuard could not complete verified project deletion cleanup.",
-    };
-    await this.runs.save(operation);
+      },
+    });
   }
 
   private runtimeIdentity(project: Project, environmentName: string, evidence: Record<string, unknown>) {

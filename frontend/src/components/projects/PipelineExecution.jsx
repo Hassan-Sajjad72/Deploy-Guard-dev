@@ -83,9 +83,10 @@ export default function PipelineExecution({ canManage = false, currentState, onR
   const timedStages = stages.filter((stage) => stage.status !== "skipped" && Number.isFinite(stage.durationMs) && stage.durationMs > 0);
   const longestStage = Math.max(1, ...timedStages.map((stage) => stage.durationMs));
   const latestFailed = latest?.status === "failed";
+  const retrySafeNow = !latest?.diagnosis || latest.diagnosis.retryDecision === "SAFE_NOW";
 
   async function retry() {
-    if (!canManage || !currentState.canRetry || !latestFailed || retrying.current) return;
+    if (!canManage || !currentState.canRetry || !latestFailed || !retrySafeNow || retrying.current) return;
     retrying.current = true;
     setRetryBusy(true);
     setError("");
@@ -119,7 +120,7 @@ export default function PipelineExecution({ canManage = false, currentState, onR
         </li>; })}
       </ol> : <p className="pipeline-unavailable">{latest?.workflowStagesUnavailable ? "Unavailable — GitHub Actions final step metadata is temporarily unavailable. The terminal operation status and run link remain available." : latest ? "GitHub Actions step metadata has not been collected yet. The operation status and run link remain available." : "No deployment request has been made yet."}</p>}
       {latest ? <details className="pipeline-advanced"><summary>Advanced run details</summary><dl><div><dt>GitHub Actions run</dt><dd>{latest.workflowRunId || "Unavailable"}</dd></div><div><dt>Workflow status</dt><dd>{latest.workflowStatus || "Unavailable"}</dd></div><div><dt>Operation identifier</dt><dd>{latest.id}</dd></div></dl></details> : null}
-      {latestFailed && canManage && currentState.canRetry ? <div className="pipeline-retry-action"><Button disabled={retryBusy} onClick={() => void retry()}>{retryBusy ? "Retrying…" : `Retry failed ${operationType(latest).toLowerCase()}`}</Button></div> : null}
+      {latestFailed && canManage && currentState.canRetry && retrySafeNow ? <div className="pipeline-retry-action"><Button disabled={retryBusy} onClick={() => void retry()}>{retryBusy ? "Retrying…" : `Retry failed ${operationType(latest).toLowerCase()}`}</Button></div> : null}
     </Card>
 
     {timedStages.length ? <ChartCard description="Stage duration from GitHub Actions timestamps." hasData title="Where deployment time was spent">

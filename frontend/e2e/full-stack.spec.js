@@ -229,13 +229,14 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   await page.getByLabel("Name").first().fill("Certified application");
   await page.getByLabel("Description").fill("Full-stack persisted configuration");
   const detailsResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}`));
-  await page.getByRole("button", { name: "Save project details" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   const details = await expectJson(await detailsResponse);
   expect(details.project.name).toBe("Certified application");
   await expect(page.getByText("Project details saved.")).toBeVisible();
 
+  await page.getByRole("tab", { name: "Services" }).click();
   const addResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith(`/api/projects/${projectId}/services`));
-  await page.getByRole("button", { name: "+ Add Service" }).click();
+  await page.getByRole("button", { name: "+ Add service" }).click();
   const added = await expectJson(await addResponse, 201);
   expect(added.service.id).toMatch(/^[0-9a-f-]{36}$/i);
   await expect(page.getByText("Service added.")).toBeVisible();
@@ -243,56 +244,59 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   const cards = page.locator(".settings-service-card");
   await expect(cards).toHaveCount(2);
   const second = cards.nth(1);
+  await second.locator("summary").click();
   await second.getByLabel("Name").fill("Api");
-  await second.getByLabel("Repository-relative directory").fill("apps/api");
+  await second.getByLabel("Directory").fill("apps/api");
   const serviceResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().includes(`/api/projects/${projectId}/services/`));
   await second.getByRole("button", { name: "Save service" }).click();
   const savedService = await expectJson(await serviceResponse);
   expect(savedService.service.serviceDirectory).toBe("apps/api");
   const apiServiceId = savedService.service.id;
 
-  const applicationService = page.getByRole("combobox", { name: "Application service", exact: true });
+  const applicationService = page.getByRole("combobox", { name: "Open Application service", exact: true });
   await applicationService.selectOption(apiServiceId);
   const applicationServiceResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}`));
-  await page.getByRole("button", { name: "Save application service" }).click();
+  await page.getByRole("button", { name: "Save entrypoint" }).click();
   const applicationProject = await expectJson(await applicationServiceResponse);
   expect(applicationProject.project.applicationEntryPointServiceId).toBe(apiServiceId);
   const selectedDelete = await request.delete(`${apiBase}/api/projects/${projectId}/services/${apiServiceId}`);
   expect(selectedDelete.status()).toBe(400);
 
-  const first = cards.nth(0);
-  await first.getByLabel("Paste KEY=VALUE lines").fill("PUBLIC_URL=https://example.test");
+  await page.getByRole("tab", { name: "Variables" }).click();
+  const variableService = page.getByRole("combobox", { name: "Service", exact: true });
+  await variableService.selectOption({ index: 0 });
+  await page.getByLabel("Paste KEY=VALUE lines").fill("PUBLIC_URL=https://example.test");
   const publicEnvResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url().includes(`/api/projects/${projectId}/services/`) && response.url().endsWith("/env/bulk"));
-  await first.getByRole("button", { name: "Save pasted variables" }).click();
+  await page.getByRole("button", { name: "Save pasted variables" }).click();
   const publicEnv = await expectJson(await publicEnvResponse, 201);
   expect(publicEnv.variables).toHaveLength(1);
   expect(JSON.stringify(publicEnv)).not.toContain("https://example.test");
 
-  await second.getByLabel("Paste KEY=VALUE lines").fill("JWT_SECRET=browser-secret-value");
+  await variableService.selectOption(apiServiceId);
+  await page.getByLabel("Paste KEY=VALUE lines").fill("JWT_SECRET=browser-secret-value");
   const secretEnvResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url().includes(apiServiceId) && response.url().endsWith("/env/bulk"));
-  await second.getByRole("button", { name: "Save pasted variables" }).click();
+  await page.getByRole("button", { name: "Save pasted variables" }).click();
   const secretEnv = await expectJson(await secretEnvResponse, 201);
   expect(secretEnv.variables[0].isSecret).toBe(true);
   expect(JSON.stringify(secretEnv)).not.toContain("browser-secret-value");
 
+  await page.getByRole("tab", { name: "Database" }).click();
   const databaseForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Managed database" }) });
-  await databaseForm.locator("select").nth(0).selectOption("managed");
-  await databaseForm.locator("select").nth(1).selectOption("mysql");
-  await databaseForm.locator("select").nth(2).selectOption(apiServiceId);
+  await databaseForm.getByLabel("Database type").selectOption("mysql");
+  await databaseForm.getByLabel("Attached service").selectOption(apiServiceId);
   const databaseResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}/database-tier`));
-  await databaseForm.getByRole("button", { name: "Save database settings" }).click();
+  await databaseForm.getByRole("button", { name: "Save database" }).click();
   const database = await expectJson(await databaseResponse);
   expect(database.database).toMatchObject({ provider: "managed", engine: "mysql", attachedServiceId: apiServiceId });
 
-  await databaseForm.locator("select").nth(0).selectOption("none");
+  await databaseForm.getByLabel("Database type").selectOption("none");
   const disabledResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}/database-tier`));
-  await databaseForm.getByRole("button", { name: "Save database settings" }).click();
+  await databaseForm.getByRole("button", { name: "Save database" }).click();
   expect((await expectJson(await disabledResponse)).database.provider).toBe("none");
-  await databaseForm.locator("select").nth(0).selectOption("managed");
-  await databaseForm.locator("select").nth(1).selectOption("mongodb");
-  await databaseForm.locator("select").nth(2).selectOption(apiServiceId);
+  await databaseForm.getByLabel("Database type").selectOption("mongodb");
+  await databaseForm.getByLabel("Attached service").selectOption(apiServiceId);
   const mongodbResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}/database-tier`));
-  await databaseForm.getByRole("button", { name: "Save database settings" }).click();
+  await databaseForm.getByRole("button", { name: "Save database" }).click();
   expect((await expectJson(await mongodbResponse)).database.engine).toBe("mongodb");
 
   const wrongDestroy = await request.post(`${apiBase}/api/projects/${projectId}/deploy/destroy`, { data: { confirmationPhrase: "wrong" } });
@@ -321,7 +325,7 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   const readonlyPage = await readonly.newPage();
   await readonlyPage.goto(`/projects/${projectId}/settings`);
   await expect(readonlyPage.getByRole("heading", { name: "Settings" })).toBeVisible();
-  await expect(readonlyPage.getByRole("button", { name: "Save project details" })).toHaveCount(0);
+  await expect(readonlyPage.getByRole("button", { name: "Save changes" })).toHaveCount(0);
   await readonlyPage.goto("/deploy");
   await expect(readonlyPage).toHaveURL(/\/403$/);
   const forbidden = await readonly.request.patch(`${apiBase}/api/projects/${projectId}`, { data: { name: "forbidden" }, headers: { "X-User-Id": readonlyUserId } });

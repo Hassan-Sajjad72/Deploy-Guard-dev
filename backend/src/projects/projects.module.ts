@@ -52,6 +52,7 @@ import { ManagedDatabaseReconciliationService } from "./managed-database-reconci
 import { BuildTargetResolverService } from "./build-target-resolver.service";
 import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
 import { DeploymentRequirementResolverService } from "./deployment-requirement-resolver.service";
+import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { DeploymentRequirementResolverService } from "./deployment-requirement-r
     RepositorySourceService,
     BuildTargetResolverService,
     DeploymentRequirementResolverService,
+    FailureDiagnosticService,
     PipelineStageResolverService,
     ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,
