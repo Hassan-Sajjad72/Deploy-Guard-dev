@@ -26,6 +26,7 @@ import { ProjectDeployableService } from "../src/projects/project-deployable-ser
 import { ProjectEnvironmentVariable } from "../src/projects/project-environment-variable.entity";
 import { ProjectDatabaseTier } from "../src/projects/project-database-tier.entity";
 import { ProjectConfigurationSnapshot } from "../src/projects/project-configuration-snapshot.entity";
+import { BuildTargetResolutionError } from "../src/projects/build-target-resolver.service";
 
 const user = { id: 7 } as any;
 const project = {
@@ -329,6 +330,54 @@ async function verifyPreDispatchFailure() {
   return failed;
 }
 
+async function verifyUnsupportedDeploymentContractBlocksBeforeWorkflowOrAws() {
+  const saved: any[] = [];
+  let workflowRegistrationCalls = 0;
+  let awsCapabilityCalls = 0;
+  let workflowDispatchCalls = 0;
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.managedDatabaseReconciliation = { reconcile: async () => ({ state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: false, persistenceEnabled: false, expectedStorageIdentity: false, bindingStatus: null, bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }) };
+  const runs = { findOne: async () => null, count: async () => 0, create: (row: any) => row, save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  service.runs = runs;
+  service.config = { get: (key: string, fallback = "") => key === "DEPLOYGUARD_REUSABLE_WORKFLOW" ? "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0123456789abcdef0123456789abcdef01234567" : fallback };
+  const serviceRow = { id: project.applicationEntryPointServiceId, projectId: project.id, name: "Web", serviceDirectory: ".", servicePort: 8080, position: 0 };
+  const snapshots: any[] = [];
+  const manager = {
+    query: async () => undefined,
+    getRepository: (entity: unknown) => entity === Project ? { findOne: async () => ({ ...project }) }
+      : entity === ProjectPipelineRun ? runs
+        : entity === ProjectDeployableService ? { find: async () => [serviceRow] }
+          : entity === ProjectEnvironmentVariable ? { createQueryBuilder: () => ({ addSelect() { return this; }, where() { return this; }, getMany: async () => [] }) }
+            : entity === ProjectDatabaseTier ? { findOne: async () => null }
+              : entity === ProjectConfigurationSnapshot ? { create: (row: any) => row, save: async (row: any) => { const value = { ...row, id: "88888888-8888-4888-8888-888888888888" }; snapshots.push(value); return value; } }
+                : entity === ProjectEnvironmentRoute ? { findOne: async () => null }
+                  : null,
+  };
+  service.dataSource = { transaction: async (callback: any) => callback(manager) };
+  service.crypto = { decrypt: (value: string) => value, encrypt: () => "encrypted-fixture" };
+  service.githubApp = {
+    tokenForRepository: async () => ({ token: "fixture-token" }),
+    ensureWorkflow: async () => { workflowRegistrationCalls += 1; return { registrationBranch: "main" }; },
+  };
+  service.source = {
+    resolveSourceSha: async () => "a".repeat(40),
+    resolveBuildTargetsAtExactSha: async () => { throw new BuildTargetResolutionError("DG_DEPLOYMENT_CONTRACT_UNSUPPORTED", serviceRow.id, "The selected service is outside the supported deployment contract."); },
+  };
+  service.awsCapabilities = { ensure: async () => { awsCapabilityCalls += 1; } };
+  service.actions = { triggerWorkflow: async () => { workflowDispatchCalls += 1; return { receipt: {} }; } };
+  const result = await service.deploy(user, project.id);
+  assert.equal(result.deployment.state, "blocked");
+  assert.equal(result.deployment.code, "DG_DEPLOYMENT_CONTRACT_UNSUPPORTED");
+  assert.equal(result.deployment.stage, "deployment_contract_admission");
+  assert.equal(workflowRegistrationCalls, 0, "unsupported contracts must not construct a reusable-workflow dispatch");
+  assert.equal(awsCapabilityCalls, 0, "unsupported contracts must not reach AWS capability verification");
+  assert.equal(workflowDispatchCalls, 0, "unsupported contracts must never dispatch GitHub Actions");
+  assert.equal(saved.at(-1).failureCode, "DG_DEPLOYMENT_CONTRACT_UNSUPPORTED");
+  assert.equal(saved.at(-1).metadata.failedStage, "deployment_contract_admission");
+  assert.equal(snapshots.length, 1, "blocked contract admission remains attached to the immutable configuration snapshot");
+}
+
 async function verifyAtomicAdmissionAndImmutableConfiguration() {
   const operations: any[] = [];
   const snapshots: any[] = [];
@@ -413,7 +462,7 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   let validatedServices: any[] = [];
   service.source = {
     resolveSourceSha: async () => "a".repeat(40),
-    resolveBuildTargetsAtExactSha: async (input: any) => { validatedServices = input.services; return { ports: input.services.map((item: any) => ({ serviceId: item.serviceId, servicePort: 3000, evidence: { priority: 2, source: "fixture" } })), targets: input.services.map((item: any) => ({ serviceId: item.serviceId, target: { resolverVersion: "deployguard.build-target/v1", sourceSha: "a".repeat(40), serviceDirectory: item.serviceDirectory, workspaceRoot: ".", buildRoot: item.serviceDirectory, installRoot: item.serviceDirectory, packageIdentity: "fixture", dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "a".repeat(64) } })) }; },
+    resolveBuildTargetsAtExactSha: async (input: any) => { validatedServices = input.services; return { ports: input.services.map((item: any) => ({ serviceId: item.serviceId, servicePort: 3000, evidence: { priority: 2, source: "fixture" } })), targets: input.services.map((item: any) => ({ serviceId: item.serviceId, target: { resolverVersion: "deployguard.build-target/v2", sourceSha: "a".repeat(40), serviceDirectory: item.serviceDirectory, workspaceRoot: ".", buildRoot: item.serviceDirectory, installRoot: item.serviceDirectory, packageIdentity: "fixture", contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: null, buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "a".repeat(64) } })) }; },
     resolveRequirementsAtExactSha: async () => ({ status: "READY", fingerprint: "b".repeat(64), requirements: [], unresolvedRequired: [], prohibitedOverrides: [], duplicateConflicts: [], validationBlockers: [] }),
   };
   service.buildTargetRevisions = { create: (row: any) => row, save: async (row: any) => ({ ...row, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }) };
@@ -916,6 +965,7 @@ void (async () => {
   await verifyAtomicAdmissionAndImmutableConfiguration();
   await verifyActiveOperationUniquenessConflictReturnsCanonicalNoOp();
   const failed = await verifyPreDispatchFailure();
+  await verifyUnsupportedDeploymentContractBlocksBeforeWorkflowOrAws();
   verifyCapabilityFailureIsBoundedAndPreDispatch();
   await verifyPerActionCapabilitySimulation();
   await verifyReleaseArtifactEvidenceReconciliation();
@@ -954,7 +1004,7 @@ void (async () => {
   assert.match(workflow, /name: Install Terraform[\s\S]*?if: success\(\)/);
   assert.match(workflow, /name: Materialize release runtime[\s\S]*?steps\.image\.outputs\.published == 'true'/);
   assert.match(workflow, /name: Publish verified release result[\s\S]*?if: success\(\) && hashFiles/);
-  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" --name/);
+  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name/);
   assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
   assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
   assert.match(overviewPage, /getProjectCurrentState/);

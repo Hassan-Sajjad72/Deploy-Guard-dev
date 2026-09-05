@@ -52,7 +52,24 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     ids.add(service.serviceId); names.add(loweredName);
     if (!Number.isInteger(service.servicePort) || service.servicePort < 1 || service.servicePort > 65535) throw new Error("Railpack service port is invalid.");
     if (normalizeServiceDirectory(service.serviceDirectory) !== service.serviceDirectory) throw new Error("Railpack service directory is not canonical.");
-    if ((service.buildTargetRevisionId && !UUID.test(service.buildTargetRevisionId)) || (service.buildTarget && (service.buildTarget.status !== "resolved" || service.buildTarget.serviceDirectory !== service.serviceDirectory || !/^[0-9a-f]{64}$/.test(service.buildTarget.fingerprint)))) throw new Error("Railpack build target is invalid.");
+    if (service.buildTargetRevisionId && !UUID.test(service.buildTargetRevisionId)) throw new Error("Railpack build target is invalid.");
+    if (service.buildTarget) {
+      const target = service.buildTarget;
+      const execution = target.execution;
+      const expectedWorkspaceCommands = execution?.packageManager === "pnpm" ? { build: `pnpm --filter ${target.packageIdentity} run build`, start: `pnpm --filter ${target.packageIdentity} run start` }
+        : execution?.packageManager === "yarn" ? { build: `yarn workspace ${target.packageIdentity} run build`, start: `yarn workspace ${target.packageIdentity} run start` }
+          : execution?.packageManager === "bun" ? { build: `bun --filter ${target.packageIdentity} run build`, start: `bun --filter ${target.packageIdentity} run start` }
+            : execution?.packageManager === "npm" ? { build: `npm --workspace ${target.packageIdentity} run build`, start: `npm --workspace ${target.packageIdentity} run start` }
+              : null;
+      const workspaceExecution = target.contract === "JS_WORKSPACE_MEMBER"
+        && execution?.packageTarget === target.packageIdentity
+        && ["npm", "pnpm", "yarn", "bun"].includes(execution?.packageManager || "")
+        && execution?.buildCommand === expectedWorkspaceCommands?.build
+        && execution?.startCommand === expectedWorkspaceCommands?.start;
+      const standaloneExecution = ["JS_STANDALONE", "PYTHON_STANDALONE"].includes(target.contract)
+        && execution?.packageTarget === null && execution?.packageManager === null && execution?.buildCommand === null && execution?.startCommand === null;
+      if (target.resolverVersion !== "deployguard.build-target/v2" || target.status !== "resolved" || target.serviceDirectory !== service.serviceDirectory || !/^[0-9a-f]{64}$/.test(target.fingerprint) || (!workspaceExecution && !standaloneExecution)) throw new Error("Railpack build target is invalid.");
+    }
     if (!service.buildEnvironment || typeof service.buildEnvironment !== "object" || Array.isArray(service.buildEnvironment) || !service.buildSecretReferences || typeof service.buildSecretReferences !== "object" || Array.isArray(service.buildSecretReferences) || !service.environment || typeof service.environment !== "object" || Array.isArray(service.environment) || !service.secretReferences || typeof service.secretReferences !== "object" || Array.isArray(service.secretReferences)) throw new Error("Railpack build/runtime references are invalid.");
     for (const [key, item] of Object.entries(service.buildEnvironment)) if (!KEY.test(key) || typeof item !== "string" || ["PORT", "HOST"].includes(key) || (service.databaseAttached && service.managedDatabase.aliases.includes(key))) throw new Error("Railpack build environment is invalid.");
     for (const [key, reference] of Object.entries(service.buildSecretReferences)) if (!KEY.test(key) || !SECRET_VALUE_FROM.test(reference) || ["PORT", "HOST"].includes(key) || (service.databaseAttached && service.managedDatabase.aliases.includes(key))) throw new Error("Railpack build secret reference is invalid.");

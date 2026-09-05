@@ -432,6 +432,7 @@ export class RailpackDeploymentService {
       operation.failureOwner = ownership.failureOwner; operation.externalProvider = ownership.externalProvider; operation.failureCode = ownership.failureCode; operation.failureServiceId = ownership.failureServiceId;
       operation.metadata = { ...(operation.metadata || {}), dispatchState: "failed", failureSource: "deployguard_dispatch", failedStage: failure.stage, safeLog: failure.message, dispatchFailure: failure.evidence };
       await this.runs.save(operation);
+      if (error instanceof BuildTargetResolutionError) return { deployment: { state: "blocked", code: error.code, stage: failure.stage, message: error.message, operation } };
       if (error instanceof DeploymentRequirementAdmissionError) return { deployment: { state: error.admission.status === "INPUT_REQUIRED" ? "input_required" : "blocked", message: error.message, requirements: error.admission, operation } };
       return { deployment: { state: "dispatch_failed", message: "Deployment could not start. DeployGuard failed while starting the GitHub Actions deployment.", operation } };
     }
@@ -834,7 +835,8 @@ export class RailpackDeploymentService {
       return { stage: evidenceStage || stage || "source_resolution", message: error.message.slice(0, 500), evidence: { classification: "repository_configuration", safeDetail: error.safeDetail } };
     }
     if (error instanceof BuildTargetResolutionError) {
-      return { stage: "build_target_resolution", message: `${error.message} ${error.safeDetail()}`.slice(0, 500), evidence: { classification: "build_target_admission", code: error.code, serviceId: error.serviceId, ...error.evidence } };
+      const contractAdmission = error.code === "DG_DEPLOYMENT_CONTRACT_UNSUPPORTED";
+      return { stage: contractAdmission ? "deployment_contract_admission" : "build_target_resolution", message: `${error.message} ${error.safeDetail()}`.slice(0, 500), evidence: { classification: contractAdmission ? "deployment_contract" : "build_target_admission", code: error.code, serviceId: error.serviceId, ...error.evidence } };
     }
     if (error instanceof DeploymentRequirementAdmissionError) {
       const code = error.admission.status === "INPUT_REQUIRED" ? "DG_DEPLOYMENT_INPUT_REQUIRED" : "DG_DEPLOYMENT_REQUIREMENTS_BLOCKED";

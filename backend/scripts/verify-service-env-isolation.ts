@@ -8,7 +8,7 @@ const webId = "22222222-2222-4222-8222-222222222222";
 const apiId = "33333333-3333-4333-8333-333333333333";
 const operationId = "44444444-4444-4444-8444-444444444444";
 const service = Object.create(RailpackDeploymentService.prototype) as any;
-const buildTarget = (serviceId: string, directory: string) => ({ id: serviceId === webId ? "77777777-7777-4777-8777-777777777777" : "88888888-8888-4888-8888-888888888888", target: { resolverVersion: "deployguard.build-target/v1", sourceSha: "a".repeat(40), serviceDirectory: directory, workspaceRoot: directory, buildRoot: directory, installRoot: directory, packageIdentity: directory, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: serviceId === webId ? "a".repeat(64) : "b".repeat(64) } });
+const buildTarget = (serviceId: string, directory: string) => ({ id: serviceId === webId ? "77777777-7777-4777-8777-777777777777" : "88888888-8888-4888-8888-888888888888", target: { resolverVersion: "deployguard.build-target/v2", sourceSha: "a".repeat(40), serviceDirectory: directory, workspaceRoot: directory, buildRoot: directory, installRoot: directory, packageIdentity: directory, contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: null, buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: serviceId === webId ? "a".repeat(64) : "b".repeat(64) } });
 service.deployableServices = { find: async () => [
   { id: webId, projectId, name: "Web", serviceDirectory: "web", servicePort: 3000, position: 0 },
   { id: apiId, projectId, name: "API", serviceDirectory: "api", servicePort: 8000, position: 1 },

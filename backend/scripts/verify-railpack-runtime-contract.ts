@@ -35,9 +35,34 @@ const pinned = parsePinnedReusableWorkflow("Hassan-Sajjad72/Deploy-Guard-dev/.gi
 const caller = renderDeployguardCallerWorkflow(pinned.reference);
 const jqContract = workflow.match(/jq -e[^']*'\n([\s\S]*?)\n\s*' \.deployguard\/runtime\.json/)?.[1];
 assert.ok(jqContract, "the workflow service-contract jq filter must be extractable");
-const contractFixture: RailpackRuntimeConfiguration = { schemaVersion: 3, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "44444444-4444-4444-8444-444444444444", buildTargetRevisionId: "55555555-5555-4555-8555-555555555555", buildTarget: { resolverVersion: "deployguard.build-target/v1", sourceSha: "a".repeat(40), serviceDirectory: ".", workspaceRoot: ".", buildRoot: ".", installRoot: ".", packageIdentity: "fixture", dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "d".repeat(64) }, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, buildEnvironment: { PUBLIC_BUILD_MODE: "production" }, buildSecretReferences: { BUILD_TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:BUILD_TOKEN::${"c".repeat(64)}` }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::${"b".repeat(64)}` }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
+const contractFixture: RailpackRuntimeConfiguration = { schemaVersion: 3, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "44444444-4444-4444-8444-444444444444", buildTargetRevisionId: "55555555-5555-4555-8555-555555555555", buildTarget: { resolverVersion: "deployguard.build-target/v2", sourceSha: "a".repeat(40), serviceDirectory: ".", workspaceRoot: ".", buildRoot: ".", installRoot: ".", packageIdentity: "fixture", contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: null, buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "d".repeat(64) }, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, buildEnvironment: { PUBLIC_BUILD_MODE: "production" }, buildSecretReferences: { BUILD_TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:BUILD_TOKEN::${"c".repeat(64)}` }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::${"b".repeat(64)}` }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
 const jqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(contractFixture), encoding: "utf8" });
 assert.equal(jqResult.status, 0, `workflow service contract must accept the canonical runtime fixture: ${jqResult.stderr}`);
+const workspaceServerFixture: any = structuredClone(contractFixture);
+Object.assign(workspaceServerFixture.services[0], { serviceDirectory: "packages/server" });
+workspaceServerFixture.services[0].buildTarget = {
+  ...workspaceServerFixture.services[0].buildTarget,
+  serviceDirectory: "packages/server", workspaceRoot: ".", buildRoot: ".", installRoot: ".", packageIdentity: "server", contract: "JS_WORKSPACE_MEMBER", strategy: "workspace",
+  execution: { packageTarget: "server", packageManager: "pnpm", buildCommand: "pnpm --filter server run build", startCommand: "pnpm --filter server run start" },
+};
+assert.doesNotThrow(() => servicesBase64(workspaceServerFixture), "a workspace member runtime payload must preserve its root build scope and selected package command");
+const workspaceServerJqResult = spawnSync("jq", ["-e", "--arg", "project", workspaceServerFixture.projectId, "--arg", "operation", workspaceServerFixture.operationId, "--arg", "sha", workspaceServerFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(workspaceServerFixture), encoding: "utf8" });
+assert.equal(workspaceServerJqResult.status, 0, `workflow must admit the server workspace payload: ${workspaceServerJqResult.stderr}`);
+const workspaceClientFixture: any = structuredClone(workspaceServerFixture);
+workspaceClientFixture.services[0].serviceDirectory = "packages/client";
+workspaceClientFixture.services[0].buildTarget = {
+  ...workspaceClientFixture.services[0].buildTarget,
+  serviceDirectory: "packages/client", packageIdentity: "client",
+  execution: { packageTarget: "client", packageManager: "pnpm", buildCommand: "pnpm --filter client run build", startCommand: "pnpm --filter client run start" },
+};
+assert.doesNotThrow(() => servicesBase64(workspaceClientFixture), "a second workspace service must retain its own selected package command");
+assert.notEqual(workspaceServerFixture.services[0].buildTarget.execution.buildCommand, workspaceClientFixture.services[0].buildTarget.execution.buildCommand, "server and client cannot collapse to one root workspace command");
+const invalidWorkspaceExecution: any = structuredClone(workspaceServerFixture);
+invalidWorkspaceExecution.services[0].buildTarget.execution.startCommand = null;
+assert.throws(() => servicesBase64(invalidWorkspaceExecution), /Railpack build target is invalid/, "a workspace payload without package-specific start execution is blocked before workflow dispatch");
+const genericWorkspaceExecution: any = structuredClone(workspaceServerFixture);
+genericWorkspaceExecution.services[0].buildTarget.execution.buildCommand = "pnpm run build";
+assert.throws(() => servicesBase64(genericWorkspaceExecution), /Railpack build target is invalid/, "a generic root workspace command is blocked before workflow dispatch");
 const invalidReference = structuredClone(contractFixture);
 invalidReference.services[0].secretReferences.TOKEN = "terraform://database/password";
 const invalidJqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(invalidReference), encoding: "utf8" });
@@ -221,7 +246,8 @@ assert.doesNotMatch(workflow, /rollback_image_uri|runtime_environment_base64|run
 assert.match(deploymentService, /result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION/);
 assert.match(deploymentService, /release_contract_incompatible/);
 assert.match(deploymentService, /Destroy requires the authoritative verified deployed release identity/);
-assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$build_root"/);
+assert.match(workflow, /execution_args\+=\(--build-cmd "\$build_command" --start-cmd "\$start_command"\)/, "workspace execution commands must be consumed by Railpack");
+assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name "\$image" "\$build_root"/);
 assert.match(workflow, /buildTargetRevisionId/);
 assert.match(workflow, /get-secret-value --secret-id "\$secret_id" --version-id "\$version_id"/, "build secrets are fetched by immutable secret version");
 assert.match(workflow, /build_env_args\+=\(--env "\$key"\)/, "Railpack receives build ENV names without raw values in argv");
@@ -230,7 +256,7 @@ assert.match(workflow, /BUILDKIT_IMAGE: moby\/buildkit:v0\.16\.0@sha256:bc1fe182
 assert.match(workflow, /docker version --format/);
 assert.match(workflow, /docker run --rm --privileged --detach --name "\$BUILDKIT_CONTAINER" "\$BUILDKIT_IMAGE"/);
 assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
-assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" --name "\$image" "\$build_root"/);
+assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name "\$image" "\$build_root"/);
 assert.match(workflow, /DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build/);
 assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*?docker rm --force "\$BUILDKIT_CONTAINER"/);
 assert.doesNotMatch(workflow, /moby\/buildkit:latest/);

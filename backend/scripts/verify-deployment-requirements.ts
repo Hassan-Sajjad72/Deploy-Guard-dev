@@ -7,7 +7,7 @@ import { DeploymentRequirementResolverService } from "../src/projects/deployment
 import { CanonicalBuildTarget, canonicalBuildTarget } from "../src/projects/build-target";
 
 const resolver = new DeploymentRequirementResolverService(); const sha = "a".repeat(40); const first = "11111111-1111-4111-8111-111111111111"; const second = "22222222-2222-4222-8222-222222222222";
-const target = (serviceId: string, directory = ".") => ({ serviceId, target: canonicalBuildTarget({ resolverVersion: "deployguard.build-target/v1", sourceSha: sha, serviceDirectory: directory, workspaceRoot: ".", buildRoot: directory, installRoot: directory, packageIdentity: "fixture", dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null }) });
+const target = (serviceId: string, directory = ".") => ({ serviceId, target: canonicalBuildTarget({ resolverVersion: "deployguard.build-target/v2", sourceSha: sha, serviceDirectory: directory, workspaceRoot: ".", buildRoot: directory, installRoot: directory, packageIdentity: "fixture", contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: null, buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null }) });
 const resolve = (root: string, variables: any[] = [], database: any = null, targets = [target(first)]) => resolver.resolve(root, { sourceSha: sha, targets, variables, managedDatabase: database });
 void (async () => {
   const root = await mkdtemp(join(tmpdir(), "deployguard-requirements-"));
