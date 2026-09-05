@@ -65,7 +65,9 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
         && execution?.packageTarget === target.packageIdentity
         && ["npm", "pnpm", "yarn", "bun"].includes(execution?.packageManager || "")
         && execution?.buildCommand === expectedWorkspaceCommands?.build
-        && execution?.startCommand === expectedWorkspaceCommands?.start;
+        // A null start command is an immutable, resolver-authorized static
+        // application fact.  Railpack must retain its native static behavior.
+        && (execution?.startCommand === expectedWorkspaceCommands?.start || execution?.startCommand === null);
       const standaloneExecution = ["JS_STANDALONE", "PYTHON_STANDALONE"].includes(target.contract)
         && execution?.packageTarget === null && execution?.packageManager === null && execution?.buildCommand === null && execution?.startCommand === null;
       if (target.resolverVersion !== "deployguard.build-target/v2" || target.status !== "resolved" || target.serviceDirectory !== service.serviceDirectory || !/^[0-9a-f]{64}$/.test(target.fingerprint) || (!workspaceExecution && !standaloneExecution)) throw new Error("Railpack build target is invalid.");
