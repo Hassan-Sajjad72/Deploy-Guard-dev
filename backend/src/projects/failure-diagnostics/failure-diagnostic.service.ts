@@ -8,6 +8,7 @@ import {
   FailureDiagnosticConfidence,
   FailureRetryDecision,
 } from "./failure-diagnostic.types";
+import { MANAGED_DATABASE_RECONCILIATION_FAILURE } from "../managed-database-reconciliation.error";
 
 type Diagnosis = {
   rootCauseCode: string;
@@ -64,7 +65,7 @@ export class FailureDiagnosticService {
 
   diagnose(input: DeploymentFailureDiagnosticInput): DeploymentFailureDiagnostic {
     const evidence = this.safe(input.safeEvidence || input.errorMessage || "No terminal evidence was available.", 12_000);
-    const diagnosis = this.classify(input.terminalFailureCode, input.failureStage, evidence);
+    const diagnosis = this.classify(input.terminalFailureCode, input.failureStage, evidence, input.managedDatabaseReconciliation);
     const owner = diagnosis.owner && input.failureOwner === "UNVERIFIED" ? diagnosis.owner : input.failureOwner;
     const provider = owner === "EXTERNAL_PROVIDER" ? (input.externalProvider || diagnosis.provider || null) : input.externalProvider || null;
     const excerpt = this.excerpt(evidence, diagnosis.evidencePattern);
@@ -96,7 +97,15 @@ export class FailureDiagnosticService {
     };
   }
 
-  private classify(terminalCode: string, stage: string, evidence: string): Diagnosis {
+  private classify(
+    terminalCode: string,
+    stage: string,
+    evidence: string,
+    managedDatabase?: DeploymentFailureDiagnosticInput["managedDatabaseReconciliation"],
+  ): Diagnosis {
+    if (terminalCode === MANAGED_DATABASE_RECONCILIATION_FAILURE && managedDatabase) {
+      return this.managedDatabaseDiagnosis(managedDatabase);
+    }
     if (/ERR_PNPM_OUTDATED_LOCKFILE|pnpm-lock\.yaml[^\n]{0,160}(?:not up to date|outdated)|frozen-lockfile[^\n]{0,120}(?:fail|mismatch)/i.test(evidence)) {
       const mismatch = evidence.match(/([@\w./-]*package\.json)[^\n]*?([@\w./-]+)\s*=\s*([^\s,;]+)[^\n]*?(?:lockfile|pnpm-lock\.yaml)[^\n]*?\2\s*=\s*([^\s,;]+)/i);
       const reason = mismatch
@@ -140,6 +149,65 @@ export class FailureDiagnosticService {
       remediationSteps: ["Review the relevant sanitized evidence.", "Use evidence-bound AI troubleshooting if useful.", "Do not assume retry is safe until the cause is understood."],
       retryDecision: "INSUFFICIENT_EVIDENCE", confidence: "UNVERIFIED",
     };
+  }
+
+  private managedDatabaseDiagnosis(reconciliation: NonNullable<DeploymentFailureDiagnosticInput["managedDatabaseReconciliation"]>): Diagnosis {
+    const resetGuidance = reconciliation.resetAllowed && !reconciliation.recoveryAvailable
+      ? "If no persistent database data must be retained, use the existing Reset & Deploy Fresh flow only after explicitly confirming its destructive fresh-generation semantics."
+      : "Do not reset or delete managed database resources automatically.";
+    const common = {
+      owner: "DEPLOYGUARD_PLATFORM" as const,
+      affectedComponent: "Managed database reconciliation",
+      retryDecision: "NOT_SAFE_YET" as const,
+      confidence: "DETERMINISTIC" as const,
+    };
+    switch (reconciliation.reconciliationState) {
+      case "STALE_METADATA":
+        return {
+          ...common,
+          rootCauseCode: "DG_MANAGED_DATABASE_STALE_METADATA",
+          summary: "Stale managed database state blocks deployment.",
+          technicalReason: "No verified persistent database exists, but DeployGuard-owned credentials, bindings, or Terraform state remain in the exact project/environment namespace.",
+          recommendedAction: "Inspect the persisted managed-database reconciliation evidence before starting another deployment.",
+          remediationSteps: ["Review the deterministic managed-database reconciliation evidence.", "Normal deployment is intentionally blocked until stale platform state is reconciled.", resetGuidance],
+        };
+      case "RECOVERABLE":
+        return {
+          ...common,
+          rootCauseCode: "DG_MANAGED_DATABASE_RECOVERY_REQUIRED",
+          summary: "Managed database recovery is required before deployment.",
+          technicalReason: "Expected persistent storage is unavailable, but a verified recovery point exists.",
+          recommendedAction: "Restore the managed database through the existing recovery path before deploying.",
+          remediationSteps: ["Review the verified recovery evidence.", "Restore the managed database using the existing recovery path.", "Do not use a destructive reset while recovery evidence exists."],
+        };
+      case "DATA_LOST_RESET_REQUIRED":
+        return {
+          ...common,
+          rootCauseCode: "DG_MANAGED_DATABASE_DATA_LOST_RESET_REQUIRED",
+          summary: "Managed database data is unavailable and requires an explicit fresh reset.",
+          technicalReason: "DeployGuard established that persistent data previously existed, current storage is unavailable, and no verified recovery point exists.",
+          recommendedAction: "Keep normal deployment blocked until the data-loss condition is explicitly accepted.",
+          remediationSteps: ["Review the deterministic data-loss evidence.", "Do not retry normal deployment.", resetGuidance],
+        };
+      case "IDENTITY_MIGRATION_REQUIRED":
+        return {
+          ...common,
+          rootCauseCode: "DG_MANAGED_DATABASE_IDENTITY_MIGRATION_REQUIRED",
+          summary: "Managed database identity reconciliation is required.",
+          technicalReason: "Persistent storage exists, but its binding, access point, credentials, or Terraform identity does not match the expected platform-owned identity.",
+          recommendedAction: "Reconcile or migrate the platform-managed database identity before deploying.",
+          remediationSteps: ["Review the deterministic identity reconciliation evidence.", "Reconcile the platform-managed storage and binding identity.", "Do not change application-owned environment variables unless separate evidence proves an application configuration defect."],
+        };
+      default:
+        return {
+          ...common,
+          rootCauseCode: "DG_MANAGED_DATABASE_RECONCILIATION_FAILED",
+          summary: "Managed database reconciliation blocked deployment.",
+          technicalReason: "DeployGuard rejected the managed database admission state before workflow dispatch.",
+          recommendedAction: "Review the managed-database reconciliation evidence before retrying.",
+          remediationSteps: ["Review the persisted managed-database reconciliation evidence.", "Resolve the platform-owned condition before deploying again."],
+        };
+    }
   }
 
   private completedStages(value: unknown) {

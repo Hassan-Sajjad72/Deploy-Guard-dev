@@ -40,6 +40,7 @@ import { ProjectConfigurationSnapshot } from "./project-configuration-snapshot.e
 import { ServicePortResolutionError } from "./service-port-resolver";
 import { decideDeploymentRecovery, DeploymentRecoveryDecision } from "./deployment-recovery-decision";
 import { ManagedDatabaseReconciliationReport, ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
+import { ManagedDatabaseReconciliationAdmissionError } from "./managed-database-reconciliation.error";
 import { AuditLogService } from "../audit-log/audit-log.service";
 import { BuildTargetResolutionError } from "./build-target-resolver.service";
 import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
@@ -291,16 +292,10 @@ export class RailpackDeploymentService {
     });
     const explicitlyReset = requestedMode === "RESET_FRESH" && Boolean(resetAt) && recoveryDecision.deploymentAllowed;
     if (!report.deploymentAllowed && !explicitlyReset) {
-      throw new ConflictException({
-        code: report.state,
-        message: report.message,
-        deploymentAllowed: false,
-        recoveryAvailable: report.recoveryAvailable,
-        resetAllowed: report.resetAllowed,
-      });
+      throw new ManagedDatabaseReconciliationAdmissionError(report);
     }
     if (!recoveryDecision.deploymentAllowed) {
-      throw new ConflictException({ code: recoveryDecision.recoveryState, message: recoveryDecision.reason, deploymentAllowed: false });
+      throw new ManagedDatabaseReconciliationAdmissionError(report);
     }
     return {
       requestedMode,
@@ -314,16 +309,10 @@ export class RailpackDeploymentService {
   private resetFreshAt(report: ManagedDatabaseReconciliationReport) {
     if (report.deploymentAllowed) return null;
     if (!report.resetAllowed || report.recoveryAvailable) {
-      throw new ConflictException({
-        code: report.state,
-        message: report.recoveryAvailable
-          ? "Managed database recovery evidence exists. Restore it before deploying instead of resetting it."
-          : report.message,
-        deploymentAllowed: false,
-      });
+      throw new ManagedDatabaseReconciliationAdmissionError(report);
     }
     if (report.evidence.currentFileSystem?.available || report.evidence.usableRecoveryPointArn) {
-      throw new ConflictException("Reset & Deploy Fresh cannot supersede retained database storage or recovery evidence.");
+      throw new ManagedDatabaseReconciliationAdmissionError(report);
     }
     return new Date().toISOString();
   }
@@ -374,9 +363,13 @@ export class RailpackDeploymentService {
           if (!target) throw new BuildTargetResolutionError("DG_BUILD_TARGET_UNRESOLVED", service.id, "Build-target revision was not persisted.");
           (service as ProjectDeployableService & { resolvedBuildTarget?: ProjectBuildTargetRevision }).resolvedBuildTarget = target;
         }
+        operation.currentStage = "deployment_requirement_admission";
+        await this.runs.save(operation);
         const requirementAdmission = await this.source.resolveRequirementsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, targets: resolved.targets, variables: configuration.variables.map(({ serviceId, key, isSecret, scope }) => ({ serviceId, key, isSecret, scope })), managedDatabase: configuration.managedDatabase?.attachedServiceId && isSupportedManagedDatabaseEngine(configuration.managedDatabase.engine) ? { engine: configuration.managedDatabase.engine, attachedServiceId: configuration.managedDatabase.attachedServiceId } : null, accessToken: credential.token });
         await this.sealRequirementAdmission(operation, configuration, targetRevisions, sourceSha, requirementAdmission);
         if (requirementAdmission.status !== "READY") throw new DeploymentRequirementAdmissionError(requirementAdmission);
+        operation.currentStage = "managed_database_reconciliation";
+        await this.runs.save(operation);
         const report = reconciled || await this.managedDatabaseReconciliation.reconcile(project);
         const effectiveResetAt = requestedMode === "RESET_FRESH" && !resetAt ? this.resetFreshAt(report) : resetAt;
         deployAdmission = await this.managedDatabaseAdmission(project, requestedMode, effectiveResetAt, report);
@@ -431,13 +424,19 @@ export class RailpackDeploymentService {
       await this.runs.save(operation);
     } catch (error) {
       const failure = this.dispatchFailure(error, operation.currentStage);
-      const ownership = classifyStructuredFailure(failure.stage, `${failure.message} ${JSON.stringify(failure.evidence)}`);
+      const ownership = failure.ownership || classifyStructuredFailure(failure.stage, `${failure.message} ${JSON.stringify(failure.evidence)}`);
       operation.githubWorkflowStatus = "not_dispatched";
       await this.captureTerminalFailure(operation, {
         stage: failure.stage, message: failure.message, safeEvidence: failure.message,
         owner: ownership.failureOwner, provider: ownership.externalProvider, code: ownership.failureCode, serviceId: ownership.failureServiceId,
         evidenceSource: "deployguard_dispatch",
-        metadata: { dispatchState: "failed", failureSource: "deployguard_dispatch", dispatchFailure: failure.evidence },
+        metadata: {
+          dispatchState: "failed",
+          failureSource: "deployguard_dispatch",
+          dispatchFailure: failure.evidence,
+          ...(failure.managedDatabaseReconciliation ? { managedDatabaseReconciliationFailure: failure.managedDatabaseReconciliation } : {}),
+        },
+        managedDatabaseReconciliation: failure.managedDatabaseReconciliation,
       });
       if (error instanceof BuildTargetResolutionError) return { deployment: { state: "blocked", code: error.code, stage: failure.stage, message: error.message, operation } };
       if (error instanceof DeploymentRequirementAdmissionError) return { deployment: { state: error.admission.status === "INPUT_REQUIRED" ? "input_required" : "blocked", message: error.message, requirements: error.admission, operation } };
@@ -828,6 +827,16 @@ export class RailpackDeploymentService {
   }
 
   private dispatchFailure(error: unknown, stage: string | null) {
+    if (error instanceof ManagedDatabaseReconciliationAdmissionError) {
+      const reconciliation = error.safeEvidence();
+      return {
+        stage: error.stage,
+        message: error.message.slice(0, 500),
+        evidence: { classification: "managed_database_reconciliation", code: error.code, reconciliation },
+        ownership: { failureOwner: "DEPLOYGUARD_PLATFORM" as const, externalProvider: null, failureCode: error.code, failureServiceId: reconciliation.attachedServiceId },
+        managedDatabaseReconciliation: reconciliation,
+      };
+    }
     if (error instanceof ControlPlaneCompatibilityError) {
       return { stage: "control_plane_compatibility", message: `${error.message} DG_FAILURE code=${CONTROL_PLANE_VERSION_MISMATCH} stage=control_plane_compatibility`, evidence: { classification: "platform_configuration", code: CONTROL_PLANE_VERSION_MISMATCH } };
     }
@@ -868,6 +877,7 @@ export class RailpackDeploymentService {
     evidenceSource: string;
     evidenceEventId?: string | null;
     metadata?: Record<string, unknown>;
+    managedDatabaseReconciliation?: import("./managed-database-reconciliation.error").ManagedDatabaseReconciliationFailureEvidence;
   }) {
     const failedAt = new Date();
     // A few executable contract fixtures construct the service prototype
@@ -909,6 +919,7 @@ export class RailpackDeploymentService {
       evidenceEventId: failure.evidenceEventId,
       failedAt,
       workflowStages: metadata.workflowStages,
+      managedDatabaseReconciliation: failure.managedDatabaseReconciliation,
     });
     operation.metadata = metadata;
     await this.runs.save(operation);

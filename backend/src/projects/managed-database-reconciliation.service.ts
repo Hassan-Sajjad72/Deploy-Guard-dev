@@ -29,6 +29,8 @@ const DATABASE_STATE_TYPES = new Set([
 export type ManagedDatabaseReconciliationReport = ManagedDatabaseReconciliation & {
   evidence: ManagedDatabaseReconciliationEvidence;
   tierUpdatedAt: string | null;
+  engine: "postgres" | "mysql" | "mongodb" | null;
+  attachedServiceId: string | null;
   identity: { environment: string; activeGenerationId: string | null };
 };
 
@@ -60,10 +62,10 @@ export class ManagedDatabaseReconciliationService {
 
     try {
       const [fileSystems, secretPresent, terraformDatabaseAddresses] = await Promise.all([
-        this.fileSystems(), this.secretPresent(project.id), this.terraformDatabaseAddresses(project.id, environment),
+        this.fileSystems(), this.secretPresent(project.id, environment), this.terraformDatabaseAddresses(project.id, environment),
       ]);
-      const current = this.selectFileSystem(fileSystems, tier, project.id);
-      const accessPoint = current?.FileSystemId ? await this.accessPoint(current.FileSystemId, project.id) : null;
+      const current = this.selectFileSystem(fileSystems, tier, project.id, environment);
+      const accessPoint = current?.FileSystemId ? await this.accessPoint(current.FileSystemId, project.id, environment) : null;
       const expectedStorageIdentity = Boolean(
         tier.efsFileSystemId || tier.efsAccessPointId || tier.activeGenerationId || tier.status === DatabaseTierStatus.READY,
       );
@@ -75,10 +77,10 @@ export class ManagedDatabaseReconciliationService {
         bindingFileSystemId: tier.efsFileSystemId,
         bindingAccessPointId: tier.efsAccessPointId,
         currentFileSystem: current ? {
-          id: current.FileSystemId || "", identity: "current", owned: this.owned(current.Tags, project.id), available: current.LifeCycleState === "available",
+          id: current.FileSystemId || "", identity: "current", owned: this.owned(current.Tags, project.id, environment), available: current.LifeCycleState === "available",
         } : null,
         accessPoint: accessPoint ? {
-          id: accessPoint.AccessPointId || "", identity: "current", owned: this.owned(accessPoint.Tags, project.id), available: accessPoint.LifeCycleState === "available",
+          id: accessPoint.AccessPointId || "", identity: "current", owned: this.owned(accessPoint.Tags, project.id, environment), available: accessPoint.LifeCycleState === "available",
         } : null,
         // The active Terraform runtime stores password and URL in one owned
         // project secret, so its verified presence satisfies both aliases.
@@ -102,6 +104,8 @@ export class ManagedDatabaseReconciliationService {
     return {
       ...classifyManagedDatabase(evidence), evidence,
       tierUpdatedAt: tier?.updatedAt?.toISOString?.() || null,
+      engine: tier?.engine || null,
+      attachedServiceId: tier?.attachedServiceId || null,
       identity: { environment, activeGenerationId: tier?.activeGenerationId || null },
     };
   }
@@ -111,23 +115,23 @@ export class ManagedDatabaseReconciliationService {
     return (JSON.parse(result.stdout || "{}") as { FileSystems?: AwsFileSystem[] }).FileSystems || [];
   }
 
-  private selectFileSystem(fileSystems: AwsFileSystem[], tier: ProjectDatabaseTier, projectId: string) {
-    return fileSystems.find((item) => item.FileSystemId === tier.efsFileSystemId && this.owned(item.Tags, projectId))
-      || fileSystems.find((item) => this.owned(item.Tags, projectId))
+  private selectFileSystem(fileSystems: AwsFileSystem[], tier: ProjectDatabaseTier, projectId: string, environment: string) {
+    return fileSystems.find((item) => item.FileSystemId === tier.efsFileSystemId && this.owned(item.Tags, projectId, environment))
+      || fileSystems.find((item) => this.owned(item.Tags, projectId, environment))
       || null;
   }
 
-  private async accessPoint(fileSystemId: string, projectId: string): Promise<AwsAccessPoint | null> {
+  private async accessPoint(fileSystemId: string, projectId: string, environment: string): Promise<AwsAccessPoint | null> {
     const result = await this.aws.run(["efs", "describe-access-points", "--file-system-id", fileSystemId, "--output", "json"]);
     const points = (JSON.parse(result.stdout || "{}") as { AccessPoints?: AwsAccessPoint[] }).AccessPoints || [];
-    return points.find((item) => this.owned(item.Tags, projectId)) || null;
+    return points.find((item) => this.owned(item.Tags, projectId, environment)) || null;
   }
 
-  private async secretPresent(projectId: string) {
+  private async secretPresent(projectId: string, environment: string) {
     try {
-      const result = await this.aws.run(["secretsmanager", "describe-secret", "--secret-id", `deployguard/${projectId}/database`, "--output", "json"]);
+      const result = await this.aws.run(["secretsmanager", "describe-secret", "--secret-id", `deployguard/${projectId}/${environment}/database`, "--output", "json"]);
       const secret = JSON.parse(result.stdout || "{}") as { DeletedDate?: string; Tags?: Array<{ Key?: string; Value?: string }> };
-      return !secret.DeletedDate && this.owned(secret.Tags, projectId);
+      return !secret.DeletedDate && this.owned(secret.Tags, projectId, environment);
     } catch (error) {
       if (/ResourceNotFoundException|can't find the specified secret|not found/i.test(error instanceof Error ? error.message : String(error))) return false;
       throw error;
@@ -152,10 +156,11 @@ export class ManagedDatabaseReconciliationService {
     }
   }
 
-  private owned(tags: Array<{ Key?: string; Value?: string }> | undefined, projectId: string) {
+  private owned(tags: Array<{ Key?: string; Value?: string }> | undefined, projectId: string, environment: string) {
     const values = Object.fromEntries((tags || []).map((tag) => [tag.Key || "", tag.Value || ""]));
     return values.ManagedBy === "DeployGuard"
       && values.DeployGuardProjectId === projectId
+      && values.Environment === environment
       && values.DeployGuardResource === "managed-database";
   }
 }

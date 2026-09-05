@@ -1,9 +1,9 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConflictException } from "@nestjs/common";
 import { classifyManagedDatabase, ManagedDatabaseReconciliationState as State } from "../src/projects/managed-database-reconciliation";
 import { activeTerraformDatabaseAddresses, ManagedDatabaseReconciliationService } from "../src/projects/managed-database-reconciliation.service";
+import { ManagedDatabaseReconciliationAdmissionError } from "../src/projects/managed-database-reconciliation.error";
 import { DatabaseTierProvider, DatabaseTierStatus } from "../src/projects/project-database-tier.entity";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
@@ -28,7 +28,7 @@ const baseEvidence = {
 };
 const report = (overrides: Record<string, unknown> = {}) => {
   const evidence = { ...baseEvidence, ...overrides };
-  return { ...classifyManagedDatabase(evidence), evidence, tierUpdatedAt: "2026-09-04T00:00:00.000Z", identity: { environment: "dev", activeGenerationId: null } };
+  return { ...classifyManagedDatabase(evidence), evidence, tierUpdatedAt: "2026-09-04T00:00:00.000Z", engine: "postgres" as const, attachedServiceId: "33333333-3333-4333-8333-333333333333", identity: { environment: "dev", activeGenerationId: null } };
 };
 
 async function main() {
@@ -47,22 +47,28 @@ async function main() {
     efsFileSystemId: "fs-current",
     efsAccessPointId: "fsap-current",
     activeGenerationId: "22222222-2222-4222-8222-222222222222",
+    engine: "postgres",
+    attachedServiceId: "33333333-3333-4333-8333-333333333333",
     updatedAt: new Date("2026-09-04T00:00:00.000Z"),
   }) };
   collector.fileSystems = async () => [{ FileSystemId: "fs-current", LifeCycleState: "available", Tags: [
     { Key: "ManagedBy", Value: "DeployGuard" },
     { Key: "DeployGuardProjectId", Value: projectId },
+    { Key: "Environment", Value: "dev" },
     { Key: "DeployGuardResource", Value: "managed-database" },
   ] }];
   collector.accessPoint = async () => ({ AccessPointId: "fsap-current", LifeCycleState: "available", Tags: [
     { Key: "ManagedBy", Value: "DeployGuard" },
     { Key: "DeployGuardProjectId", Value: projectId },
+    { Key: "Environment", Value: "dev" },
     { Key: "DeployGuardResource", Value: "managed-database" },
   ] });
   collector.secretPresent = async () => true;
   collector.terraformDatabaseAddresses = async () => ["aws_efs_file_system.database"];
   const collectedHealthy = await collector.reconcile(project);
   assert.equal(collectedHealthy.state, State.HEALTHY, "the AWS/control-plane evidence collector feeds the canonical classifier");
+  assert.equal(collector.owned([{ Key: "ManagedBy", Value: "DeployGuard" }, { Key: "DeployGuardProjectId", Value: projectId }, { Key: "Environment", Value: "production" }, { Key: "DeployGuardResource", Value: "managed-database" }], projectId, "dev"), false, "another environment's database evidence cannot affect this environment");
+  assert.equal(collector.owned([{ Key: "ManagedBy", Value: "DeployGuard" }, { Key: "DeployGuardProjectId", Value: "99999999-9999-4999-8999-999999999999" }, { Key: "Environment", Value: "dev" }, { Key: "DeployGuardResource", Value: "managed-database" }], projectId, "dev"), false, "another project's database evidence cannot affect this project");
 
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.managedDatabaseReconciliation = { reconcile: async () => report() };
@@ -88,7 +94,7 @@ async function main() {
     const blockedReport = report(evidence);
     assert.equal(blockedReport.state, state, `${state} fixture is classified by the canonical reconciler`);
     service.managedDatabaseReconciliation = { reconcile: async () => blockedReport };
-    await assert.rejects(() => service.managedDatabaseAdmission(project, "DEPLOY", null), (error: unknown) => error instanceof ConflictException, `${state} blocks ordinary deployment admission`);
+    await assert.rejects(() => service.managedDatabaseAdmission(project, "DEPLOY", null), (error: unknown) => error instanceof ManagedDatabaseReconciliationAdmissionError && error.report.state === state, `${state} blocks ordinary deployment admission with its structured state intact`);
   }
 
   const resettable = report({ currentFileSystem: null, accessPoint: null, usableRecoveryPointArn: null });
@@ -113,7 +119,7 @@ async function main() {
   assert.equal(savedTier.restoreMetadata.previousReconciliationState, State.DATA_LOST_RESET_REQUIRED);
 
   const recoverable = report({ currentFileSystem: null, accessPoint: null, usableRecoveryPointArn: "arn:aws:backup:us-east-1:111111111111:recovery-point:fixture" });
-  assert.throws(() => service.resetFreshAt(recoverable), ConflictException, "reset-fresh cannot bypass available recovery");
+  assert.throws(() => service.resetFreshAt(recoverable), ManagedDatabaseReconciliationAdmissionError, "reset-fresh cannot bypass available recovery");
   assert.equal(service.resetFreshAt(report()), null, "healthy persistent database data is preserved");
 
   const root = join(__dirname, "..", "..");
@@ -126,6 +132,8 @@ async function main() {
   const buildTargetResolution = deployment.indexOf("resolveBuildTargetsAtExactSha");
   assert.ok(buildTargetResolution >= 0 && deployment.indexOf("managedDatabaseReconciliation.reconcile(project)", buildTargetResolution) > buildTargetResolution, "exact-SHA BuildTarget compatibility precedes managed-database cloud reconciliation");
   assert.match(deployment, /managedDatabaseAdmission\(project, requestedMode, effectiveResetAt, report\)/);
+  assert.ok(deployment.indexOf('operation.currentStage = "managed_database_reconciliation"', buildTargetResolution) < deployment.indexOf("managedDatabaseReconciliation.reconcile(project)", buildTargetResolution), "the managed-database stage is persisted before reconciliation executes");
+  assert.ok(deployment.indexOf('operation.currentStage = "deployment_requirement_admission"', buildTargetResolution) < deployment.indexOf("resolveRequirementsAtExactSha", buildTargetResolution), "the requirement-admission stage is persisted before requirement resolution executes");
   assert.ok(deployment.indexOf("if (active) return { active };") < deployment.indexOf("reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission)"), "reset mutation occurs only after same-project active-operation admission is checked");
   assert.match(deployment, /managedDatabaseReconciliationState/);
   assert.match(deployment, /cloudResourcesDeleted: false/);
@@ -133,7 +141,7 @@ async function main() {
   assert.match(terraform, /'deployguard'@'%'/, "the existing MySQL dynamic task-IP grant remains intact");
   assert.deepEqual(classifyStructuredFailure("terraform_plan", "DG_FAILURE code=DG_TERRAFORM_PLAN_FAILED stage=terraform_plan"), { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: "DG_TERRAFORM_PLAN_FAILED", failureServiceId: null });
   assert.deepEqual(classifyStructuredFailure("terraform_apply", "DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply"), { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", failureCode: "DG_TERRAFORM_APPLY_FAILED", failureServiceId: null });
-  console.log("LOW_RISK_DEFECT_CLOSURE=PASS DB_ADMISSION_STATES=5 RESET_FRESH_RECONCILED=1 HEALTHY_DB_PRESERVED=1 TERRAFORM_PLAN_APPLY_SEPARATED=1");
+  console.log("LOW_RISK_DEFECT_CLOSURE=PASS DB_ADMISSION_STATES=5 PROJECT_ENVIRONMENT_ISOLATION=1 RESET_FRESH_RECONCILED=1 HEALTHY_DB_PRESERVED=1 TERRAFORM_PLAN_APPLY_SEPARATED=1");
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

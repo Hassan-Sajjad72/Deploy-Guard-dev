@@ -70,6 +70,7 @@ locals {
   database_tags = {
     ManagedBy            = "DeployGuard"
     DeployGuardProjectId = var.project_id
+    Environment          = var.environment_name
     DeployGuardResource  = "managed-database"
   }
   runtime_secret_arns = distinct(concat(
@@ -104,7 +105,7 @@ resource "aws_cloudwatch_log_group" "application" {
 }
 resource "aws_cloudwatch_log_group" "database" {
   count             = local.database_enabled ? 1 : 0
-  name              = "/deployguard/${var.project_id}/database"
+  name              = "/deployguard/${var.project_id}/${var.environment_name}/database"
   retention_in_days = 14
   tags              = local.database_tags
 }
@@ -217,7 +218,7 @@ resource "random_password" "database" {
 }
 resource "aws_secretsmanager_secret" "database" {
   count = local.database_enabled ? 1 : 0
-  name  = "deployguard/${var.project_id}/database"
+  name  = "deployguard/${var.project_id}/${var.environment_name}/database"
   tags  = local.database_tags
 }
 resource "aws_secretsmanager_secret_version" "database" {

@@ -1,6 +1,7 @@
 variable "region" { type = string }
 variable "project_id" { type = string }
 variable "operation_id" { type = string }
+variable "environment_name" { type = string }
 variable "vpc_id" { type = string }
 variable "public_subnet_ids" { type = list(string) }
 variable "services" {

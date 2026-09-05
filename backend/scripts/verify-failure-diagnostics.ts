@@ -5,6 +5,8 @@ import { FailureDiagnosticService } from "../src/projects/failure-diagnostics/fa
 import { DeploymentFailureDiagnosticInput } from "../src/projects/failure-diagnostics/failure-diagnostic.types";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
+import { MANAGED_DATABASE_RECONCILIATION_FAILURE, ManagedDatabaseReconciliationAdmissionError } from "../src/projects/managed-database-reconciliation.error";
+import { ManagedDatabaseReconciliationState } from "../src/projects/managed-database-reconciliation";
 
 const sanitizer = new LogSanitizerService();
 const service = new FailureDiagnosticService(sanitizer);
@@ -112,6 +114,55 @@ for (const [code, stage, owner, provider, root] of structuredCases) {
   assert.equal(result.externalProvider, provider, `${code} provider must remain authoritative`);
 }
 
+const managedDatabaseFailure = (reconciliationState: ManagedDatabaseReconciliationState.STALE_METADATA | ManagedDatabaseReconciliationState.RECOVERABLE | ManagedDatabaseReconciliationState.DATA_LOST_RESET_REQUIRED | ManagedDatabaseReconciliationState.IDENTITY_MIGRATION_REQUIRED, overrides: Record<string, unknown> = {}) => ({
+  reconciliationState,
+  deploymentAllowed: false,
+  resetAllowed: reconciliationState === "STALE_METADATA" || reconciliationState === "DATA_LOST_RESET_REQUIRED",
+  recoveryAvailable: reconciliationState === "RECOVERABLE",
+  engine: "postgres" as const,
+  attachedServiceId: serviceId,
+  environment: "dev",
+  persistentPreviouslyEstablished: reconciliationState !== "STALE_METADATA",
+  currentPersistentStoragePresent: reconciliationState === "IDENTITY_MIGRATION_REQUIRED",
+  verifiedRecoveryEvidence: reconciliationState === "RECOVERABLE",
+  evidence: { managed: true, persistenceEnabled: true, expectedStorageIdentity: reconciliationState !== "STALE_METADATA", bindingStatus: "ready", currentFileSystemPresent: reconciliationState === "IDENTITY_MIGRATION_REQUIRED", accessPointPresent: reconciliationState === "IDENTITY_MIGRATION_REQUIRED", passwordSecretPresent: reconciliationState === "STALE_METADATA", urlSecretPresent: reconciliationState === "STALE_METADATA", terraformDatabaseAddressCount: reconciliationState === "STALE_METADATA" ? 1 : 0, verifiedRecoveryEvidence: reconciliationState === "RECOVERABLE" },
+  ...overrides,
+});
+const managedDatabaseCases: Array<[ManagedDatabaseReconciliationState.STALE_METADATA | ManagedDatabaseReconciliationState.RECOVERABLE | ManagedDatabaseReconciliationState.DATA_LOST_RESET_REQUIRED | ManagedDatabaseReconciliationState.IDENTITY_MIGRATION_REQUIRED, string, RegExp, RegExp]> = [
+  [ManagedDatabaseReconciliationState.STALE_METADATA, "DG_MANAGED_DATABASE_STALE_METADATA", /Reset & Deploy Fresh/, /normal deployment is intentionally blocked/i],
+  [ManagedDatabaseReconciliationState.RECOVERABLE, "DG_MANAGED_DATABASE_RECOVERY_REQUIRED", /Restore the managed database/, /Do not use a destructive reset/],
+  [ManagedDatabaseReconciliationState.DATA_LOST_RESET_REQUIRED, "DG_MANAGED_DATABASE_DATA_LOST_RESET_REQUIRED", /Reset & Deploy Fresh/, /Do not retry normal deployment/],
+  [ManagedDatabaseReconciliationState.IDENTITY_MIGRATION_REQUIRED, "DG_MANAGED_DATABASE_IDENTITY_MIGRATION_REQUIRED", /Reconcile or migrate/, /Do not change application-owned environment variables/],
+];
+for (const [state, rootCauseCode, action, remediation] of managedDatabaseCases) {
+  const result = diagnose("No persistent database was verified, but stale database credentials, binding metadata, or Terraform state remains.", {
+    failureStage: "managed_database_reconciliation",
+    terminalFailureCode: MANAGED_DATABASE_RECONCILIATION_FAILURE,
+    failureOwner: "DEPLOYGUARD_PLATFORM",
+    externalProvider: null,
+    serviceId,
+    managedDatabaseReconciliation: managedDatabaseFailure(state),
+  });
+  assert.equal(result.rootCauseCode, rootCauseCode, `${state} has an authoritative cause`);
+  assert.equal(result.failureOwner, "DEPLOYGUARD_PLATFORM");
+  assert.equal(result.failureStage, "managed_database_reconciliation");
+  assert.equal(result.confidence, "DETERMINISTIC");
+  assert.equal(result.retryDecision, "NOT_SAFE_YET");
+  assert.match(`${result.recommendedAction} ${result.remediationSteps.join(" ")}`, action);
+  assert.match(result.remediationSteps.join(" "), remediation);
+  assert.doesNotMatch(JSON.stringify(result), /DG_FAILURE_CAUSE_UNVERIFIED|password=|super-secret-value/);
+}
+for (const engine of ["postgres", "mysql", "mongodb"] as const) {
+  const result = diagnose("managed database reconciliation blocked", {
+    failureStage: "managed_database_reconciliation",
+    terminalFailureCode: MANAGED_DATABASE_RECONCILIATION_FAILURE,
+    failureOwner: "DEPLOYGUARD_PLATFORM",
+    externalProvider: null,
+    managedDatabaseReconciliation: managedDatabaseFailure(ManagedDatabaseReconciliationState.STALE_METADATA, { engine }),
+  });
+  assert.equal(result.rootCauseCode, "DG_MANAGED_DATABASE_STALE_METADATA", `${engine} uses the same platform reconciliation authority`);
+}
+
 for (const action of ["deploy", "rollback", "destroy"] as const) {
   const result = diagnose("ambiguous terminal failure", { deploymentAction: action });
   assert.equal(result.deploymentAction, action);
@@ -170,6 +221,32 @@ async function verifyCentralPersistenceAndApi() {
   assert.equal(operation.metadata.failureDiagnostic.rootCauseCode, "DG_REPOSITORY_LOCKFILE_OUTDATED");
   const api = deployment.presentOperation(operation);
   assert.equal(api.diagnosis.rootCauseCode, "DG_REPOSITORY_LOCKFILE_OUTDATED", "deployment details API exposes structured diagnosis");
+
+  const databaseOperation: any = {
+    id: "44444444-4444-4444-8444-444444444444", commitSha: "c".repeat(40), metadata: { executionEngine: "railpack", deploymentAction: "deploy", attempt: 1 },
+    failureOwner: null, externalProvider: null, failureCode: null, failureServiceId: null, githubWorkflowRunId: null, createdAt: now,
+  };
+  const staleReport: any = {
+    state: ManagedDatabaseReconciliationState.STALE_METADATA, deploymentAllowed: false, resetAllowed: true, recoveryAvailable: false,
+    title: "Stale managed database state", message: "No persistent database was verified, but stale database credentials remain.",
+    engine: "postgres", attachedServiceId: serviceId, tierUpdatedAt: now.toISOString(), identity: { environment: "dev", activeGenerationId: null },
+    evidence: { managed: true, persistenceEnabled: true, expectedStorageIdentity: false, bindingStatus: null, bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: true, urlSecretPresent: true, terraformDatabaseAddresses: ["aws_efs_file_system.database"], usableRecoveryPointArn: null },
+  };
+  const dispatchFailure = deployment.dispatchFailure(new ManagedDatabaseReconciliationAdmissionError(staleReport), "service_port_resolution");
+  assert.equal(dispatchFailure.stage, "managed_database_reconciliation", "typed managed-database evidence overrides a stale previous stage");
+  await deployment.captureTerminalFailure(databaseOperation, {
+    stage: dispatchFailure.stage, message: dispatchFailure.message, safeEvidence: dispatchFailure.message,
+    owner: dispatchFailure.ownership.failureOwner, provider: dispatchFailure.ownership.externalProvider,
+    code: dispatchFailure.ownership.failureCode, serviceId: dispatchFailure.ownership.failureServiceId,
+    evidenceSource: "deployguard_dispatch", managedDatabaseReconciliation: dispatchFailure.managedDatabaseReconciliation,
+    metadata: { dispatchState: "failed", managedDatabaseReconciliationFailure: dispatchFailure.managedDatabaseReconciliation },
+  });
+  assert.equal(databaseOperation.metadata.failureDiagnostic.rootCauseCode, "DG_MANAGED_DATABASE_STALE_METADATA");
+  assert.equal(databaseOperation.metadata.failureDiagnostic.failureOwner, "DEPLOYGUARD_PLATFORM");
+  assert.equal(databaseOperation.metadata.failureDiagnostic.failureStage, "managed_database_reconciliation");
+  assert.equal(databaseOperation.metadata.failureDiagnostic.retryDecision, "NOT_SAFE_YET");
+  assert.equal(databaseOperation.metadata.managedDatabaseReconciliationFailure.reconciliationState, ManagedDatabaseReconciliationState.STALE_METADATA);
+  assert.doesNotMatch(JSON.stringify(databaseOperation.metadata), /password=|postgresql:\/\/deployguard:/, "only bounded reconciliation facts are persisted");
   console.log("CENTRAL_DIAGNOSTIC_PERSISTENCE_AND_API=PASS");
 }
 
@@ -180,4 +257,5 @@ console.log("MULTI_SERVICE_ATTRIBUTION=PASS");
 console.log("LIFECYCLE_DIAGNOSTIC_COVERAGE=PASS");
 console.log("AI_DIAGNOSTIC_AUTHORITY=PASS");
 console.log("DIAGNOSTIC_SECRET_SAFETY=PASS");
+console.log("MANAGED_DATABASE_RECONCILIATION_DIAGNOSTICS=PASS STATES=4 ENGINES=3");
 verifyCentralPersistenceAndApi().catch((error) => { console.error(error); process.exitCode = 1; });

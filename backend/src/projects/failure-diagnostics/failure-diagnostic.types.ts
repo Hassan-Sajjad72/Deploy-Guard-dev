@@ -1,4 +1,5 @@
 import { ExternalProvider, FailureOwner } from "../failure-ownership";
+import type { ManagedDatabaseReconciliationFailureEvidence } from "../managed-database-reconciliation.error";
 
 export const FAILURE_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;
 export const FAILURE_DIAGNOSTIC_CONFIDENCE = ["DETERMINISTIC", "HIGH", "UNVERIFIED"] as const;
@@ -58,6 +59,7 @@ export type DeploymentFailureDiagnosticInput = {
   evidenceEventId?: string | null;
   failedAt: Date;
   workflowStages?: unknown;
+  managedDatabaseReconciliation?: ManagedDatabaseReconciliationFailureEvidence;
 };
 
 export function failureDiagnosticFromMetadata(metadata: Record<string, unknown> | null | undefined) {
