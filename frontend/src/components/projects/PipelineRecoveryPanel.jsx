@@ -25,12 +25,28 @@ function retryLabel(diagnosis) {
   return "The available evidence is not sufficient to claim a retry is safe.";
 }
 
+function confidenceLabel(confidence) {
+  if (confidence === "DETERMINISTIC") return "Deterministic";
+  if (confidence === "HIGH") return "High confidence";
+  return "Unverified";
+}
+
+function retrySummary(retryDecision) {
+  if (retryDecision === "SAFE_NOW") return "Safe to retry";
+  if (retryDecision === "SAFE_AFTER_FIX") return "Fix before retrying";
+  return retryDecision === "NOT_SAFE_YET" ? "Resolve before retrying" : "Insufficient evidence";
+}
+
+function aiResultModeLabel(resultMode) {
+  return resultMode === "live" ? "Evidence-based explanation" : "Evidence-only explanation";
+}
+
 function FailureDiagnosis({ diagnosis, operation, projectId }) {
   if (!diagnosis) return null;
   return <section className="pipeline-failure-diagnosis" aria-label="Deployment failure diagnosis">
-    <div className="compact-section-heading"><div><p className="eyebrow">Deployment failed</p><h3>{diagnosis.summary}</h3></div><StatusBadge status={diagnosis.confidence === "UNVERIFIED" ? "warning" : "failed"} /></div>
+    <div className="compact-section-heading"><div><p className="eyebrow">DeployGuard diagnosis</p><h3>{diagnosis.summary}</h3></div><StatusBadge status={diagnosis.confidence === "UNVERIFIED" ? "warning" : "failed"}>{confidenceLabel(diagnosis.confidence)}</StatusBadge></div>
     <p><strong>{ownershipLabel(diagnosis)}</strong></p>
-    <div className="pipeline-failure-authority"><span><strong>Affected component</strong>{diagnosis.affectedComponent}</span><span><strong>Root cause</strong>{diagnosis.rootCauseCode}</span><span><strong>Retry same commit</strong>{diagnosis.retryDecision === "SAFE_NOW" ? "Supported" : "Not recommended"}</span></div>
+    <div className="pipeline-failure-authority"><span><strong>Affected component</strong>{diagnosis.affectedComponent}</span><span><strong>Root cause</strong>{diagnosis.rootCauseCode}</span><span><strong>Retry</strong>{retrySummary(diagnosis.retryDecision)}</span></div>
     <p>{diagnosis.technicalReason}</p>
     <h4>How to fix</h4><ol className="remediation-list">{diagnosis.remediationSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol>
     <p className="state warning"><strong>Next action:</strong> {retryLabel(diagnosis)}</p>
@@ -88,14 +104,14 @@ export default function PipelineRecoveryPanel({ operations = [], projectId, refr
       {["failed", "dispatch_failed"].includes(operation.status) && operation.errorMessage ? <p className="state error">{operation.errorMessage}</p> : null}
       {operation.dispatchFailure ? <p className="muted">GitHub Actions run was not created; this is DeployGuard dispatch evidence.</p> : null}
       <FailureDiagnosis diagnosis={operation.diagnosis} operation={operation} projectId={projectId} />
-      {["failed", "dispatch_failed"].includes(operation.status) ? <div className="pipeline-failure-authority"><span><strong>Service</strong>{operation.failureServiceName || "Project operation"}</span><span><strong>Failure source</strong>{operation.failureOwner === "REPOSITORY_APPLICATION" ? "Repository / application" : operation.failureOwner === "DEPLOYGUARD_PLATFORM" ? "DeployGuard platform" : operation.failureOwner === "EXTERNAL_PROVIDER" ? `External provider — ${operation.externalProvider || "other"}` : "Unverified"}</span><span><strong>Code</strong>{operation.failureCode || "DG_FAILURE_UNVERIFIED"}</span></div> : null}
+      {["failed", "dispatch_failed"].includes(operation.status) ? <div className="pipeline-failure-authority"><span><strong>Service</strong>{operation.diagnosis?.serviceName || operation.failureServiceName || "Project operation"}</span><span><strong>Failure source</strong>{ownershipLabel(operation.diagnosis || operation)}</span><span><strong>Pipeline failure code</strong>{operation.diagnosis?.terminalFailureCode || operation.failureCode || "DG_FAILURE_UNVERIFIED"}</span></div> : null}
       {["failed", "dispatch_failed"].includes(operation.status) ? <details className="pipeline-safe-evidence" id={`failure-evidence-${operation.id}`}><summary>Sanitized failure evidence</summary><pre>{operation.safeLog || operation.errorMessage || "No failed-job log was available. The failure stage and workflow link above are the available evidence."}</pre>{operation.advancedSafeLog ? <details><summary>Advanced sanitized workflow log</summary><pre>{operation.advancedSafeLog}</pre></details> : null}</details> : null}
     </article>)}</div> : <p className="muted">No deployment request has been made yet.</p>}
     <section className="pipeline-ai-panel" id="ai-troubleshooting">
       <p className="eyebrow">AI troubleshooting</p><h3>Evidence-bounded failure guidance</h3>
       {selected ? <><label className="field"><span>Failed operation</span><select onChange={(event) => setOperationId(event.target.value)} value={operationId}>{operations.filter((operation) => operation.aiAnalysisEligible).map((operation) => <option key={operation.id} value={operation.id}>Attempt {operation.attempt} · {operation.failedStageLabel || operation.stageLabel || "Deployment failed"}</option>)}</select></label><button className="secondary-button" disabled={busy} onClick={analyze} type="button">{busy ? "Analyzing…" : provider?.configured ? "Analyze failure" : "Analyze available evidence"}</button></> : <p className="muted">AI troubleshooting requires a failed deployment attempt with sanitized persisted evidence.</p>}
       {selected && !provider?.configured ? <p className="muted">{provider?.message || "AI provider status is unavailable."}</p> : null}
-      {result ? <section className="pipeline-ai-result"><div className="compact-section-heading"><div><h3>{result.summary}</h3><p>{result.rootCause}</p></div><StatusBadge status={result.resultMode} /></div><p>{result.technicalDetails}</p><ol className="remediation-list">{result.remediationSteps.map((step) => <li key={step}>{step}</li>)}</ol><p className="muted">Confidence {Math.round(Number(result.confidence) * 100)}% · {result.limitations}</p></section> : null}
+      {result ? <section className="pipeline-ai-result"><div className="compact-section-heading"><div><p className="eyebrow">AI troubleshooting</p><h3>{result.summary}</h3><p>{result.rootCause}</p></div><StatusBadge status={result.resultMode}>{aiResultModeLabel(result.resultMode)}</StatusBadge></div><p>{result.technicalDetails}</p><ol className="remediation-list">{result.remediationSteps.map((step) => <li key={step}>{step}</li>)}</ol><p className="muted">Confidence {Math.round(Number(result.confidence) * 100)}% · {result.limitations}</p></section> : null}
     </section>
   </section>;
 }

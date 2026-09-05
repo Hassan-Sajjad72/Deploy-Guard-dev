@@ -7,7 +7,12 @@ const api = readFileSync(new URL("../src/api/platformApi.js", import.meta.url), 
 for (const heading of ["Likely responsibility", "What happened", "What DeployGuard successfully completed", "Root cause", "Recommended fix", "Retry recommendation", "Suggested questions", "Evidence viewer"]) assert.match(page, new RegExp(heading));
 assert.ok(page.indexOf("troubleshooting-diagnosis") < page.indexOf("Evidence viewer"), "diagnosis must render before raw evidence");
 assert.match(page, /<details key=\{source\}>/, "sanitized evidence remains accessible and collapsed by default");
-assert.match(page, /AI diagnosis only\. Deterministic ownership above remains authoritative\./);
+assert.match(page, /AI troubleshooting/);
+assert.match(page, /Evidence-based explanation/);
+assert.match(page, /Evidence-only explanation/);
+assert.match(page, /AI explanation only\. DeployGuard's persisted deterministic diagnosis above remains authoritative\./);
+assert.match(page, /operation\.diagnosis\?\.failureOwner \|\| operation\.failureOwner/, "canonical diagnosis owner takes presentation precedence with legacy fallback");
+assert.match(page, /operation\.diagnosis\?\.terminalFailureCode \|\| operation\.failureCode/, "pipeline terminal code remains distinct from root cause and keeps legacy fallback");
 assert.match(page, /question\.label[\s\S]*setQuestionType\(question\.type\)/, "suggested questions retain their machine-readable question type");
 assert.match(api, /questionType \? \{ questionType \}/, "question type is sent separately from display text");
 assert.match(page, /aiRuntimeAnalysisCandidate === true/);
