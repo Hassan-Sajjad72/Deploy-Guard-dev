@@ -13,9 +13,9 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "f9dfb1d1a0ec742e8ffa0c70e39e262d02741414292c5e86995010804ec0e81c",
+  workflow: "3d5c33bbc23493c1c3e7d1cee71cfe9af104c6c1609ebcdc7a3e0d41ae1dc4eb",
   releaseResultProducer: "cbda8bb60b9bd08ae8c305ce0a036ec5ffab960476aabe0b8e9caaa63cf31b80",
-  releaseOnlyTaskDefinitions: "62aa371c25dc926df8c6173023ed6dc5c7753485aae6967cce6cfa0ad1e14673",
+  releaseOnlyTaskDefinitions: "fa31e78f047fa593fe69d61abf76342a8e62df446f49d6bce360a5fed09a7038",
   runtimeVerifier: "b9f0e6c1e0be1acdf73ab0f78468dcbcab8ffe54be5f6d99b92149960c88f35a",
   runtimeInfrastructure: "9622ebfd2cd58d596d879506bc139a4ae19d3b8161d197405ee436df0040e28b",
 } as const;
@@ -89,6 +89,9 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !workflow.includes('if [ "$RELEASE_ONLY" = true ]; then')
     || !executable.releaseOnlyTaskDefinitions.includes("aws ecs register-task-definition")
     || !executable.releaseOnlyTaskDefinitions.includes("aws ecs update-service")
+    || !executable.releaseOnlyTaskDefinitions.includes("rollback_requires_immutable_task_definition")
+    || !executable.releaseOnlyTaskDefinitions.includes("rollback_task_definition_identity_mismatch")
+    || !workflow.includes("release_only_requires_deploy_or_rollback")
     || !executable.releaseOnlyTaskDefinitions.includes("active_task_definition_topology_mismatch")
     || !executable.releaseOnlyTaskDefinitions.includes("service_port_changed_requires_terraform")) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the direct ECS release-only boundary.`);

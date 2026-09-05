@@ -115,7 +115,7 @@ async function verifyActualRuntimeAndRollbackAuthority() {
       const revisions = serviceIds.map((serviceId, index) => ({
         serviceId, serviceName: `Service ${index + 1}`, serviceDirectory: index ? `service-${index + 1}` : ".",
         imageUri: `123456789012.dkr.ecr.us-east-1.amazonaws.com/service-${index + 1}`, imageDigest: `sha256:${String((index % 9) + 1).repeat(64)}`,
-        runtimeConfigRevisionId: serviceId, runtimeConfigRevision: {
+        runtimeIdentity: { taskDefinitionArn: `arn:aws:ecs:us-east-1:123456789012:task-definition/service-${index + 1}:${index + 1}` }, runtimeConfigRevisionId: serviceId, runtimeConfigRevision: {
           id: serviceId, projectId: "11111111-1111-4111-8111-111111111111", serviceId,
           isRollbackSafe: true, sealedAt: new Date(), nonSecretEnvironment: { PORT: String(3000 + index), HOST: "0.0.0.0" },
           platformValues: { PORT: String(3000 + index), HOST: "0.0.0.0" },
@@ -138,7 +138,7 @@ async function verifyActualRuntimeAndRollbackAuthority() {
           serviceId: item.serviceId, serviceName: item.serviceName, serviceDirectory: item.serviceDirectory,
           runtimeConfigRevisionId: item.runtimeConfigRevisionId, servicePort: item.runtimeConfiguration.servicePort, buildEnvironment: {}, buildSecretReferences: {}, environment: item.runtimeConfiguration.environment,
           secretReferences: item.runtimeConfiguration.secretReferences, databaseAttached: false,
-          managedDatabase: { engine: null, aliases: [] }, rollbackImage: item.immutableImage,
+          managedDatabase: { engine: null, aliases: [] }, rollbackImage: item.immutableImage, rollbackTaskDefinitionArn: item.taskDefinitionArn,
         })),
       };
       assertRailpackRuntimeConfiguration(runtime);

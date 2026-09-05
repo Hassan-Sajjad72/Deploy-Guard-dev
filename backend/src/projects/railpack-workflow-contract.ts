@@ -22,7 +22,7 @@ export type RailpackWorkflowInputs = Record<RailpackWorkflowInputName, string>;
 export const RAILPACK_CALLER_INPUT_NAMES = RAILPACK_WORKFLOW_INPUTS.map(({ name }) => name);
 export const RAILPACK_OPTIONAL_CALLER_INPUT_NAMES = [] as const;
 
-export type RailpackServiceRuntimeConfiguration = { serviceId: string; serviceName: string; serviceDirectory: string; servicePort: number; runtimeConfigRevisionId: string; buildEnvironment: Record<string, string>; buildSecretReferences: Record<string, string>; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null }; rollbackImage?: string };
+export type RailpackServiceRuntimeConfiguration = { serviceId: string; serviceName: string; serviceDirectory: string; servicePort: number; runtimeConfigRevisionId: string; buildEnvironment: Record<string, string>; buildSecretReferences: Record<string, string>; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null }; rollbackImage?: string; rollbackTaskDefinitionArn?: string };
 export type RailpackRuntimeConfiguration = { schemaVersion: 3; projectId: string; environmentName: string; operationId: string; sourceSha: string; services: RailpackServiceRuntimeConfiguration[]; projectDeletion?: { generationIds: string[] } };
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -32,6 +32,7 @@ const KEY = /^[A-Z][A-Z0-9_]{0,127}$/;
 const SECRET_VALUE_FROM = /^arn:(?:aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$/;
 const SECRETS_MANAGER_VERSION_ID = /^[A-Za-z0-9-]{32,64}$/;
 const IMMUTABLE_IMAGE = /^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i;
+const TASK_DEFINITION_ARN = /^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition\/[A-Za-z0-9_-]+:\d+$/;
 const MANAGED_MYSQL_RUNTIME_ALIASES = (["host", "port", "username", "password", "database", "url"] as const).flatMap((property) => aliasesFor("mysql", property)).sort();
 
 export function immutableRailpackServiceImageTag(commitSha: string, operationId: string, serviceId: string) {
@@ -63,6 +64,7 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     if (service.databaseAttached && service.managedDatabase.engine === "mysql" && (service.managedDatabase.aliases.length !== MANAGED_MYSQL_RUNTIME_ALIASES.length || [...new Set(service.managedDatabase.aliases)].sort().join("\0") !== MANAGED_MYSQL_RUNTIME_ALIASES.join("\0"))) throw new Error("Managed MySQL runtime aliases are incomplete.");
     if (!service.databaseAttached && (service.managedDatabase.engine !== null || service.managedDatabase.aliases.length)) throw new Error("Database configuration may only be present on its attached service.");
     if (service.rollbackImage && !IMMUTABLE_IMAGE.test(service.rollbackImage)) throw new Error("Railpack rollback service image is invalid.");
+    if (service.rollbackTaskDefinitionArn && !TASK_DEFINITION_ARN.test(service.rollbackTaskDefinitionArn)) throw new Error("Railpack rollback task definition is invalid.");
   }
   if (databaseAttachments > 1) throw new Error("Managed database may be attached to only one service.");
   if (value.projectDeletion && (!Array.isArray(value.projectDeletion.generationIds) || !value.projectDeletion.generationIds.length || value.projectDeletion.generationIds.some((id) => !UUID.test(id)) || new Set(value.projectDeletion.generationIds).size !== value.projectDeletion.generationIds.length)) throw new Error("Railpack destroy generation identity is invalid.");

@@ -87,6 +87,7 @@ rollbackDatabaseFixture.services[0].managedDatabase = {
   secretVersionId: historicalDatabaseVersionId,
 };
 rollbackDatabaseFixture.services[0].rollbackImage = `123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test@sha256:${"d".repeat(64)}`;
+rollbackDatabaseFixture.services[0].rollbackTaskDefinitionArn = "arn:aws:ecs:us-east-1:123456789012:task-definition/deployguard-test:3";
 const encodedRollbackDatabase = servicesBase64(rollbackDatabaseFixture);
 const serializedRollbackDatabase = Buffer.from(encodedRollbackDatabase, "base64").toString("utf8");
 assert.equal(
@@ -100,6 +101,14 @@ const historicalRollbackJqResult = spawnSync(
   { input: serializedRollbackDatabase, encoding: "utf8" },
 );
 assert.equal(historicalRollbackJqResult.status, 0, `the backend-serialized historical VersionId must pass the executable workflow jq contract unchanged: ${historicalRollbackJqResult.stderr}`);
+const missingRollbackTaskDefinition: any = structuredClone(rollbackDatabaseFixture);
+delete missingRollbackTaskDefinition.services[0].rollbackTaskDefinitionArn;
+const missingRollbackTaskDefinitionJqResult = spawnSync(
+  "jq",
+  ["-e", "--arg", "project", missingRollbackTaskDefinition.projectId, "--arg", "operation", missingRollbackTaskDefinition.operationId, "--arg", "sha", missingRollbackTaskDefinition.sourceSha, "--arg", "action", "rollback", jqContract],
+  { input: JSON.stringify(missingRollbackTaskDefinition), encoding: "utf8" },
+);
+assert.equal(missingRollbackTaskDefinitionJqResult.status, 0, "a legacy rollback target without a task definition retains the Terraform fallback");
 for (const invalidVersionId of ["a".repeat(31), "a".repeat(65), `${"a".repeat(31)}_`]) {
   const invalidDatabaseVersion: any = structuredClone(rollbackDatabaseFixture);
   invalidDatabaseVersion.services[0].managedDatabase.secretVersionId = invalidVersionId;

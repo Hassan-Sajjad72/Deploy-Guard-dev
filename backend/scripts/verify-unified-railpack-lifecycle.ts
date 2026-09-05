@@ -46,7 +46,7 @@ async function verifyRollbackAuthority() {
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.project = async () => project;
   service.releases = { findOne: async ({ where }: any) => where.status === StableReleaseStatus.ROLLBACK_TARGET ? target : null };
-  const revision: any = { generationId: operationA, serviceId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest: digestA, runtimeConfigRevisionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", runtimeConfigRevision: { isRollbackSafe: true, sealedAt: new Date(), nonSecretEnvironment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseConfiguration: { attached: false, engine: null, aliases: [] } } };
+  const revision: any = { generationId: operationA, serviceId, serviceName: "Web", serviceDirectory: ".", imageUri, imageDigest: digestA, runtimeIdentity: { taskDefinitionArn: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:1" }, runtimeConfigRevisionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", runtimeConfigRevision: { isRollbackSafe: true, sealedAt: new Date(), nonSecretEnvironment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseConfiguration: { attached: false, engine: null, aliases: [] } } };
   service.serviceRevisions = { find: async () => [revision] };
   const candidates = await service.rollbackCandidates({ id: 1 }, projectId);
   assert.equal(candidates.candidates.length, 1);
@@ -60,6 +60,7 @@ async function verifyRollbackAuthority() {
   await service.rollback({ id: 1 }, projectId, operationA);
   assert.equal(dispatchArgs[2], "rollback");
   assert.equal(dispatchArgs[3].services[0].immutableImage, `${imageUri}@${digestA}`);
+  assert.equal(dispatchArgs[3].services[0].taskDefinitionArn, revision.runtimeIdentity.taskDefinitionArn);
   assert.equal(dispatchArgs[3].sourceSha, sourceA);
 
   const failed: any = { projectId, metadata: { deploymentAction: "rollback", rollbackTarget: dispatchArgs[3] } };

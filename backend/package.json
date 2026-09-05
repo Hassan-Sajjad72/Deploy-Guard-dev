@@ -33,6 +33,7 @@
     "test:failure-ownership": "ts-node scripts/verify-failure-ownership.ts",
     "test:immutable-runtime-revisions": "ts-node scripts/verify-immutable-runtime-revisions.ts",
     "test:direct-ecs-redeploy": "ts-node scripts/verify-direct-ecs-redeploy.ts",
+    "test:direct-ecs-rollback": "ts-node scripts/verify-direct-ecs-rollback.ts",
     "test:external-action-pins": "ts-node scripts/verify-external-action-pins.ts",
     "test:release-identity": "ts-node scripts/verify-release-identity.ts",
     "test:multi-user-local-launch": "ts-node scripts/verify-local-launch-multi-user-postgres.ts",

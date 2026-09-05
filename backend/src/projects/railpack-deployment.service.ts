@@ -50,7 +50,7 @@ type RollbackTargetIdentity = {
   targetOperationId: string;
   generationId: string | null;
   sourceSha: string;
-  services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; runtimeConfigRevisionId: string; runtimeConfiguration: { servicePort: number; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null } } }>;
+  services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; taskDefinitionArn?: string; runtimeConfigRevisionId: string; runtimeConfiguration: { servicePort: number; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null } } }>;
 };
 
 type AdmittedEnvironmentVariable = {
@@ -379,7 +379,11 @@ export class RailpackDeploymentService {
       // A direct ECS release is deliberately limited to an already-LIVE
       // topology.  Any first deployment or topology change remains on the
       // existing Terraform bootstrap path until that path has made it LIVE.
-      const releaseOnly = action === "deploy" && await this.releaseOnlyRedeployEligible(project.id, environmentName, configuration, runtime);
+      const releaseOnly = action === "deploy"
+        ? await this.releaseOnlyRedeployEligible(project.id, environmentName, configuration, runtime)
+        : action === "rollback"
+          ? await this.directEcsRollbackEligible(project.id, environmentName, rollbackTarget, runtime)
+          : false;
       const inputs: RailpackWorkflowInputs = {
         deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
         repository_full_name: project.repositoryFullName, repository_branch: project.targetBranch, commit_sha: sourceSha,
@@ -654,9 +658,13 @@ export class RailpackDeploymentService {
   private async rollbackTarget(release: ProjectStableRelease): Promise<RollbackTargetIdentity> {
     if (!release.generationId) throw new ServiceUnavailableException("The rollback target has no canonical generation identity.");
     const revisions = await this.serviceRevisions.find({ where: { generationId: release.generationId }, relations: { runtimeConfigRevision: true } });
-    const services = revisions.sort((a, b) => a.serviceId.localeCompare(b.serviceId)).map((revision) => ({
+    const services = revisions.sort((a, b) => a.serviceId.localeCompare(b.serviceId)).map((revision) => {
+      const runtimeIdentity = revision.runtimeIdentity as Record<string, unknown>;
+      const taskDefinitionArn = typeof runtimeIdentity?.taskDefinitionArn === "string" ? runtimeIdentity.taskDefinitionArn : undefined;
+      return {
       serviceId: revision.serviceId, serviceName: revision.serviceName, serviceDirectory: revision.serviceDirectory,
       imageUri: revision.imageUri, imageDigest: revision.imageDigest, immutableImage: `${revision.imageUri}@${revision.imageDigest}`,
+      taskDefinitionArn,
       runtimeConfigRevisionId: revision.runtimeConfigRevisionId,
       runtimeConfiguration: {
         servicePort: effectiveServicePort(revision.runtimeConfigRevision.platformValues?.PORT ?? revision.runtimeConfigRevision.nonSecretEnvironment?.PORT),
@@ -670,12 +678,18 @@ export class RailpackDeploymentService {
         },
       },
       rollbackSafe: revision.runtimeConfigRevision.isRollbackSafe && Boolean(revision.runtimeConfigRevision.sealedAt),
-    }));
+    }; });
     if (release.metadata?.releaseEvidenceVerified !== true
       || !release.deployedByPipelineRunId
       || !/^[0-9a-f]{40}$/i.test(release.commitSha)
       || !services.length
-      || services.some((service) => !service.rollbackSafe || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId) || !/^[0-9a-f-]{36}$/i.test(service.serviceId) || !service.serviceName || !service.serviceDirectory || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage))) {
+      || services.some((service) => !service.rollbackSafe
+        || !/^[0-9a-f-]{36}$/i.test(service.runtimeConfigRevisionId)
+        || !/^[0-9a-f-]{36}$/i.test(service.serviceId)
+        || !service.serviceName
+        || !service.serviceDirectory
+        || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(service.immutableImage)
+        || (service.taskDefinitionArn != null && !/^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition\/[A-Za-z0-9_-]+:\d+$/.test(service.taskDefinitionArn)))) {
       throw new ServiceUnavailableException("The rollback target does not contain a complete immutable image and runtime-configuration revision set.");
     }
     return { releaseId: release.id, targetOperationId: release.deployedByPipelineRunId, generationId: release.generationId, sourceSha: release.commitSha, services: services.map(({ rollbackSafe: _rollbackSafe, ...service }) => service) };
@@ -734,7 +748,11 @@ export class RailpackDeploymentService {
     const services = Array.isArray(target.services) ? target.services as Array<Record<string, unknown>> : [];
     if (!/^[0-9a-f]{40}$/i.test(String(target.sourceSha || ""))
       || !services.length
-      || services.some((service) => !/^[0-9a-f-]{36}$/i.test(String(service.runtimeConfigRevisionId || "")) || !service.runtimeConfiguration || String(service.immutableImage || "") !== `${String(service.imageUri || "")}@${String(service.imageDigest || "")}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(String(service.immutableImage || "")))) {
+      || services.some((service) => !/^[0-9a-f-]{36}$/i.test(String(service.runtimeConfigRevisionId || ""))
+        || !service.runtimeConfiguration
+        || String(service.immutableImage || "") !== `${String(service.imageUri || "")}@${String(service.imageDigest || "")}`
+        || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i.test(String(service.immutableImage || ""))
+        || (service.taskDefinitionArn != null && !/^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition\/[A-Za-z0-9_-]+:\d+$/.test(String(service.taskDefinitionArn))))) {
       throw new ServiceUnavailableException("The failed rollback target identity is invalid.");
     }
     return {
@@ -828,6 +846,7 @@ export class RailpackDeploymentService {
         databaseAttached: service.runtimeConfiguration.databaseAttached,
         managedDatabase: { ...service.runtimeConfiguration.managedDatabase, aliases: [...service.runtimeConfiguration.managedDatabase.aliases] },
         rollbackImage: service.immutableImage,
+        ...(action === "rollback" ? { rollbackTaskDefinitionArn: service.taskDefinitionArn } : {}),
       })).sort((a, b) => a.serviceId.localeCompare(b.serviceId));
       const projectDeletion = action === "destroy"
         ? { generationIds: (await this.dataSource.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName } })).map((generation) => generation.id).sort() }
@@ -942,6 +961,54 @@ export class RailpackDeploymentService {
     } catch {
       // The direct path is an optimization.  If its read-only live-topology
       // proof is unavailable, retain the certified Terraform bootstrap path.
+      return false;
+    }
+  }
+
+  /**
+   * An exact rollback is eligible for ECS-only execution only when both the
+   * target's sealed task definition and the currently LIVE topology prove the
+   * database credentials and service shape are still compatible.  Otherwise
+   * the established Terraform rollback path remains the safe fallback.
+   */
+  private async directEcsRollbackEligible(projectId: string, environmentName: string, target: RollbackTargetIdentity | null, runtime: RailpackRuntimeConfiguration) {
+    try {
+      if (!target || !runtime.services.length || runtime.services.some((service) => !/^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition\/[A-Za-z0-9_-]+:\d+$/.test(String(service.rollbackTaskDefinitionArn || "")))) return false;
+      const route = await this.dataSource.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId, environmentName } });
+      if (!route?.liveGenerationId) return false;
+      const live = await this.serviceRevisions.find({ where: { generationId: route.liveGenerationId } });
+      if (live.length !== runtime.services.length || !live.length) return false;
+      const liveRuntimeConfigs = await this.runtimeConfigRevisions.find({ where: { id: In(live.map((revision) => revision.runtimeConfigRevisionId)) } });
+      if (liveRuntimeConfigs.length !== live.length) return false;
+      const liveByService = new Map(live.map((revision) => [revision.serviceId, revision]));
+      const configById = new Map(liveRuntimeConfigs.map((revision) => [revision.id, revision]));
+      const sameAliases = (left: unknown, right: unknown) => Array.isArray(left) && Array.isArray(right)
+        && [...left].map(String).sort().join("\0") === [...right].map(String).sort().join("\0");
+      for (const service of runtime.services) {
+        const current = liveByService.get(service.serviceId);
+        const currentConfiguration = current && configById.get(current.runtimeConfigRevisionId);
+        const historical = target.services.find((candidate) => candidate.serviceId === service.serviceId);
+        if (!current || !currentConfiguration || !historical
+          || current.serviceName !== service.serviceName
+          || current.serviceDirectory !== service.serviceDirectory
+          || Number((current.runtimeIdentity as Record<string, unknown>)?.servicePort) !== service.servicePort
+          || historical.immutableImage !== service.rollbackImage
+          || historical.taskDefinitionArn !== service.rollbackTaskDefinitionArn) return false;
+        const currentDatabase = currentConfiguration.databaseConfiguration as Record<string, unknown>;
+        if (currentDatabase?.attached !== service.databaseAttached
+          || (currentDatabase?.engine || null) !== service.managedDatabase.engine
+          || !sameAliases(currentDatabase?.aliases, service.managedDatabase.aliases)) return false;
+        if (service.databaseAttached && (typeof service.managedDatabase.secretVersionId !== "string" || currentDatabase?.secretVersionId !== service.managedDatabase.secretVersionId)) return false;
+      }
+      const attached = runtime.services.find((service) => service.databaseAttached);
+      if (!attached) return true;
+      const tier = await this.dataSource.getRepository(ProjectDatabaseTier).findOne({ where: { projectId, provider: DatabaseTierProvider.MANAGED } });
+      return Boolean(tier
+        && tier.status === DatabaseTierStatus.READY
+        && tier.activeGenerationId === route.liveGenerationId
+        && tier.attachedServiceId === attached.serviceId
+        && tier.engine === attached.managedDatabase.engine);
+    } catch {
       return false;
     }
   }
