@@ -20,12 +20,12 @@ void (async () => {
       const fixture = join(root, manager.replace(/\W/g, "_")); await mkdir(fixture); await write(fixture, "package.json", packageJson(`standalone-${manager}`)); await write(fixture, manager, "lock");
       const target = await resolve(fixture, "."); assert.equal(target.strategy, "isolated"); assert.equal(target.buildRoot, ".");
     }
-    const pnpm = join(root, "pnpm-shared"); await mkdir(pnpm); await write(pnpm, "pnpm-workspace.yaml", "packages:\n  - packages/*\n"); await write(pnpm, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n"); await write(pnpm, "packages/client/package.json", packageJson("@fixture/client", { "@fixture/shared": "workspace:*" })); await write(pnpm, "packages/client/src/index.ts", "import '@fixture/shared'\n"); await write(pnpm, "packages/shared/package.json", packageJson("@fixture/shared"));
-    const shared = await resolve(pnpm, "packages/client"); assert.equal(shared.workspaceRoot, "."); assert.equal(shared.buildRoot, "."); assert.deepEqual(shared.dependencyPaths, ["packages/shared"]);
-    const again = await resolve(pnpm, "packages/client"); assert.equal(shared.fingerprint, again.fingerprint, "same SHA and topology are deterministic");
-    await write(pnpm, "README.md", "irrelevant"); assert.equal((await resolve(pnpm, "packages/client")).fingerprint, shared.fingerprint, "irrelevant content cannot alter ownership");
-    await write(pnpm, "pnpm-workspace.yaml", "packages:\n  - packages/*\n  - tools/*\n"); assert.notEqual((await resolve(pnpm, "packages/client")).fingerprint, shared.fingerprint, "changed workspace topology changes the fingerprint"); await write(pnpm, "pnpm-workspace.yaml", "packages:\n  - packages/*\n");
-    assert.equal(shared.serviceDirectory, "packages/client", "the shared library remains a dependency, never an implicitly selected deployable service");
+    const pnpm = join(root, "pnpm-shared"); await mkdir(pnpm); await write(pnpm, "pnpm-workspace.yaml", "packages:\n  - packages/*\n"); await write(pnpm, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n"); await write(pnpm, "packages/client/package.json", packageJson("@fixture/client")); await write(pnpm, "packages/client/src/index.ts", "export {}\n"); await write(pnpm, "packages/shared/package.json", packageJson("@fixture/shared"));
+    const clientTarget = await resolve(pnpm, "packages/client"); assert.equal(clientTarget.workspaceRoot, "."); assert.equal(clientTarget.buildRoot, "."); assert.equal(clientTarget.installRoot, "."); assert.equal(clientTarget.strategy, "workspace"); assert.equal(clientTarget.packageIdentity, "@fixture/client"); assert.deepEqual(clientTarget.dependencyPaths, []);
+    const again = await resolve(pnpm, "packages/client"); assert.equal(clientTarget.fingerprint, again.fingerprint, "same SHA and topology are deterministic");
+    await write(pnpm, "README.md", "irrelevant"); assert.equal((await resolve(pnpm, "packages/client")).fingerprint, clientTarget.fingerprint, "irrelevant content cannot alter ownership");
+    await write(pnpm, "pnpm-workspace.yaml", "packages:\n  - packages/*\n  - tools/*\n"); assert.notEqual((await resolve(pnpm, "packages/client")).fingerprint, clientTarget.fingerprint, "changed workspace topology changes the fingerprint"); await write(pnpm, "pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+    assert.equal(clientTarget.serviceDirectory, "packages/client", "selected runnable package identity remains distinct from the workspace root and unselected siblings");
 
     // npm, Yarn, Bun, Nx, Turbo and Lerna are all repository-owned workspace evidence.
     for (const [name, rootManifest, marker] of [
@@ -36,8 +36,8 @@ void (async () => {
       ["turbo", JSON.stringify({ private: true, workspaces: ["apps/*"] }), "turbo.json"],
       ["lerna", JSON.stringify({ private: true, workspaces: ["apps/*"] }), "lerna.json"],
     ] as const) {
-      const fixture = join(root, name); await mkdir(fixture); await write(fixture, "package.json", rootManifest); await write(fixture, marker, marker === "lerna.json" ? JSON.stringify({ packages: ["apps/*"] }) : "{}"); await write(fixture, "apps/api/package.json", packageJson(`@${name}/api`, { [`@${name}/shared`]: "workspace:*" })); await write(fixture, "apps/shared/package.json", packageJson(`@${name}/shared"`.replace('"', '')));
-      const target = await resolve(fixture, "apps/api"); assert.equal(target.strategy, "workspace", `${name} workspace must retain its shared build root`); assert.equal(target.buildRoot, ".");
+      const fixture = join(root, name); await mkdir(fixture); await write(fixture, "package.json", rootManifest); await write(fixture, marker, marker === "lerna.json" ? JSON.stringify({ packages: ["apps/*"] }) : "{}"); await write(fixture, "apps/api/package.json", packageJson(`@${name}/api`)); await write(fixture, "apps/shared/package.json", packageJson(`@${name}/shared"`.replace('"', '')));
+      const target = await resolve(fixture, "apps/api"); assert.equal(target.strategy, "workspace", `${name} declared workspace membership must retain the root build scope without a sibling dependency`); assert.equal(target.workspaceRoot, "."); assert.equal(target.buildRoot, "."); assert.equal(target.installRoot, "."); assert.equal(target.packageIdentity, `@${name}/api`);
     }
     const nested = join(root, "nested"); await mkdir(nested); await write(nested, "package.json", JSON.stringify({ private: true, workspaces: ["packages/*"] })); await write(nested, "packages/platform/package.json", JSON.stringify({ private: true, workspaces: ["apps/*"] })); await write(nested, "packages/platform/apps/web/package.json", packageJson("@nested/web"));
     assert.equal((await resolve(nested, "packages/platform/apps/web")).workspaceRoot, "packages/platform", "nearest nested workspace owns its member");

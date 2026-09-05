@@ -36,7 +36,9 @@ export class BuildTargetResolverService {
     const packageIdentity = servicePackage?.name || python.name || null;
     if (owner && !servicePackage && !python.kind) throw new BuildTargetResolutionError("DG_BUILD_TARGET_UNSUPPORTED", input.serviceId, "The selected workspace member has no supported JavaScript or Python project manifest.", { workspaceRoot: repositoryPath(canonicalRoot, owner.root) });
     const dependencies = await this.localDependencies(canonicalRoot, servicePath, servicePackage, python.paths, workspacePackages, input.serviceId);
-    const workspaceRequired = Boolean(owner && dependencies.length);
+    // A declared JavaScript workspace owns installation and build topology even
+    // when the selected package has no explicit local sibling dependency.
+    const workspaceRequired = Boolean(owner && servicePackage);
     let workspaceRoot = owner ? repositoryPath(canonicalRoot, owner.root) : serviceDirectory;
     let buildRoot = workspaceRequired ? workspaceRoot : serviceDirectory;
     let installRoot = buildRoot;
