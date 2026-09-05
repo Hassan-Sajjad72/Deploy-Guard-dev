@@ -5,6 +5,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
 import { resolveServicePorts } from "./service-port-resolver";
+import { BuildTargetResolverService } from "./build-target-resolver.service";
+import { DeploymentRequirementResolverService } from "./deployment-requirement-resolver.service";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,6 +21,7 @@ export class RepositorySourceError extends Error {
 @Injectable()
 export class RepositorySourceService {
   private readonly logger = new Logger(RepositorySourceService.name);
+  constructor(private readonly buildTargets: BuildTargetResolverService, private readonly requirements: DeploymentRequirementResolverService) {}
 
   async checkout(input: { repositoryUrl: string; branch: string; accessToken?: string | null }) {
     this.validateRepositoryUrl(input.repositoryUrl);
@@ -95,6 +98,25 @@ export class RepositorySourceService {
     } finally {
       await this.cleanup(checkout.workspacePath);
     }
+  }
+
+  /** Resolves port evidence and a canonical build target from the same immutable checkout. */
+  async resolveBuildTargetsAtExactSha(input: { repositoryUrl: string; branch: string; sourceSha: string; services: Array<{ serviceId: string; serviceDirectory: string; buildTargetOverride?: unknown }>; accessToken?: string | null }) {
+    if (!/^[0-9a-f]{40}$/i.test(input.sourceSha)) throw new RepositorySourceError("Exact source identity is invalid.", "source SHA was invalid");
+    const checkout = await this.checkout({ repositoryUrl: input.repositoryUrl, branch: input.branch, accessToken: input.accessToken });
+    try {
+      if (checkout.sourceSha.toLowerCase() !== input.sourceSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed while preparing build targets. Retry against the new exact SHA.", "source SHA changed before build-target resolution");
+      const root = await realpath(checkout.workspacePath);
+      const targets = await Promise.all(input.services.map(async (service) => ({ serviceId: service.serviceId, target: await this.buildTargets.resolve(root, { serviceId: service.serviceId, sourceSha: input.sourceSha, serviceDirectory: service.serviceDirectory, override: service.buildTargetOverride }) })));
+      const ports = await resolveServicePorts(root, input.services);
+      return { targets, ports };
+    } finally { await this.cleanup(checkout.workspacePath); }
+  }
+
+  async resolveRequirementsAtExactSha(input: { repositoryUrl: string; branch: string; sourceSha: string; targets: Array<{ serviceId: string; target: import("./build-target").CanonicalBuildTarget }>; variables: Array<{ serviceId: string; key: string; isSecret: boolean; scope: "build" | "runtime" | "both" }>; managedDatabase: { engine: "postgres" | "mysql" | "mongodb"; attachedServiceId: string } | null; accessToken?: string | null }) {
+    const checkout = await this.checkout({ repositoryUrl: input.repositoryUrl, branch: input.branch, accessToken: input.accessToken });
+    try { if (checkout.sourceSha.toLowerCase() !== input.sourceSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed while resolving deployment requirements. Retry against the new exact SHA.", "source SHA changed before requirement admission"); return this.requirements.resolve(await realpath(checkout.workspacePath), input); }
+    finally { await this.cleanup(checkout.workspacePath); }
   }
 
   async cleanup(workspacePath: string) { await rm(workspacePath, { recursive: true, force: true }); }

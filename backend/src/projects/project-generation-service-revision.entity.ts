@@ -3,6 +3,7 @@ import { Project } from "./project.entity";
 import { ProjectDeployableService } from "./project-deployable-service.entity";
 import { ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
+import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
 
 /** Canonical immutable member of a project generation. */
 @Entity("project_generation_service_revisions")
@@ -27,5 +28,7 @@ export class ProjectGenerationServiceRevision {
   @ManyToOne(() => ProjectServiceRuntimeConfigRevision, { nullable: false, onDelete: "RESTRICT" })
   @JoinColumn({ name: "runtime_config_revision_id" }) runtimeConfigRevision: ProjectServiceRuntimeConfigRevision;
   @Column({ name: "runtime_identity", type: "jsonb" }) runtimeIdentity: Record<string, unknown>;
+  @Index() @Column({ name: "build_target_revision_id", type: "uuid", nullable: true }) buildTargetRevisionId: string | null;
+  @ManyToOne(() => ProjectBuildTargetRevision, { nullable: true, onDelete: "RESTRICT" }) @JoinColumn({ name: "build_target_revision_id" }) buildTargetRevision: ProjectBuildTargetRevision | null;
   @CreateDateColumn({ name: "created_at", type: "timestamptz" }) createdAt: Date;
 }

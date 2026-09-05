@@ -413,8 +413,10 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   let validatedServices: any[] = [];
   service.source = {
     resolveSourceSha: async () => "a".repeat(40),
-    resolveServicePortsAtExactSha: async (input: any) => { validatedServices = input.services; return input.services.map((item: any) => ({ serviceId: item.serviceId, servicePort: 3000, evidence: { priority: 2, source: "fixture" } })); },
+    resolveBuildTargetsAtExactSha: async (input: any) => { validatedServices = input.services; return { ports: input.services.map((item: any) => ({ serviceId: item.serviceId, servicePort: 3000, evidence: { priority: 2, source: "fixture" } })), targets: input.services.map((item: any) => ({ serviceId: item.serviceId, target: { resolverVersion: "deployguard.build-target/v1", sourceSha: "a".repeat(40), serviceDirectory: item.serviceDirectory, workspaceRoot: ".", buildRoot: item.serviceDirectory, installRoot: item.serviceDirectory, packageIdentity: "fixture", dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "a".repeat(64) } })) }; },
+    resolveRequirementsAtExactSha: async () => ({ status: "READY", fingerprint: "b".repeat(64), requirements: [], unresolvedRequired: [], prohibitedOverrides: [], duplicateConflicts: [], validationBlockers: [] }),
   };
+  service.buildTargetRevisions = { create: (row: any) => row, save: async (row: any) => ({ ...row, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }) };
   service.oidcTrust = { ensureRepositoryAuthorized: async () => undefined };
   const materializedSecrets: any[] = [];
   service.runtimeSecrets = { materialize: async (input: any) => {
@@ -438,10 +440,11 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   assert.equal(operations.length, 1, "concurrent lifecycle requests persist exactly one authoritative operation");
   assert.equal(dispatchCalls, 1, "the losing caller never reaches workflow dispatch");
   assert.equal(credentialCalls, 1, "the losing caller never crosses the first external boundary");
-  assert.deepEqual(validatedServices, [{ serviceId: serviceRow.id, serviceDirectory: "apps/a" }], "directory validation consumes the admitted service snapshot");
+  assert.deepEqual(validatedServices, [{ serviceId: serviceRow.id, serviceDirectory: "apps/a", buildTargetOverride: undefined }], "build-target resolution consumes the admitted service snapshot");
   const runtime = JSON.parse(Buffer.from(dispatchedInputs.services_base64, "base64").toString("utf8"));
   assert.equal(runtime.services[0].serviceDirectory, "apps/a");
   assert.equal(runtime.services[0].servicePort, 3000);
+  assert.equal(runtime.services[0].buildTarget.buildRoot, "apps/a");
   assert.equal(runtime.services[0].environment.MODE, "mode-a");
   assert.equal(runtime.services[0].databaseAttached, true);
   assert.deepEqual(materializedSecrets[0].secretValues, { TOKEN: "secret-a" }, "secret materialization consumes the admitted encrypted snapshot value in memory");

@@ -67,6 +67,7 @@ import { GithubAppInstallation } from "./projects/github-app-installation.entity
 import { ProjectDeployableService } from "./projects/project-deployable-service.entity";
 import { ProjectServiceRuntimeConfigRevision } from "./projects/project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "./projects/project-generation-service-revision.entity";
+import { ProjectBuildTargetRevision } from "./projects/project-build-target-revision.entity";
 
 function loadBackendEnv() {
   const envPath = resolveBackendEnvFile();
@@ -131,6 +132,7 @@ export default new DataSource({
     ProjectDeployableService,
     ProjectServiceRuntimeConfigRevision,
     ProjectGenerationServiceRevision,
+    ProjectBuildTargetRevision,
     ProjectEnvironmentVariable,
     ProjectDatabaseTier,
     ProjectPipelineRun,

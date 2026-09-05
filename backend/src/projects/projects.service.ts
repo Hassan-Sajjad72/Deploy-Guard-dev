@@ -35,6 +35,7 @@ import { DeployableServiceInputDto, UpdateDeployableServiceDto } from "./dto/dep
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
 import { PipelineRunStatus, ProjectPipelineRun } from "./project-pipeline-run.entity";
+import { assertBuildTargetOverride } from "./build-target";
 
 type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
@@ -222,6 +223,7 @@ export class ProjectsService {
         projectId: saved.id,
         name: service.name,
         serviceDirectory: service.serviceDirectory,
+        buildTargetOverride: assertBuildTargetOverride((service as DeployableServiceInputDto).buildTargetOverride),
         servicePort: null,
         position,
       }));
@@ -278,7 +280,7 @@ export class ProjectsService {
       const repository = manager.getRepository(ProjectDeployableService);
       const services = await repository.find({ where: { projectId }, order: { position: "ASC" } });
       const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory })), dto]);
-      return repository.save(repository.create({ projectId, ...normalized[normalized.length - 1], position: services.length }));
+      return repository.save(repository.create({ projectId, ...normalized[normalized.length - 1], buildTargetOverride: assertBuildTargetOverride(dto.buildTargetOverride), position: services.length }));
     });
   }
 
@@ -300,6 +302,7 @@ export class ProjectsService {
       const directoryChanged = normalized.serviceDirectory !== service.serviceDirectory;
       service.name = normalized.name;
       service.serviceDirectory = normalized.serviceDirectory;
+      if (dto.buildTargetOverride !== undefined) service.buildTargetOverride = assertBuildTargetOverride(dto.buildTargetOverride);
       if (directoryChanged) service.servicePort = null;
       if (dto.position !== undefined && dto.position !== service.position) {
         const other = await repository.findOne({ where: { projectId, position: dto.position } });
@@ -955,7 +958,7 @@ export class ProjectsService {
       targetBranch: project.targetBranch,
       environmentName: project.environmentName || "dev",
       applicationEntryPointServiceId: project.applicationEntryPointServiceId || ((project.services || []).length === 1 ? project.services[0].id : null),
-      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort, position: service.position })),
+      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort, position: service.position, ...(service.buildTargetOverride ? { buildTargetOverride: service.buildTargetOverride } : {}) })),
       status: project.status,
       visibility: project.visibility,
       canManage:

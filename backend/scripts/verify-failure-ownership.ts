@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
 
 const serviceId = "11111111-1111-4111-8111-111111111111";
-assert.deepEqual(classifyStructuredFailure("railpack_build", `DG_FAILURE serviceId=${serviceId} code=DG_RAILPACK_BUILD_FAILED stage=railpack_build`), { failureOwner: "REPOSITORY_APPLICATION", externalProvider: null, failureCode: "DG_RAILPACK_BUILD_FAILED", failureServiceId: serviceId });
+assert.deepEqual(classifyStructuredFailure("railpack_build", `DG_FAILURE serviceId=${serviceId} code=DG_RAILPACK_BUILD_FAILED stage=railpack_build`), { failureOwner: "UNVERIFIED", externalProvider: null, failureCode: "DG_RAILPACK_BUILD_FAILED", failureServiceId: serviceId });
+for (const code of ["DG_BUILD_TARGET_UNRESOLVED", "DG_BUILD_TARGET_AMBIGUOUS", "DG_BUILD_TARGET_UNSUPPORTED", "DG_BUILD_TARGET_INVALID"]) {
+  assert.deepEqual(classifyStructuredFailure("build_target_resolution", `DG_FAILURE serviceId=${serviceId} code=${code} stage=build_target_resolution`), { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: code, failureServiceId: serviceId });
+}
 assert.deepEqual(classifyStructuredFailure("service_directory_validation", `DG_FAILURE serviceId=${serviceId} code=DG_SERVICE_DIRECTORY_MISSING stage=service_directory_validation`), { failureOwner: "REPOSITORY_APPLICATION", externalProvider: null, failureCode: "DG_SERVICE_DIRECTORY_MISSING", failureServiceId: serviceId });
 for (const code of ["DG_SERVICE_PORT_UNRESOLVED", "DG_SERVICE_PORT_CONFLICT", "DG_SERVICE_PORT_INVALID"]) {
   assert.deepEqual(classifyStructuredFailure("service_port_resolution", `DG_FAILURE serviceId=${serviceId} code=${code} stage=service_port_resolution`), { failureOwner: "REPOSITORY_APPLICATION", externalProvider: null, failureCode: code, failureServiceId: serviceId });

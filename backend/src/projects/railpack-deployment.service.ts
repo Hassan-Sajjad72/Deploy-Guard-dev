@@ -41,6 +41,10 @@ import { ServicePortResolutionError } from "./service-port-resolver";
 import { decideDeploymentRecovery, DeploymentRecoveryDecision } from "./deployment-recovery-decision";
 import { ManagedDatabaseReconciliationReport, ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
 import { AuditLogService } from "../audit-log/audit-log.service";
+import { BuildTargetResolutionError } from "./build-target-resolver.service";
+import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
+import { CanonicalBuildTarget } from "./build-target";
+import { DeploymentRequirementAdmissionError, RequirementAdmission } from "./deployment-requirement-resolver.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -109,6 +113,7 @@ export class RailpackDeploymentService {
     @InjectRepository(ProjectStableRelease) private readonly releases: Repository<ProjectStableRelease>,
     @InjectRepository(ProjectServiceRuntimeConfigRevision) private readonly runtimeConfigRevisions: Repository<ProjectServiceRuntimeConfigRevision>,
     @InjectRepository(ProjectGenerationServiceRevision) private readonly serviceRevisions: Repository<ProjectGenerationServiceRevision>,
+    @InjectRepository(ProjectBuildTargetRevision) private readonly buildTargetRevisions: Repository<ProjectBuildTargetRevision>,
     private readonly githubApp: GithubAppService,
     private readonly actions: GithubActionsService,
     private readonly oidcTrust: GithubActionsOidcTrustService,
@@ -356,16 +361,27 @@ export class RailpackDeploymentService {
           : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
       if (action === "deploy") {
-        const configuredServices = configuration.services.map((service) => ({ serviceId: service.id, serviceDirectory: service.serviceDirectory }));
+        const configuredServices = configuration.services.map((service) => ({ serviceId: service.id, serviceDirectory: service.serviceDirectory, buildTargetOverride: service.buildTargetOverride }));
+        operation.currentStage = "build_target_resolution";
+        await this.runs.save(operation);
+        const resolved = await this.source.resolveBuildTargetsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, services: configuredServices, accessToken: credential.token });
+        const targetRevisions = await this.persistBuildTargetRevisions(project.id, operation.id, sourceSha, resolved.targets);
+        const targetsByService = new Map(targetRevisions.map((revision) => [revision.serviceId, revision]));
+        operation.metadata = { ...(operation.metadata || {}), buildTargetRevisionIds: targetRevisions.map((revision) => revision.id).sort(), buildTargetFingerprints: targetRevisions.map((revision) => ({ serviceId: revision.serviceId, fingerprint: revision.fingerprint })).sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
         operation.currentStage = "service_port_resolution";
         await this.runs.save(operation);
-        const resolvedPorts = await this.source.resolveServicePortsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, services: configuredServices, accessToken: credential.token });
-        const portsByService = new Map(resolvedPorts.map((result) => [result.serviceId, result.servicePort]));
+        const portsByService = new Map(resolved.ports.map((result) => [result.serviceId, result.servicePort]));
         for (const service of configuration.services) {
           const resolved = portsByService.get(service.id);
           if (!resolved) throw new ServicePortResolutionError("DG_SERVICE_PORT_UNRESOLVED", service.id, []);
           service.servicePort = resolved;
+          const target = targetsByService.get(service.id);
+          if (!target) throw new BuildTargetResolutionError("DG_BUILD_TARGET_UNRESOLVED", service.id, "Build-target revision was not persisted.");
+          (service as ProjectDeployableService & { resolvedBuildTarget?: ProjectBuildTargetRevision }).resolvedBuildTarget = target;
         }
+        const requirementAdmission = await this.source.resolveRequirementsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, targets: resolved.targets, variables: configuration.variables.map(({ serviceId, key, isSecret, scope }) => ({ serviceId, key, isSecret, scope })), managedDatabase: configuration.managedDatabase?.attachedServiceId && isSupportedManagedDatabaseEngine(configuration.managedDatabase.engine) ? { engine: configuration.managedDatabase.engine, attachedServiceId: configuration.managedDatabase.attachedServiceId } : null, accessToken: credential.token });
+        await this.sealRequirementAdmission(operation, configuration, targetRevisions, sourceSha, requirementAdmission);
+        if (requirementAdmission.status !== "READY") throw new DeploymentRequirementAdmissionError(requirementAdmission);
         await this.sealResolvedDeploymentConfiguration(operation, configuration);
       }
       operation.currentStage = "caller_reconciliation";
@@ -416,9 +432,37 @@ export class RailpackDeploymentService {
       operation.failureOwner = ownership.failureOwner; operation.externalProvider = ownership.externalProvider; operation.failureCode = ownership.failureCode; operation.failureServiceId = ownership.failureServiceId;
       operation.metadata = { ...(operation.metadata || {}), dispatchState: "failed", failureSource: "deployguard_dispatch", failedStage: failure.stage, safeLog: failure.message, dispatchFailure: failure.evidence };
       await this.runs.save(operation);
+      if (error instanceof DeploymentRequirementAdmissionError) return { deployment: { state: error.admission.status === "INPUT_REQUIRED" ? "input_required" : "blocked", message: error.message, requirements: error.admission, operation } };
       return { deployment: { state: "dispatch_failed", message: "Deployment could not start. DeployGuard failed while starting the GitHub Actions deployment.", operation } };
     }
     return { deployment: { state: "accepted", message: "Railpack deployment dispatched to GitHub Actions.", operation } };
+  }
+
+  private async persistBuildTargetRevisions(projectId: string, operationId: string, sourceSha: string, values: Array<{ serviceId: string; target: CanonicalBuildTarget }>) {
+    const revisions: ProjectBuildTargetRevision[] = [];
+    for (const value of values.sort((a, b) => a.serviceId.localeCompare(b.serviceId))) {
+      revisions.push(await this.buildTargetRevisions.save(this.buildTargetRevisions.create({ projectId, operationId, serviceId: value.serviceId, sourceSha, resolverVersion: value.target.resolverVersion, fingerprint: value.target.fingerprint, target: value.target as unknown as Record<string, unknown> })));
+    }
+    return revisions;
+  }
+
+  private async sealRequirementAdmission(operation: ProjectPipelineRun, configuration: AdmittedDeploymentConfiguration, targets: ProjectBuildTargetRevision[], sourceSha: string, admission: RequirementAdmission) {
+    await this.dataSource.transaction(async (manager) => {
+      await acquireProjectConfigurationAdvisoryLock(manager, configuration.project.id, configuration.environmentName);
+      const snapshots = manager.getRepository(ProjectConfigurationSnapshot);
+      const snapshot = operation.configurationSnapshotId ? await snapshots.findOne({ where: { id: operation.configurationSnapshotId, pipelineRunId: operation.id } }) : null;
+      if (!snapshot) throw new ServiceUnavailableException("The admitted deployment configuration snapshot is unavailable.");
+      snapshot.unresolvedRequired = admission.unresolvedRequired;
+      snapshot.prohibitedOverrides = admission.prohibitedOverrides;
+      snapshot.duplicateConflicts = admission.duplicateConflicts;
+      snapshot.validationBlockers = admission.validationBlockers;
+      snapshot.sourceRevisions = { ...snapshot.sourceRevisions, sourceSha, buildTargetRevisions: JSON.stringify(targets.map((target) => ({ serviceId: target.serviceId, id: target.id, fingerprint: target.fingerprint })).sort((a, b) => a.serviceId.localeCompare(b.serviceId))), requirementFingerprint: admission.fingerprint };
+      snapshot.sanitizedManifest = { ...snapshot.sanitizedManifest, requirementAdmission: { status: admission.status, fingerprint: admission.fingerprint, requirements: admission.requirements.map(({ secret: _secret, ...requirement }) => requirement), unresolvedRequired: admission.unresolvedRequired, prohibitedOverrides: admission.prohibitedOverrides, duplicateConflicts: admission.duplicateConflicts, validationBlockers: admission.validationBlockers } };
+      snapshot.configurationFingerprint = createHash("sha256").update(JSON.stringify({ admitted: snapshot.configurationFingerprint, sourceSha, buildTargets: targets.map((target) => target.fingerprint).sort(), requirements: admission.fingerprint })).digest("hex");
+      await snapshots.save(snapshot);
+      operation.metadata = { ...(operation.metadata || {}), admittedConfigurationFingerprint: snapshot.configurationFingerprint, deploymentRequirementAdmission: { status: admission.status, fingerprint: admission.fingerprint } };
+      await manager.getRepository(ProjectPipelineRun).save(operation);
+    });
   }
 
   private async admitLifecycleOperation(
@@ -789,6 +833,13 @@ export class RailpackDeploymentService {
       const evidenceStage = error.safeDetail.match(/(?:^|\s)stage=([a-z0-9_]+)/i)?.[1];
       return { stage: evidenceStage || stage || "source_resolution", message: error.message.slice(0, 500), evidence: { classification: "repository_configuration", safeDetail: error.safeDetail } };
     }
+    if (error instanceof BuildTargetResolutionError) {
+      return { stage: "build_target_resolution", message: `${error.message} ${error.safeDetail()}`.slice(0, 500), evidence: { classification: "build_target_admission", code: error.code, serviceId: error.serviceId, ...error.evidence } };
+    }
+    if (error instanceof DeploymentRequirementAdmissionError) {
+      const code = error.admission.status === "INPUT_REQUIRED" ? "DG_DEPLOYMENT_INPUT_REQUIRED" : "DG_DEPLOYMENT_REQUIREMENTS_BLOCKED";
+      return { stage: "deployment_requirement_admission", message: `${error.message} DG_FAILURE code=${code} stage=deployment_requirement_admission`, evidence: { classification: "deployment_requirements", ...error.admission } };
+    }
     if (error instanceof ServicePortResolutionError) {
       return { stage: "service_port_resolution", message: error.safeDetail.slice(0, 500), evidence: { classification: "repository_configuration", code: error.code, serviceId: error.serviceId, sources: error.evidence.map((item) => item.source) } };
     }
@@ -914,7 +965,9 @@ export class RailpackDeploymentService {
         legacyBackfill: false,
         sealedAt: null,
       }));
-      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, servicePort, runtimeConfigRevisionId: revision.id, buildEnvironment, buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
+      const buildTargetRevision = (service as ProjectDeployableService & { resolvedBuildTarget?: ProjectBuildTargetRevision }).resolvedBuildTarget;
+      if (!buildTargetRevision) throw new ServiceUnavailableException(`Canonical build-target evidence is unavailable for ${service.name}.`);
+      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, servicePort, runtimeConfigRevisionId: revision.id, buildTargetRevisionId: buildTargetRevision.id, buildTarget: buildTargetRevision.target as unknown as CanonicalBuildTarget, buildEnvironment, buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
     }
     return { schemaVersion: 3, projectId: project.id, environmentName, operationId, sourceSha, services: services.sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
   }
@@ -1262,7 +1315,7 @@ export class RailpackDeploymentService {
       const imageUri = String(item.imageUri || ""); const imageDigest = String(item.imageDigest || ""); const image = String(item.image || "");
       const runtime = terraformServices[String(item.serviceId || "")];
       if (!expectedService || String(item.runtimeConfigRevisionId || "") !== expectedService.runtimeConfigRevisionId || String(item.serviceName || "") !== expectedService.serviceName || String(item.serviceDirectory || "") !== expectedService.serviceDirectory || Number(item.servicePort) !== expectedService.servicePort || image !== `${imageUri}@${imageDigest}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*$/i.test(imageUri) || !/^sha256:[0-9a-f]{64}$/.test(imageDigest) || !runtime || runtime.image !== image || runtime.runtime_config_revision_id !== expectedService.runtimeConfigRevisionId || Number(runtime.service_port) !== expectedService.servicePort || typeof runtime.public_url !== "string" || typeof runtime.task_definition_arn !== "string" || typeof runtime.ecs_service_arn !== "string" || runtime.transport_probe_container_name !== "deployguard-transport-probe" || !Number.isInteger(Number(runtime.transport_probe_port)) || runtime.platform_health_check_path !== DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH) throw new Error("Release service evidence does not match its immutable service contract and Terraform runtime.");
-      return { serviceId: expectedService.serviceId, serviceName: expectedService.serviceName, serviceDirectory: expectedService.serviceDirectory, servicePort: expectedService.servicePort, sourceSha, runtimeConfigRevisionId: expectedService.runtimeConfigRevisionId, imageUri, imageDigest, image, publicUrl: runtime.public_url, taskDefinitionArn: runtime.task_definition_arn, ecsServiceArn: runtime.ecs_service_arn, ecsServiceName: runtime.ecs_service_name, albArn: runtime.alb_arn, albName: runtime.alb_name, targetGroupArn: runtime.alb_target_group_arn, targetGroupName: runtime.alb_target_group_name, cloudWatchLogGroupName: runtime.cloudwatch_log_group_name, applicationContainerName: runtime.application_container_name, transportProbeContainerName: runtime.transport_probe_container_name, transportProbePort: Number(runtime.transport_probe_port), platformHealthCheckPath: runtime.platform_health_check_path };
+      return { serviceId: expectedService.serviceId, serviceName: expectedService.serviceName, serviceDirectory: expectedService.serviceDirectory, servicePort: expectedService.servicePort, sourceSha, runtimeConfigRevisionId: expectedService.runtimeConfigRevisionId, buildTargetRevisionId: expectedService.buildTargetRevisionId || null, buildTarget: expectedService.buildTarget || null, imageUri, imageDigest, image, publicUrl: runtime.public_url, taskDefinitionArn: runtime.task_definition_arn, ecsServiceArn: runtime.ecs_service_arn, ecsServiceName: runtime.ecs_service_name, albArn: runtime.alb_arn, albName: runtime.alb_name, targetGroupArn: runtime.alb_target_group_arn, targetGroupName: runtime.alb_target_group_name, cloudWatchLogGroupName: runtime.cloudwatch_log_group_name, applicationContainerName: runtime.application_container_name, transportProbeContainerName: runtime.transport_probe_container_name, transportProbePort: Number(runtime.transport_probe_port), platformHealthCheckPath: runtime.platform_health_check_path };
     });
     if (intendedServices.length !== expected.services.length || new Set(intendedServices.map((service) => service.serviceId)).size !== expected.services.length) {
       throw new Error("Release result does not contain the complete immutable service set.");
@@ -1459,7 +1512,7 @@ export class RailpackDeploymentService {
         const expectedByService = new Map(immutableServices.map((service) => [String(service.serviceId), service]));
         if (existingGenerationRevisions.length !== immutableServices.length || existingGenerationRevisions.some((revision) => {
           const expected = expectedByService.get(revision.serviceId);
-          return !expected || revision.projectId !== project.id || revision.sourceSha !== current.commitSha || revision.imageUri !== expected.imageUri || revision.imageDigest !== expected.imageDigest || revision.runtimeConfigRevisionId !== expected.runtimeConfigRevisionId;
+          return !expected || revision.projectId !== project.id || revision.sourceSha !== current.commitSha || revision.imageUri !== expected.imageUri || revision.imageDigest !== expected.imageDigest || revision.runtimeConfigRevisionId !== expected.runtimeConfigRevisionId || revision.buildTargetRevisionId !== (expected.buildTargetRevisionId || null);
         })) throw new Error("Generation service revision set conflicts with immutable release evidence.");
       }
       if (!existingGenerationRevisions.length) {
@@ -1473,6 +1526,7 @@ export class RailpackDeploymentService {
           imageUri: String(service.imageUri),
           imageDigest: String(service.imageDigest),
           runtimeConfigRevisionId: String(service.runtimeConfigRevisionId),
+          buildTargetRevisionId: typeof service.buildTargetRevisionId === "string" ? service.buildTargetRevisionId : null,
           runtimeIdentity: service,
         }));
         await generationRevisions.save(promotedServiceRevisions(candidateRevisions, expectedServiceIds));

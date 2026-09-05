@@ -49,11 +49,14 @@ import { ProjectDeployableService } from "./project-deployable-service.entity";
 import { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import { ManagedDatabaseReconciliationService } from "./managed-database-reconciliation.service";
+import { BuildTargetResolverService } from "./build-target-resolver.service";
+import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
+import { DeploymentRequirementResolverService } from "./deployment-requirement-resolver.service";
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, User, GithubAppInstallation, ProjectEnvironmentVariable,
+      Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, ProjectBuildTargetRevision, User, GithubAppInstallation, ProjectEnvironmentVariable,
       ProjectDatabaseTier, ProjectPipelineRun, ProjectPipelineEvent, ProjectUserActivity,
       // Historical infrastructure/storage records are not part of ordinary
       // project state authority. Current routing uses generation records.
@@ -75,6 +78,8 @@ import { ManagedDatabaseReconciliationService } from "./managed-database-reconci
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
     DatabaseTierService,
     RepositorySourceService,
+    BuildTargetResolverService,
+    DeploymentRequirementResolverService,
     PipelineStageResolverService,
     ProjectCurrentStateService,
     ProjectActivityService, LogSanitizerService,

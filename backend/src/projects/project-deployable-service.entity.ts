@@ -13,6 +13,8 @@ export class ProjectDeployableService {
   @JoinColumn({ name: "project_id" }) project: Project;
   @Column({ length: 80 }) name: string;
   @Column({ name: "service_directory", length: 512, default: "." }) serviceDirectory: string;
+  /** Advanced, bounded escape hatch; ordinary services use exact-SHA topology resolution. */
+  @Column({ name: "build_target_override", type: "jsonb", nullable: true }) buildTargetOverride: Record<string, unknown> | null;
   @Column({ name: "service_port", type: "integer", nullable: true }) servicePort: number | null;
   @Column({ type: "integer", default: 0 }) position: number;
   @OneToMany(() => ProjectEnvironmentVariable, (variable) => variable.service) environmentVariables: ProjectEnvironmentVariable[];
