@@ -80,6 +80,7 @@ void (async () => {
   assert.ok(api.managedDatabase.aliases.includes("DATABASE_URL"));
   assert.ok(api.managedDatabase.aliases.includes("POSTGRES_PASSWORD"));
   assert.deepEqual(materializations.map((item) => [item.serviceId, Object.keys(item.secretValues)]), [[webId, ["WEB_BUILD_SECRET", "WEB_BOTH_SECRET", "WEB_RUNTIME_SECRET", "DATABASE_URL"]], [apiId, ["API_TOKEN", "API_BUILD_TOKEN", "MONGODB_URI"]]]);
+  assert.equal(materializations.find((item) => item.serviceId === apiId).secretValues.DATABASE_URL, undefined, "managed PostgreSQL aliases never enter user runtime secret materialization");
   assert.deepEqual(materializations.map((item) => item.environment), ["cert-20260831", "cert-20260831"], "named project environments survive runtime configuration unchanged");
 
   managedTier = null;

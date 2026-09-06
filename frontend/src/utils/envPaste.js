@@ -1,6 +1,6 @@
 import { classifySubmittedEnvironmentKey, ignoredEnvironmentNotice } from "./envOwnership.js";
 
-export function parseEnvPaste(value) {
+export function parseEnvPaste(value, backendManagedKeys = []) {
   const entries = [];
   const errors = [];
   const ignoredVariableNames = [];
@@ -12,7 +12,7 @@ export function parseEnvPaste(value) {
     const match = text.match(/^(?:export\s+)?([A-Z][A-Z0-9_]*)=(.*)$/);
     if (!match) { errors.push(`Line ${number}: use KEY=value.`); return; }
     const [, key, raw] = match;
-    const ownership = classifySubmittedEnvironmentKey(key);
+    const ownership = classifySubmittedEnvironmentKey(key, backendManagedKeys);
     if (ownership.management !== "application") {
       ignoredVariableNames.push(ownership.key);
       return;

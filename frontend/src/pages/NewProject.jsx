@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { bulkUpsertProjectServiceEnvVars, connectGithubAppInstallation, createProject, deployGithubActionsDeployment, getGithubConnectionStatus, getGithubRepositories, getGithubRepositoryDirectories, inspectGithubRepository, updateProject, updateProjectBranch, updateProjectDatabaseTier } from "../api/projectApi.js";
 import { ActionBar, Card, IssueCard, ReadinessSummary, StatusChip } from "../components/common/DesignSystem.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
+import { managedDatabaseAliases } from "../utils/envOwnership.js";
 import { parseEnvPaste } from "../utils/envPaste.js";
 import { createDeploymentSelectionGate, deploymentSelectionKey } from "../utils/deploymentSelection.js";
 
@@ -123,12 +124,6 @@ function ServiceDirectoryPicker({ browseError, browsing, directories, disabled, 
   </div>;
 }
 
-const MANAGED_DATABASE_ALIASES = {
-  postgres: ["DB_HOST", "DATABASE_HOST", "POSTGRES_HOST", "PGHOST", "DB_PORT", "DATABASE_PORT", "POSTGRES_PORT", "PGPORT", "DB_USER", "DATABASE_USER", "POSTGRES_USER", "PGUSER", "DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD", "DB_NAME", "DATABASE_NAME", "POSTGRES_DB", "PGDATABASE", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"],
-  mysql: ["DB_HOST", "DATABASE_HOST", "MYSQL_HOST", "DB_PORT", "DATABASE_PORT", "MYSQL_PORT", "DB_USER", "DATABASE_USER", "MYSQL_USER", "DB_PASSWORD", "DATABASE_PASSWORD", "MYSQL_PASSWORD", "DB_NAME", "DATABASE_NAME", "MYSQL_DATABASE", "DATABASE_URL", "MYSQL_URL"],
-  mongodb: ["DB_HOST", "DATABASE_HOST", "MONGO_HOST", "MONGODB_HOST", "DB_PORT", "DATABASE_PORT", "MONGO_PORT", "MONGODB_PORT", "DB_USER", "DATABASE_USER", "MONGO_USER", "MONGODB_USER", "DB_PASSWORD", "DATABASE_PASSWORD", "MONGO_PASSWORD", "MONGODB_PASSWORD", "DB_NAME", "DATABASE_NAME", "MONGO_DB", "MONGODB_DATABASE", "DATABASE_URL", "MONGO_URI", "MONGO_URL", "MONGODB_URI"],
-};
-
 export default function NewProject() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -150,12 +145,12 @@ export default function NewProject() {
   const [ignoredEnvironmentNames, setIgnoredEnvironmentNames] = useState([]);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState("");
-  const parsedServices = useMemo(() => services.map((service) => ({ service, parsed: parseEnvPaste(service.envPaste) })), [services]);
   const attachedDatabaseServiceKey = database.attachedServiceKey || services[0]?.key;
-  const managedDatabaseConflicts = database.provider === "managed"
-    ? (parsedServices.find(({ service }) => service.key === attachedDatabaseServiceKey)?.parsed.entries || []).filter(({ key }) => MANAGED_DATABASE_ALIASES[database.engine]?.includes(key)).map(({ key }) => key)
-    : [];
-  const hasServiceErrors = parsedServices.some(({ parsed }) => parsed.errors.length) || services.some((service) => !service.name.trim() || !service.serviceDirectory.trim()) || new Set(services.map((service) => service.name.trim().toLowerCase())).size !== services.length || (services.length > 1 && !services.some((service) => service.key === applicationEntryPointServiceId)) || managedDatabaseConflicts.length > 0;
+  const parsedServices = useMemo(() => services.map((service) => ({
+    service,
+    parsed: parseEnvPaste(service.envPaste, database.provider === "managed" && service.key === attachedDatabaseServiceKey ? managedDatabaseAliases(database.engine) : []),
+  })), [attachedDatabaseServiceKey, database.engine, database.provider, services]);
+  const hasServiceErrors = parsedServices.some(({ parsed }) => parsed.errors.length) || services.some((service) => !service.name.trim() || !service.serviceDirectory.trim()) || new Set(services.map((service) => service.name.trim().toLowerCase())).size !== services.length || (services.length > 1 && !services.some((service) => service.key === applicationEntryPointServiceId));
   const currentSelection = deploymentSelectionKey(repository, branch);
   const deployable = Boolean(readiness?.project?.id && readiness.selection === currentSelection && readiness.deployAllowed === true && ["ready", "warning"].includes(readiness.level));
   const journey = deploymentJourney(repository, branch, readiness, working, deployable);
@@ -305,6 +300,11 @@ export default function NewProject() {
         project = (await updateProjectBranch(project.id, requestedBranch)).project;
       }
       if (!isCurrent()) return;
+      if (database.provider === "managed") {
+        const attachedIndex = Math.max(0, services.findIndex((service) => service.key === attachedDatabaseServiceKey));
+        await updateProjectDatabaseTier(project.id, { provider: "managed", engine: database.engine, persistenceEnabled: true, attachedServiceId: project.services[attachedIndex].id });
+      }
+      if (!isCurrent()) return;
       let savedCount = 0; const ignored = [];
       for (const [index, item] of parsedServices.entries()) {
         const persistedService = project.services?.[index];
@@ -318,10 +318,6 @@ export default function NewProject() {
       if (!isCurrent()) return;
       setSavedEnvironmentCount(savedCount); setIgnoredEnvironmentNames([...new Set(ignored)].sort());
       setServices((current) => current.map((service) => ({ ...service, envPaste: "" })));
-      if (database.provider === "managed") {
-        const attachedIndex = Math.max(0, services.findIndex((service) => service.key === database.attachedServiceKey));
-        await updateProjectDatabaseTier(project.id, { provider: "managed", engine: database.engine, persistenceEnabled: true, attachedServiceId: project.services[attachedIndex].id });
-      }
       setReadiness({ level: "ready", deployAllowed: true, requiredInputs: [], message: "Repository, branch, and optional environment are ready for deployment.", project, selection: ticket.selection });
     } catch (caught) {
       if (isCurrent()) setReadiness({ level: "blocked", message: safeMessage(caught), selection: ticket.selection, existingProjectSettingsId });
@@ -357,7 +353,7 @@ export default function NewProject() {
         {services.length > 1 ? <label className="field"><span>Application service</span><select disabled={Boolean(working)} onChange={(event) => changeApplicationService(event.target.value)} value={applicationEntryPointServiceId}><option value="">Choose the service Open Application should open</option>{services.map((service) => <option key={service.key} value={service.key}>{service.name} — {service.serviceDirectory || "Choose a directory"}</option>)}</select></label> : null}
         {parsedServices.map(({ service, parsed }, index) => <article className="panel-flat deployable-service-editor" key={service.key}><div className="compact-section-heading"><strong>Service {index + 1}</strong>{services.length > 1 ? <button className="danger-text-button" disabled={Boolean(working)} onClick={() => removeService(service.key)} type="button">Remove</button> : null}</div><div className="new-project-fields"><label className="field"><span>Name</span><input disabled={Boolean(working)} maxLength="80" onChange={(event) => changeService(service.key, "name", event.target.value)} value={service.name} /></label><ServiceDirectoryPicker browseError={directoryBrowseError} browsing={directoriesLoading} directories={directories} disabled={Boolean(working)} onValueChange={(value) => changeService(service.key, "serviceDirectory", value)} service={service} /></div><label className="field"><span>Optional .env for {service.name || `Service ${index + 1}`}</span><textarea disabled={Boolean(working)} onChange={(event) => changeService(service.key, "envPaste", event.target.value)} placeholder={"# Optional\nAPI_URL=https://example.test"} rows="5" value={service.envPaste} /><small>Encrypted and injected only into this service.</small></label>{parsed.errors.map((message) => <IssueCard key={message} severity="danger" title="Invalid environment input"><p>{message}</p></IssueCard>)}{parsed.warnings?.map((message) => <IssueCard key={message} severity="warning" title="Input ignored"><p>{message}</p></IssueCard>)}</article>)}
       </section>
-      <section className="panel-flat settings-simple-form"><div><p className="eyebrow">Database</p><h3>Database</h3><p className="muted">Use existing ENV for an external database, or let DeployGuard manage one database for one service.</p></div><label className="field"><span>Database</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => event.target.value === "none" ? { ...current, provider: "none" } : { ...current, provider: "managed", engine: event.target.value })} value={database.provider === "managed" ? database.engine : "none"}><option value="none">No managed database / use existing ENV</option><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option><option value="mongodb">MongoDB</option></select></label>{database.provider === "managed" ? services.length > 1 ? <label className="field"><span>Attach database to</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => ({ ...current, attachedServiceKey: event.target.value }))} value={database.attachedServiceKey || services[0].key}>{services.map((service) => <option key={service.key} value={service.key}>{service.name}</option>)}</select></label> : <p className="muted">The database will connect to {services[0]?.name || "Web"}.</p> : null}{managedDatabaseConflicts.length ? <IssueCard severity="danger" title="Database configuration conflict"><p>Remove {managedDatabaseConflicts.join(", ")} from the selected service ENV, or choose “No managed database / use existing ENV”.</p></IssueCard> : null}</section>
+      <section className="panel-flat settings-simple-form"><div><p className="eyebrow">Database</p><h3>Database</h3><p className="muted">Use existing ENV for an external database, or let DeployGuard manage one database for one service.</p></div><label className="field"><span>Database</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => event.target.value === "none" ? { ...current, provider: "none" } : { ...current, provider: "managed", engine: event.target.value })} value={database.provider === "managed" ? database.engine : "none"}><option value="none">No managed database / use existing ENV</option><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option><option value="mongodb">MongoDB</option></select></label>{database.provider === "managed" ? services.length > 1 ? <label className="field"><span>Attach database to</span><select disabled={Boolean(working)} onChange={(event) => setDatabase((current) => ({ ...current, attachedServiceKey: event.target.value }))} value={database.attachedServiceKey || services[0].key}>{services.map((service) => <option key={service.key} value={service.key}>{service.name}</option>)}</select></label> : <p className="muted">The database will connect to {services[0]?.name || "Web"}. Database connection variables pasted for that service are platform-managed and will be ignored.</p> : null}</section>
       {ignoredEnvironmentNames.map((key) => <IssueCard key={key} severity="warning" title="Platform-managed value"><p>{key} is managed by DeployGuard and was ignored.</p></IssueCard>)}
       {savedEnvironmentCount ? <IssueCard severity="success" title="Application configuration saved"><p>{savedEnvironmentCount} value{savedEnvironmentCount === 1 ? " was" : "s were"} accepted; values are not displayed.</p></IssueCard> : null}
       {deployable ? <section className="deploy-review-summary" aria-label="Deployment review"><div><span>Source</span><strong>{repository} · {branch}</strong></div><div><span>Services</span><strong>{services.map((service) => `${service.name} · ${service.serviceDirectory}`).join(" | ")}</strong></div><div><span>Application ports</span><strong>Detected automatically from each service</strong></div><div><span>Open application</span><strong>{services.length === 1 ? services[0].name : services.find((service) => service.key === applicationEntryPointServiceId)?.name || "Unavailable"}</strong></div><div><span>Database</span><strong>{database.provider === "managed" ? `${database.engine} → ${services.find((service) => service.key === attachedDatabaseServiceKey)?.name || "Unavailable"}` : "Existing ENV / none managed"}</strong></div></section> : null}

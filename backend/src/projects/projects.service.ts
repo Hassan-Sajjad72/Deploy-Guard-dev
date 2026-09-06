@@ -698,11 +698,6 @@ export class ProjectsService {
     const result = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, environment);
       const repository = manager.getRepository(ProjectEnvironmentVariable);
-      const managedDatabase = await this.managedDatabaseForService(projectId, service.id, manager);
-      if (managedDatabase) {
-        const conflict = normalized.map((item) => item.key).find((key) => Boolean(serviceAlias(key, managedDatabase.engine)));
-        if (conflict) throw new BadRequestException(`${conflict} conflicts with the DeployGuard-managed database attached to this service. Remove the variable or disable the managed database.`);
-      }
       const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(projectId, service.id, normalized.map((item) => item.key), manager);
       const { accepted } = partitionSubmittedEnvironmentVariables(normalized, { allowDatabaseAliases: true, repositoryOwnedKeys: new Set(ignoredVariableNames) });
       const duplicateKeys = accepted.map((item) => item.key).filter((key, index, keys) => keys.indexOf(key) !== index);
@@ -1028,7 +1023,12 @@ export class ProjectsService {
   }
 
   private async ignoredEnvironmentVariableNames(projectId: string, serviceId: string, keys: string[], manager?: EntityManager) {
-    return partitionSubmittedEnvironmentVariables(keys.map((key) => ({ key })), { allowDatabaseAliases: true }).ignoredVariableNames;
+    const managedDatabase = await this.managedDatabaseForService(projectId, serviceId, manager);
+    return partitionSubmittedEnvironmentVariables(keys.map((key) => ({ key })), {
+      allowDatabaseAliases: true,
+      managedService: Boolean(managedDatabase),
+      service: managedDatabase?.engine,
+    }).ignoredVariableNames;
   }
 
   private async managedDatabaseForService(projectId: string, serviceId: string, manager?: EntityManager) {

@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFile } from "node:fs/promises";
+import { managedDatabaseAliases } from "../src/utils/envOwnership.js";
 import { parseEnvPaste } from "../src/utils/envPaste.js";
 import { createDeploymentSelectionGate, deploymentSelectionKey } from "../src/utils/deploymentSelection.js";
 
@@ -18,6 +19,17 @@ assert.match(managed.warnings.join(" "), /PORT is managed by DeployGuard and was
 assert.equal(parseEnvPaste("").entries.length, 0, "an empty .env block is accepted");
 const externalDatabase = parseEnvPaste("DATABASE_URL=postgresql://external.example/app");
 assert.equal(externalDatabase.entries[0].isSecret, true, "external database URLs retain encrypted secret delivery");
+
+for (const engine of ["postgres", "mysql", "mongodb"]) {
+  const aliases = managedDatabaseAliases(engine);
+  const values = aliases.map((key) => `${key}=user-supplied-${engine}`).join("\n");
+  const managedDatabasePaste = parseEnvPaste(`${values}\nAPP_MODE=production`, aliases);
+  assert.deepEqual(managedDatabasePaste.errors, [], `${engine} aliases do not block project configuration`);
+  assert.deepEqual(managedDatabasePaste.entries, [{ key: "APP_MODE", value: "production", isSecret: false }], `${engine} user database values are discarded while application ENV survives`);
+  assert.deepEqual(managedDatabasePaste.ignoredVariableNames, [...aliases].sort(), `every canonical ${engine} alias is reported ignored`);
+  assert.equal(managedDatabasePaste.warnings.length, aliases.length, `every canonical ${engine} alias has a platform-managed notice`);
+  assert.doesNotMatch(JSON.stringify(managedDatabasePaste), new RegExp(`user-supplied-${engine}`), `${engine} values are discarded before persistence`);
+}
 
 const gate = createDeploymentSelectionGate();
 const branchA = gate.begin("Example/Application", "main");
@@ -50,8 +62,9 @@ assert.match(page, /Service name or directory changes must be made under Setting
 assert.match(page, /to=\{`\/projects\/\$\{readiness\.existingProjectSettingsId\}\/settings`\}>Open Project Settings<\/Link>/, "the blocker links directly to the existing project's Settings page");
 assert.doesNotMatch(page, /updateProjectService/, "the deploy journey does not mutate existing service configuration");
 assert.match(page, /No managed database \/ use existing ENV/);
-assert.match(page, /Database configuration conflict/);
-assert.match(page, /MANAGED_DATABASE_ALIASES\[database\.engine\]/);
+assert.match(page, /managedDatabaseAliases\(database\.engine\)/);
+assert.doesNotMatch(page, /managedDatabaseConflicts|Database configuration conflict|Remove .* from the selected service ENV/);
+assert.ok(page.indexOf("updateProjectDatabaseTier(project.id") < page.indexOf("bulkUpsertProjectServiceEnvVars(project.id"), "managed database ownership is persisted before the bulk ENV boundary");
 for (const step of ["Source", "Services", "Configuration", "Review & Deploy"]) assert.match(page, new RegExp(`label: "${step.replace("&", "&")}"`));
 assert.match(page, /hasReadiness \? "complete"/);
 assert.match(page, /values are not displayed/);

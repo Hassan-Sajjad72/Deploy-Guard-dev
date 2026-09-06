@@ -181,7 +181,10 @@ export function ignoredSubmittedVariableNames(
 ) {
   return [...new Set(keys.map(normalizeConfigurationKey).filter((key) => {
     if (options.repositoryOwnedKeys?.has(key)) return true;
-    if (isDeployGuardManagedDatabaseAlias(key)) return !options.allowDatabaseAliases;
+    if (isDeployGuardManagedDatabaseAlias(key)) {
+      if (options.managedService && options.service && serviceAlias(key, options.service)) return true;
+      return !options.allowDatabaseAliases;
+    }
     const alias = serviceAlias(key, options.service);
     if (options.managedService && alias) return true;
     return Boolean(reservedVariable(key, options.service) && !alias);
