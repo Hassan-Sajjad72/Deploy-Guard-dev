@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPresentation.js";
+import { PROJECT_DELETION_NOTICE, redirectDeletedProject } from "../src/utils/projectStateSync.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const projects = read("../src/pages/Projects.jsx");
@@ -16,6 +17,13 @@ const lifecycle = read("../src/components/projects/ProjectOverviewLifecycle.jsx"
 const routes = read("../src/routes/AppRoutes.jsx");
 const api = read("../src/api/projectApi.js");
 const statePresentation = read("../src/utils/projectStatePresentation.js");
+
+const deletionNavigation = [];
+assert.equal(redirectDeletedProject({ status: 404 }, (...args) => deletionNavigation.push(args)), true);
+assert.deepEqual(deletionNavigation, [["/projects", { replace: true, state: { notice: PROJECT_DELETION_NOTICE } }]]);
+assert.equal(PROJECT_DELETION_NOTICE, "Project deletion completed.");
+assert.equal(redirectDeletedProject({ status: 500 }, (...args) => deletionNavigation.push(args)), false);
+assert.equal(deletionNavigation.length, 1, "non-404 failures preserve normal page error handling");
 
 for (const source of [projects, dashboard, overview, pipeline, infrastructure, monitoring]) {
   assert.match(source, /projectStatePresentation/);
@@ -40,6 +48,10 @@ for (const path of ["pipeline", "infrastructure", "monitoring", "settings", "tro
   assert.match(routes, new RegExp(`path="/projects/:projectId/${path}"`));
 }
 for (const source of [overview, pipeline]) assert.match(source, /subscribeProjectStateChanged/);
+for (const source of [overview, pipeline, infrastructure, monitoring, settings, troubleshooting]) {
+  assert.match(source, /redirectDeletedProject\(caught, navigate\)/);
+}
+assert.match(projects, /location\.state\?\.notice/);
 assert.match(execution, /retryGithubActionsDeployment\(projectId\)[\s\S]{0,240}await onRefresh\(\)/);
 
 const active = deploymentPhasePresentation({ developerState: "deploying", progress: { phase: "deploy" } });

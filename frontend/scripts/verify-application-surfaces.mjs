@@ -60,7 +60,8 @@ assert.match(admin, /data-admin-section="overview"/);
 assert.match(admin, /data-admin-section="users"/);
 assert.match(admin, /data-admin-section="projects"/);
 assert.match(admin, /data-admin-section="audit"/);
-assert.match(deployment, /canManage \|\| !currentState\.canRetry \|\| !latestFailed/);
-assert.doesNotMatch(deployment, /Redeploy|destroyGithubActionsDeployment|deployGithubActionsDeployment/);
+assert.match(deployment, /failureRecoveryCommand\(latest, currentState\.canRetry\)/);
+assert.match(deployment, /deployGithubActionsDeployment\(projectId\)/, "Pipeline can submit a corrected repository commit through normal deployment admission");
+assert.doesNotMatch(deployment, /Redeploy|destroyGithubActionsDeployment/);
 
 console.log("Canonical application surface and consolidated deployment journey verification passed.");

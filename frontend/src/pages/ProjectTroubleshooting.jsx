@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { followUpTroubleshooting, getTroubleshootingSession, getTroubleshootingSessions, regenerateTroubleshooting, startTroubleshooting } from "../api/platformApi.js";
 import { getGithubActionsDeploymentHistory, getProjectCurrentState } from "../api/projectApi.js";
 import { Card, EmptyState, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
-import { subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 
 const sourceLabels = { github_actions: "GitHub Actions", github_actions_status: "GitHub Actions", github_actions_stage: "GitHub Actions stages", railpack_build: "Railpack / build evidence", terraform: "Terraform", aws_runtime_verification: "AWS runtime verification", cloudwatch_runtime: "CloudWatch application logs", ecs_cloudwatch_runtime: "ECS / CloudWatch runtime events", deployguard_lifecycle: "DeployGuard lifecycle evidence" };
@@ -17,6 +17,7 @@ function aiResultModeLabel(resultMode) { return resultMode === "live" ? "Evidenc
 
 export default function ProjectTroubleshooting() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const [query] = useSearchParams();
   const [sessions, setSessions] = useState([]);
   const [eligibleOperations, setEligibleOperations] = useState([]);
@@ -46,9 +47,9 @@ export default function ProjectTroubleshooting() {
       const existingForOperation = requestedOperation ? list.items?.find((session) => session.pipelineRunId === requestedOperation)?.id : null;
       const requested = preferredSession || query.get("session") || existingForOperation || (!requestedOperation ? list.items?.[0]?.id : null);
       if (requested) setSelected(await getTroubleshootingSession(projectId, requested));
-    } catch (caught) { setError(caught.message); }
+    } catch (caught) { if (!redirectDeletedProject(caught, navigate)) setError(caught.message); }
     finally { setLoaded(true); }
-  }, [projectId, query]);
+  }, [navigate, projectId, query]);
   useEffect(() => { void load(); }, [load, projectId]);
   useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
   useEffect(() => {

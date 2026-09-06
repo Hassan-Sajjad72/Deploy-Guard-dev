@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { getApplicationLogStreamUrl, getApplicationRuntimeMetrics, getProjectDetailedCurrentState } from "../api/projectApi.js";
 import {
   Card,
@@ -12,7 +12,7 @@ import {
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
-import { subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 
 const metricDefinitions = [
   { key: "cpu", title: "ECS CPU utilization", unit: "%" },
@@ -109,6 +109,7 @@ function RuntimeLogViewer({ projectId, serviceId, live }) {
 
 export default function ProjectMetrics() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const [range, setRange] = useState("1h");
   const [selectedServiceId, setSelectedServiceId] = useState("");
   const [runtime, setRuntime] = useState(null);
@@ -132,8 +133,8 @@ export default function ProjectMetrics() {
         setRuntime(await getApplicationRuntimeMetrics(projectId, { range, serviceId: effectiveServiceId }));
       }
       setError("");
-    } catch (caught) { setError(caught.message); } finally { setLoading(false); }
-  }, [projectId, range, selectedServiceId]);
+    } catch (caught) { if (!redirectDeletedProject(caught, navigate)) setError(caught.message); } finally { setLoading(false); }
+  }, [navigate, projectId, range, selectedServiceId]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
   useEffect(() => {

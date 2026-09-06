@@ -34,7 +34,10 @@ for (const heading of ["Attempt", "Type", "Result", "Commit", "Duration", "Time"
 assert.match(execution, /retryOfOperationId/);
 assert.match(execution, /retryGithubActionsDeployment\(projectId\)/);
 assert.match(execution, /currentState\.canRetry/);
-assert.doesNotMatch(execution, /Redeploy|destroyGithubActionsDeployment|deployGithubActionsDeployment|CPU|memory|request chart|error chart/i);
+assert.match(execution, /failureRecoveryCommand\(latest, currentState\.canRetry\)/);
+assert.match(execution, /deployGithubActionsDeployment\(projectId\)/);
+assert.match(execution, /Deploy Fixed Commit/);
+assert.doesNotMatch(execution, /Redeploy|destroyGithubActionsDeployment|CPU|memory|request chart|error chart/i);
 assert.match(execution, /Advanced run details/);
 assert.match(execution, /workflowRunId/);
 assert.match(recovery, /Sanitized failure evidence/);

@@ -6,7 +6,7 @@ import LoadingState from "../components/common/LoadingState.jsx";
 import { PageHeader } from "../components/common/DesignSystem.jsx";
 import PipelineExecution from "../components/projects/PipelineExecution.jsx";
 import PipelineRecoveryPanel from "../components/projects/PipelineRecoveryPanel.jsx";
-import { subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 import { useSerializedProjectRefresh } from "../hooks/useSerializedProjectRefresh.js";
 
@@ -32,7 +32,7 @@ export default function ProjectPipeline() {
       setError("");
     } catch (caught) {
       if (!isCurrent()) return;
-      if (caught.status === 404) { navigate("/projects", { replace: true, state: { notice: "Project deletion completed." } }); return; }
+      if (redirectDeletedProject(caught, navigate)) return;
       setError(caught.message);
     }
   }, [navigate]));

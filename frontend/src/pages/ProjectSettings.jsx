@@ -7,6 +7,7 @@ import { PageHeader } from "../components/common/Premium.jsx";
 import { Tabs } from "../components/common/DesignSystem.jsx";
 import EnvironmentVariablesPanel from "../components/projects/EnvironmentVariablesPanel.jsx";
 import NotificationSettingsPanel from "../components/projects/NotificationSettingsPanel.jsx";
+import { redirectDeletedProject } from "../utils/projectStateSync.js";
 
 const settingsSections = [
   { id: "general", label: "General" },
@@ -48,7 +49,7 @@ export default function ProjectSettings() {
       });
       setDatabase({ provider: databaseResponse.database?.provider || "none", engine: databaseResponse.database?.engine || "postgres", persistenceEnabled: databaseResponse.database?.persistenceEnabled !== false, attachedServiceId: databaseResponse.database?.attachedServiceId || value.services?.[0]?.id || "" });
     } catch (caught) {
-      setError(caught.status === 404 ? "Project not found." : caught.status === 403 ? "You do not have permission to view this project." : caught.message);
+      if (!redirectDeletedProject(caught, navigate)) setError(caught.status === 403 ? "You do not have permission to view this project." : caught.message);
     } finally { setLoading(false); }
   }
 

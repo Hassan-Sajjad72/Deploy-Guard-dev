@@ -9,8 +9,9 @@ import {
   StatusChip,
 } from "../common/DesignSystem.jsx";
 import ErrorState from "../common/ErrorState.jsx";
-import { retryGithubActionsDeployment } from "../../api/projectApi.js";
+import { deployGithubActionsDeployment, retryGithubActionsDeployment } from "../../api/projectApi.js";
 import { useToast } from "../../hooks/useToast.js";
+import { failureRecoveryCommand } from "../../utils/overviewLifecyclePresentation.js";
 import { pipelineStageDisplayStatus, pipelineStageDurationEnd } from "../../utils/pipelineStageTiming.js";
 
 function date(value) {
@@ -83,10 +84,10 @@ export default function PipelineExecution({ canManage = false, currentState, onR
   const timedStages = stages.filter((stage) => stage.status !== "skipped" && Number.isFinite(stage.durationMs) && stage.durationMs > 0);
   const longestStage = Math.max(1, ...timedStages.map((stage) => stage.durationMs));
   const latestFailed = latest?.status === "failed";
-  const retrySafeNow = !latest?.diagnosis || latest.diagnosis.retryDecision === "SAFE_NOW";
+  const recoveryCommand = latestFailed ? failureRecoveryCommand(latest, currentState.canRetry) : null;
 
   async function retry() {
-    if (!canManage || !currentState.canRetry || !latestFailed || !retrySafeNow || retrying.current) return;
+    if (!canManage || recoveryCommand !== "retry" || retrying.current) return;
     retrying.current = true;
     setRetryBusy(true);
     setError("");
@@ -104,10 +105,29 @@ export default function PipelineExecution({ canManage = false, currentState, onR
     }
   }
 
+  async function deployFixedCommit() {
+    if (!canManage || recoveryCommand !== "deploy_fixed" || retrying.current) return;
+    retrying.current = true;
+    setRetryBusy(true);
+    setError("");
+    try {
+      const response = await deployGithubActionsDeployment(projectId);
+      await onRefresh();
+      const rejected = response.deployment?.state === "rejected";
+      if (rejected) setError(response.deployment?.message || "The fixed commit deployment was recorded but not dispatched.");
+      notify(response.deployment?.message || "Fixed commit deployment submitted.", rejected ? "danger" : "success");
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      retrying.current = false;
+      setRetryBusy(false);
+    }
+  }
+
   return <div className="pipeline-execution" data-pipeline-execution="true">
     <Card className="pipeline-identity-card" aria-label="Deployment execution summary"><div><p className="eyebrow">Latest deployment</p><h2>{latest ? `Attempt ${latest.attempt}` : "Not started"}</h2><p>{latest ? `${compactCommit(latest.commitSha || currentState.commit)} · ${currentState.branch || "Branch unavailable"}` : "No deployment request has been made."}</p></div><StatusChip status={latest?.destroyVerificationStatus === "pending" ? "warning" : latest?.status}>{resultLabel(latest)}</StatusChip>{latest ? <dl><div><dt>Operation</dt><dd>{operationType(latest)}</dd></div><div><dt>Duration</dt><dd>{duration(latest.createdAt, operationEnd(latest))}</dd></div><div><dt>Completed</dt><dd>{compactDate(operationEnd(latest) || latest.createdAt)}</dd></div></dl> : null}</Card>
 
-    {error ? <ErrorState message={error} onRetry={() => void retry()} /> : null}
+    {error ? <ErrorState message={error} onRetry={() => void (recoveryCommand === "deploy_fixed" ? deployFixedCommit() : retry())} /> : null}
 
     <Card className="pipeline-timeline-card">
       <div className="pipeline-section-heading"><div><p className="eyebrow">GitHub Actions execution</p><h2>Technical pipeline timeline</h2><p>Only stages returned by the selected GitHub Actions run are shown. Expand a stage for its recorded evidence.</p></div>{latest?.workflowUrl ? <Button href={latest.workflowUrl} rel="noreferrer" target="_blank" tone="secondary">Open GitHub Actions</Button> : null}</div>
@@ -120,7 +140,7 @@ export default function PipelineExecution({ canManage = false, currentState, onR
         </li>; })}
       </ol> : <p className="pipeline-unavailable">{latest?.workflowStagesUnavailable ? "Unavailable — GitHub Actions final step metadata is temporarily unavailable. The terminal operation status and run link remain available." : latest ? "GitHub Actions step metadata has not been collected yet. The operation status and run link remain available." : "No deployment request has been made yet."}</p>}
       {latest ? <details className="pipeline-advanced"><summary>Advanced run details</summary><dl><div><dt>GitHub Actions run</dt><dd>{latest.workflowRunId || "Unavailable"}</dd></div><div><dt>Workflow status</dt><dd>{latest.workflowStatus || "Unavailable"}</dd></div><div><dt>Operation identifier</dt><dd>{latest.id}</dd></div></dl></details> : null}
-      {latestFailed && canManage && currentState.canRetry && retrySafeNow ? <div className="pipeline-retry-action"><Button disabled={retryBusy} onClick={() => void retry()}>{retryBusy ? "Retrying…" : `Retry failed ${operationType(latest).toLowerCase()}`}</Button></div> : null}
+      {latestFailed && canManage && recoveryCommand ? <div className="pipeline-retry-action"><Button disabled={retryBusy} onClick={() => void (recoveryCommand === "deploy_fixed" ? deployFixedCommit() : retry())}>{retryBusy ? (recoveryCommand === "deploy_fixed" ? "Deploying…" : "Retrying…") : recoveryCommand === "deploy_fixed" ? "Deploy Fixed Commit" : `Retry failed ${operationType(latest).toLowerCase()}`}</Button></div> : null}
     </Card>
 
     {timedStages.length ? <ChartCard description="Stage duration from GitHub Actions timestamps." hasData title="Where deployment time was spent">

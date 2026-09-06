@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { getProjectDetailedCurrentState } from "../api/projectApi.js";
 import { Card, ChartCard, CopyValue, DataTable, EmptyState, MetricCard, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
-import { subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 
 function label(value) {
@@ -91,9 +91,10 @@ function TechnicalDetails({ state, evidence }) {
 
 export default function ProjectInfrastructure() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
-  const load = useCallback(async () => { try { setError(""); setState(await getProjectDetailedCurrentState(projectId)); } catch (caught) { setError(caught.message); } }, [projectId]);
+  const load = useCallback(async () => { try { setError(""); setState(await getProjectDetailedCurrentState(projectId)); } catch (caught) { if (!redirectDeletedProject(caught, navigate)) setError(caught.message); } }, [navigate, projectId]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
   useEffect(() => { if (!projectStatePresentation(state).active) return undefined; const timer = window.setInterval(load, 5000); return () => window.clearInterval(timer); }, [state?.stateAuthority?.activeOperation?.id, state?.stateAuthority?.activeOperation?.status, load]);

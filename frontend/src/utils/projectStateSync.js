@@ -1,4 +1,14 @@
 export const PROJECT_STATE_CHANGED_EVENT = "deployguard:project-state-changed";
+export const PROJECT_DELETION_NOTICE = "Project deletion completed.";
+
+export function redirectDeletedProject(error, navigate) {
+  if (error?.status !== 404) return false;
+  navigate("/projects", {
+    replace: true,
+    state: { notice: PROJECT_DELETION_NOTICE },
+  });
+  return true;
+}
 
 export function publishProjectStateChanged(projectId) {
   window.dispatchEvent(new CustomEvent(PROJECT_STATE_CHANGED_EVENT, {

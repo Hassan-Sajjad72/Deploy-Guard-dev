@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { getWorkspaceSummary } from "../api/projectApi.js";
 import AppIcon from "../components/common/AppIcon.jsx";
 import { Card, StatusChip } from "../components/common/DesignSystem.jsx";
@@ -20,6 +20,7 @@ const filters = [
 
 export default function Projects() {
   const { role } = useAuth();
+  const location = useLocation();
   const [summaries, setSummaries] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -55,6 +56,7 @@ export default function Projects() {
       <div><p className="eyebrow">Workspace</p><h1>Projects</h1><p>Projects deployed or managed through DeployGuard.</p></div>
       {role !== "readonly" ? <Link className="button" to="/deploy"><AppIcon name="plus" size={16} />Deploy new project</Link> : null}
     </header>
+    {location.state?.notice ? <p className="state success" role="status">{location.state.notice}</p> : null}
     {error ? <ErrorState message={error} /> : null}
     {loading ? <LoadingState message="Loading projects…" /> : null}
     {!loading && !error && !summaries.length ? <EmptyState action={role !== "readonly" ? <Link className="button" to="/deploy">Deploy a repository</Link> : null} message="Create a project to start managing a repository." title="No projects yet" /> : null}
