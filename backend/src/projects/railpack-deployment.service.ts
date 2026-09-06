@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash, randomUUID } from "crypto";
@@ -46,8 +46,7 @@ import { BuildTargetResolutionError } from "./build-target-resolver.service";
 import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
 import { CanonicalBuildTarget } from "./build-target";
 import { DeploymentRequirementAdmissionError, RequirementAdmission } from "./deployment-requirement-resolver.service";
-import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
-import { failureDiagnosticFromMetadata } from "./failure-diagnostics/failure-diagnostic.types";
+import { currentFailureDiagnostic, FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -173,8 +172,19 @@ export class RailpackDeploymentService {
         return { deployment: { state: "no_op", message: "Verified AWS release evidence remains valid; DeployGuard finalization still needs attention and can be retried without changing AWS.", operation: previous } };
       }
     }
+    if (!previous) throw new BadRequestException("No failed deployment operation is available to retry.");
+    const recovery = currentFailureDiagnostic(previous);
+    if (recovery?.retryDecision !== "SAFE_NOW") {
+      return { deployment: { state: "rejected", message: recovery?.recommendedAction || "The authoritative failure evidence does not permit a safe retry.", operation: previous } };
+    }
+    if (previous.metadata?.executionEngine !== "railpack" || !["deploy", "rollback", "destroy"].includes(action)) {
+      return { deployment: { state: "rejected", message: "Only a failed Railpack lifecycle operation can be retried through this endpoint.", operation: previous } };
+    }
+    if (action === "deploy" && !/^[0-9a-f]{40}$/i.test(previous.commitSha || "")) {
+      return { deployment: { state: "rejected", message: "The failed deployment has no valid immutable source SHA to retry.", operation: previous } };
+    }
     const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
-    const retrySourceSha = action === "deploy" && /^[0-9a-f]{40}$/i.test(previous?.commitSha || "") ? previous!.commitSha : null;
+    const retrySourceSha = action === "deploy" ? previous.commitSha : null;
     return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null, action === "deploy" ? "RETRY" : "DEPLOY", null, null, undefined, retrySourceSha);
   }
   async resetAndDeployFresh(user: User, projectId: string, confirmationPhrase: string, _request?: unknown) {
@@ -227,7 +237,9 @@ export class RailpackDeploymentService {
   async latest(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
     const operation = await this.runs.findOne({ where: { projectId }, order: { createdAt: "DESC" } });
-    return { deployment: operation ? { ...operation, diagnosis: failureDiagnosticFromMetadata(operation.metadata) } : null };
+    if (!operation) return { deployment: null };
+    const diagnosis = currentFailureDiagnostic(operation);
+    return { deployment: { ...operation, failureOwner: diagnosis?.failureOwner || operation.failureOwner, externalProvider: diagnosis?.externalProvider ?? operation.externalProvider, failureCode: diagnosis?.terminalFailureCode || operation.failureCode, diagnosis } };
   }
   async history(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
@@ -1003,6 +1015,7 @@ export class RailpackDeploymentService {
 
   private presentOperation(operation: ProjectPipelineRun) {
     const metadata = operation.metadata || {};
+    const diagnosis = currentFailureDiagnostic(operation);
     const action = (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
     const dispatchFailed = metadata.dispatchState === "failed" && !operation.githubWorkflowRunId;
     const failureServiceName = this.failureServiceName(metadata, operation.failureServiceId);
@@ -1016,8 +1029,8 @@ export class RailpackDeploymentService {
       failedStageLabel: dispatchFailed ? deployguardOperationStagePresentation(metadata.failedStage || "dispatch", action).label : operation.status === PipelineRunStatus.FAILED ? deployguardOperationStagePresentation(metadata.failedStage || operation.currentStage, action).label : null,
       errorMessage: operation.errorMessage || null, githubRunCreated: Boolean(operation.githubWorkflowRunId),
       workflowStagesUnavailable: metadata.terminalWorkflowStagesUnavailable === true,
-      failureOwner: operation.failureOwner || null, externalProvider: operation.externalProvider || null, failureCode: operation.failureCode || null, failureServiceId: operation.failureServiceId || null, failureServiceName,
-      diagnosis: failureDiagnosticFromMetadata(metadata),
+      failureOwner: diagnosis?.failureOwner || operation.failureOwner || null, externalProvider: diagnosis?.externalProvider ?? operation.externalProvider ?? null, failureCode: diagnosis?.terminalFailureCode || operation.failureCode || null, failureServiceId: diagnosis?.serviceId || operation.failureServiceId || null, failureServiceName,
+      diagnosis,
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       aiRuntimeAnalysisCandidate: operation.status === PipelineRunStatus.COMPLETED && Boolean(operation.generationId) && metadata.releaseEvidenceVerified === true,
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,

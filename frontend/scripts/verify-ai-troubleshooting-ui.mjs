@@ -13,6 +13,7 @@ assert.match(page, /Evidence-only explanation/);
 assert.match(page, /AI explanation only\. DeployGuard's persisted deterministic diagnosis above remains authoritative\./);
 assert.match(page, /operation\.diagnosis\?\.failureOwner \|\| operation\.failureOwner/, "canonical diagnosis owner takes presentation precedence with legacy fallback");
 assert.match(page, /operation\.diagnosis\?\.terminalFailureCode \|\| operation\.failureCode/, "pipeline terminal code remains distinct from root cause and keeps legacy fallback");
+assert.match(page, /operation\.diagnosis\.recommendedAction/, "Troubleshooting presents the current deterministic recovery action");
 assert.match(page, /question\.label[\s\S]*setQuestionType\(question\.type\)/, "suggested questions retain their machine-readable question type");
 assert.match(api, /questionType \? \{ questionType \}/, "question type is sent separately from display text");
 assert.match(page, /aiRuntimeAnalysisCandidate === true/);

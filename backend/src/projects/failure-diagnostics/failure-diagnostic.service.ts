@@ -9,6 +9,8 @@ import {
   FailureRetryDecision,
 } from "./failure-diagnostic.types";
 import { MANAGED_DATABASE_RECONCILIATION_FAILURE } from "../managed-database-reconciliation.error";
+import { failureContractFor } from "./failure-contract.catalog";
+import { classifyFailureCode } from "../failure-ownership";
 
 type Diagnosis = {
   rootCauseCode: string;
@@ -33,43 +35,15 @@ const repositoryFix = (tool: string, rootCauseCode: string, toolErrorCode: strin
   retryDecision: "SAFE_AFTER_FIX", confidence: "DETERMINISTIC", evidencePattern: pattern,
 });
 
-const structured: Record<string, Omit<Diagnosis, "confidence">> = {
-  DG_DEPLOYMENT_INPUT_REQUIRED: { rootCauseCode: "DG_CONFIGURATION_INPUT_REQUIRED", affectedComponent: "Service configuration", summary: "Required deployment configuration is missing.", technicalReason: "Requirement admission identified unresolved required input before workflow dispatch.", recommendedAction: "Provide the exact missing service-scoped configuration and submit a new deployment.", remediationSteps: ["Review the unresolved required inputs.", "Configure them for the affected service.", "Submit deployment admission again."], retryDecision: "NOT_SAFE_YET" },
-  DG_DEPLOYMENT_REQUIREMENTS_BLOCKED: { rootCauseCode: "DG_CONFIGURATION_ADMISSION_BLOCKED", affectedComponent: "Service configuration", summary: "Deployment configuration was blocked.", technicalReason: "Requirement admission found a prohibited override, duplicate conflict, or validation blocker.", recommendedAction: "Resolve the reported configuration conflict before deploying.", remediationSteps: ["Review the persisted admission blockers.", "Correct the affected service configuration.", "Submit deployment admission again."], retryDecision: "NOT_SAFE_YET" },
-  DG_SERVICE_PORT_UNRESOLVED: { rootCauseCode: "DG_APPLICATION_PORT_UNRESOLVED", affectedComponent: "Application port contract", summary: "The application port could not be resolved.", technicalReason: "Repository evidence did not establish one canonical service port.", recommendedAction: "Declare one supported service port and deploy a new commit.", remediationSteps: ["Declare the service port in supported repository configuration.", "Commit the change.", "Deploy the new commit."], retryDecision: "SAFE_AFTER_FIX" },
-  DG_SERVICE_PORT_CONFLICT: { rootCauseCode: "DG_APPLICATION_PORT_CONFLICT", affectedComponent: "Application port contract", summary: "Conflicting application ports were declared.", technicalReason: "Repository-owned port evidence disagrees.", recommendedAction: "Make the service port declarations consistent and deploy a new commit.", remediationSteps: ["Review the reported port sources.", "Choose one canonical port.", "Commit and deploy the correction."], retryDecision: "SAFE_AFTER_FIX" },
-  DG_SERVICE_PORT_INVALID: { rootCauseCode: "DG_APPLICATION_PORT_INVALID", affectedComponent: "Application port contract", summary: "The declared application port is invalid.", technicalReason: "The repository supplied a port outside the supported runtime contract.", recommendedAction: "Correct the service port and deploy a new commit.", remediationSteps: ["Correct the invalid port declaration.", "Commit the change.", "Deploy the new commit."], retryDecision: "SAFE_AFTER_FIX" },
-  DG_APPLICATION_RUNTIME_FAILED: { rootCauseCode: "DG_APPLICATION_STARTUP_OR_RUNTIME_FAILED", affectedComponent: "Application runtime", summary: "The application did not start or remain healthy.", technicalReason: "Structured application runtime evidence identifies an application-owned failure.", recommendedAction: "Correct the application startup/runtime failure and deploy a new commit.", remediationSteps: ["Inspect the relevant sanitized runtime evidence.", "Correct the application startup or runtime behavior.", "Deploy the fixed commit."], retryDecision: "SAFE_AFTER_FIX" },
-  DG_RAILPACK_PREREQUISITE_FAILED: { rootCauseCode: "DG_RAILPACK_PROVIDER_PREREQUISITE_FAILED", affectedComponent: "Railpack provider", summary: "Railpack prerequisites were unavailable.", technicalReason: "The existing provider boundary identified a Railpack prerequisite failure.", recommendedAction: "Retry after Railpack prerequisites are available.", remediationSteps: ["Review provider evidence.", "Retry the operation when the prerequisite is available."], retryDecision: "SAFE_NOW" },
-  DG_GITHUB_PROVIDER_FAILED: { rootCauseCode: "DG_GITHUB_PROVIDER_OPERATION_FAILED", affectedComponent: "GitHub Actions", summary: "GitHub could not accept or execute the operation.", technicalReason: "The existing GitHub provider boundary identified the failure.", recommendedAction: "Verify GitHub availability and authorization, then retry.", remediationSteps: ["Review the GitHub provider evidence.", "Restore authorization or wait for provider recovery.", "Retry the operation."], retryDecision: "SAFE_NOW" },
-  DG_TERRAFORM_APPLY_FAILED: { rootCauseCode: "DG_AWS_TERRAFORM_APPLY_FAILED", affectedComponent: "Terraform/AWS infrastructure", summary: "Terraform could not apply the infrastructure change.", technicalReason: "The workflow emitted the authoritative Terraform apply boundary.", recommendedAction: "Review the bounded Terraform/AWS evidence and retry only after the provider condition is resolved.", remediationSteps: ["Review the relevant Terraform evidence.", "Resolve the reported AWS/provider condition.", "Retry using the existing lifecycle operation."], retryDecision: "NOT_SAFE_YET" },
-  DG_ECR_PUBLISH_FAILED: { rootCauseCode: "DG_AWS_ECR_PUBLICATION_FAILED", affectedComponent: "Amazon ECR", summary: "The deployment image could not be published.", technicalReason: "The workflow emitted the authoritative ECR publication boundary.", recommendedAction: "Resolve the AWS/ECR provider condition, then retry.", remediationSteps: ["Review ECR provider evidence.", "Restore the required AWS capability.", "Retry the operation."], retryDecision: "NOT_SAFE_YET" },
-  DG_ECS_STABILITY_FAILED: { rootCauseCode: "DG_ECS_SERVICE_STABILITY_FAILED", affectedComponent: "Amazon ECS service", summary: "The ECS service did not reach stable healthy state.", technicalReason: "Structured ECS diagnostics identified the service stability boundary.", recommendedAction: "Follow the existing ECS ownership evidence before retrying.", remediationSteps: ["Review the service-scoped ECS diagnostics.", "Resolve the proven application, platform, or provider condition.", "Retry only after that condition changes."], retryDecision: "NOT_SAFE_YET" },
-  DG_MANAGED_DATABASE_READINESS_FAILED: { rootCauseCode: "DG_MANAGED_DATABASE_PLATFORM_READINESS_FAILED", affectedComponent: "Managed database readiness", summary: "The managed database did not become ready.", technicalReason: "DeployGuard's platform-owned managed database readiness verification failed.", recommendedAction: "Resolve the platform database readiness condition before retrying.", remediationSteps: ["Review the managed database readiness evidence.", "Correct the platform condition.", "Retry the deployment."], retryDecision: "NOT_SAFE_YET" },
-  DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED: { rootCauseCode: "DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED", affectedComponent: "Managed MySQL account grants", summary: "Managed MySQL grants could not be reconciled.", technicalReason: "DeployGuard's platform-owned MySQL account/grant reconciliation failed.", recommendedAction: "Resolve the platform grant reconciliation condition before retrying.", remediationSteps: ["Review the bounded MySQL reconciliation evidence.", "Correct the platform condition.", "Retry the deployment."], retryDecision: "NOT_SAFE_YET" },
-  DG_WORKFLOW_CONTRACT_INVALID: { rootCauseCode: "DG_WORKFLOW_CONTRACT_INVALID", affectedComponent: "DeployGuard workflow contract", summary: "The workflow result contract was incompatible.", technicalReason: "DeployGuard rejected terminal evidence that did not match the immutable workflow contract.", recommendedAction: "Correct the DeployGuard control-plane/workflow contract before retrying.", remediationSteps: ["Verify the pinned workflow release identity.", "Correct the platform contract.", "Retry after the platform fix."], retryDecision: "NOT_SAFE_YET" },
-  DG_CONTROL_PLANE_VERSION_MISMATCH: { rootCauseCode: "DG_CONTROL_PLANE_VERSION_MISMATCH", affectedComponent: "DeployGuard control plane", summary: "The backend and reusable workflow versions differ.", technicalReason: "The immutable control-plane compatibility check rejected different commit identities.", recommendedAction: "Pin the reusable workflow to the backend control-plane commit.", remediationSteps: ["Publish the current control-plane commit.", "Update the reusable workflow pin.", "Restart DeployGuard and submit deployment again."], retryDecision: "NOT_SAFE_YET" },
-  DG_RELEASE_FINALIZATION_FAILED: { rootCauseCode: "DG_RELEASE_FINALIZATION_FAILED", affectedComponent: "DeployGuard release projection", summary: "DeployGuard could not finalize verified release evidence.", technicalReason: "The workflow succeeded, but local release finalization failed.", recommendedAction: "Retry finalization through the existing recovery flow.", remediationSteps: ["Retain the verified immutable release evidence.", "Retry the failed operation to re-run local finalization."], retryDecision: "SAFE_NOW" },
-  DG_PROJECT_DELETE_CLEANUP_FAILED: { rootCauseCode: "DG_PROJECT_DELETE_CLEANUP_FAILED", affectedComponent: "DeployGuard project cleanup", summary: "Verified cloud deletion completed, but local cleanup did not.", technicalReason: "The destroy result was verified before the local control-plane cleanup failed.", recommendedAction: "Retry local cleanup without redispatching infrastructure deletion.", remediationSteps: ["Retain the verified destroy evidence.", "Retry the destroy recovery operation."], retryDecision: "SAFE_NOW" },
-  DG_AWS_AUTHORIZATION_FAILED: { rootCauseCode: "DG_AWS_AUTHORIZATION_FAILED", affectedComponent: "AWS authorization", summary: "AWS rejected the deployment authorization.", technicalReason: "The existing AWS provider boundary identified an authorization failure.", recommendedAction: "Restore the required AWS authorization before retrying.", remediationSteps: ["Review the bounded AWS authorization evidence.", "Restore the required role or policy capability.", "Retry the operation."], retryDecision: "NOT_SAFE_YET" },
-  DG_AWS_PROVIDER_FAILED: { rootCauseCode: "DG_AWS_PROVIDER_FAILED", affectedComponent: "AWS provider", summary: "An AWS provider operation failed.", technicalReason: "The existing AWS provider boundary identified the failure.", recommendedAction: "Retry after the provider condition is resolved.", remediationSteps: ["Review the bounded AWS provider evidence.", "Wait for recovery or correct the provider condition.", "Retry the operation."], retryDecision: "SAFE_NOW" },
-  DG_PUBLIC_REACHABILITY_FAILED: { rootCauseCode: "DG_PUBLIC_REACHABILITY_FAILED", affectedComponent: "AWS public endpoint reachability", summary: "The public endpoint did not become reachable.", technicalReason: "The ALB continued returning a gateway reachability response after DeployGuard's bounded convergence policy.", recommendedAction: "Retry the same immutable deployment after the transient AWS reachability condition clears.", remediationSteps: ["Review the bounded public-health and target-health evidence.", "Wait for the AWS public endpoint to converge.", "Retry the failed immutable deployment."], retryDecision: "SAFE_NOW" },
-  DG_AWS_RUNTIME_CONFIGURATION_FAILED: { rootCauseCode: "DG_AWS_RUNTIME_CONFIGURATION_FAILED", affectedComponent: "DeployGuard AWS runtime configuration", summary: "Generated AWS runtime configuration was invalid.", technicalReason: "DeployGuard's platform-owned runtime configuration boundary failed.", recommendedAction: "Correct the DeployGuard platform configuration before retrying.", remediationSteps: ["Review the bounded runtime-configuration evidence.", "Correct the platform configuration.", "Retry after the correction."], retryDecision: "NOT_SAFE_YET" },
-  DG_RUNTIME_SECRET_MATERIALIZATION_FAILED: { rootCauseCode: "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED", affectedComponent: "AWS Secrets Manager runtime configuration", summary: "Runtime secret materialization failed.", technicalReason: "AWS Secrets Manager did not complete DeployGuard's immutable runtime-secret operation.", recommendedAction: "Restore AWS Secrets Manager availability and permissions before retrying.", remediationSteps: ["Review the bounded runtime-secret failure evidence.", "Verify DeployGuard's AWS Secrets Manager access.", "Retry after the provider condition is corrected."], retryDecision: "NOT_SAFE_YET" },
-  DG_TERRAFORM_MATERIALIZATION_FAILED: { rootCauseCode: "DG_TERRAFORM_MATERIALIZATION_FAILED", affectedComponent: "DeployGuard Terraform materialization", summary: "DeployGuard could not materialize the Terraform contract.", technicalReason: "The platform-owned Terraform materialization boundary failed.", recommendedAction: "Correct the DeployGuard materialization failure before retrying.", remediationSteps: ["Review the bounded materialization evidence.", "Correct the platform condition.", "Retry after the correction."], retryDecision: "NOT_SAFE_YET" },
-  DG_TERRAFORM_VALIDATE_FAILED: { rootCauseCode: "DG_TERRAFORM_VALIDATE_FAILED", affectedComponent: "DeployGuard Terraform validation", summary: "Generated Terraform configuration failed validation.", technicalReason: "The platform-owned Terraform validation boundary rejected generated configuration.", recommendedAction: "Correct the DeployGuard Terraform generation defect before retrying.", remediationSteps: ["Review the bounded validation evidence.", "Correct the platform-generated configuration.", "Retry after the correction."], retryDecision: "NOT_SAFE_YET" },
-  DG_TERRAFORM_PLAN_FAILED: { rootCauseCode: "DG_TERRAFORM_PLAN_FAILED", affectedComponent: "DeployGuard Terraform plan", summary: "Terraform planning failed at the platform boundary.", technicalReason: "The existing platform ownership table identifies Terraform planning as DeployGuard-owned.", recommendedAction: "Resolve the platform planning condition before retrying.", remediationSteps: ["Review the bounded plan evidence.", "Correct the platform condition.", "Retry after the correction."], retryDecision: "NOT_SAFE_YET" },
-};
-
 @Injectable()
 export class FailureDiagnosticService {
   constructor(private readonly sanitizer: LogSanitizerService) {}
 
   diagnose(input: DeploymentFailureDiagnosticInput): DeploymentFailureDiagnostic {
     const evidence = this.safe(input.safeEvidence || input.errorMessage || "No terminal evidence was available.", 12_000);
-    const diagnosis = this.classify(input.terminalFailureCode, input.failureStage, evidence, input.managedDatabaseReconciliation);
-    const owner = diagnosis.owner && input.failureOwner === "UNVERIFIED" ? diagnosis.owner : input.failureOwner;
-    const provider = owner === "EXTERNAL_PROVIDER" ? (input.externalProvider || diagnosis.provider || null) : input.externalProvider || null;
+    const diagnosis = this.classify(input.terminalFailureCode, input.failureStage, evidence, input.failureOwner, input.externalProvider, input.managedDatabaseReconciliation);
+    const owner = diagnosis.owner || input.failureOwner;
+    const provider = owner === "EXTERNAL_PROVIDER" ? (diagnosis.provider || input.externalProvider || null) : null;
     const excerpt = this.excerpt(evidence, diagnosis.evidencePattern);
     return {
       schemaVersion: FAILURE_DIAGNOSTIC_SCHEMA_VERSION,
@@ -103,11 +77,16 @@ export class FailureDiagnosticService {
     terminalCode: string,
     stage: string,
     evidence: string,
+    failureOwner: DeploymentFailureDiagnosticInput["failureOwner"],
+    externalProvider: DeploymentFailureDiagnosticInput["externalProvider"],
     managedDatabase?: DeploymentFailureDiagnosticInput["managedDatabaseReconciliation"],
   ): Diagnosis {
     if (terminalCode === MANAGED_DATABASE_RECONCILIATION_FAILURE && managedDatabase) {
       return this.managedDatabaseDiagnosis(managedDatabase);
     }
+    const authoritative = failureContractFor(terminalCode);
+    const evidenceClassifiable = !authoritative || ["DG_APPLICATION_RUNTIME_FAILED", "DG_RAILPACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED", "DG_FAILURE_UNVERIFIED"].includes(terminalCode);
+    if (authoritative && !evidenceClassifiable) return { ...authoritative, confidence: "DETERMINISTIC" };
     if (/ERR_PNPM_OUTDATED_LOCKFILE|pnpm-lock\.yaml[^\n]{0,160}(?:not up to date|outdated)|frozen-lockfile[^\n]{0,120}(?:fail|mismatch)/i.test(evidence)) {
       const mismatch = evidence.match(/([@\w./-]*package\.json)[^\n]*?([@\w./-]+)\s*=\s*([^\s,;]+)[^\n]*?(?:lockfile|pnpm-lock\.yaml)[^\n]*?\2\s*=\s*([^\s,;]+)/i);
       const reason = mismatch
@@ -142,8 +121,35 @@ export class FailureDiagnosticService {
     if (/application database (?:connection|authentication) failed/i.test(evidence)) return repositoryFix("application", "DG_APPLICATION_DATABASE_CONSUMPTION_FAILED", undefined, "The application could not consume its database configuration.", "Application-owned runtime evidence proves failure while consuming the supplied database contract.", "Correct the application database client configuration or usage.", /application database (?:connection|authentication) failed[^\n]{0,300}/i);
     if (/(?:static output directory|static artifact)[^\n]{0,160}(?:missing|not found|empty)/i.test(evidence)) return repositoryFix("application-build", "DG_STATIC_OUTPUT_MISSING", undefined, "The static application output is missing.", "The application build completed without the configured static output artifact.", "Correct the application static build/output configuration.", /(?:static output directory|static artifact)[^\n]{0,300}/i);
 
-    const existing = structured[terminalCode];
-    if (existing) return { ...existing, confidence: "DETERMINISTIC" };
+    if (terminalCode === "DG_ECS_STABILITY_FAILED") {
+      const provenRepositoryFailure = failureOwner === "REPOSITORY_APPLICATION";
+      const provenProviderFailure = failureOwner === "EXTERNAL_PROVIDER" && Boolean(externalProvider);
+      return {
+        rootCauseCode: "DG_ECS_SERVICE_STABILITY_FAILED", affectedComponent: "Amazon ECS service", summary: "The ECS service did not reach stable healthy state.",
+        technicalReason: failureOwner === "UNVERIFIED"
+          ? "The structured code proves the ECS stability boundary, but the available diagnostics do not prove who owns the underlying cause."
+          : "Structured ECS diagnostics identified both the service stability boundary and its failure owner.",
+        recommendedAction: provenRepositoryFailure
+          ? "Correct the application failure identified by ECS diagnostics and deploy a new commit."
+          : provenProviderFailure
+            ? "Retry after the verified external-provider condition clears."
+            : failureOwner === "DEPLOYGUARD_PLATFORM"
+              ? "Resolve the verified DeployGuard platform condition before retrying."
+              : "Review the service-scoped ECS diagnostics before choosing a recovery action.",
+        remediationSteps: provenRepositoryFailure
+          ? ["Review the service-scoped ECS diagnostics.", "Correct the application-owned failure.", "Commit and deploy the corrected source."]
+          : ["Review the service-scoped ECS diagnostics.", "Resolve the proven platform or provider condition.", "Retry only after that condition changes."],
+        retryDecision: provenRepositoryFailure ? "SAFE_AFTER_FIX" : provenProviderFailure ? "SAFE_NOW" : failureOwner === "DEPLOYGUARD_PLATFORM" ? "NOT_SAFE_YET" : "INSUFFICIENT_EVIDENCE",
+        confidence: failureOwner === "UNVERIFIED" ? "UNVERIFIED" : "DETERMINISTIC",
+      };
+    }
+    if (authoritative) return { ...authoritative, confidence: "DETERMINISTIC" };
+    if (terminalCode === "DG_RAILPACK_BUILD_FAILED") return {
+      rootCauseCode: "DG_RAILPACK_BUILD_FAILED", affectedComponent: "Railpack application build", summary: "The Railpack application build failed.",
+      technicalReason: "The structured boundary proves the build failed, but the available evidence does not prove whether its underlying cause belongs to the repository, platform, or provider.",
+      recommendedAction: "Review the sanitized build evidence before choosing a recovery action.", remediationSteps: ["Review the bounded Railpack build evidence.", "Do not retry or change source until the underlying cause is identified."],
+      retryDecision: "INSUFFICIENT_EVIDENCE", confidence: "UNVERIFIED",
+    };
     return {
       rootCauseCode: "DG_FAILURE_CAUSE_UNVERIFIED", affectedComponent: "Deployment operation", summary: "The deployment failed, but the specific cause is not verified.",
       technicalReason: "Terminal evidence was captured, but no authoritative structured code or sufficiently unique signature proves a more specific cause.",
@@ -232,4 +238,58 @@ export class FailureDiagnosticService {
   private safe(value: string, limit: number) {
     return this.sanitizer.sanitize(value).replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, limit) || "No safe terminal evidence was available.";
   }
+}
+
+type PersistedFailureOperation = {
+  id: string;
+  commitSha?: string | null;
+  currentStage?: string | null;
+  failedAt?: Date | string | null;
+  updatedAt?: Date | string | null;
+  errorMessage?: string | null;
+  failureCode?: string | null;
+  failureServiceId?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+/**
+ * Reclassifies current recovery authority from immutable terminal facts. The
+ * original metadata.failureDiagnostic remains untouched as historical audit
+ * evidence and is only used for non-authoritative display context.
+ */
+export function currentFailureDiagnostic(operation: PersistedFailureOperation): DeploymentFailureDiagnostic | null {
+  const metadata = operation.metadata || {};
+  const historical = metadata.failureDiagnostic && typeof metadata.failureDiagnostic === "object"
+    ? metadata.failureDiagnostic as Partial<DeploymentFailureDiagnostic>
+    : null;
+  const code = typeof operation.failureCode === "string" && operation.failureCode
+    ? operation.failureCode
+    : typeof historical?.terminalFailureCode === "string" ? historical.terminalFailureCode : null;
+  if (!code) return null;
+  const stage = typeof metadata.failedStage === "string" ? metadata.failedStage : operation.currentStage || "unknown";
+  const safeEvidence = typeof metadata.safeLog === "string" ? metadata.safeLog : operation.errorMessage || `DG_FAILURE code=${code} stage=${stage}`;
+  const ownership = classifyFailureCode(code, stage, safeEvidence, operation.failureServiceId || historical?.serviceId || null);
+  const failedAtValue = operation.failedAt || operation.updatedAt || historical?.failedAt || new Date(0);
+  const failedAt = failedAtValue instanceof Date ? failedAtValue : new Date(failedAtValue);
+  const managedDatabase = metadata.managedDatabaseReconciliationFailure && typeof metadata.managedDatabaseReconciliationFailure === "object"
+    ? metadata.managedDatabaseReconciliationFailure as DeploymentFailureDiagnosticInput["managedDatabaseReconciliation"]
+    : undefined;
+  return new FailureDiagnosticService(new LogSanitizerService()).diagnose({
+    operationId: operation.id,
+    deploymentAction: metadata.deploymentAction === "rollback" ? "rollback" : metadata.deploymentAction === "destroy" ? "destroy" : "deploy",
+    sourceSha: operation.commitSha || historical?.sourceSha || null,
+    failureStage: stage,
+    terminalFailureCode: ownership.failureCode,
+    failureOwner: ownership.failureOwner,
+    externalProvider: ownership.externalProvider,
+    serviceId: ownership.failureServiceId,
+    serviceName: historical?.serviceName || null,
+    errorMessage: operation.errorMessage,
+    safeEvidence,
+    evidenceSource: historical?.evidenceReferences?.[0]?.source || (metadata.dispatchState === "failed" ? "deployguard_dispatch" : "github_actions"),
+    evidenceEventId: historical?.evidenceReferences?.[0]?.eventId || null,
+    failedAt: Number.isNaN(failedAt.getTime()) ? new Date(0) : failedAt,
+    workflowStages: metadata.workflowStages,
+    managedDatabaseReconciliation: managedDatabase,
+  });
 }

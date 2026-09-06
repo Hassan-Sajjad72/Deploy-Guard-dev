@@ -9,7 +9,7 @@ import { ProjectEnvironmentVariable } from "../projects/project-environment-vari
 import { ProjectEnvironmentCryptoService } from "../projects/project-environment-crypto.service";
 import { User } from "../users/user.entity";
 import { AiEvidencePreprocessorService, RawEvidence } from "./ai-evidence-preprocessor.service";
-import { failureDiagnosticFromMetadata } from "../projects/failure-diagnostics/failure-diagnostic.types";
+import { currentFailureDiagnostic } from "../projects/failure-diagnostics/failure-diagnostic.service";
 
 @Injectable()
 export class AiEvidenceService {
@@ -27,7 +27,7 @@ export class AiEvidenceService {
     const run = await this.runs.findOne({ where: { id: pipelineRunId, projectId } });
     const stage = typeof run?.metadata?.failedStage === "string" ? run.metadata.failedStage : run?.currentStage;
     const rows: RawEvidence[] = [];
-    const diagnosis = failureDiagnosticFromMetadata(run?.metadata);
+    const diagnosis = run ? currentFailureDiagnostic(run) : null;
     let runtimeServiceId: string | null = null;
     const failedSource = /terraform/i.test(String(stage || "")) ? "terraform" : /railpack|build|application_runtime/i.test(String(stage || "")) ? "railpack_build" : "github_actions";
     if (typeof run?.metadata?.safeLog === "string" && run.metadata.safeLog.trim()) rows.push({ source: failedSource, stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.metadata.safeLog });
@@ -84,10 +84,10 @@ export class AiEvidenceService {
         operationType: run?.metadata?.deploymentAction || null,
         commitSha: run?.commitSha || null,
         failedAt: run?.failedAt?.toISOString() || null,
-        failureOwner: run?.failureOwner || "UNVERIFIED",
-        externalProvider: run?.externalProvider || null,
-        failureCode: run?.failureCode || null,
-        failureServiceId: run?.failureServiceId || null,
+        failureOwner: diagnosis?.failureOwner || run?.failureOwner || "UNVERIFIED",
+        externalProvider: diagnosis?.externalProvider ?? run?.externalProvider ?? null,
+        failureCode: diagnosis?.terminalFailureCode || run?.failureCode || null,
+        failureServiceId: diagnosis?.serviceId || run?.failureServiceId || null,
         failureDiagnostic: diagnosis,
         rootCauseCode: diagnosis?.rootCauseCode || null,
         retryDecision: diagnosis?.retryDecision || null,

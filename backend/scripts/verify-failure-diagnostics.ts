@@ -1,9 +1,12 @@
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { AiEvidencePreprocessorService } from "../src/ai-troubleshooting/ai-evidence-preprocessor.service";
-import { FailureDiagnosticService } from "../src/projects/failure-diagnostics/failure-diagnostic.service";
+import { currentFailureDiagnostic, FailureDiagnosticService } from "../src/projects/failure-diagnostics/failure-diagnostic.service";
 import { DeploymentFailureDiagnosticInput } from "../src/projects/failure-diagnostics/failure-diagnostic.types";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
+import { FAILURE_CONTRACT } from "../src/projects/failure-diagnostics/failure-contract.catalog";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { MANAGED_DATABASE_RECONCILIATION_FAILURE, ManagedDatabaseReconciliationAdmissionError } from "../src/projects/managed-database-reconciliation.error";
 import { ManagedDatabaseReconciliationState } from "../src/projects/managed-database-reconciliation";
@@ -16,7 +19,8 @@ const serviceId = "11111111-1111-4111-8111-111111111111";
 function diagnose(evidence: string, overrides: Partial<DeploymentFailureDiagnosticInput> = {}) {
   const stage = overrides.failureStage || "railpack_build";
   const terminalFailureCode = overrides.terminalFailureCode || "DG_RAILPACK_BUILD_FAILED";
-  const authority = classifyStructuredFailure(stage, `DG_FAILURE code=${terminalFailureCode} stage=${stage}${overrides.serviceId ? ` serviceId=${overrides.serviceId}` : ""}`);
+  const marker = `DG_FAILURE code=${terminalFailureCode} stage=${stage}${overrides.serviceId ? ` serviceId=${overrides.serviceId}` : ""}`;
+  const authority = classifyStructuredFailure(stage, evidence.includes("DG_FAILURE ") ? evidence : marker);
   const input: DeploymentFailureDiagnosticInput = {
     operationId: "22222222-2222-4222-8222-222222222222",
     deploymentAction: "deploy",
@@ -102,6 +106,45 @@ assert.equal(publicReachabilityFailure.externalProvider, "aws");
 assert.equal(publicReachabilityFailure.retryDecision, "SAFE_NOW");
 assert.equal(publicReachabilityFailure.confidence, "DETERMINISTIC");
 
+const applicationBindingFailure = diagnose("DG_FAILURE serviceId=11111111-1111-4111-8111-111111111111 code=DG_APPLICATION_EXTERNAL_BINDING_FAILED stage=application_runtime", {
+  failureStage: "application_runtime",
+  terminalFailureCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED",
+  failureOwner: "REPOSITORY_APPLICATION",
+  externalProvider: null,
+  serviceId,
+  serviceName: "web",
+});
+assert.equal(applicationBindingFailure.rootCauseCode, "DG_APPLICATION_EXTERNAL_BINDING_FAILED");
+assert.equal(applicationBindingFailure.failureOwner, "REPOSITORY_APPLICATION");
+assert.equal(applicationBindingFailure.externalProvider, null);
+assert.equal(applicationBindingFailure.retryDecision, "SAFE_AFTER_FIX");
+assert.equal(applicationBindingFailure.confidence, "DETERMINISTIC");
+
+for (const [code, contract] of Object.entries(FAILURE_CONTRACT)) {
+  const result = diagnose(`DG_FAILURE code=${code} stage=contract_audit`, { terminalFailureCode: code, failureStage: "contract_audit" });
+  assert.equal(result.terminalFailureCode, code, `${code} retains terminal identity`);
+  assert.equal(result.failureOwner, contract.owner, `${code} owner`);
+  assert.equal(result.externalProvider, contract.provider, `${code} provider`);
+  assert.equal(result.rootCauseCode, contract.rootCauseCode, `${code} diagnosis`);
+  assert.equal(result.retryDecision, contract.retryDecision, `${code} retry decision`);
+  assert.equal(result.recommendedAction, contract.recommendedAction, `${code} recovery action`);
+  assert.equal(result.confidence, "DETERMINISTIC", `${code} confidence`);
+  assert.notEqual(result.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED", `${code} must not fall through`);
+}
+
+const repositoryRoot = join(__dirname, "..", "..");
+const executableFailureSources = [
+  ".github/workflows/deployguard-reusable.yml",
+  "infrastructure/railpack-runtime/verify-runtime.sh",
+  "infrastructure/railpack-runtime/register-release-task-definitions.sh",
+  "infrastructure/railpack-runtime/build-release-result.sh",
+].map((path) => readFileSync(join(repositoryRoot, path), "utf8")).join("\n");
+const literalEmittedCodes = new Set([...executableFailureSources.matchAll(/\bcode=(DG_[A-Z0-9_]+)|\b(?:runtime_failure|managed_database_failure)\s+"[^"\n]+"\s+(DG_[A-Z0-9_]+)/g)].map((match) => match[1] || match[2]));
+const evidenceDependentCodes = new Set(["DG_RAILPACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED"]);
+for (const code of literalEmittedCodes) {
+  assert.ok(code in FAILURE_CONTRACT || evidenceDependentCodes.has(code), `${code} is emitted by executable workflow/runtime code but absent from the failure contract`);
+}
+
 const pnpm = diagnose([
   "DG_FAILURE code=DG_RAILPACK_BUILD_FAILED stage=railpack_build serviceId=11111111-1111-4111-8111-111111111111",
   "ERR_PNPM_OUTDATED_LOCKFILE Cannot install with frozen-lockfile because pnpm-lock.yaml is not up to date",
@@ -137,7 +180,19 @@ for (const [code, stage, owner, provider, root] of structuredCases) {
   assert.equal(result.rootCauseCode, root, code);
   assert.equal(result.failureOwner, owner, `${code} owner must remain authoritative`);
   assert.equal(result.externalProvider, provider, `${code} provider must remain authoritative`);
+  if (code === "DG_ECS_STABILITY_FAILED") {
+    assert.equal(result.confidence, "UNVERIFIED", "a stability boundary without causal diagnostics remains explicitly unverified");
+    assert.equal(result.retryDecision, "INSUFFICIENT_EVIDENCE", "ambiguous ECS stability evidence cannot expose recovery");
+  }
 }
+
+const repositoryEcsFailure = diagnose('DG_ECS_DIAGNOSTICS {"containerExitCode":1,"stoppedTaskReason":"Essential container exited"}\nDG_FAILURE code=DG_ECS_STABILITY_FAILED stage=ecs_stability', {
+  terminalFailureCode: "DG_ECS_STABILITY_FAILED",
+  failureStage: "ecs_stability",
+});
+assert.equal(repositoryEcsFailure.failureOwner, "REPOSITORY_APPLICATION");
+assert.equal(repositoryEcsFailure.confidence, "DETERMINISTIC");
+assert.equal(repositoryEcsFailure.retryDecision, "SAFE_AFTER_FIX");
 
 const managedDatabaseFailure = (reconciliationState: ManagedDatabaseReconciliationState.STALE_METADATA | ManagedDatabaseReconciliationState.RECOVERABLE | ManagedDatabaseReconciliationState.DATA_LOST_RESET_REQUIRED | ManagedDatabaseReconciliationState.IDENTITY_MIGRATION_REQUIRED, overrides: Record<string, unknown> = {}) => ({
   reconciliationState,
@@ -191,12 +246,14 @@ for (const engine of ["postgres", "mysql", "mongodb"] as const) {
 for (const action of ["deploy", "rollback", "destroy"] as const) {
   const result = diagnose("ambiguous terminal failure", { deploymentAction: action });
   assert.equal(result.deploymentAction, action);
-  assert.equal(result.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED");
+  assert.equal(result.rootCauseCode, "DG_RAILPACK_BUILD_FAILED", "a known umbrella code retains its verified boundary without inventing an underlying cause");
+  assert.equal(result.confidence, "UNVERIFIED");
+  assert.equal(result.retryDecision, "INSUFFICIENT_EVIDENCE");
 }
 const redeploy = diagnose("ambiguous redeploy terminal failure", { deploymentAction: "deploy" });
 assert.equal(redeploy.deploymentAction, "deploy", "redeploy uses the frozen deploy action contract");
 
-const unknown = diagnose("command returned a non-zero result with no specific causal evidence");
+const unknown = diagnose("command returned a non-zero result with no specific causal evidence", { terminalFailureCode: "DG_UNKNOWN_TERMINAL_FAILURE" });
 assert.equal(unknown.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED");
 assert.equal(unknown.failureOwner, "UNVERIFIED");
 assert.equal(unknown.retryDecision, "INSUFFICIENT_EVIDENCE");
@@ -204,6 +261,27 @@ assert.equal(unknown.confidence, "UNVERIFIED");
 assert.ok(unknown.evidenceReferences[0].excerpt.length > 0);
 const unknownRuntime = diagnose("container stopped for an unknown reason", { failureStage: "application_runtime", terminalFailureCode: "DG_FAILURE_UNVERIFIED" });
 assert.equal(unknownRuntime.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED");
+
+const historicalMetadata: Record<string, unknown> = {
+  executionEngine: "railpack",
+  deploymentAction: "deploy",
+  failedStage: "application_runtime",
+  safeLog: `DG_FAILURE serviceId=${serviceId} code=DG_APPLICATION_EXTERNAL_BINDING_FAILED stage=application_runtime`,
+  failureDiagnostic: { ...unknown, terminalFailureCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED" },
+};
+const immutableAuditSnapshot = JSON.stringify(historicalMetadata.failureDiagnostic);
+const currentRecovery = currentFailureDiagnostic({
+  id: unknown.operationId,
+  commitSha: "f".repeat(40),
+  currentStage: "application_runtime",
+  failedAt: now,
+  failureCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED",
+  failureServiceId: serviceId,
+  metadata: historicalMetadata,
+});
+assert.equal(currentRecovery?.retryDecision, "SAFE_AFTER_FIX", "current recovery uses the current deterministic contract");
+assert.equal(currentRecovery?.rootCauseCode, "DG_APPLICATION_EXTERNAL_BINDING_FAILED");
+assert.equal(JSON.stringify(historicalMetadata.failureDiagnostic), immutableAuditSnapshot, "historical persisted diagnosis remains byte-for-byte unchanged");
 
 const retainedOwner = diagnose("ambiguous detail", { failureOwner: "DEPLOYGUARD_PLATFORM", terminalFailureCode: "DG_FAILURE_UNVERIFIED" });
 assert.equal(retainedOwner.failureOwner, "DEPLOYGUARD_PLATFORM", "unknown cause must retain proven owner");

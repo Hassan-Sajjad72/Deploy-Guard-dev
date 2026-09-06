@@ -1,4 +1,4 @@
-import { ExternalProvider, FailureOwner } from "../failure-ownership";
+import type { ExternalProvider, FailureOwner } from "../failure-ownership";
 import type { ManagedDatabaseReconciliationFailureEvidence } from "../managed-database-reconciliation.error";
 
 export const FAILURE_DIAGNOSTIC_SCHEMA_VERSION = 1 as const;

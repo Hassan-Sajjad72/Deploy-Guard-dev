@@ -709,6 +709,38 @@ async function verifyPublicReachabilityRetryProjection() {
   assert.equal(state.latestAttempt.diagnosis?.retryDecision, "SAFE_NOW");
   assert.equal(state.latestAttempt.commit, commitSha, "retry eligibility remains bound to the failed immutable source SHA");
   assert.equal(state.canRetry, true, "SAFE_NOW public reachability failure enables the existing immutable retry path");
+
+  failed.commitSha = null;
+  const invalidSource = await service.withGithubActionsState(project.id, "dev", state, null);
+  assert.equal(invalidSource.canRetry, false, "SAFE_NOW cannot expose Retry without the failed operation's exact immutable source SHA");
+  failed.commitSha = commitSha;
+
+  failed.failureCode = "DG_UNKNOWN_TERMINAL_FAILURE";
+  const unknownFailure = await service.withGithubActionsState(project.id, "dev", state, null);
+  assert.equal(unknownFailure.latestAttempt.diagnosis?.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED");
+  assert.equal(unknownFailure.canRetry, false, "unknown terminal evidence never exposes an unsafe Retry action");
+  failed.failureCode = failureCode;
+
+  const historicalDiagnosis = structuredClone(failed.metadata.failureDiagnostic);
+  historicalDiagnosis.rootCauseCode = "DG_FAILURE_CAUSE_UNVERIFIED";
+  historicalDiagnosis.retryDecision = "INSUFFICIENT_EVIDENCE";
+  historicalDiagnosis.confidence = "UNVERIFIED";
+  historicalDiagnosis.terminalFailureCode = "DG_APPLICATION_EXTERNAL_BINDING_FAILED";
+  failed.failureCode = "DG_APPLICATION_EXTERNAL_BINDING_FAILED";
+  failed.failureOwner = "REPOSITORY_APPLICATION";
+  failed.externalProvider = null;
+  failed.metadata = {
+    ...failed.metadata,
+    safeLog: "DG_FAILURE serviceId=77777777-7777-4777-8777-777777777777 code=DG_APPLICATION_EXTERNAL_BINDING_FAILED stage=application_runtime",
+    failedStage: "application_runtime",
+    failureDiagnostic: historicalDiagnosis,
+  };
+  const immutableHistoricalSnapshot = JSON.stringify(failed.metadata.failureDiagnostic);
+  const corrected = await service.withGithubActionsState(project.id, "dev", state, null);
+  assert.equal(corrected.latestAttempt.diagnosis?.rootCauseCode, "DG_APPLICATION_EXTERNAL_BINDING_FAILED");
+  assert.equal(corrected.latestAttempt.diagnosis?.retryDecision, "SAFE_AFTER_FIX");
+  assert.equal(corrected.canRetry, false, "SAFE_AFTER_FIX never enables immutable retry");
+  assert.equal(JSON.stringify(failed.metadata.failureDiagnostic), immutableHistoricalSnapshot, "current projection must not rewrite historical audit diagnosis");
 }
 
 async function verifyVerifiedReleaseProjectsLive() {

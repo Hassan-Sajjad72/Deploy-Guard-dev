@@ -116,10 +116,12 @@ assert.deepEqual(actions("DESTROYED"), [{ kind: "command", command: "deploy", la
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED" }, canRetry: false }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }]);
 const safeNowFailure = { operationType: "deploy", diagnosis: { failureOwner: "EXTERNAL_PROVIDER", retryDecision: "SAFE_NOW" } };
 const publicReachabilityFailure = { operationType: "deploy", commit: "d".repeat(40), diagnosis: { terminalFailureCode: "DG_PUBLIC_REACHABILITY_FAILED", rootCauseCode: "DG_PUBLIC_REACHABILITY_FAILED", failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", retryDecision: "SAFE_NOW" } };
+const applicationBindingFailure = { operationType: "deploy", commit: "e".repeat(40), diagnosis: { terminalFailureCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED", rootCauseCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED", failureOwner: "REPOSITORY_APPLICATION", externalProvider: null, retryDecision: "SAFE_AFTER_FIX", recommendedAction: "Bind to 0.0.0.0 and deploy the corrected commit." } };
 const safeAfterFixFailure = { operationType: "deploy", diagnosis: { failureOwner: "REPOSITORY_APPLICATION", retryDecision: "SAFE_AFTER_FIX" } };
 const notSafeFailure = { operationType: "deploy", diagnosis: { failureOwner: "DEPLOYGUARD_PLATFORM", retryDecision: "NOT_SAFE_YET" } };
 assert.equal(failureRecoveryCommand(safeNowFailure, true), "retry");
 assert.equal(failureRecoveryCommand(publicReachabilityFailure, true), "retry", "an admitted public-reachability retry renders through the existing retry command");
+assert.equal(failureRecoveryCommand(applicationBindingFailure, false), "deploy_fixed", "application binding failures require a fresh corrected commit");
 assert.equal(failureRecoveryCommand(safeAfterFixFailure, false), "deploy_fixed");
 assert.equal(failureRecoveryCommand(notSafeFailure, false), null);
 assert.equal(failureRecoveryCommand({ ...safeAfterFixFailure, operationType: "rollback" }, false), null, "rollback never becomes a fresh source deployment");
@@ -127,6 +129,9 @@ assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", l
   { kind: "link", target: "pipeline", label: "View Pipeline" },
   { kind: "command", command: "deploy_fixed", label: "Deploy Fixed Commit" },
 ]);
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: applicationBindingFailure, canRetry: false }, true).at(-1), { kind: "command", command: "deploy_fixed", label: "Deploy Fixed Commit" });
+assert.match(lifecycle, /latest\.diagnosis\.rootCauseCode/);
+assert.match(lifecycle, /latest\.diagnosis\.recommendedAction/);
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: notSafeFailure, canRetry: true }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }], "NOT_SAFE_YET suppresses unsafe actions even if canRetry is inconsistent");
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "READY" } }, false), []);
 assert.doesNotMatch(lifecycle, /getGithubActionsDeploymentHistory|developerAction|estimatedCost|terraform/i);
