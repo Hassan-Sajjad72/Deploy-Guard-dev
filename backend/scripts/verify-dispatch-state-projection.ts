@@ -20,7 +20,7 @@ import { ProjectServiceRuntimeConfigRevision } from "../src/projects/project-ser
 import { ProjectGenerationServiceRevision } from "../src/projects/project-generation-service-revision.entity";
 import { Project } from "../src/projects/project.entity";
 import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError } from "../src/projects/github-app.service";
-import { terminalStructuredFailureMarker } from "../src/projects/failure-ownership";
+import { classifyStructuredFailure, terminalStructuredFailureMarker } from "../src/projects/failure-ownership";
 import { QueryFailedError } from "typeorm";
 import { ProjectDeployableService } from "../src/projects/project-deployable-service.entity";
 import { ProjectEnvironmentVariable } from "../src/projects/project-environment-variable.entity";
@@ -28,6 +28,7 @@ import { ProjectDatabaseTier } from "../src/projects/project-database-tier.entit
 import { ProjectConfigurationSnapshot } from "../src/projects/project-configuration-snapshot.entity";
 import { BuildTargetResolutionError } from "../src/projects/build-target-resolver.service";
 import { RuntimeSecretMaterializationError } from "../src/projects/github-actions-runtime-secret.service";
+import { FailureDiagnosticService } from "../src/projects/failure-diagnostics/failure-diagnostic.service";
 
 const user = { id: 7 } as any;
 const project = {
@@ -654,6 +655,62 @@ async function verifyCurrentStateProjection(failed: any, realGithubRun = false) 
   }
 }
 
+async function verifyPublicReachabilityRetryProjection() {
+  const failedAt = new Date("2026-09-06T00:03:00.000Z");
+  const commitSha = "d".repeat(40);
+  const failureCode = "DG_PUBLIC_REACHABILITY_FAILED";
+  const failureStage = "public_health";
+  const ownership = classifyStructuredFailure(failureStage, `DG_FAILURE code=${failureCode} stage=${failureStage}`);
+  const diagnosis = new FailureDiagnosticService(new LogSanitizerService()).diagnose({
+    operationId: "34343434-3434-4434-8434-343434343434",
+    deploymentAction: "deploy",
+    sourceSha: commitSha,
+    failureStage,
+    terminalFailureCode: failureCode,
+    failureOwner: ownership.failureOwner,
+    externalProvider: ownership.externalProvider,
+    errorMessage: "The ALB continued returning a gateway reachability failure after bounded convergence.",
+    safeEvidence: `DG_FAILURE code=${failureCode} stage=${failureStage}`,
+    evidenceSource: "github_actions",
+    evidenceEventId: "123",
+    failedAt,
+  });
+  const failed: any = {
+    id: diagnosis.operationId,
+    projectId: project.id,
+    generationId: null,
+    status: PipelineRunStatus.FAILED,
+    currentStage: failureStage,
+    githubWorkflowRunId: "123",
+    commitSha,
+    createdAt: failedAt,
+    startedAt: failedAt,
+    completedAt: failedAt,
+    updatedAt: failedAt,
+    failedAt,
+    errorMessage: diagnosis.summary,
+    failureOwner: ownership.failureOwner,
+    externalProvider: ownership.externalProvider,
+    failureCode,
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy", attempt: 1, failedStage: failureStage, failureDiagnostic: diagnosis },
+  };
+  const builder: any = {
+    where() { return this; }, andWhere() { return this; }, orderBy() { return this; }, clone() { return this; }, getOne: async () => failed,
+  };
+  const service = Object.create(ProjectCurrentStateService.prototype) as any;
+  service.runRepository = { createQueryBuilder: () => builder };
+  service.releaseRepository = { findOne: async () => null };
+  const state = await service.withGithubActionsState(project.id, "dev", {
+    repository: project.repositoryFullName, branch: project.targetBranch, commit: null, latestAttempt: null,
+    stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null,
+    canRetry: false, stateAuthority: null, developerState: "ready", developerAction: "deploy", developerMessage: "ready", progress: { percentage: 0, phase: null, label: "Ready" },
+  }, null);
+  assert.equal(state.latestAttempt.diagnosis?.rootCauseCode, failureCode, "current-state preserves the deterministic reachability diagnosis");
+  assert.equal(state.latestAttempt.diagnosis?.retryDecision, "SAFE_NOW");
+  assert.equal(state.latestAttempt.commit, commitSha, "retry eligibility remains bound to the failed immutable source SHA");
+  assert.equal(state.canRetry, true, "SAFE_NOW public reachability failure enables the existing immutable retry path");
+}
+
 async function verifyVerifiedReleaseProjectsLive() {
   const completedAt = new Date("2026-08-29T12:00:00.000Z");
   const generationId = "88888888-8888-4888-8888-888888888888";
@@ -1050,6 +1107,7 @@ void (async () => {
   await verifyActiveGithubStagesPersistWithoutPipeline();
   await verifyTerminalStageMetadataConvergenceAndBackfill();
   await verifyCurrentStateProjection(terminalFailure, true);
+  await verifyPublicReachabilityRetryProjection();
   await verifyCurrentStateReconcilesWithoutPipeline();
   await verifyConcurrentStateReadsShareReconciliation();
   await verifyDispatchIdentityRecovery();

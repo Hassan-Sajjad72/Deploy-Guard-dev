@@ -87,6 +87,21 @@ assert.equal(runtimeSecretFailure.rootCauseCode, "DG_RUNTIME_SECRET_MATERIALIZAT
 assert.equal(runtimeSecretFailure.failureOwner, "EXTERNAL_PROVIDER");
 assert.equal(runtimeSecretFailure.externalProvider, "aws");
 
+const publicReachabilityFailure = diagnose("DG_FAILURE code=DG_PUBLIC_REACHABILITY_FAILED stage=public_health", {
+  failureStage: "public_health",
+  terminalFailureCode: "DG_PUBLIC_REACHABILITY_FAILED",
+  failureOwner: "EXTERNAL_PROVIDER",
+  externalProvider: "aws",
+  serviceId,
+  serviceName: "web",
+});
+assert.equal(publicReachabilityFailure.terminalFailureCode, "DG_PUBLIC_REACHABILITY_FAILED");
+assert.equal(publicReachabilityFailure.rootCauseCode, "DG_PUBLIC_REACHABILITY_FAILED");
+assert.equal(publicReachabilityFailure.failureOwner, "EXTERNAL_PROVIDER");
+assert.equal(publicReachabilityFailure.externalProvider, "aws");
+assert.equal(publicReachabilityFailure.retryDecision, "SAFE_NOW");
+assert.equal(publicReachabilityFailure.confidence, "DETERMINISTIC");
+
 const pnpm = diagnose([
   "DG_FAILURE code=DG_RAILPACK_BUILD_FAILED stage=railpack_build serviceId=11111111-1111-4111-8111-111111111111",
   "ERR_PNPM_OUTDATED_LOCKFILE Cannot install with frozen-lockfile because pnpm-lock.yaml is not up to date",

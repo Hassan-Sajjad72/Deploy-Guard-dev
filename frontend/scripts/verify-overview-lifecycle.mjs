@@ -115,9 +115,11 @@ assert.deepEqual(actions("DESTROYING"), [{ kind: "link", target: "pipeline", lab
 assert.deepEqual(actions("DESTROYED"), [{ kind: "command", command: "deploy", label: "Deploy Again" }]);
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED" }, canRetry: false }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }]);
 const safeNowFailure = { operationType: "deploy", diagnosis: { failureOwner: "EXTERNAL_PROVIDER", retryDecision: "SAFE_NOW" } };
+const publicReachabilityFailure = { operationType: "deploy", commit: "d".repeat(40), diagnosis: { terminalFailureCode: "DG_PUBLIC_REACHABILITY_FAILED", rootCauseCode: "DG_PUBLIC_REACHABILITY_FAILED", failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", retryDecision: "SAFE_NOW" } };
 const safeAfterFixFailure = { operationType: "deploy", diagnosis: { failureOwner: "REPOSITORY_APPLICATION", retryDecision: "SAFE_AFTER_FIX" } };
 const notSafeFailure = { operationType: "deploy", diagnosis: { failureOwner: "DEPLOYGUARD_PLATFORM", retryDecision: "NOT_SAFE_YET" } };
 assert.equal(failureRecoveryCommand(safeNowFailure, true), "retry");
+assert.equal(failureRecoveryCommand(publicReachabilityFailure, true), "retry", "an admitted public-reachability retry renders through the existing retry command");
 assert.equal(failureRecoveryCommand(safeAfterFixFailure, false), "deploy_fixed");
 assert.equal(failureRecoveryCommand(notSafeFailure, false), null);
 assert.equal(failureRecoveryCommand({ ...safeAfterFixFailure, operationType: "rollback" }, false), null, "rollback never becomes a fresh source deployment");
