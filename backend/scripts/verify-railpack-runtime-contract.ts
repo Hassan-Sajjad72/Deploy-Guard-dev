@@ -265,17 +265,21 @@ assert.doesNotMatch(workflow, /moby\/buildkit:latest/);
 assert.match(workflow, /\^\(deploy\|rollback\|destroy\)\$/);
 assert.match(workflow, /key=projects\/\$PROJECT_ID\/\$ENVIRONMENT_NAME\/runtime\/terraform\.tfstate/);
 assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
-assert.match(runtimeVerification, /aws ecs wait services-stable/);
-assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/);
-assert.doesNotMatch(runtimeVerification, /curl --fail --show-error --silent --retry 20/, "application HTTP status is outside deployment readiness");
+assert.match(runtimeVerification, /timeout "\$ecs_stability_timeout_seconds" aws ecs wait services-stable/, "ECS waiter must have an explicit finite deadline");
+for (const convergence of ["wait_for_cloud_map_registration", "wait_for_alb_active", "wait_for_listener", "wait_for_public_dns", "wait_for_public_transport"]) assert.match(runtimeVerification, new RegExp(convergence), `${convergence} must remain in the orchestration verifier`);
+assert.match(runtimeVerification, /curl --silent --show-error --connect-timeout "\$effective_connect_timeout" --max-time "\$effective_attempt_timeout"/, "public transport attempts need explicit connection and transfer deadlines capped by the overall convergence deadline");
+for (const deadline of ["DEPLOYGUARD_DATABASE_READINESS_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_TARGET_HEALTH_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_CLOUD_MAP_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_ALB_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_LISTENER_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_DNS_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_PUBLIC_MAX_ELAPSED_SECONDS"]) assert.match(runtimeVerification, new RegExp(deadline), `${deadline} must remain explicit and finite`);
+assert.doesNotMatch(runtimeVerification, /curl --fail/, "application HTTP status must remain distinct from transport readiness");
 assert.match(terraform, /platform_health_check_path\s*=\s*"\/_deployguard\/transport-ready"/, "the platform owns its transport-readiness endpoint");
-assert.match(terraform, /name\s*=\s*"deployguard-transport-probe"[\s\S]*?APPLICATION_PORT[\s\S]*?nc -z -w 1 127\.0\.0\.1/, "the task-local probe succeeds only while the declared application port accepts TCP");
+assert.match(terraform, /name\s*=\s*"deployguard-transport-probe"[\s\S]*?task_ip=\\"\$\(hostname -i[\s\S]*?nc -z -w 1 \\"\$task_ip\\"/, "the transport probe must reach the application through the task ENI rather than loopback");
 assert.match(terraform, /name\s*=\s*"application"[\s\S]*?awslogs-stream-prefix = "application"/, "developer application errors remain available in the existing runtime log stream");
 assert.match(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*local\.platform_health_check_path[\s\S]*?port\s*=\s*tostring\(local\.transport_probe_ports\[each\.key\]\)[\s\S]*?matcher\s*=\s*"200-299"/, "ALB stability uses DeployGuard transport readiness instead of application response status");
 assert.match(terraform, /resource "aws_lb_target_group" "application"[\s\S]*?name\s*=\s*"\$\{local\.project_name\}-\$\{substr\(replace\(each\.key, "-", ""\), 0, 8\)\}-\$\{each\.value\.service_port\}"[\s\S]*?lifecycle\s*\{[\s\S]*?create_before_destroy\s*=\s*true/, "service-port changes must create a distinctly named target group before retiring the listener's current target group");
 assert.doesNotMatch(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*"\/"/, "developer root-route semantics are not a default deployment gate");
 assert.match(runtimeVerification, /readinessMode:"platform_transport"/);
 assert.match(releaseResultProducer, /\$outcome\.readinessMode == "platform_transport"/);
+assert.match(releaseResultProducer, /\$outcome\.applicationReachabilityPath == "alb_to_task_eni"/);
+for (const evidenceField of ["taskIpAddresses", "targetRegistrations", "alb", "listener", "publicProbe"]) assert.match(releaseResultProducer, new RegExp(`\\$outcome\\.${evidenceField}`), `terminal release evidence must require ${evidenceField}`);
 const normalizedTerraform = terraform.replaceAll('\\"', '"');
 for (const engine of ["postgres", "mysql", "mongodb"] as ManagedDatabaseEngine[]) {
   const profile = MANAGED_DATABASE_ENGINE_PROFILES[engine];
@@ -297,6 +301,10 @@ assert.ok(verifyDatabase, "the managed-database release orchestration must be ex
 assert.ok(
   verifyDatabase.indexOf('wait_for_managed_database_readiness "$database_id"') < verifyDatabase.indexOf('release_database_attached_service "$database_id"'),
   "the attached application scale-up must occur strictly after managed-database readiness",
+);
+assert.ok(
+  verifyDatabase.indexOf('wait_for_cloud_map_registration "$database_id"') < verifyDatabase.indexOf('release_database_attached_service "$database_id"'),
+  "the attached application scale-up must occur strictly after current-task Cloud Map registration",
 );
 assert.equal((runtimeVerification.match(/aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/g) || []).length, 1, "the runtime boundary has one explicit attached-service release action");
 assert.match(terraform, /mysql_grant_reconciler_name\s+=\s+"deployguard-mysql-grant-reconciler"/, "managed MySQL must name its grant reconciler explicitly");
@@ -368,6 +376,7 @@ attach_diagnostics() { :; }
 sanitize() { cat; }
 configuration_failure() { return 1; }
 provider_failure() { return 1; }
+sleep_within_deadline() { [ "$3" -eq 0 ] || sleep "$3"; }
 ${databaseReadiness}
 wait_for_managed_database_readiness "33333333-3333-4333-8333-333333333333" cluster database "database-task-definition:1" "$DATABASE_ENGINE"
 release_database_attached_service "33333333-3333-4333-8333-333333333333" cluster application

@@ -49,6 +49,7 @@ jobs:
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
       BUILDKIT_CONTAINER: deployguard-buildkit-${{ inputs.deployment_operation_id }}
       BUILDKIT_IMAGE: moby/buildkit:v0.16.0@sha256:bc1fe18224dbcb92599139db0c745696c48ba9fd4ac24038d1fa81fdd7dcac27
+      TRANSPORT_PROBE_IMAGE: public.ecr.aws/docker/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
     steps:
       - name: Checkout exact application source
         if: inputs.deployment_action == 'deploy'
@@ -159,6 +160,7 @@ jobs:
         run: |
           set -euo pipefail
           containers=(); networks=(); runtime_names=()
+          docker image inspect "$TRANSPORT_PROBE_IMAGE" >/dev/null 2>&1 || docker pull "$TRANSPORT_PROBE_IMAGE" >/dev/null || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=application_runtime message=transport_probe_image_unavailable' >&2; exit 1; }
           cleanup_probes() {
             for key in "${runtime_names[@]:-}"; do unset "$key"; done
             for container in "${containers[@]:-}"; do docker rm --force "$container" >/dev/null 2>&1 || true; done
@@ -166,7 +168,7 @@ jobs:
           }
           trap cleanup_probes EXIT INT TERM
           while IFS= read -r artifact; do
-            service_id="$(jq -r '.serviceId' <<<"$artifact")"; image="$(jq -r '.localImage' <<<"$artifact")"; expected_image_id="$(jq -r '.localImageId' <<<"$artifact")"; compact_service="${service_id//-/}"; suffix="${compact_service:0:8}"; container="deployguard-runtime-probe-${OPERATION_ID}-${suffix}"; network="deployguard-runtime-probe-${OPERATION_ID}-${suffix}"; containers+=("$container"); networks+=("$network")
+            service_id="$(jq -r '.serviceId' <<<"$artifact")"; image="$(jq -r '.localImage' <<<"$artifact")"; expected_image_id="$(jq -r '.localImageId' <<<"$artifact")"; compact_service="${service_id//-/}"; suffix="${compact_service:0:8}"; container="deployguard-runtime-probe-${OPERATION_ID}-${suffix}"; network="deployguard-runtime-probe-${OPERATION_ID}-${suffix}"; peer_alias="application-${suffix}"; containers+=("$container"); networks+=("$network")
             actual_image_id="$(docker image inspect --format '{{.Id}}' "$image")"; [ "$actual_image_id" = "$expected_image_id" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime message=immutable_image_mismatch" >&2; exit 1; }
             service="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' .deployguard/runtime.json)"; [ -n "$service" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime message=runtime_configuration_missing" >&2; exit 1; }; service_port="$(jq -r '.servicePort' <<<"$service")"
             docker network create "$network" >/dev/null
@@ -214,19 +216,20 @@ jobs:
                 printf -v "$key" '%s' "$value"; export "${key?}"; runtime_names+=("$key"); runtime_args+=(--env "$key")
               done < <(jq -r '.managedDatabase.aliases[]' <<<"$service")
             fi
-            if docker run --detach --name "$container" --network "$network" --publish "127.0.0.1:${service_port}:${service_port}" "${runtime_args[@]}" --env PORT="$service_port" --env HOST=0.0.0.0 "$expected_image_id" >/dev/null 2>&1; then
+            if docker run --detach --name "$container" --network "$network" --network-alias "$peer_alias" --publish "127.0.0.1:${service_port}:${service_port}" "${runtime_args[@]}" --env PORT="$service_port" --env HOST=0.0.0.0 "$expected_image_id" >/dev/null 2>&1; then
               host_port="$service_port"
             else
               docker rm -f "$container" >/dev/null 2>&1 || true
-              docker run --detach --name "$container" --network "$network" --publish "127.0.0.1::${service_port}" "${runtime_args[@]}" --env PORT="$service_port" --env HOST=0.0.0.0 "$expected_image_id" >/dev/null 2>&1 || { echo "DG_FAILURE serviceId=$service_id code=DG_LOCAL_HOST_PORT_ALLOCATION_FAILED stage=local_host_port_allocation" >&2; exit 1; }
+              docker run --detach --name "$container" --network "$network" --network-alias "$peer_alias" --publish "127.0.0.1::${service_port}" "${runtime_args[@]}" --env PORT="$service_port" --env HOST=0.0.0.0 "$expected_image_id" >/dev/null 2>&1 || { echo "DG_FAILURE serviceId=$service_id code=DG_LOCAL_HOST_PORT_ALLOCATION_FAILED stage=local_host_port_allocation" >&2; exit 1; }
               host_port="$(docker port "$container" "${service_port}/tcp" 2>/dev/null | awk -F: 'NR==1 {print $NF}')"
               [[ "$host_port" =~ ^[0-9]+$ ]] && [ "$host_port" -ge 1 ] && [ "$host_port" -le 65535 ] || { echo "DG_FAILURE serviceId=$service_id code=DG_LOCAL_HOST_PORT_ALLOCATION_FAILED stage=local_host_port_allocation" >&2; exit 1; }
             fi
             ready=false
-            # The inner Bash receives the container/temporary host port as positional parameters; expansion here would be wrong.
+            # Probe from a separate network peer so Docker's published-port proxy
+            # cannot make a loopback-only application appear externally reachable.
             # shellcheck disable=SC2016
-            if timeout --signal=TERM 45 bash -c 'stable=0; while [ "$stable" -lt 5 ]; do running="$(docker inspect --format "{{.State.Running}}" "$1" 2>/dev/null || true)"; [ "$running" = true ] || exit 1; if timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/\$1" _ "$2" 2>/dev/null; then stable=$((stable + 1)); else stable=0; fi; sleep 1; done' _ "$container" "$host_port"; then ready=true; fi
-            if [ "$ready" != true ]; then docker logs "$container" --tail 100 2>&1 | sed -E 's/((password|passwd|token|secret|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/Ig' | tr -cd '\11\12\15\40-\176' | tail -c 12000 >&2 || true; echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_RUNTIME_FAILED stage=application_runtime" >&2; echo "Application did not listen on PORT=$service_port within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable." >&2; exit 1; fi
+            if timeout --signal=TERM 45 bash -c 'stable=0; while [ "$stable" -lt 5 ]; do running="$(docker inspect --format "{{.State.Running}}" "$1" 2>/dev/null || true)"; [ "$running" = true ] || exit 1; if docker run --rm --network "$2" "$3" nc -z -w 1 "$4" "$5" >/dev/null 2>&1; then stable=$((stable + 1)); else stable=0; fi; sleep 1; done' _ "$container" "$network" "$TRANSPORT_PROBE_IMAGE" "$peer_alias" "$service_port"; then ready=true; fi
+            if [ "$ready" != true ]; then docker logs "$container" --tail 100 2>&1 | sed -E 's/((password|passwd|token|secret|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1[REDACTED]/Ig' | tr -cd '\11\12\15\40-\176' | tail -c 12000 >&2 || true; echo "DG_FAILURE serviceId=$service_id code=DG_APPLICATION_EXTERNAL_BINDING_FAILED stage=application_runtime" >&2; echo "Application was not reachable from a separate network peer on PORT=$service_port within 45 seconds. Bind to 0.0.0.0 and use the PORT environment variable." >&2; exit 1; fi
             docker rm --force "$container" >/dev/null
             unset 'containers[${#containers[@]}-1]'
             for key in "${runtime_names[@]:-}"; do unset "$key"; done; runtime_names=()

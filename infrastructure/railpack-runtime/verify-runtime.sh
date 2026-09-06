@@ -29,26 +29,40 @@ sanitize() {
     | tr -cd '\11\12\15\40-\176' | tail -c 12000
 }
 
+sleep_within_deadline() {
+  local started="$1" max_elapsed="$2" requested="$3" elapsed remaining duration
+  elapsed=$((SECONDS - started)); remaining=$((max_elapsed - elapsed))
+  [ "$remaining" -gt 0 ] || return 1
+  duration="$requested"; [ "$duration" -le "$remaining" ] || duration="$remaining"
+  [ "$duration" -eq 0 ] || sleep "$duration"
+}
+
 configuration_failure() {
   local service_id="$1" message="$2"
   echo "DG_FAILURE serviceId=$service_id code=DG_AWS_RUNTIME_CONFIGURATION_FAILED stage=aws_runtime_verification" >&2
   append_outcome "$service_id" false DG_AWS_RUNTIME_CONFIGURATION_FAILED "$message" aws_runtime_verification
-  jq -cn --arg diagnosticCode AWS_RUNTIME_CONFIGURATION_MISMATCH --arg summary "$message" '{diagnosticCode:$diagnosticCode,summary:$summary}' \
-    | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2 || true
+  local diagnostic
+  diagnostic="$(jq -cn --arg diagnosticCode AWS_RUNTIME_CONFIGURATION_MISMATCH --arg summary "$message" '{diagnosticCode:$diagnosticCode,classification:"FATAL",summary:$summary}')"
+  attach_diagnostics "$service_id" "$diagnostic" || true
+  printf '%s\n' "$diagnostic" | sed 's/^/DG_ECS_DIAGNOSTICS /' >&2 || true
   exit 1
 }
 
 provider_failure() {
-  local service_id="$1" detail="$2"
+  local service_id="$1" detail="$2" safe_detail diagnostic code summary
+  safe_detail="$(printf '%s\n' "$detail" | sanitize)"
   if grep -Eqi 'AccessDenied|not authorized|UnauthorizedOperation' <<<"$detail"; then
-    printf '%s\n' "$detail" | sanitize >&2
+    printf '%s\n' "$safe_detail" >&2
     echo "DG_FAILURE serviceId=$service_id code=DG_AWS_AUTHORIZATION_FAILED stage=aws_runtime_verification" >&2
-    append_outcome "$service_id" false DG_AWS_AUTHORIZATION_FAILED "AWS authorization failed during terminal reconciliation." aws_runtime_verification
+    code=DG_AWS_AUTHORIZATION_FAILED; summary="AWS authorization failed during terminal reconciliation."
   else
-    printf '%s\n' "$detail" | sanitize >&2
+    printf '%s\n' "$safe_detail" >&2
     echo "DG_FAILURE serviceId=$service_id code=DG_AWS_PROVIDER_FAILED stage=aws_runtime_verification" >&2
-    append_outcome "$service_id" false DG_AWS_PROVIDER_FAILED "AWS provider observation failed during terminal reconciliation." aws_runtime_verification
+    code=DG_AWS_PROVIDER_FAILED; summary="AWS provider observation failed during terminal reconciliation."
   fi
+  append_outcome "$service_id" false "$code" "$summary" aws_runtime_verification
+  diagnostic="$(jq -cn --arg detail "$safe_detail" '{diagnosticCode:"AWS_PROVIDER_OBSERVATION_FAILED",classification:"FATAL",providerDetail:$detail}')"
+  attach_diagnostics "$service_id" "$diagnostic" || true
   exit 1
 }
 
@@ -78,7 +92,7 @@ ecs_diagnostics() {
     --argjson tasks "$tasks" --argjson service "$service_description" --argjson target "$target_health" --argjson logs "$logs" '
       (($tasks.tasks // []) | sort_by(.stoppedAt // "") | last // {}) as $task |
       (($task.containers // []) | map(select(.name == "application")) | first // (($task.containers // [])[0]) // {}) as $container |
-      {diagnosticCode:"ECS_STABILITY_FAILED",stopCode:($task.stopCode//null),stoppedTaskReason:($task.stoppedReason//null),containerExitCode:($container.exitCode//null),containerReason:($container.reason//null),taskEvents:((($service.services // [])[0].events // [])[0:12] | map(.message // null)),targetHealth:(($target.TargetHealthDescriptions // [])[0:20] | map({targetId:(.Target.Id//null),port:(.Target.Port//null),state:(.TargetHealth.State//null),reason:(.TargetHealth.Reason//null),description:(.TargetHealth.Description//null)})),logLines:(($logs.events // [])[-25:] | map(.message // null))}' 2>/dev/null || printf '{"diagnosticCode":"ECS_STABILITY_FAILED","diagnosticsUnavailable":true}')"
+      {diagnosticCode:"ECS_STABILITY_FAILED",classification:(if ($task.stopCode != null or $container.exitCode != null) then "FATAL" else "TRANSIENT_TIMEOUT" end),stopCode:($task.stopCode//null),stoppedTaskReason:($task.stoppedReason//null),containerExitCode:($container.exitCode//null),containerReason:($container.reason//null),taskEvents:((($service.services // [])[0].events // [])[0:12] | map(.message // null)),targetHealth:(($target.TargetHealthDescriptions // [])[0:20] | map({targetId:(.Target.Id//null),port:(.Target.Port//null),state:(.TargetHealth.State//null),reason:(.TargetHealth.Reason//null),description:(.TargetHealth.Description//null)})),logLines:(($logs.events // [])[-25:] | map(.message // null))}' 2>/dev/null || printf '{"diagnosticCode":"ECS_STABILITY_FAILED","classification":"TRANSIENT_TIMEOUT","diagnosticsUnavailable":true}')"
   diagnostic="$(printf '%s\n' "$diagnostic" | sanitize)"
   jq -e 'type == "object"' <<<"$diagnostic" >/dev/null 2>&1 || diagnostic='{"diagnosticCode":"ECS_STABILITY_FAILED","diagnosticsUnavailable":true}'
   attach_diagnostics "$service_id" "$diagnostic" || true
@@ -87,25 +101,194 @@ ecs_diagnostics() {
 }
 
 wait_for_target_health() {
-  local service_id="$1" target_group="$2" expected_targets="$3" attempt detail
+  local service_id="$1" target_group="$2" expected_targets="$3" expected_port="$4" attempt detail started elapsed remaining observation_status
   local max_attempts="${DEPLOYGUARD_TARGET_HEALTH_MAX_ATTEMPTS:-20}"
   local interval_seconds="${DEPLOYGUARD_TARGET_HEALTH_INTERVAL_SECONDS:-6}"
+  local max_elapsed_seconds="${DEPLOYGUARD_TARGET_HEALTH_MAX_ELAPSED_SECONDS:-180}"
+  [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || configuration_failure "$service_id" "Target-health attempt limit is invalid."
+  [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || configuration_failure "$service_id" "Target-health interval is invalid."
+  [[ "$max_elapsed_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$max_elapsed_seconds" -le 900 ] || configuration_failure "$service_id" "Target-health elapsed-time limit is invalid."
+  started="$SECONDS"
   target_health='{"TargetHealthDescriptions":[]}'
   for ((attempt=1; attempt<=max_attempts; attempt++)); do
-    detail="$(aws elbv2 describe-target-health --target-group-arn "$target_group" --output json 2>&1)" || provider_failure "$service_id" "$detail"
+    elapsed=$((SECONDS - started)); remaining=$((max_elapsed_seconds - elapsed)); [ "$remaining" -gt 0 ] || break
+    if detail="$(timeout "$remaining" aws elbv2 describe-target-health --target-group-arn "$target_group" --output json 2>&1)"; then observation_status=0; else observation_status=$?; fi
+    [ "$observation_status" -ne 124 ] || break
+    [ "$observation_status" -eq 0 ] || provider_failure "$service_id" "$detail"
     target_health="$detail"
-    if jq -e --argjson expected "$expected_targets" '
+    if jq -e --argjson expected "$expected_targets" --argjson port "$expected_port" '
       ($expected | sort | unique) as $current |
-      [.TargetHealthDescriptions[]? | {id:.Target.Id,state:.TargetHealth.State}] as $observed |
+      [.TargetHealthDescriptions[]? | {id:.Target.Id,port:.Target.Port,state:.TargetHealth.State}] as $observed |
       ($current | length > 0)
-      and all($current[]; . as $id | any($observed[]; .id == $id and .state == "healthy"))
+      and all($current[]; . as $id | any($observed[]; .id == $id and .port == $port and .state == "healthy"))
       and all($observed[]; (.id as $id | ($current | index($id)) != null) or .state == "draining")
     ' <<<"$target_health" >/dev/null; then
       return 0
     fi
-    [ "$attempt" -eq "$max_attempts" ] || sleep "$interval_seconds"
+    if jq -e --argjson expected "$expected_targets" --argjson port "$expected_port" '
+      any(.TargetHealthDescriptions[]?;
+        (((.Target.Id as $id | ($expected | index($id)) == null)
+          or ((.Target.Id as $id | ($expected | index($id)) != null) and .Target.Port != $port))
+        and .TargetHealth.State != "draining"))
+    ' <<<"$target_health" >/dev/null; then
+      return 2
+    fi
+    elapsed=$((SECONDS - started))
+    [ "$attempt" -eq "$max_attempts" ] || sleep_within_deadline "$started" "$max_elapsed_seconds" "$interval_seconds" || break
+    [ "$elapsed" -lt "$max_elapsed_seconds" ] || break
   done
   return 1
+}
+
+runtime_failure() {
+  local service_id="$1" code="$2" stage="$3" summary="$4" diagnostic="${5:-}"
+  echo "DG_FAILURE serviceId=$service_id code=$code stage=$stage" >&2
+  append_outcome "$service_id" false "$code" "$summary" "$stage"
+  if [ -n "$diagnostic" ]; then
+    diagnostic="$(printf '%s\n' "$diagnostic" | sanitize)"
+    jq -e 'type == "object"' <<<"$diagnostic" >/dev/null 2>&1 || diagnostic='{"diagnosticCode":"RUNTIME_CONVERGENCE_EVIDENCE_UNAVAILABLE"}'
+    attach_diagnostics "$service_id" "$diagnostic" || true
+    printf '%s\n' "$diagnostic" | sed 's/^/DG_RUNTIME_DIAGNOSTICS /' >&2 || true
+  fi
+  exit 1
+}
+
+wait_for_alb_active() {
+  local service_id="$1" alb_arn="$2" expected_security_group="$3" attempt detail state started elapsed diagnostic remaining observation_status
+  local max_attempts="${DEPLOYGUARD_ALB_MAX_ATTEMPTS:-30}"
+  local interval_seconds="${DEPLOYGUARD_ALB_INTERVAL_SECONDS:-5}"
+  local max_elapsed_seconds="${DEPLOYGUARD_ALB_MAX_ELAPSED_SECONDS:-180}"
+  [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || configuration_failure "$service_id" "ALB attempt limit is invalid."
+  [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || configuration_failure "$service_id" "ALB interval is invalid."
+  [[ "$max_elapsed_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$max_elapsed_seconds" -le 900 ] || configuration_failure "$service_id" "ALB elapsed-time limit is invalid."
+  started="$SECONDS"
+  alb_observation='{"state":"unknown","dnsName":null,"scheme":null,"type":null,"securityGroups":[]}'
+  for ((attempt=1; attempt<=max_attempts; attempt++)); do
+    elapsed=$((SECONDS - started)); remaining=$((max_elapsed_seconds - elapsed)); [ "$remaining" -gt 0 ] || break
+    if detail="$(timeout "$remaining" aws elbv2 describe-load-balancers --load-balancer-arns "$alb_arn" --output json 2>&1)"; then observation_status=0; else observation_status=$?; fi
+    [ "$observation_status" -ne 124 ] || break
+    [ "$observation_status" -eq 0 ] || provider_failure "$service_id" "$detail"
+    alb_observation="$(jq -c --arg arn "$alb_arn" '(.LoadBalancers | map(select(.LoadBalancerArn == $arn)) | first // {}) | {state:(.State.Code // "unknown"),dnsName:(.DNSName // null),scheme:(.Scheme // null),type:(.Type // null),ipAddressType:(.IpAddressType // null),securityGroups:(.SecurityGroups // [])}' <<<"$detail")" || configuration_failure "$service_id" "ALB state evidence is invalid."
+    state="$(jq -r '.state' <<<"$alb_observation")"
+    if [ "$state" = active ]; then
+      jq -e --arg sg "$expected_security_group" '.dnsName != null and .scheme == "internet-facing" and .type == "application" and (.securityGroups | index($sg) != null)' <<<"$alb_observation" >/dev/null || configuration_failure "$service_id" "The active ALB identity, scheme, type, DNS name, or security group does not match the immutable runtime."
+      return 0
+    fi
+    if [ "$state" = failed ]; then
+      diagnostic="$(jq -cn --argjson alb "$alb_observation" --argjson attempts "$attempt" --argjson elapsed "$((SECONDS - started))" '{diagnosticCode:"ALB_FAILED",classification:"FATAL",attempts:$attempts,elapsedSeconds:$elapsed,alb:$alb}')"
+      runtime_failure "$service_id" DG_ALB_NOT_ACTIVE alb_readiness "The service ALB entered a failed state." "$diagnostic"
+    fi
+    elapsed=$((SECONDS - started))
+    [ "$attempt" -eq "$max_attempts" ] || sleep_within_deadline "$started" "$max_elapsed_seconds" "$interval_seconds" || break
+    [ "$elapsed" -lt "$max_elapsed_seconds" ] || break
+  done
+  diagnostic="$(jq -cn --argjson alb "$alb_observation" --argjson attempts "$((attempt > max_attempts ? max_attempts : attempt))" --argjson elapsed "$((SECONDS - started))" '{diagnosticCode:"ALB_READINESS_TIMEOUT",classification:"TRANSIENT_TIMEOUT",attempts:$attempts,elapsedSeconds:$elapsed,alb:$alb}')"
+  runtime_failure "$service_id" DG_ALB_NOT_ACTIVE alb_readiness "The service ALB did not become active within the bounded convergence policy." "$diagnostic"
+}
+
+wait_for_listener() {
+  local service_id="$1" alb_arn="$2" target_group="$3" attempt detail matching_count started elapsed diagnostic remaining observation_status
+  local max_attempts="${DEPLOYGUARD_LISTENER_MAX_ATTEMPTS:-20}"
+  local interval_seconds="${DEPLOYGUARD_LISTENER_INTERVAL_SECONDS:-3}"
+  local max_elapsed_seconds="${DEPLOYGUARD_LISTENER_MAX_ELAPSED_SECONDS:-90}"
+  [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || configuration_failure "$service_id" "Listener attempt limit is invalid."
+  [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || configuration_failure "$service_id" "Listener interval is invalid."
+  [[ "$max_elapsed_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$max_elapsed_seconds" -le 900 ] || configuration_failure "$service_id" "Listener elapsed-time limit is invalid."
+  started="$SECONDS"
+  listener_observation='{"listenerArn":null,"port":null,"protocol":null,"defaultTargetGroupArn":null}'
+  for ((attempt=1; attempt<=max_attempts; attempt++)); do
+    elapsed=$((SECONDS - started)); remaining=$((max_elapsed_seconds - elapsed)); [ "$remaining" -gt 0 ] || break
+    if detail="$(timeout "$remaining" aws elbv2 describe-listeners --load-balancer-arn "$alb_arn" --output json 2>&1)"; then observation_status=0; else observation_status=$?; fi
+    [ "$observation_status" -ne 124 ] || break
+    [ "$observation_status" -eq 0 ] || provider_failure "$service_id" "$detail"
+    matching_count="$(jq '[.Listeners[]? | select(.Port == 80 and .Protocol == "HTTP")] | length' <<<"$detail")" || configuration_failure "$service_id" "ALB listener evidence is invalid."
+    if [ "$matching_count" -gt 0 ]; then
+      [ "$matching_count" -eq 1 ] || runtime_failure "$service_id" DG_ALB_LISTENER_MISMATCH alb_listener "The service ALB has ambiguous HTTP listeners." "$(jq -cn --argjson listeners "$detail" '{diagnosticCode:"ALB_LISTENER_AMBIGUOUS",classification:"FATAL",listeners:[$listeners.Listeners[]? | {listenerArn:.ListenerArn,port:.Port,protocol:.Protocol}]}')"
+      listener_observation="$(jq -c '[.Listeners[] | select(.Port == 80 and .Protocol == "HTTP")] | first | {listenerArn:.ListenerArn,port:.Port,protocol:.Protocol,defaultTargetGroupArn:([.DefaultActions[]? | select(.Type == "forward") | .TargetGroupArn] | first // null)}' <<<"$detail")"
+      jq -e --arg target "$target_group" '.defaultTargetGroupArn == $target' <<<"$listener_observation" >/dev/null || runtime_failure "$service_id" DG_ALB_LISTENER_MISMATCH alb_listener "The service ALB listener does not forward to the immutable target group." "$(jq -cn --argjson listener "$listener_observation" --arg expectedTargetGroupArn "$target_group" '{diagnosticCode:"ALB_LISTENER_MISMATCH",classification:"FATAL",expectedTargetGroupArn:$expectedTargetGroupArn,listener:$listener}')"
+      return 0
+    fi
+    if jq -e 'any(.Listeners[]?; .Port == 80 or .Protocol == "HTTP")' <<<"$detail" >/dev/null; then
+      runtime_failure "$service_id" DG_ALB_LISTENER_MISMATCH alb_listener "The service ALB listener has the wrong port or protocol." "$(jq -cn --argjson listeners "$detail" '{diagnosticCode:"ALB_LISTENER_MISMATCH",classification:"FATAL",listeners:[$listeners.Listeners[]? | {listenerArn:.ListenerArn,port:.Port,protocol:.Protocol}]}')"
+    fi
+    elapsed=$((SECONDS - started))
+    [ "$attempt" -eq "$max_attempts" ] || sleep_within_deadline "$started" "$max_elapsed_seconds" "$interval_seconds" || break
+    [ "$elapsed" -lt "$max_elapsed_seconds" ] || break
+  done
+  diagnostic="$(jq -cn --argjson attempts "$((attempt > max_attempts ? max_attempts : attempt))" --argjson elapsed "$((SECONDS - started))" '{diagnosticCode:"ALB_LISTENER_TIMEOUT",classification:"TRANSIENT_TIMEOUT",attempts:$attempts,elapsedSeconds:$elapsed}')"
+  runtime_failure "$service_id" DG_ALB_LISTENER_MISMATCH alb_listener "The service ALB listener did not appear within the bounded convergence policy." "$diagnostic"
+}
+
+wait_for_public_dns() {
+  local service_id="$1" hostname="$2" attempt started elapsed addresses diagnostic remaining effective_timeout
+  local max_attempts="${DEPLOYGUARD_DNS_MAX_ATTEMPTS:-20}"
+  local interval_seconds="${DEPLOYGUARD_DNS_INTERVAL_SECONDS:-3}"
+  local max_elapsed_seconds="${DEPLOYGUARD_DNS_MAX_ELAPSED_SECONDS:-90}"
+  local attempt_timeout_seconds="${DEPLOYGUARD_DNS_ATTEMPT_TIMEOUT_SECONDS:-5}"
+  [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || configuration_failure "$service_id" "DNS attempt limit is invalid."
+  [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || configuration_failure "$service_id" "DNS interval is invalid."
+  [[ "$max_elapsed_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$max_elapsed_seconds" -le 900 ] || configuration_failure "$service_id" "DNS elapsed-time limit is invalid."
+  [[ "$attempt_timeout_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$attempt_timeout_seconds" -le 30 ] || configuration_failure "$service_id" "DNS per-attempt timeout is invalid."
+  command -v getent >/dev/null 2>&1 || configuration_failure "$service_id" "The runtime verifier requires getent for bounded public DNS verification."
+  started="$SECONDS"
+  resolved_ips='[]'
+  for ((attempt=1; attempt<=max_attempts; attempt++)); do
+    elapsed=$((SECONDS - started)); remaining=$((max_elapsed_seconds - elapsed)); [ "$remaining" -gt 0 ] || break
+    effective_timeout="$attempt_timeout_seconds"; [ "$effective_timeout" -le "$remaining" ] || effective_timeout="$remaining"
+    addresses="$(timeout "$effective_timeout" getent ahostsv4 "$hostname" 2>/dev/null | awk '{print $1}' | sort -u || true)"
+    resolved_ips="$(printf '%s\n' "$addresses" | jq -Rsc 'split("\n") | map(select(length > 0)) | unique | sort')"
+    if jq -e 'length > 0 and all(.[]; test("^[0-9]{1,3}(\\.[0-9]{1,3}){3}$"))' <<<"$resolved_ips" >/dev/null; then
+      dns_attempt_count="$attempt"
+      dns_elapsed_seconds="$((SECONDS - started))"
+      return 0
+    fi
+    elapsed=$((SECONDS - started))
+    [ "$attempt" -eq "$max_attempts" ] || sleep_within_deadline "$started" "$max_elapsed_seconds" "$interval_seconds" || break
+    [ "$elapsed" -lt "$max_elapsed_seconds" ] || break
+  done
+  diagnostic="$(jq -cn --arg hostname "$hostname" --argjson addresses "$resolved_ips" --argjson attempts "$((attempt > max_attempts ? max_attempts : attempt))" --argjson elapsed "$((SECONDS - started))" '{diagnosticCode:"PUBLIC_DNS_UNRESOLVED",classification:"TRANSIENT_TIMEOUT",hostname:$hostname,resolvedIpAddresses:$addresses,attempts:$attempts,elapsedSeconds:$elapsed}')"
+  runtime_failure "$service_id" DG_PUBLIC_DNS_UNRESOLVED public_dns "The public ALB DNS name did not resolve within the bounded convergence policy." "$diagnostic"
+}
+
+wait_for_public_transport() {
+  local service_id="$1" public_url="$2" hostname="$3" attempt started elapsed metrics curl_exit http_status remote_ip connect_time start_transfer_time total_time stderr_file stderr_text classification failure_code summary diagnostic remaining effective_attempt_timeout effective_connect_timeout
+  local max_attempts="${DEPLOYGUARD_PUBLIC_MAX_ATTEMPTS:-25}"
+  local interval_seconds="${DEPLOYGUARD_PUBLIC_INTERVAL_SECONDS:-3}"
+  local max_elapsed_seconds="${DEPLOYGUARD_PUBLIC_MAX_ELAPSED_SECONDS:-150}"
+  local connect_timeout_seconds="${DEPLOYGUARD_PUBLIC_CONNECT_TIMEOUT_SECONDS:-5}"
+  local attempt_timeout_seconds="${DEPLOYGUARD_PUBLIC_ATTEMPT_TIMEOUT_SECONDS:-10}"
+  [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || configuration_failure "$service_id" "Public-probe attempt limit is invalid."
+  [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || configuration_failure "$service_id" "Public-probe interval is invalid."
+  [[ "$max_elapsed_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$max_elapsed_seconds" -le 900 ] || configuration_failure "$service_id" "Public-probe elapsed-time limit is invalid."
+  [[ "$connect_timeout_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$connect_timeout_seconds" -le 30 ] || configuration_failure "$service_id" "Public-probe connection timeout is invalid."
+  [[ "$attempt_timeout_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$attempt_timeout_seconds" -le 60 ] || configuration_failure "$service_id" "Public-probe per-attempt timeout is invalid."
+  stderr_file="$(mktemp)"
+  trap 'rm -f "$stderr_file"' RETURN
+  started="$SECONDS"
+  curl_exit=0; http_status=000; remote_ip=""; connect_time=0; start_transfer_time=0; total_time=0; stderr_text=""
+  for ((attempt=1; attempt<=max_attempts; attempt++)); do
+    elapsed=$((SECONDS - started)); remaining=$((max_elapsed_seconds - elapsed)); [ "$remaining" -gt 0 ] || break
+    effective_attempt_timeout="$attempt_timeout_seconds"; [ "$effective_attempt_timeout" -le "$remaining" ] || effective_attempt_timeout="$remaining"
+    effective_connect_timeout="$connect_timeout_seconds"; [ "$effective_connect_timeout" -le "$effective_attempt_timeout" ] || effective_connect_timeout="$effective_attempt_timeout"
+    : > "$stderr_file"
+    if metrics="$(curl --silent --show-error --connect-timeout "$effective_connect_timeout" --max-time "$effective_attempt_timeout" --output /dev/null --write-out '%{http_code}\t%{remote_ip}\t%{time_connect}\t%{time_starttransfer}\t%{time_total}' "$public_url" 2>"$stderr_file")"; then curl_exit=0; else curl_exit=$?; fi
+    IFS=$'\t' read -r http_status remote_ip connect_time start_transfer_time total_time <<<"$metrics"
+    stderr_text="$(sanitize < "$stderr_file")"
+    elapsed=$((SECONDS - started))
+    if [ "$curl_exit" -eq 0 ] && [[ "$http_status" =~ ^[1-5][0-9][0-9]$ ]] && [[ ! "$http_status" =~ ^(502|503|504)$ ]]; then
+      public_probe="$(jq -cn --arg hostname "$hostname" --argjson resolvedIpAddresses "$resolved_ips" --argjson dnsAttempts "$dns_attempt_count" --argjson dnsElapsedSeconds "$dns_elapsed_seconds" --argjson attemptCount "$attempt" --argjson elapsedSeconds "$elapsed" --argjson curlExitCode "$curl_exit" --arg httpStatus "$http_status" --arg remoteIp "$remote_ip" --arg connectTime "$connect_time" --arg startTransferTime "$start_transfer_time" --arg totalTime "$total_time" '{classification:"READY",hostname:$hostname,resolvedIpAddresses:$resolvedIpAddresses,dnsAttempts:$dnsAttempts,dnsElapsedSeconds:$dnsElapsedSeconds,attemptCount:$attemptCount,elapsedSeconds:$elapsedSeconds,curlExitCode:$curlExitCode,httpStatus:$httpStatus,remoteIp:$remoteIp,connectTimeSeconds:$connectTime,startTransferTimeSeconds:$startTransferTime,totalTimeSeconds:$totalTime}')"
+      rm -f "$stderr_file"; trap - RETURN
+      return 0
+    fi
+    [ "$attempt" -eq "$max_attempts" ] || sleep_within_deadline "$started" "$max_elapsed_seconds" "$interval_seconds" || break
+    [ "$elapsed" -lt "$max_elapsed_seconds" ] || break
+  done
+  classification="TRANSIENT_TIMEOUT"; failure_code=DG_PUBLIC_CONNECTION_FAILED; summary="The public endpoint did not accept a connection within the bounded convergence policy."
+  if [ "$curl_exit" -eq 6 ]; then failure_code=DG_PUBLIC_DNS_UNRESOLVED; summary="The public endpoint DNS name stopped resolving during bounded transport convergence."
+  elif [ "$curl_exit" -eq 0 ] && [[ "$http_status" =~ ^(502|503|504)$ ]]; then failure_code=DG_PUBLIC_REACHABILITY_FAILED; summary="The ALB continued returning a gateway reachability failure after bounded convergence."; fi
+  diagnostic="$(jq -cn --arg diagnosticCode "${failure_code#DG_}" --arg classification "$classification" --arg hostname "$hostname" --argjson resolvedIpAddresses "$resolved_ips" --argjson attemptCount "$((attempt > max_attempts ? max_attempts : attempt))" --argjson elapsedSeconds "$((SECONDS - started))" --argjson curlExitCode "$curl_exit" --arg httpStatus "$http_status" --arg remoteIp "$remote_ip" --arg connectTime "$connect_time" --arg startTransferTime "$start_transfer_time" --arg totalTime "$total_time" --arg curlStderr "$stderr_text" --argjson alb "$alb_observation" --argjson listener "$listener_observation" --argjson targets "$(jq '[.TargetHealthDescriptions[]? | {targetId:(.Target.Id//null),port:(.Target.Port//null),state:(.TargetHealth.State//null),reason:(.TargetHealth.Reason//null)}]' <<<"$target_health")" '{diagnosticCode:$diagnosticCode,classification:$classification,hostname:$hostname,resolvedIpAddresses:$resolvedIpAddresses,attemptCount:$attemptCount,elapsedSeconds:$elapsedSeconds,curlExitCode:$curlExitCode,httpStatus:$httpStatus,remoteIp:$remoteIp,connectTimeSeconds:$connectTime,startTransferTimeSeconds:$startTransferTime,totalTimeSeconds:$totalTime,curlStderr:$curlStderr,alb:$alb,listener:$listener,targetHealth:$targets}')"
+  rm -f "$stderr_file"; trap - RETURN
+  runtime_failure "$service_id" "$failure_code" public_health "$summary" "$diagnostic"
 }
 
 managed_database_failure() {
@@ -121,18 +304,27 @@ wait_for_managed_database_readiness() {
   local service_id="$1" cluster="$2" service_name="$3" task_definition="$4" engine="$5"
   local max_attempts="${DEPLOYGUARD_DATABASE_READINESS_MAX_ATTEMPTS:-60}"
   local interval_seconds="${DEPLOYGUARD_DATABASE_READINESS_INTERVAL_SECONDS:-5}"
-  local attempt task_arns tasks last_observation diagnostic
+  local max_elapsed_seconds="${DEPLOYGUARD_DATABASE_READINESS_MAX_ELAPSED_SECONDS:-360}"
+  local attempt task_arns tasks last_observation diagnostic started elapsed remaining observation_status
   [[ "$engine" =~ ^(postgres|mysql|mongodb)$ ]] || configuration_failure "$service_id" "Managed database engine is invalid."
   [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || configuration_failure "$service_id" "Managed database readiness attempt limit is invalid."
   [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || configuration_failure "$service_id" "Managed database readiness interval is invalid."
+  [[ "$max_elapsed_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$max_elapsed_seconds" -le 1200 ] || configuration_failure "$service_id" "Managed database readiness elapsed-time limit is invalid."
 
   last_observation='{"tasks":[]}'
+  started="$SECONDS"
   for ((attempt=1; attempt<=max_attempts; attempt++)); do
-    task_arns="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status RUNNING --output json 2>&1)" || provider_failure "$service_id" "$task_arns"
+    elapsed=$((SECONDS - started)); remaining=$((max_elapsed_seconds - elapsed)); [ "$remaining" -gt 0 ] || break
+    if task_arns="$(timeout "$remaining" aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status RUNNING --output json 2>&1)"; then observation_status=0; else observation_status=$?; fi
+    [ "$observation_status" -ne 124 ] || break
+    [ "$observation_status" -eq 0 ] || provider_failure "$service_id" "$task_arns"
     jq -e '.taskArns | type == "array"' <<<"$task_arns" >/dev/null 2>&1 || provider_failure "$service_id" "$task_arns"
     if [ "$(jq '.taskArns | length' <<<"$task_arns")" -gt 0 ]; then
       mapfile -t running_task_arns < <(jq -r '.taskArns[]' <<<"$task_arns")
-      tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "${running_task_arns[@]}" --output json 2>&1)" || provider_failure "$service_id" "$tasks"
+      elapsed=$((SECONDS - started)); remaining=$((max_elapsed_seconds - elapsed)); [ "$remaining" -gt 0 ] || break
+      if tasks="$(timeout "$remaining" aws ecs describe-tasks --cluster "$cluster" --tasks "${running_task_arns[@]}" --output json 2>&1)"; then observation_status=0; else observation_status=$?; fi
+      [ "$observation_status" -ne 124 ] || break
+      [ "$observation_status" -eq 0 ] || provider_failure "$service_id" "$tasks"
       jq -e '.tasks | type == "array"' <<<"$tasks" >/dev/null 2>&1 || provider_failure "$service_id" "$tasks"
     else
       tasks='{"tasks":[]}'
@@ -166,11 +358,40 @@ wait_for_managed_database_readiness() {
       printf 'DG_MANAGED_DATABASE_READY serviceId=%s engine=%s attempts=%s\n' "$service_id" "$engine" "$attempt"
       return 0
     fi
-    [ "$attempt" -eq "$max_attempts" ] || sleep "$interval_seconds"
+    [ "$attempt" -eq "$max_attempts" ] || sleep_within_deadline "$started" "$max_elapsed_seconds" "$interval_seconds" || break
   done
 
-  diagnostic="$(jq -cn --arg engine "$engine" --argjson attempts "$max_attempts" --argjson observation "$last_observation" '{diagnosticCode:"MANAGED_DATABASE_READINESS_TIMEOUT",engine:$engine,attempts:$attempts,observation:$observation}')" || configuration_failure "$service_id" "Managed database timeout evidence is invalid."
+  diagnostic="$(jq -cn --arg engine "$engine" --argjson attempts "$((attempt > max_attempts ? max_attempts : attempt))" --argjson elapsed "$((SECONDS - started))" --argjson observation "$last_observation" '{diagnosticCode:"MANAGED_DATABASE_READINESS_TIMEOUT",classification:"TRANSIENT_TIMEOUT",engine:$engine,attempts:$attempts,elapsedSeconds:$elapsed,observation:$observation}')" || configuration_failure "$service_id" "Managed database timeout evidence is invalid."
   managed_database_failure "$service_id" DG_MANAGED_DATABASE_READINESS_FAILED "Managed database did not become ready within the bounded policy." "$diagnostic"
+  return 1
+}
+
+wait_for_cloud_map_registration() {
+  local service_id="$1" cloud_map_service_id="$2" expected_ips="$3" attempt started elapsed detail diagnostic remaining observation_status
+  local max_attempts="${DEPLOYGUARD_CLOUD_MAP_MAX_ATTEMPTS:-30}"
+  local interval_seconds="${DEPLOYGUARD_CLOUD_MAP_INTERVAL_SECONDS:-3}"
+  local max_elapsed_seconds="${DEPLOYGUARD_CLOUD_MAP_MAX_ELAPSED_SECONDS:-120}"
+  [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || configuration_failure "$service_id" "Cloud Map attempt limit is invalid."
+  [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || configuration_failure "$service_id" "Cloud Map interval is invalid."
+  [[ "$max_elapsed_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$max_elapsed_seconds" -le 900 ] || configuration_failure "$service_id" "Cloud Map elapsed-time limit is invalid."
+  started="$SECONDS"
+  cloud_map_observation='{"registeredIpAddresses":[]}'
+  for ((attempt=1; attempt<=max_attempts; attempt++)); do
+    elapsed=$((SECONDS - started)); remaining=$((max_elapsed_seconds - elapsed)); [ "$remaining" -gt 0 ] || break
+    if detail="$(timeout "$remaining" aws servicediscovery list-instances --service-id "$cloud_map_service_id" --output json 2>&1)"; then observation_status=0; else observation_status=$?; fi
+    [ "$observation_status" -ne 124 ] || break
+    [ "$observation_status" -eq 0 ] || provider_failure "$service_id" "$detail"
+    cloud_map_observation="$(jq -c '{registeredIpAddresses:([.Instances[]?.Attributes.AWS_INSTANCE_IPV4 | select(type == "string" and length > 0)] | unique | sort)}' <<<"$detail")" || configuration_failure "$service_id" "Cloud Map instance evidence is invalid."
+    if jq -e --argjson expected "$expected_ips" '(.registeredIpAddresses | sort) == ($expected | sort)' <<<"$cloud_map_observation" >/dev/null; then
+      cloud_map_observation="$(jq -c --argjson attempts "$attempt" --argjson elapsed "$((SECONDS - started))" '. + {classification:"READY",attempts:$attempts,elapsedSeconds:$elapsed}' <<<"$cloud_map_observation")"
+      return 0
+    fi
+    elapsed=$((SECONDS - started))
+    [ "$attempt" -eq "$max_attempts" ] || sleep_within_deadline "$started" "$max_elapsed_seconds" "$interval_seconds" || break
+    [ "$elapsed" -lt "$max_elapsed_seconds" ] || break
+  done
+  diagnostic="$(jq -cn --argjson expectedIpAddresses "$expected_ips" --argjson observation "$cloud_map_observation" --argjson attempts "$((attempt > max_attempts ? max_attempts : attempt))" --argjson elapsed "$((SECONDS - started))" '{diagnosticCode:"CLOUD_MAP_REGISTRATION_TIMEOUT",classification:"TRANSIENT_TIMEOUT",expectedIpAddresses:$expectedIpAddresses,observation:$observation,attempts:$attempts,elapsedSeconds:$elapsed}')"
+  managed_database_failure "$service_id" DG_CLOUD_MAP_REGISTRATION_TIMEOUT "Managed database Cloud Map registration did not converge to the current task identity." "$diagnostic"
   return 1
 }
 
@@ -195,7 +416,6 @@ verify_database() {
   database_task="$(aws ecs list-tasks --cluster "$cluster" --service-name "$database_service" --desired-status RUNNING --output json 2>&1)" || provider_failure "$database_id" "$database_task"
   cloud_map_service="$(jq -r '.database.cloud_map_service_id' "$outputs")"
   cloud_map="$(aws servicediscovery get-service --id "$cloud_map_service" --output json 2>&1)" || provider_failure "$database_id" "$cloud_map"
-  instances="$(aws servicediscovery list-instances --service-id "$cloud_map_service" --output json 2>&1)" || provider_failure "$database_id" "$instances"
   database_sg="$(jq -r '.database.security_group_id' "$outputs")"
   application_sg="$(jq -r '.services[.database.attached_service_id].security_group_id' "$outputs")"
   security_group="$(aws ec2 describe-security-groups --group-ids "$database_sg" --output json 2>&1)" || provider_failure "$database_id" "$security_group"
@@ -205,7 +425,11 @@ verify_database() {
   ' <<<"$database_description" >/dev/null || configuration_failure "$database_id" "Managed database ECS or Cloud Map runtime identity does not match Terraform."
   jq -e '.taskArns | length > 0' <<<"$database_task" >/dev/null || configuration_failure "$database_id" "Managed database has no running ECS task."
   jq -e '.Service.Type == "DNS_HTTP"' <<<"$cloud_map" >/dev/null || configuration_failure "$database_id" "Cloud Map service is not DNS-enabled."
-  jq -e '.Instances | length > 0' <<<"$instances" >/dev/null || configuration_failure "$database_id" "Cloud Map has no registered managed-database instance."
+  mapfile -t database_task_arns < <(jq -r '.taskArns[]' <<<"$database_task")
+  database_tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "${database_task_arns[@]}" --output json 2>&1)" || provider_failure "$database_id" "$database_tasks"
+  database_task_ips="$(jq -c --arg taskDefinition "$database_task_definition" '[.tasks[]? | select(.taskDefinitionArn == $taskDefinition and .lastStatus == "RUNNING") | .attachments[]?.details[]? | select(.name == "privateIPv4Address") | .value] | unique | sort' <<<"$database_tasks")" || configuration_failure "$database_id" "Managed database task-network evidence is invalid."
+  jq -e 'length > 0' <<<"$database_task_ips" >/dev/null || configuration_failure "$database_id" "Managed database has no current task ENI identity."
+  wait_for_cloud_map_registration "$database_id" "$cloud_map_service" "$database_task_ips" || return 1
   jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --arg application "$application_sg" --argjson port "$database_port" '
     .SecurityGroups[0].VpcId == $vpc and any(.SecurityGroups[0].IpPermissions[]; .FromPort == $port and .ToPort == $port and any(.UserIdGroupPairs[]; .GroupId == $application))
   ' <<<"$security_group" >/dev/null || configuration_failure "$database_id" "Managed database security group does not admit only its attached application service on the database port."
@@ -221,7 +445,8 @@ fi
 
 verify_service() {
   local service="$1" service_id deployed expected service_name target_group log_group service_description task_definition_arn task_definition expected_image expected_port expected_probe_port expected_health_path
-  local database expected_environment expected_secrets managed_database application_sg alb_sg security_group target_group_description running tasks target_health expected_targets check
+  local database expected_environment expected_secrets managed_database application_sg alb_sg application_security_group alb_security_group target_group_description running tasks target_health expected_targets check
+  local target_result alb_arn public_url public_host ecs_stability_timeout_seconds
   local -a running_task_arns
   service_id="$(jq -r '.key' <<<"$service")"; deployed="$(jq -c '.value' <<<"$service")"
   expected="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' "$runtime")"
@@ -269,11 +494,15 @@ verify_service() {
   ' <<<"$task_definition" >/dev/null || configuration_failure "$service_id" "Task definition image, port, log, environment, or Secrets Manager injection does not match the immutable runtime."
   application_sg="$(jq -r '.security_group_id' <<<"$deployed")"
   alb_sg="$(jq -r '.alb_security_group_id' <<<"$deployed")"
-  security_group="$(aws ec2 describe-security-groups --group-ids "$application_sg" --output json 2>&1)" || provider_failure "$service_id" "$security_group"
-  jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --arg alb "$alb_sg" --argjson port "$expected_port" --argjson probePort "$expected_probe_port" --argjson root "$security_group" '.SecurityGroups[0].VpcId == $vpc and all([$port,$probePort][]; . as $required | any($root.SecurityGroups[0].IpPermissions[]; .FromPort == $required and .ToPort == $required and any(.UserIdGroupPairs[]; .GroupId == $alb)))' <<<"$security_group" >/dev/null || configuration_failure "$service_id" "Application security group does not admit the service ALB on the immutable application and transport-probe ports."
+  application_security_group="$(aws ec2 describe-security-groups --group-ids "$application_sg" --output json 2>&1)" || provider_failure "$service_id" "$application_security_group"
+  jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --arg alb "$alb_sg" --argjson port "$expected_port" --argjson probePort "$expected_probe_port" --argjson root "$application_security_group" '.SecurityGroups[0].VpcId == $vpc and all([$port,$probePort][]; . as $required | any($root.SecurityGroups[0].IpPermissions[]; .FromPort == $required and .ToPort == $required and any(.UserIdGroupPairs[]; .GroupId == $alb)))' <<<"$application_security_group" >/dev/null || configuration_failure "$service_id" "Application security group does not admit the service ALB on the immutable application and transport-probe ports."
+  alb_security_group="$(aws ec2 describe-security-groups --group-ids "$alb_sg" --output json 2>&1)" || provider_failure "$service_id" "$alb_security_group"
+  jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" '.SecurityGroups[0].VpcId == $vpc and any(.SecurityGroups[0].IpPermissions[]; .IpProtocol == "tcp" and .FromPort == 80 and .ToPort == 80 and any(.IpRanges[]?; .CidrIp == "0.0.0.0/0"))' <<<"$alb_security_group" >/dev/null || configuration_failure "$service_id" "ALB security group does not admit public IPv4 HTTP traffic on port 80."
   target_group_description="$(aws elbv2 describe-target-groups --target-group-arns "$target_group" --output json 2>&1)" || provider_failure "$service_id" "$target_group_description"
   jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --argjson port "$expected_port" --arg probePort "$expected_probe_port" --arg path "$expected_health_path" '.TargetGroups[0].VpcId == $vpc and .TargetGroups[0].Port == $port and .TargetGroups[0].Protocol == "HTTP" and .TargetGroups[0].HealthCheckPort == $probePort and .TargetGroups[0].HealthCheckPath == $path and .TargetGroups[0].Matcher.HttpCode == "200-299"' <<<"$target_group_description" >/dev/null || configuration_failure "$service_id" "ALB target group does not use the immutable application port and platform transport-readiness probe."
-  aws ecs wait services-stable --cluster "$cluster" --services "$service_name" || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
+  ecs_stability_timeout_seconds="${DEPLOYGUARD_ECS_STABILITY_TIMEOUT_SECONDS:-660}"
+  [[ "$ecs_stability_timeout_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$ecs_stability_timeout_seconds" -le 1200 ] || configuration_failure "$service_id" "ECS stability timeout is invalid."
+  timeout "$ecs_stability_timeout_seconds" aws ecs wait services-stable --cluster "$cluster" --services "$service_name" || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   running="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status RUNNING --output json 2>&1)" || provider_failure "$service_id" "$running"
   jq -e '.taskArns | length > 0' <<<"$running" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   mapfile -t running_task_arns < <(jq -r '.taskArns[]' <<<"$running")
@@ -281,8 +510,21 @@ verify_service() {
   jq -e --arg task "$task_definition_arn" 'all(.tasks[]; .lastStatus == "RUNNING" and .taskDefinitionArn == $task and any(.containers[]; .name == "application" and .lastStatus == "RUNNING"))' <<<"$tasks" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   expected_targets="$(jq -c '[.tasks[]?.attachments[]?.details[]? | select(.name == "privateIPv4Address") | .value] | sort | unique' <<<"$tasks")"
   jq -e 'length > 0' <<<"$expected_targets" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
-  wait_for_target_health "$service_id" "$target_group" "$expected_targets" || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
-  curl --show-error --silent --retry 20 --retry-delay 3 --retry-connrefused --output /dev/null "$(jq -r '.public_url' <<<"$deployed")" || { echo "DG_FAILURE serviceId=$service_id code=DG_PUBLIC_REACHABILITY_FAILED stage=public_health" >&2; append_outcome "$service_id" false DG_PUBLIC_REACHABILITY_FAILED "The verified service endpoint is not publicly reachable." public_health; exit 1; }
+  if wait_for_target_health "$service_id" "$target_group" "$expected_targets" "$expected_port"; then target_result=0; else target_result=$?; fi
+  if [ "$target_result" -eq 2 ]; then
+    runtime_failure "$service_id" DG_ECS_STABILITY_FAILED ecs_stability "An unexpected non-draining target is registered with the immutable service." "$(jq -cn --argjson expected "$expected_targets" --argjson observed "$(jq '[.TargetHealthDescriptions[]? | {targetId:(.Target.Id//null),port:(.Target.Port//null),state:(.TargetHealth.State//null),reason:(.TargetHealth.Reason//null)}]' <<<"$target_health")" '{diagnosticCode:"UNEXPECTED_ACTIVE_TARGET",classification:"FATAL",expectedTargetIds:$expected,targetHealth:$observed}')"
+  elif [ "$target_result" -ne 0 ]; then
+    ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
+  fi
+  alb_arn="$(jq -r '.alb_arn' <<<"$deployed")"
+  public_url="$(jq -r '.public_url' <<<"$deployed")"
+  [[ "$public_url" =~ ^http://[A-Za-z0-9.-]+/?$ ]] || configuration_failure "$service_id" "The public ALB URL is not a canonical credential-free HTTP endpoint."
+  public_host="${public_url#http://}"; public_host="${public_host%/}"
+  wait_for_alb_active "$service_id" "$alb_arn" "$alb_sg"
+  [ "$(jq -r '.dnsName' <<<"$alb_observation")" = "$public_host" ] || configuration_failure "$service_id" "The active ALB DNS identity does not match the immutable public endpoint."
+  wait_for_listener "$service_id" "$alb_arn" "$target_group"
+  wait_for_public_dns "$service_id" "$public_host"
+  wait_for_public_transport "$service_id" "$public_url" "$public_host"
   check="$(jq -cn \
     --arg serviceId "$service_id" \
     --arg checkedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -292,6 +534,7 @@ verify_service() {
     --arg targetGroupArn "$target_group" \
     --arg publicUrl "$(jq -r '.public_url' <<<"$deployed")" \
     --argjson runningTaskArns "$(jq '.taskArns' <<<"$running")" \
+    --argjson expectedTargets "$expected_targets" \
     --argjson targets "$(jq --argjson expected "$expected_targets" '[.TargetHealthDescriptions[] | select(.Target.Id as $id | $expected | index($id)) | .TargetHealth.State]' <<<"$target_health")" \
     --argjson targetRegistrations "$(jq '[.TargetHealthDescriptions[] | {targetId:.Target.Id,port:(.Target.Port//null),state:.TargetHealth.State}]' <<<"$target_health")" \
     --argjson environment "$expected_environment" \
@@ -300,7 +543,10 @@ verify_service() {
     --argjson runtimePort "$expected_port" \
     --argjson transportProbePort "$expected_probe_port" \
     --arg platformHealthCheckPath "$expected_health_path" \
-    '{serviceId:$serviceId,verified:true,readinessMode:"platform_transport",image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),runtimePort:$runtimePort,transportProbePort:$transportProbePort,platformHealthCheckPath:$platformHealthCheckPath,targetGroupArn:$targetGroupArn,targetHealth:$targets,targetRegistrations:$targetRegistrations,environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
+    --argjson alb "$alb_observation" \
+    --argjson listener "$listener_observation" \
+    --argjson publicProbe "$public_probe" \
+    '{serviceId:$serviceId,verified:true,readinessMode:"platform_transport",applicationReachabilityPath:"alb_to_task_eni",image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),taskIpAddresses:$expectedTargets,runtimePort:$runtimePort,transportProbePort:$transportProbePort,platformHealthCheckPath:$platformHealthCheckPath,targetGroupArn:$targetGroupArn,targetHealth:$targets,targetRegistrations:$targetRegistrations,alb:$alb,listener:$listener,publicProbe:$publicProbe,environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
   jq --argjson check "$check" '. + [$check]' "$evidence" > "$evidence.next"; mv "$evidence.next" "$evidence"
 }
 

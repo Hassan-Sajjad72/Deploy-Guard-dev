@@ -141,8 +141,9 @@ function verifyWorkflowAndUiContract() {
   assert.match(workflow, /terraform -chdir=\.deployguard\/terraform apply/);
   assert.match(workflow, /bash \.deployguard\/terraform\/verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
   assert.match(runtimeVerification, /aws ecs wait services-stable/);
-  assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/);
-  assert.doesNotMatch(runtimeVerification, /curl --fail --show-error --silent --retry 20/);
+  assert.match(runtimeVerification, /wait_for_public_dns[\s\S]*wait_for_public_transport/);
+  assert.match(runtimeVerification, /curl --silent --show-error --connect-timeout "\$effective_connect_timeout" --max-time "\$effective_attempt_timeout"/);
+  assert.doesNotMatch(runtimeVerification, /curl --fail/, "application-owned HTTP errors must not be conflated with transport reachability");
   assert.match(workflow, /Publish verified release result/);
   const detailsRoute = /@Get\(":projectId\/current-state\/details"\)([\s\S]*?)async getDetailedCurrentState/.exec(controller)?.[1] || "";
   assert.doesNotMatch(detailsRoute, /UserRole\.ADMIN/, "normal Infrastructure details must not require ADMIN");

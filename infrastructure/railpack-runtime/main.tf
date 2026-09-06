@@ -326,7 +326,7 @@ resource "aws_ecs_task_definition" "application" {
         { name = "APPLICATION_PORT", value = tostring(each.value.service_port) },
         { name = "PROBE_PORT", value = tostring(local.transport_probe_ports[each.key]) },
       ]
-      command          = ["sh", "-ec", "while true; do if nc -z -w 1 127.0.0.1 \"$APPLICATION_PORT\"; then printf 'HTTP/1.1 204 No Content\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n' | nc -l -p \"$PROBE_PORT\" -w 2 || true; else sleep 1; fi; done"]
+      command          = ["sh", "-ec", "task_ip=\"$(hostname -i | tr ' ' '\\n' | awk '/^[0-9]+\\./ && $0 !~ /^127\\./ {print; exit}')\"; [ -n \"$task_ip\" ]; while true; do if nc -z -w 1 \"$task_ip\" \"$APPLICATION_PORT\"; then printf 'HTTP/1.1 204 No Content\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n' | nc -l -p \"$PROBE_PORT\" -w 2 || true; else sleep 1; fi; done"]
       logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.application[each.key].name, awslogs-region = var.region, awslogs-stream-prefix = "deployguard-transport-probe" } }
     }
   ])
