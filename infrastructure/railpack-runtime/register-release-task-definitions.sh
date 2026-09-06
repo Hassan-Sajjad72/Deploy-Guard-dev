@@ -9,6 +9,7 @@ outputs="${1:?Terraform outputs path is required}"
 runtime="${2:?runtime configuration path is required}"
 artifacts="${3:?service artifacts path is required}"
 release_action="${4:-deploy}"
+activation_mode="${5:-release_only}"
 
 failure() {
   echo "DG_FAILURE code=DG_ECS_RELEASE_ONLY_FAILED stage=ecs_release_only message=$1" >&2
@@ -24,6 +25,10 @@ done
 case "$release_action" in
   deploy|rollback) ;;
   *) failure invalid_release_only_action ;;
+esac
+case "$activation_mode" in
+  release_only|terraform) ;;
+  *) failure invalid_activation_mode ;;
 esac
 
 cluster="$(jq -r '.ecs_cluster_name // empty' "$outputs")"
@@ -44,6 +49,10 @@ while IFS= read -r artifact; do
   service_name="$(jq -r '.ecs_service_name // empty' <<<"$deployed")"
   [ -n "$service_name" ] || failure missing_ecs_service
 
+  if [ "$activation_mode" = terraform ]; then
+    task_definition_arn="$(jq -r '.task_definition_arn // empty' <<<"$deployed")"
+    [[ "$task_definition_arn" =~ ^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/[A-Za-z0-9_-]+:[0-9]+$ ]] || failure terraform_task_definition_missing
+  else
   service_description="$(aws ecs describe-services --cluster "$cluster" --services "$service_name" --output json 2>&1)" || failure ecs_service_lookup_failed
   current_task_definition="$(jq -r '.services[0].taskDefinition // empty' <<<"$service_description")"
   desired_count="$(jq -r '.services[0].desiredCount // empty' <<<"$service_description")"
@@ -104,6 +113,7 @@ while IFS= read -r artifact; do
     registered="$(aws ecs register-task-definition --cli-input-json "file://${registration_path}" --output json 2>&1)" || failure task_definition_registration_failed
     task_definition_arn="$(jq -r '.taskDefinition.taskDefinitionArn // empty' <<<"$registered")"
     [ -n "$task_definition_arn" ] || failure registered_task_definition_missing
+  fi
   fi
   aws ecs update-service --cluster "$cluster" --service "$service_name" --task-definition "$task_definition_arn" --force-new-deployment --output json >/dev/null 2>&1 || failure ecs_service_update_failed
   jq --arg id "$service_id" --arg image "$image" --arg revision "$runtime_config_revision_id" --arg task "$task_definition_arn" --argjson port "$service_port" '.services[$id] += {image:$image,runtime_config_revision_id:$revision,task_definition_arn:$task,service_port:$port}' .deployguard/release-only/terraform-outputs.json > .deployguard/release-only/terraform-outputs.next

@@ -77,6 +77,16 @@ for (const item of cases) {
   assert.equal(result.retryDecision, "SAFE_AFTER_FIX", item.name);
 }
 
+const runtimeSecretFailure = diagnose("AWS Secrets Manager runtime configuration failed.", {
+  failureStage: "runtime_secret_materialization",
+  terminalFailureCode: "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED",
+  failureOwner: "EXTERNAL_PROVIDER",
+  externalProvider: "aws",
+});
+assert.equal(runtimeSecretFailure.rootCauseCode, "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED");
+assert.equal(runtimeSecretFailure.failureOwner, "EXTERNAL_PROVIDER");
+assert.equal(runtimeSecretFailure.externalProvider, "aws");
+
 const pnpm = diagnose([
   "DG_FAILURE code=DG_RAILPACK_BUILD_FAILED stage=railpack_build serviceId=11111111-1111-4111-8111-111111111111",
   "ERR_PNPM_OUTDATED_LOCKFILE Cannot install with frozen-lockfile because pnpm-lock.yaml is not up to date",

@@ -70,6 +70,12 @@ async function verifyRollbackAuthority() {
   assert.deepEqual(dispatchArgs[3], failed.metadata.rollbackTarget, "failed rollback retry must preserve the exact immutable target");
   assert.equal(dispatchArgs[4], undefined === failed.id ? null : failed.id);
 
+  const failedDeploy: any = { id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", projectId, commitSha: sourceA, status: PipelineRunStatus.FAILED, metadata: { deploymentAction: "deploy" } };
+  service.runs.findOne = async () => failedDeploy;
+  dispatchArgs = [];
+  await service.retry({ id: 1 }, projectId);
+  assert.equal(dispatchArgs[9], sourceA, "a failed normal Deploy retry must reuse the original admitted exact source SHA");
+
   service.serviceRevisions.find = async () => [{ ...revision, imageUri: "docker.io/example/app" }];
   assert.equal((await service.rollbackCandidates({ id: 1 }, projectId)).candidates.length, 0, "unsafe historical identity is not offered as a rollback target");
 

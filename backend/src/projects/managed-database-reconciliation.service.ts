@@ -54,12 +54,12 @@ export class ManagedDatabaseReconciliationService {
   async reconcile(project: Project): Promise<ManagedDatabaseReconciliationReport> {
     const tier = await this.tiers.findOne({ where: { projectId: project.id } });
     const environment = canonicalEnvironmentName(project);
-    if (tier?.provider !== DatabaseTierProvider.MANAGED) return this.classify(tier, environment, {
+    if (!tier) return this.classify(null, environment, {
       managed: false, persistenceEnabled: false, expectedStorageIdentity: false, bindingStatus: null,
       bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null,
       passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null,
     });
-
+    const managed = tier?.provider === DatabaseTierProvider.MANAGED;
     try {
       const [fileSystems, secretPresent, terraformDatabaseAddresses] = await Promise.all([
         this.fileSystems(), this.secretPresent(project.id, environment), this.terraformDatabaseAddresses(project.id, environment),
@@ -67,15 +67,15 @@ export class ManagedDatabaseReconciliationService {
       const current = this.selectFileSystem(fileSystems, tier, project.id, environment);
       const accessPoint = current?.FileSystemId ? await this.accessPoint(current.FileSystemId, project.id, environment) : null;
       const expectedStorageIdentity = Boolean(
-        tier.efsFileSystemId || tier.efsAccessPointId || tier.activeGenerationId || tier.status === DatabaseTierStatus.READY,
+        tier?.efsFileSystemId || tier?.efsAccessPointId || tier?.activeGenerationId || tier?.status === DatabaseTierStatus.READY,
       );
       return this.classify(tier, environment, {
-        managed: true,
-        persistenceEnabled: tier.persistenceEnabled,
+        managed,
+        persistenceEnabled: managed ? tier!.persistenceEnabled : false,
         expectedStorageIdentity,
-        bindingStatus: tier.status,
-        bindingFileSystemId: tier.efsFileSystemId,
-        bindingAccessPointId: tier.efsAccessPointId,
+        bindingStatus: tier?.status || null,
+        bindingFileSystemId: tier?.efsFileSystemId || null,
+        bindingAccessPointId: tier?.efsAccessPointId || null,
         currentFileSystem: current ? {
           id: current.FileSystemId || "", identity: "current", owned: this.owned(current.Tags, project.id, environment), available: current.LifeCycleState === "available",
         } : null,
@@ -115,8 +115,8 @@ export class ManagedDatabaseReconciliationService {
     return (JSON.parse(result.stdout || "{}") as { FileSystems?: AwsFileSystem[] }).FileSystems || [];
   }
 
-  private selectFileSystem(fileSystems: AwsFileSystem[], tier: ProjectDatabaseTier, projectId: string, environment: string) {
-    return fileSystems.find((item) => item.FileSystemId === tier.efsFileSystemId && this.owned(item.Tags, projectId, environment))
+  private selectFileSystem(fileSystems: AwsFileSystem[], tier: ProjectDatabaseTier | null, projectId: string, environment: string) {
+    return fileSystems.find((item) => item.FileSystemId === tier?.efsFileSystemId && this.owned(item.Tags, projectId, environment))
       || fileSystems.find((item) => this.owned(item.Tags, projectId, environment))
       || null;
   }

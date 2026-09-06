@@ -13,9 +13,9 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "2a0407f41e076eb9e19ab49efd37414ad0c282dd5ccb45389f1ebbcc8e73d390",
+  workflow: "d0f028095d6d28193a878d9f50593fe7f45c9303341eb190509689a974de5aff",
   releaseResultProducer: "cbda8bb60b9bd08ae8c305ce0a036ec5ffab960476aabe0b8e9caaa63cf31b80",
-  releaseOnlyTaskDefinitions: "fa31e78f047fa593fe69d61abf76342a8e62df446f49d6bce360a5fed09a7038",
+  releaseOnlyTaskDefinitions: "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
   runtimeVerifier: "b9f0e6c1e0be1acdf73ab0f78468dcbcab8ffe54be5f6d99b92149960c88f35a",
   runtimeInfrastructure: "bf85cd5bd65fe0be133837b054c95728bf720bb63ffb6da4aa3d1466d7ec79df",
 } as const;

@@ -33,7 +33,7 @@ export function classifyStructuredFailure(stage: string, safeEvidence: string): 
   if (code === "DG_RAILPACK_PREREQUISITE_FAILED") return { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "railpack", failureCode: code, failureServiceId: serviceId };
   if (code === "DG_ECS_STABILITY_FAILED") return { ...classifyEcsDiagnosticsOwnership(ecsDiagnosticsFromEvidence(safeEvidence)), failureCode: code, failureServiceId: serviceId };
   if (code === "DG_AWS_RUNTIME_CONFIGURATION_FAILED") return { failureOwner: "DEPLOYGUARD_PLATFORM", externalProvider: null, failureCode: code, failureServiceId: serviceId };
-  if (["DG_TERRAFORM_APPLY_FAILED", "DG_ECR_PUBLISH_FAILED", "DG_AWS_AUTHORIZATION_FAILED", "DG_AWS_PROVIDER_FAILED"].includes(code)) return { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", failureCode: code, failureServiceId: serviceId };
+  if (["DG_TERRAFORM_APPLY_FAILED", "DG_ECR_PUBLISH_FAILED", "DG_AWS_AUTHORIZATION_FAILED", "DG_AWS_PROVIDER_FAILED", "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED"].includes(code)) return { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", failureCode: code, failureServiceId: serviceId };
   if (stage === "github_authentication" || stage === "workflow_dispatch") return { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "github", failureCode: "DG_GITHUB_PROVIDER_FAILED", failureServiceId: serviceId };
   return { failureOwner: "UNVERIFIED", externalProvider: null, failureCode: code, failureServiceId: serviceId };
 }

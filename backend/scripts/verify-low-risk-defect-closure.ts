@@ -106,6 +106,17 @@ async function main() {
   assert.equal(classifyManagedDatabase({ ...freshEvidence, passwordSecretPresent: true, urlSecretPresent: true }).state, State.STALE_METADATA, "a durable owned managed-database secret remains stale metadata");
   assert.equal(classifyManagedDatabase({ ...freshEvidence, terraformDatabaseAddresses: ["aws_efs_file_system.database"] }).state, State.STALE_METADATA, "a durable Terraform database address remains stale metadata");
 
+  collector.tiers = { findOne: async () => ({
+    projectId, provider: DatabaseTierProvider.NONE, persistenceEnabled: false,
+    status: DatabaseTierStatus.NOT_REQUIRED, efsFileSystemId: null, efsAccessPointId: null,
+    activeGenerationId: null, engine: null, attachedServiceId: null, updatedAt: new Date("2026-09-06T00:00:00.000Z"),
+  }) };
+  collector.secretPresent = async () => true;
+  collector.terraformDatabaseAddresses = async () => ["aws_efs_file_system.database"];
+  const disabledWithDurableEvidence = await collector.reconcile(project);
+  assert.equal(disabledWithDurableEvidence.state, State.STALE_METADATA, "provider NONE cannot hide exact owned secret or Terraform database evidence");
+  assert.equal(disabledWithDurableEvidence.deploymentAllowed, false, "ordinary Deploy cannot remove partially provisioned managed database resources");
+
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.managedDatabaseReconciliation = { reconcile: async () => report() };
   const healthy = await service.managedDatabaseAdmission(project, "DEPLOY", null);

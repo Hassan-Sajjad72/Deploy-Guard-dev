@@ -3,6 +3,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   CreateSecretCommand,
+  DeleteSecretCommand,
   DescribeSecretCommand,
   PutSecretValueCommand,
   RestoreSecretCommand,
@@ -26,10 +27,18 @@ export type RuntimeSecretDescription = {
 
 export type RuntimeSecretMaterialization = {
   secretArn: string;
+  secretName: string;
   secretNames: string[];
   valueFromByName: Record<string, string>;
   versionToken: string;
+  provisionalChange: "created" | "version_activated" | null;
+  previousVersionToken: string | null;
 };
+
+export class RuntimeSecretMaterializationError extends Error {
+  readonly diagnosticCode = "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED";
+  constructor() { super("DeployGuard could not materialize the immutable project secret reference."); }
+}
 
 export interface RuntimeSecretMaterializationPort {
   describe(name: string): Promise<RuntimeSecretDescription | null>;
@@ -37,6 +46,7 @@ export interface RuntimeSecretMaterializationPort {
   restore(arn: string): Promise<void>;
   put(arn: string, secretString: string, versionToken: string): Promise<void>;
   activateVersion(arn: string, versionToken: string, previousVersionToken: string): Promise<void>;
+  delete(arn: string): Promise<void>;
   wait?(milliseconds: number): Promise<void>;
 }
 
@@ -75,8 +85,11 @@ export class RuntimeSecretMaterializer {
 
     let description = await this.port.describe(secretName);
     let arn: string;
+    let provisionalChange: RuntimeSecretMaterialization["provisionalChange"] = null;
+    let previousVersionToken: string | null = null;
     if (!description) {
       arn = await this.port.create(secretName, secretString, versionToken, tags);
+      provisionalChange = "created";
     } else {
       this.assertOwnership(description, secretName, tags);
       if (description.deletionDate) {
@@ -88,23 +101,54 @@ export class RuntimeSecretMaterializer {
       if (!stages.includes("AWSCURRENT")) {
         const previous = Object.entries(description.versions)
           .find(([, versionStages]) => versionStages.includes("AWSCURRENT"))?.[0] || "";
+        if (!previous) throw new Error("Managed runtime secret has no unambiguous AWSCURRENT version.");
         if (stages.length) {
-          if (!previous) throw new Error("Managed runtime secret has no unambiguous AWSCURRENT version.");
           await this.port.activateVersion(arn, versionToken, previous);
         } else {
           await this.port.put(arn, secretString, versionToken);
         }
+        provisionalChange = "version_activated";
+        previousVersionToken = previous;
       }
     }
 
     return {
       secretArn: arn,
+      secretName,
       secretNames,
       // ECS accepts ARN:json-key:version-stage:version-id. Leaving both
       // version selectors empty would make rollback follow mutable AWSCURRENT.
       valueFromByName: Object.fromEntries(secretNames.map((name) => [name, `${arn}:${name}::${versionToken}`])),
       versionToken,
+      provisionalChange,
+      previousVersionToken,
     };
+  }
+
+  async compensate(materialization: RuntimeSecretMaterialization) {
+    if (!materialization.provisionalChange) return;
+    const serviceScope = materialization.secretName.split("/").at(-2) || "";
+    const parts = materialization.secretName.split("/");
+    const tags = {
+      ManagedBy: "DeployGuard",
+      DeployGuardProjectId: parts[1] || "",
+      DeployGuardServiceId: serviceScope,
+      Environment: parts[2] || "",
+      DeployGuardScope: "service",
+      SecretPurpose: "application_runtime",
+    };
+    const description = await this.port.describe(materialization.secretName);
+    if (!description || description.arn !== materialization.secretArn) throw new Error("Managed runtime secret compensation identity is unavailable.");
+    this.assertOwnership(description, materialization.secretName, tags);
+    if (materialization.provisionalChange === "created") {
+      await this.port.delete(materialization.secretArn);
+      return;
+    }
+    if (!materialization.previousVersionToken) throw new Error("Managed runtime secret compensation has no previous immutable version.");
+    const currentStages = description.versions[materialization.versionToken] || [];
+    if (currentStages.includes("AWSCURRENT")) {
+      await this.port.activateVersion(materialization.secretArn, materialization.previousVersionToken, materialization.versionToken);
+    }
   }
 
   private assertInput(input: { projectId: string; generationId: string; environment: string; configurationFingerprint: string; secretValues: Record<string, string> }) {
@@ -155,7 +199,26 @@ export class GithubActionsRuntimeSecretService {
     configurationFingerprint: string;
     secretValues: Record<string, string>;
   }) {
-    const port: RuntimeSecretMaterializationPort = {
+    const port = this.port();
+    try {
+      return await new RuntimeSecretMaterializer(port).materialize(input);
+    } catch {
+      throw new RuntimeSecretMaterializationError();
+    }
+  }
+
+  async compensate(materializations: RuntimeSecretMaterialization[]) {
+    const materializer = new RuntimeSecretMaterializer(this.port());
+    const failed: string[] = [];
+    for (const materialization of [...materializations].reverse()) {
+      try { await materializer.compensate(materialization); }
+      catch { failed.push(materialization.secretName); }
+    }
+    return { cleaned: materializations.length - failed.length, failed: failed.length };
+  }
+
+  private port(): RuntimeSecretMaterializationPort {
+    return {
       describe: async (name) => {
         try {
           const result = await this.client.send(new DescribeSecretCommand({ SecretId: name }));
@@ -194,11 +257,9 @@ export class GithubActionsRuntimeSecretService {
           RemoveFromVersionId: previousVersionToken,
         }));
       },
+      delete: async (arn) => {
+        await this.client.send(new DeleteSecretCommand({ SecretId: arn, ForceDeleteWithoutRecovery: true }));
+      },
     };
-    try {
-      return await new RuntimeSecretMaterializer(port).materialize(input);
-    } catch {
-      throw new Error("DeployGuard could not materialize the immutable project secret reference.");
-    }
   }
 }

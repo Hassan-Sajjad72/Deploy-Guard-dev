@@ -12,12 +12,12 @@ import { ProjectEnvironmentVariable } from "./project-environment-variable.entit
 import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError, GithubAppService } from "./github-app.service";
 import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
 import { GithubActionsAwsCapabilityService, WorkflowAwsCapabilityError } from "./github-actions-aws-capability.service";
-import { GithubActionsDispatchError, GithubActionsService } from "./pipeline/github-actions.service";
+import { GithubActionsDispatchError, GithubActionsDispatchReceipt, GithubActionsService } from "./pipeline/github-actions.service";
 import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
 import { Project } from "./project.entity";
 import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
 import { effectiveServicePort } from "./railpack-release";
-import { GithubActionsRuntimeSecretService } from "./github-actions-runtime-secret.service";
+import { GithubActionsRuntimeSecretService, RuntimeSecretMaterialization, RuntimeSecretMaterializationError } from "./github-actions-runtime-secret.service";
 import { isSupportedManagedDatabaseEngine } from "./managed-database-engine";
 import { aliasesFor } from "./configuration-ownership";
 import { assertRailpackRuntimeConfiguration, DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
@@ -174,7 +174,8 @@ export class RailpackDeploymentService {
       }
     }
     const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
-    return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null, action === "deploy" ? "RETRY" : "DEPLOY");
+    const retrySourceSha = action === "deploy" && /^[0-9a-f]{40}$/i.test(previous?.commitSha || "") ? previous!.commitSha : null;
+    return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null, action === "deploy" ? "RETRY" : "DEPLOY", null, null, undefined, retrySourceSha);
   }
   async resetAndDeployFresh(user: User, projectId: string, confirmationPhrase: string, _request?: unknown) {
     const project = await this.project(user, projectId);
@@ -317,7 +318,7 @@ export class RailpackDeploymentService {
     return new Date().toISOString();
   }
 
-  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null, requestedMode: DeployAdmissionContext["requestedMode"] = "DEPLOY", resetAt: string | null = null, reconciled?: ManagedDatabaseReconciliationReport | null, request?: unknown) {
+  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null, requestedMode: DeployAdmissionContext["requestedMode"] = "DEPLOY", resetAt: string | null = null, reconciled?: ManagedDatabaseReconciliationReport | null, request?: unknown, admittedSourceSha: string | null = null) {
     const authorizedProject = await this.project(user, projectId);
     // Capture the immutable local configuration first.  Source compatibility is
     // the pre-cloud boundary; managed DB reconciliation happens only after it.
@@ -328,6 +329,7 @@ export class RailpackDeploymentService {
     const project = configuration.project;
     const environmentName = configuration.environmentName;
     const operationId = operation.id;
+    const provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [];
     try {
       operation.currentStage = "control_plane_release";
       await this.runs.save(operation);
@@ -342,8 +344,10 @@ export class RailpackDeploymentService {
       const destroyRelease = action === "destroy" ? await this.authoritativeDestroyRelease(project, environmentName, operation.generationId) : null;
       const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || ""
         : action === "destroy" ? destroyRelease?.commitSha || ""
-          : await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
+          : admittedSourceSha || await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new ServiceUnavailableException("An exact source SHA is required for the release.");
+      operation.commitSha = sourceSha;
+      await this.runs.save(operation);
       if (action === "deploy") {
         const configuredServices = configuration.services.map((service) => ({ serviceId: service.id, serviceDirectory: service.serviceDirectory, buildTargetOverride: service.buildTargetOverride }));
         operation.currentStage = "build_target_resolution";
@@ -388,7 +392,15 @@ export class RailpackDeploymentService {
       await this.runs.save(operation);
       await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
       const immutableTarget = action === "destroy" && destroyRelease ? await this.destroyTarget(destroyRelease) : rollbackTarget;
-      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration);
+      const managedDatabaseEnabled = action === "deploy"
+        ? Boolean(configuration.managedDatabase)
+        : Boolean(immutableTarget?.services.some((service) => service.runtimeConfiguration.databaseAttached));
+      operation.currentStage = "aws_capability_verification";
+      await this.runs.save(operation);
+      await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled });
+      operation.currentStage = action === "deploy" ? "runtime_secret_materialization" : "runtime_configuration";
+      await this.runs.save(operation);
+      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration, provisionalRuntimeSecrets);
       // A direct ECS release is deliberately limited to an already-LIVE
       // topology.  Any first deployment or topology change remains on the
       // existing Terraform bootstrap path until that path has made it LIVE.
@@ -407,22 +419,24 @@ export class RailpackDeploymentService {
         control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
         release_only: releaseOnly ? "true" : "false",
       };
-      operation.commitSha = sourceSha;
       operation.imageTag = null;
-      operation.currentStage = "aws_capability_verification";
-      await this.runs.save(operation);
-      await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled: runtime.services.some((service) => service.databaseAttached) });
       operation.currentStage = "workflow_dispatch";
       operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", configuredControlPlaneSha: inputs.control_plane_sha, workflowRegistrationBranch: caller.registrationBranch, releaseStrategy: releaseOnly ? "direct_ecs" : "terraform_bootstrap", immutableDispatchInputs: inputs, immutableDispatchFingerprint: immutableRailpackDispatchFingerprint(inputs) };
       await this.runs.save(operation);
       const dispatched = await this.actions.triggerWorkflow({ repositoryFullName: project.repositoryFullName, targetBranch: project.targetBranch, workflowRegistrationBranch: caller.registrationBranch, token: credential.token, inputs });
-      operation.githubWorkflowRunId = dispatched.receipt.workflowRunId;
-      operation.githubWorkflowStatus = "queued";
-      operation.status = PipelineRunStatus.RUNNING;
-      operation.currentStage = "github_actions";
-      operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatched", workflowRunUrl: dispatched.receipt.workflowRunUrl };
-      await this.runs.save(operation);
+      if (!await this.persistAcceptedWorkflowDispatch(operation, dispatched.receipt)) {
+        // The durable dispatch intent contains the operation-id run name and
+        // immutable inputs. Reconciliation can recover the exact GitHub run.
+        return { deployment: { state: "accepted", message: "Railpack deployment was accepted by GitHub Actions; local run identity persistence is pending reconciliation.", operation } };
+      }
     } catch (error) {
+      const remoteDispatchPossible = Boolean(operation.githubWorkflowRunId)
+        || (error instanceof GithubActionsDispatchError && error.dispatchMayHaveOccurred);
+      if (error instanceof GithubActionsDispatchError && error.dispatchMayHaveOccurred && !operation.githubWorkflowRunId) {
+        await this.preserveAmbiguousWorkflowDispatch(operation, error);
+        return { deployment: { state: "accepted", message: "GitHub may have accepted the deployment; DeployGuard is reconciling its immutable workflow run identity.", operation } };
+      }
+      const cleanup = await this.compensateProvisionalRuntimeSecrets(provisionalRuntimeSecrets, remoteDispatchPossible);
       const failure = this.dispatchFailure(error, operation.currentStage);
       const ownership = failure.ownership || classifyStructuredFailure(failure.stage, `${failure.message} ${JSON.stringify(failure.evidence)}`);
       operation.githubWorkflowStatus = "not_dispatched";
@@ -434,6 +448,7 @@ export class RailpackDeploymentService {
           dispatchState: "failed",
           failureSource: "deployguard_dispatch",
           dispatchFailure: failure.evidence,
+          ...(cleanup ? { provisionalRuntimeSecretCleanup: cleanup } : {}),
           ...(failure.managedDatabaseReconciliation ? { managedDatabaseReconciliationFailure: failure.managedDatabaseReconciliation } : {}),
         },
         managedDatabaseReconciliation: failure.managedDatabaseReconciliation,
@@ -443,6 +458,49 @@ export class RailpackDeploymentService {
       return { deployment: { state: "dispatch_failed", message: "Deployment could not start. DeployGuard failed while starting the GitHub Actions deployment.", operation } };
     }
     return { deployment: { state: "accepted", message: "Railpack deployment dispatched to GitHub Actions.", operation } };
+  }
+
+  private async compensateProvisionalRuntimeSecrets(materializations: RuntimeSecretMaterialization[], remoteDispatchPossible: boolean) {
+    if (!materializations.length) return null;
+    if (remoteDispatchPossible) return { skipped: "remote_dispatch_possible" };
+    return this.runtimeSecrets.compensate(materializations);
+  }
+
+  private async persistAcceptedWorkflowDispatch(operation: ProjectPipelineRun, receipt: GithubActionsDispatchReceipt) {
+    operation.githubWorkflowRunId = receipt.workflowRunId;
+    operation.githubWorkflowStatus = "queued";
+    operation.status = PipelineRunStatus.RUNNING;
+    operation.currentStage = "github_actions";
+    operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatched", workflowRunUrl: receipt.workflowRunUrl };
+    try {
+      await this.runs.save(operation);
+      return true;
+    } catch {
+      operation.currentStage = "workflow_dispatch";
+      operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", dispatchPersistencePending: true };
+      return false;
+    }
+  }
+
+  private async preserveAmbiguousWorkflowDispatch(operation: ProjectPipelineRun, error: GithubActionsDispatchError) {
+    operation.status = PipelineRunStatus.QUEUED;
+    operation.currentStage = "workflow_dispatch";
+    operation.githubWorkflowStatus = "dispatching";
+    operation.metadata = {
+      ...(operation.metadata || {}),
+      dispatchState: "dispatching",
+      dispatchIdentityRecoveryPending: true,
+      dispatchIdentityRecoveryStartedAt: typeof operation.metadata?.dispatchIdentityRecoveryStartedAt === "string"
+        ? operation.metadata.dispatchIdentityRecoveryStartedAt
+        : new Date().toISOString(),
+      dispatchUncertainty: error.diagnosticCode,
+    };
+    try {
+      await this.runs.save(operation);
+    } catch {
+      // The pre-dispatch intent was saved before the remote call. A later
+      // reconciliation pass can recover by the operation-specific run name.
+    }
   }
 
   private async persistBuildTargetRevisions(projectId: string, operationId: string, sourceSha: string, values: Array<{ serviceId: string; target: CanonicalBuildTarget }>) {
@@ -843,6 +901,14 @@ export class RailpackDeploymentService {
     if (error instanceof WorkflowAwsCapabilityError) {
       return { stage: stage || "aws_capability_verification", message: `AWS platform capability verification failed: ${error.missingCapabilities.join(", ") || "required capability unavailable"}.`, evidence: { classification: "platform_configuration", missingCapabilities: error.missingCapabilities } };
     }
+    if (error instanceof RuntimeSecretMaterializationError) {
+      return {
+        stage: "runtime_secret_materialization",
+        message: `${error.message} DG_FAILURE code=${error.diagnosticCode} stage=runtime_secret_materialization`,
+        evidence: { classification: "aws_runtime_secret_materialization", code: error.diagnosticCode },
+        ownership: { failureOwner: "EXTERNAL_PROVIDER" as const, externalProvider: "aws" as const, failureCode: error.diagnosticCode, failureServiceId: null },
+      };
+    }
     if (error instanceof GithubActionsDispatchError) {
       return { stage: stage || "workflow_dispatch", message: error.safeDetail || "DeployGuard could not dispatch the GitHub Actions workflow.", evidence: error.evidence || { classification: error.diagnosticCode } };
     }
@@ -965,7 +1031,7 @@ export class RailpackDeploymentService {
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null): Promise<RailpackRuntimeConfiguration> {
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = []): Promise<RailpackRuntimeConfiguration> {
     if (action !== "deploy") {
       if (!target?.services.length) throw new ServiceUnavailableException("The lifecycle target does not contain canonical service revisions.");
       const services = target.services.map((service) => ({
@@ -1031,6 +1097,7 @@ export class RailpackDeploymentService {
       const databaseConfiguration = { attached: databaseAttached, engine: databaseAttached ? tier?.engine || null : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] };
       const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, servicePort, buildEnvironment, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(servicePort), HOST: "0.0.0.0" } })).digest("hex");
       const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues: allSecretValues });
+      if (materialized?.provisionalChange) provisionalRuntimeSecrets.push(materialized);
       const materializedReferences = materialized?.valueFromByName || {};
       const buildSecretReferences = Object.fromEntries([...buildSecretNames].sort().map((name) => [name, materializedReferences[name]]));
       const secretReferences = Object.fromEntries([...runtimeSecretNames].sort().map((name) => [name, materializedReferences[name]]));
@@ -1151,7 +1218,7 @@ export class RailpackDeploymentService {
   }
 
   private async reconcile(operation: ProjectPipelineRun) {
-    if (!ACTIVE.includes(operation.status) || !operation.githubWorkflowRunId) return operation;
+    if (!ACTIVE.includes(operation.status)) return operation;
     const [project, user] = await Promise.all([
       this.projects.findOne({ where: { id: operation.projectId } }),
       this.users.findOne({ where: { id: operation.triggeredByUserId } }),
@@ -1159,6 +1226,23 @@ export class RailpackDeploymentService {
     if (!project || !user || !project.repositoryFullName) return operation;
     try {
       const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
+      if (!operation.githubWorkflowRunId) {
+        if (operation.currentStage !== "workflow_dispatch" || operation.metadata?.dispatchState !== "dispatching") return operation;
+        const recoveredRunId = await this.actions.findWorkflowRunForOperation(
+          project.repositoryFullName,
+          String(operation.metadata?.workflowRegistrationBranch || project.targetBranch),
+          operation.id,
+          operation.startedAt || operation.createdAt || new Date(),
+          credential.token,
+        );
+        if (!recoveredRunId) return operation;
+        operation.githubWorkflowRunId = recoveredRunId;
+        operation.githubWorkflowStatus = "queued";
+        operation.status = PipelineRunStatus.RUNNING;
+        operation.currentStage = "github_actions";
+        operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatched", dispatchIdentityRecovered: true, dispatchPersistencePending: false, workflowRunUrl: `https://github.com/${project.repositoryFullName}/actions/runs/${recoveredRunId}` };
+        await this.runs.save(operation);
+      }
       const workflow = await this.actions.getWorkflowRun(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
       const status = String(workflow.status || "");
       const conclusion = String(workflow.conclusion || "");

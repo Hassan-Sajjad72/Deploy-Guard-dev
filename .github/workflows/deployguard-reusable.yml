@@ -355,6 +355,8 @@ jobs:
               actual_database_version="$(jq -r '.database.secret_version_id // empty' .deployguard/terraform-outputs.json)"
               [ -z "$expected_database_version" ] || [ "$actual_database_version" = "$expected_database_version" ] || { echo 'DG_FAILURE code=DG_DATABASE_SECRET_VERSION_MISMATCH stage=terraform_apply' >&2; exit 1; }
             fi
+            bash .deployguard/terraform/register-release-task-definitions.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/service-artifacts.json "$DEPLOYMENT_ACTION" terraform > .deployguard/terraform-outputs.activated.json
+            mv .deployguard/terraform-outputs.activated.json .deployguard/terraform-outputs.json
             bash .deployguard/terraform/verify-runtime.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/aws-runtime-verification.json
             bash .deployguard/terraform/build-release-result.sh "$DEPLOYMENT_ACTION" "$RESULT_CONTRACT_VERSION" "$SOURCE_SHA" "$OPERATION_ID" .deployguard/service-artifacts.json .deployguard/terraform-outputs.json .deployguard/aws-runtime-verification.json .deployguard/release-runtime.json
           fi

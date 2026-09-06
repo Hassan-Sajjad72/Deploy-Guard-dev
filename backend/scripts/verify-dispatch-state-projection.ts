@@ -10,7 +10,7 @@ import { ProjectCurrentStateService } from "../src/projects/current-state/projec
 import { isAiTroubleshootingEligible } from "../src/ai-troubleshooting/ai-troubleshooting.service";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentation } from "../src/projects/pipeline/github-actions-stage-presentation";
-import { DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
+import { DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsDispatchError, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
 import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
@@ -27,6 +27,7 @@ import { ProjectEnvironmentVariable } from "../src/projects/project-environment-
 import { ProjectDatabaseTier } from "../src/projects/project-database-tier.entity";
 import { ProjectConfigurationSnapshot } from "../src/projects/project-configuration-snapshot.entity";
 import { BuildTargetResolutionError } from "../src/projects/build-target-resolver.service";
+import { RuntimeSecretMaterializationError } from "../src/projects/github-actions-runtime-secret.service";
 
 const user = { id: 7 } as any;
 const project = {
@@ -963,6 +964,74 @@ async function verifyConcurrentStateReadsShareReconciliation() {
   assert.equal(reconciliationCalls, 1, "concurrent current-state and history reads must share one GitHub reconciliation");
 }
 
+async function verifyDispatchIdentityRecovery() {
+  const operation: any = {
+    id: "abababab-abab-4bab-8bab-abababababab", projectId: project.id, triggeredByUserId: user.id,
+    status: PipelineRunStatus.QUEUED, currentStage: "workflow_dispatch", githubWorkflowRunId: null,
+    startedAt: new Date("2026-09-06T00:00:00.000Z"), metadata: { deploymentAction: "deploy", dispatchState: "dispatching", workflowRegistrationBranch: "main" },
+  };
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "fixture-token" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  service.actions = {
+    findWorkflowRunForOperation: async (_repository: string, branch: string, operationId: string) => {
+      assert.equal(branch, "main"); assert.equal(operationId, operation.id); return "987654321";
+    },
+    getWorkflowRun: async () => ({ status: "in_progress", conclusion: null }),
+    getWorkflowStages: async () => [],
+  };
+  await service.reconcile(operation);
+  assert.equal(operation.githubWorkflowRunId, "987654321", "a persisted dispatch intent recovers the exact operation-named GitHub run");
+  assert.equal(operation.status, PipelineRunStatus.RUNNING);
+  assert.equal(operation.metadata.dispatchIdentityRecovered, true);
+  assert.ok(saved.some((row) => row.githubWorkflowRunId === "987654321"), "recovered remote identity becomes authoritative local state");
+}
+
+async function verifyAcceptedDispatchPersistenceSplit() {
+  const operation: any = { id: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd", status: PipelineRunStatus.QUEUED, currentStage: "workflow_dispatch", metadata: { dispatchState: "dispatching" } };
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.runs = { save: async () => { throw new Error("transient database write failure"); } };
+  const persisted = await service.persistAcceptedWorkflowDispatch(operation, { workflowRunId: "24680", workflowRunUrl: "https://github.example/runs/24680" });
+  assert.equal(persisted, false);
+  assert.equal(operation.githubWorkflowRunId, "24680", "the accepted remote identity remains attached in memory when its first local save fails");
+  assert.equal(operation.currentStage, "workflow_dispatch");
+  assert.equal(operation.metadata.dispatchState, "dispatching", "the durable pre-dispatch intent remains eligible for exact run-name recovery");
+}
+
+async function verifyAmbiguousDispatchRemainsRecoverable() {
+  const operation: any = {
+    id: "dededede-dede-4ede-8ede-dededededede",
+    status: PipelineRunStatus.RUNNING,
+    currentStage: "workflow_dispatch",
+    githubWorkflowRunId: null,
+    metadata: { dispatchState: "dispatching" },
+  };
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  await service.preserveAmbiguousWorkflowDispatch(
+    operation,
+    new GithubActionsDispatchError("workflow_run_identity_missing", "accepted without identity", null, true),
+  );
+  assert.equal(operation.status, PipelineRunStatus.QUEUED, "an ambiguous accepted dispatch must remain active instead of becoming retryable");
+  assert.equal(operation.currentStage, "workflow_dispatch");
+  assert.equal(operation.githubWorkflowStatus, "dispatching");
+  assert.equal(operation.metadata.dispatchIdentityRecoveryPending, true);
+  assert.equal(saved.at(-1)?.metadata.dispatchState, "dispatching");
+}
+
+function verifyRuntimeSecretFailureAuthority() {
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  const failure = service.dispatchFailure(new RuntimeSecretMaterializationError(), "runtime_secret_materialization");
+  assert.equal(failure.stage, "runtime_secret_materialization");
+  assert.equal(failure.ownership.failureOwner, "EXTERNAL_PROVIDER");
+  assert.equal(failure.ownership.externalProvider, "aws");
+  assert.equal(failure.ownership.failureCode, "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED");
+}
+
 void (async () => {
   await verifyAtomicAdmissionAndImmutableConfiguration();
   await verifyActiveOperationUniquenessConflictReturnsCanonicalNoOp();
@@ -983,6 +1052,10 @@ void (async () => {
   await verifyCurrentStateProjection(terminalFailure, true);
   await verifyCurrentStateReconcilesWithoutPipeline();
   await verifyConcurrentStateReadsShareReconciliation();
+  await verifyDispatchIdentityRecovery();
+  await verifyAcceptedDispatchPersistenceSplit();
+  await verifyAmbiguousDispatchRemainsRecoverable();
+  verifyRuntimeSecretFailureAuthority();
   const root = join(__dirname, "..", "..");
   const phases = readFileSync(join(root, "frontend", "src", "utils", "developerDeploymentPresentation.js"), "utf8");
   const routes = readFileSync(join(root, "frontend", "src", "routes", "AppRoutes.jsx"), "utf8");

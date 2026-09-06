@@ -22,6 +22,7 @@ export class GithubActionsDispatchError extends Error {
     public readonly diagnosticCode: GithubActionsDiagnosticCode,
     public readonly safeDetail: string | null = null,
     public readonly evidence: GithubActionsDispatchEvidence | null = null,
+    public readonly dispatchMayHaveOccurred = false,
   ) {
     super(
       "GitHub Actions dispatch failed. Check workflow file, selected branch, workflow_dispatch, token repo access, and Actions write permission."
@@ -188,7 +189,7 @@ export class GithubActionsService {
         }
       );
     } catch {
-      throw new GithubActionsDispatchError("unknown_github_error");
+      throw new GithubActionsDispatchError("unknown_github_error", null, null, true);
     }
 
     if (!response.ok) {
@@ -212,6 +213,7 @@ export class GithubActionsService {
         "workflow_run_identity_missing",
         detail,
         this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch),
+        true,
       );
     }
     const excludedRunIds = new Set(input.excludedWorkflowRunIds || []);
@@ -234,6 +236,7 @@ export class GithubActionsService {
           "workflow_run_identity_missing",
           detail,
           this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch),
+          true,
         );
       }
       workflowRunId = discoveredRunId;
@@ -324,6 +327,25 @@ export class GithubActionsService {
     const floor = dispatchedAt.getTime() - 5_000;
     const excluded = new Set(excludedIds);
     const match = (body.workflow_runs || []).find((run) => run.id && !excluded.has(String(run.id)) && Date.parse(String(run.created_at || "")) >= floor);
+    return match?.id ? String(match.id) : null;
+  }
+
+  async findWorkflowRunForOperation(repository: string, branch: string, operationId: string, dispatchedAt: Date, token: string) {
+    if (!/^[0-9a-f-]{36}$/i.test(operationId)) return null;
+    const workflowFile = this.config.get<string>("GITHUB_ACTIONS_WORKFLOW_FILE", "deployguard.yml");
+    const response = await fetch(`https://api.github.com/repos/${repository}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?event=workflow_dispatch&branch=${encodeURIComponent(branch)}&per_page=30`, { headers: this.headers(token) });
+    if (!response.ok) {
+      throw new GithubActionsDispatchError(
+        "unknown_github_error",
+        "GitHub workflow-run identity reconciliation is temporarily unavailable.",
+        null,
+        true,
+      );
+    }
+    const body = await response.json() as { workflow_runs?: Array<{ id?: number; created_at?: string; display_title?: string }> };
+    const floor = dispatchedAt.getTime() - 5_000;
+    const expectedTitle = `DeployGuard ${operationId}`;
+    const match = (body.workflow_runs || []).find((run) => run.id && run.display_title === expectedTitle && Date.parse(String(run.created_at || "")) >= floor);
     return match?.id ? String(match.id) : null;
   }
 

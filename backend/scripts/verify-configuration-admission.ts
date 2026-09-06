@@ -50,6 +50,7 @@ assert.match(workflowCalls[0].url, /deployguard\.yml\?ref=main$/);
 assert.equal(JSON.parse(String(workflowCalls.at(-1)?.init?.body)).branch, "main", "caller workflow is registered on GitHub's default branch");
 assert.doesNotMatch(JSON.stringify(workflowCalls), /feature\/selected/, "application source branch never controls workflow registration");
 assert.match(Buffer.from(JSON.parse(String(workflowCalls.at(-1)?.init?.body)).content, "base64").toString("utf8"), new RegExp(`uses: ${canonicalReusable}`), "a fresh project gets the configured canonical workflow SHA");
+assert.match(Buffer.from(JSON.parse(String(workflowCalls.at(-1)?.init?.body)).content, "base64").toString("utf8"), /run-name: DeployGuard \$\{\{ inputs\.deployment_operation_id \}\}/, "the caller exposes an operation-correlated run identity for dispatch recovery");
 
 async function reconcileManagedCaller(existingContent: string) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -116,6 +117,7 @@ globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => 
   const url = String(input); dispatchCalls.push({ url, init });
   if (url.includes("/contents/.github/workflows/deployguard.yml")) return new Response(JSON.stringify({ encoding: "base64", content: Buffer.from(caller).toString("base64") }), { status: 200 });
   if (url.endsWith("/dispatches")) return new Response(JSON.stringify({ workflow_run_id: 12345, html_url: "https://github.com/owner/application/actions/runs/12345" }), { status: 200 });
+  if (url.includes("/runs?event=workflow_dispatch")) return new Response(JSON.stringify({ workflow_runs: [{ id: 12345, created_at: "2026-09-06T00:00:01.000Z", display_title: `DeployGuard ${dispatchInputs.deployment_operation_id}` }] }), { status: 200 });
   if (url.includes("/actions/workflows/deployguard.yml")) return new Response(JSON.stringify({ state: "active" }), { status: 200 });
   return new Response(JSON.stringify({}), { status: 200 });
 };
@@ -127,6 +129,7 @@ try {
   assert.equal(dispatched.receipt.ref, "main");
   assert.equal(dispatched.receipt.sourceRef, applicationBranch);
   assert.equal(dispatchInputs.repository_branch, applicationBranch, "immutable application source branch remains selected");
+  assert.equal(await actions.findWorkflowRunForOperation("owner/application", "main", dispatchInputs.deployment_operation_id, new Date("2026-09-06T00:00:00.000Z"), "installation-token"), "12345", "dispatch recovery matches the exact operation run-name");
   assert.ok(dispatchCalls.some((call) => call.url.includes(`/branches/${encodeURIComponent(applicationBranch)}`)), "selected source branch remains independently validated");
   assert.ok(dispatchCalls.some((call) => call.url.includes("/contents/.github/workflows/deployguard.yml?ref=main")), "caller contract is validated on the registration branch");
 } finally {
@@ -143,12 +146,12 @@ databaseTier.projects = { getProjectEntityForManage: async () => ({ id: "project
 await assert.rejects(() => databaseTier.update({} as any, "project", { provider: DatabaseTierProvider.MANAGED } as any), /Select a supported managed database engine/);
 await assert.rejects(() => databaseTier.update({} as any, "project", { provider: DatabaseTierProvider.MANAGED, engine: "redis" } as any), /Select a supported managed database engine/);
 
-async function updateDatabase(services: any[], dto: any, conflictingKeys: string[] = []) {
+async function updateDatabase(services: any[], dto: any, conflictingKeys: string[] = [], existing: any = null) {
   const candidate = Object.create(DatabaseTierService.prototype) as any;
   let saved: any = null;
   candidate.projects = { getProjectEntityForManage: async () => ({ id: "11111111-1111-4111-8111-111111111111", environmentName: "dev" }) };
   candidate.audit = { record: async () => undefined };
-  const tierRepository = { findOne: async () => null, create: (value: any) => value, save: async (value: any) => { saved = value; return value; } };
+  const tierRepository = { findOne: async () => existing, create: (value: any) => value, save: async (value: any) => { saved = value; return value; } };
   const environmentRepository = { createQueryBuilder: () => ({ where() { return this; }, andWhere() { return this; }, orderBy() { return this; }, getMany: async () => conflictingKeys.map((key) => ({ key })) }) };
   const serviceRepository = { find: async () => services };
   candidate.dataSource = { transaction: async (work: any) => work({ query: async () => undefined, getRepository: (entity: unknown) => entity === ProjectDatabaseTier ? tierRepository : entity === ProjectEnvironmentVariable ? environmentRepository : entity === ProjectDeployableService ? serviceRepository : null }) };
@@ -159,6 +162,14 @@ const singleService = [{ id: "22222222-2222-4222-8222-222222222222", position: 0
 const singleManaged = await updateDatabase(singleService, { provider: DatabaseTierProvider.MANAGED, engine: "postgres", persistenceEnabled: true });
 assert.equal(singleManaged.saved.attachedServiceId, singleService[0].id, "a single-service managed database attaches automatically");
 assert.equal(singleManaged.saved.status, DatabaseTierStatus.PENDING, "a newly configured managed database persists the non-durable pending lifecycle status");
+const establishedTier = { ...singleManaged.saved, provider: DatabaseTierProvider.MANAGED, engine: "postgres", status: DatabaseTierStatus.READY, activeGenerationId: "44444444-4444-4444-8444-444444444444", efsFileSystemId: "fs-established", credentialsSecretArn: "arn:aws:secretsmanager:us-east-1:123456789012:secret:database" };
+const unchangedEstablished = await updateDatabase(singleService, { provider: DatabaseTierProvider.MANAGED, engine: "postgres", persistenceEnabled: true }, [], establishedTier);
+assert.equal(unchangedEstablished.saved.status, DatabaseTierStatus.READY, "saving unchanged managed database settings preserves authoritative READY state");
+await assert.rejects(
+  () => updateDatabase(singleService, { provider: DatabaseTierProvider.NONE }, [], establishedTier),
+  /immutable after project persistence is established/,
+  "an ordinary settings update cannot disable an established persistent database",
+);
 const multiServices = [...singleService, { id: "33333333-3333-4333-8333-333333333333", position: 1 }];
 await assert.rejects(() => updateDatabase(multiServices, { provider: DatabaseTierProvider.MANAGED, engine: "mysql", persistenceEnabled: true }), /Select the service/);
 const explicitManaged = await updateDatabase(multiServices, { provider: DatabaseTierProvider.MANAGED, engine: "mysql", persistenceEnabled: true, attachedServiceId: multiServices[1].id });

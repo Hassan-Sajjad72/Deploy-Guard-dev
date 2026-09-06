@@ -48,13 +48,15 @@ const baseTask = {
   }, tags: [{ key: "ManagedBy", value: "DeployGuard" }],
 };
 
-function runScript(desiredCount = 1) {
+function runScript(desiredCount = 1, activationMode = "release_only", releaseAction = "deploy") {
   const directory = mkdtempSync(join(tmpdir(), "deployguard-release-only-"));
   const bin = join(directory, "bin");
   mkdirSync(bin);
   const fakeAws = join(bin, "aws");
   const outputsPath = join(directory, "outputs.json"); const runtimePath = join(directory, "runtime.json"); const artifactsPath = join(directory, "artifacts.json");
-  writeFileSync(outputsPath, JSON.stringify(outputs)); writeFileSync(runtimePath, JSON.stringify(runtime)); writeFileSync(artifactsPath, JSON.stringify(artifacts));
+  const effectiveOutputs = structuredClone(outputs);
+  if (activationMode === "terraform") effectiveOutputs.services[serviceId].task_definition_arn = "arn:aws:ecs:us-east-1:123456789012:task-definition/dg-api:8";
+  writeFileSync(outputsPath, JSON.stringify(effectiveOutputs)); writeFileSync(runtimePath, JSON.stringify(runtime)); writeFileSync(artifactsPath, JSON.stringify(artifacts));
   writeFileSync(fakeAws, `#!/usr/bin/env bash
 set -euo pipefail
 if [ "$1 $2" = "ecs describe-services" ]; then printf '%s\\n' '${JSON.stringify({ services: [{ taskDefinition: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg-api:7", desiredCount }] })}'; exit 0; fi
@@ -69,7 +71,7 @@ exit 91
 `);
   chmodSync(fakeAws, 0o755);
   const script = join(__dirname, "..", "..", "infrastructure", "railpack-runtime", "register-release-task-definitions.sh");
-  const result = spawnSync("bash", [script, outputsPath, runtimePath, artifactsPath], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_AWS_LOG: join(directory, "aws.log") } });
+  const result = spawnSync("bash", [script, outputsPath, runtimePath, artifactsPath, releaseAction, activationMode], { encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_AWS_LOG: join(directory, "aws.log") } });
   return { directory, result };
 }
 
@@ -81,6 +83,18 @@ assert.equal(releaseOutputs.services[serviceId].runtime_config_revision_id, runt
 assert.equal(releaseOutputs.services[serviceId].task_definition_arn, "arn:aws:ecs:us-east-1:123456789012:task-definition/dg-api:8", "release evidence must use the ECS-registered revision");
 assert.match(readFileSync(join(successful.directory, "aws.log"), "utf8"), /--task-definition arn:aws:ecs:us-east-1:123456789012:task-definition\/dg-api:8 --force-new-deployment/, "ECS must receive the registered revision directly");
 rmSync(successful.directory, { recursive: true, force: true });
+
+const terraformFallback = runScript(1, "terraform");
+assert.equal(terraformFallback.result.status, 0, terraformFallback.result.stderr);
+assert.match(readFileSync(join(terraformFallback.directory, "aws.log"), "utf8"), /--task-definition arn:aws:ecs:us-east-1:123456789012:task-definition\/dg-api:8 --force-new-deployment/, "Terraform fallback must explicitly activate the task definition emitted by the applied plan");
+assert.doesNotMatch(readFileSync(join(terraformFallback.directory, "aws.log"), "utf8"), /register-task-definition/, "Terraform fallback activates Terraform's revision without registering a competing revision");
+rmSync(terraformFallback.directory, { recursive: true, force: true });
+
+const terraformFallbackRollback = runScript(1, "terraform", "rollback");
+assert.equal(terraformFallbackRollback.result.status, 0, terraformFallbackRollback.result.stderr);
+assert.match(readFileSync(join(terraformFallbackRollback.directory, "aws.log"), "utf8"), /--task-definition arn:aws:ecs:us-east-1:123456789012:task-definition\/dg-api:8 --force-new-deployment/, "Terraform fallback rollback must explicitly activate the task definition emitted by the applied plan");
+assert.doesNotMatch(readFileSync(join(terraformFallbackRollback.directory, "aws.log"), "utf8"), /register-task-definition/, "Terraform fallback rollback must not register a competing task definition revision");
+rmSync(terraformFallbackRollback.directory, { recursive: true, force: true });
 
 const inactive = runScript(0);
 assert.notEqual(inactive.result.status, 0, "an inactive/unbootstrapped service must fall back instead of receiving a direct release");
@@ -100,5 +114,5 @@ assert.equal(await candidate.releaseOnlyRedeployEligible(projectId, "dev", confi
 const staleDatabase: any = { ...configuration, managedDatabase: { ...configuration.managedDatabase, activeGenerationId: "77777777-7777-4777-8777-777777777777" } };
 assert.equal(await candidate.releaseOnlyRedeployEligible(projectId, "dev", staleDatabase, runtime), false, "a database not owned by the live generation must retain Terraform fallback");
 
-console.log("DIRECT_ECS_REDEPLOY=PASS REGISTER_UPDATE_VERIFY_EVIDENCE=1 TOPOLOGY_FALLBACK=1 ACTIVE_TASK_DEFINITION_GATE=1 DATABASE_GENERATION_GATE=1");
+console.log("DIRECT_ECS_REDEPLOY=PASS REGISTER_UPDATE_VERIFY_EVIDENCE=1 TERRAFORM_FALLBACK_DEPLOY_ACTIVATION=1 TERRAFORM_FALLBACK_ROLLBACK_ACTIVATION=1 TOPOLOGY_FALLBACK=1 ACTIVE_TASK_DEFINITION_GATE=1 DATABASE_GENERATION_GATE=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

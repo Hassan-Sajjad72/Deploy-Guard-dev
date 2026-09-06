@@ -39,7 +39,7 @@ export function renderDeployguardCallerWorkflow(reusable: string) {
   const forwarded = RAILPACK_WORKFLOW_INPUTS.map(({ name }) => {
     return `      ${name}: \${{ inputs.${name} }}`;
   }).join("\n");
-  return `name: DeployGuard\non:\n  workflow_dispatch:\n    inputs:\n${inputDefinitions}\npermissions:\n  contents: read\n  id-token: write\njobs:\n  deploy:\n    uses: ${reusable}\n    with:\n${forwarded}\n`;
+  return `name: DeployGuard\nrun-name: DeployGuard \${{ inputs.deployment_operation_id }}\non:\n  workflow_dispatch:\n    inputs:\n${inputDefinitions}\npermissions:\n  contents: read\n  id-token: write\njobs:\n  deploy:\n    uses: ${reusable}\n    with:\n${forwarded}\n`;
 }
 
 @Injectable()

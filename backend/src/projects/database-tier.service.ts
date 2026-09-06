@@ -76,7 +76,9 @@ export class DatabaseTierService {
         attachedServiceId,
         provider: dto.provider,
         engine,
-        status: dto.provider === DatabaseTierProvider.NONE ? DatabaseTierStatus.NOT_REQUIRED : DatabaseTierStatus.PENDING,
+        status: dto.provider === DatabaseTierProvider.NONE
+          ? DatabaseTierStatus.NOT_REQUIRED
+          : established ? existing!.status : DatabaseTierStatus.PENDING,
         externalHost: dto.provider === DatabaseTierProvider.EXTERNAL ? dto.externalHost!.trim() : null,
         externalPort: dto.provider === DatabaseTierProvider.EXTERNAL ? (dto.externalPort || managedDatabaseProfile(engine)?.port || 0) : null,
         internalHost,

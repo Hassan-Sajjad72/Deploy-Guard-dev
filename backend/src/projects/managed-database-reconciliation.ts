@@ -61,7 +61,11 @@ export function classifyManagedDatabase(
   // A tier lifecycle status (notably the initial PENDING status) describes
   // desired configuration, not durable database persistence. Durable binding
   // identity is represented by the storage/generation fields above.
-  const anyMetadata = evidence.expectedStorageIdentity || secretsPresent || statePresent;
+  const anyMetadata = evidence.expectedStorageIdentity
+    || Boolean(evidence.currentFileSystem?.owned)
+    || Boolean(evidence.accessPoint?.owned)
+    || secretsPresent
+    || statePresent;
 
   if (!evidence.managed || !evidence.persistenceEnabled) {
     return anyMetadata
