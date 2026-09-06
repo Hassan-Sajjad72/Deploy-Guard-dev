@@ -9,6 +9,7 @@ import { ProjectEnvironmentVariable } from "../projects/project-environment-vari
 import { ProjectEnvironmentCryptoService } from "../projects/project-environment-crypto.service";
 import { User } from "../users/user.entity";
 import { AiEvidencePreprocessorService, RawEvidence } from "./ai-evidence-preprocessor.service";
+import { failureDiagnosticFromMetadata } from "../projects/failure-diagnostics/failure-diagnostic.types";
 
 @Injectable()
 export class AiEvidenceService {
@@ -26,10 +27,12 @@ export class AiEvidenceService {
     const run = await this.runs.findOne({ where: { id: pipelineRunId, projectId } });
     const stage = typeof run?.metadata?.failedStage === "string" ? run.metadata.failedStage : run?.currentStage;
     const rows: RawEvidence[] = [];
+    const diagnosis = failureDiagnosticFromMetadata(run?.metadata);
     let runtimeServiceId: string | null = null;
     const failedSource = /terraform/i.test(String(stage || "")) ? "terraform" : /railpack|build|application_runtime/i.test(String(stage || "")) ? "railpack_build" : "github_actions";
     if (typeof run?.metadata?.safeLog === "string" && run.metadata.safeLog.trim()) rows.push({ source: failedSource, stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.metadata.safeLog });
     if (run?.errorMessage) rows.push({ source: "github_actions_status", stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.errorMessage });
+    if (diagnosis) rows.push({ source: "deployguard_diagnosis", stage, eventId: run?.id, timestamp: run?.failedAt, text: JSON.stringify(diagnosis) });
     if (run?.metadata?.terraformPlanSummary) rows.push({ source: "terraform", stage, eventId: run.id, timestamp: run.updatedAt, text: `Terraform plan summary: ${JSON.stringify(run.metadata.terraformPlanSummary)}` });
     if (run) rows.push({ source: "deployguard_lifecycle", stage, eventId: run.id, timestamp: run.updatedAt, text: JSON.stringify({ operationId: run.id, generationId: run.generationId, commitSha: run.commitSha, deploymentAction: run.metadata?.deploymentAction, failedStage: run.metadata?.failedStage, status: run.status, failureOwner: run.failureOwner, externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId }) });
     if (run) {
@@ -85,6 +88,9 @@ export class AiEvidenceService {
         externalProvider: run?.externalProvider || null,
         failureCode: run?.failureCode || null,
         failureServiceId: run?.failureServiceId || null,
+        failureDiagnostic: diagnosis,
+        rootCauseCode: diagnosis?.rootCauseCode || null,
+        retryDecision: diagnosis?.retryDecision || null,
         requestedServiceId: serviceId || null,
         runtimeServiceId: runtimeEvidence.length ? runtimeServiceId : null,
         problemType: run?.status === PipelineRunStatus.COMPLETED ? "LIVE_RUNTIME_ISSUE" : "FAILED_DEPLOYMENT",

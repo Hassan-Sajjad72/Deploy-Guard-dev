@@ -22,6 +22,7 @@ assert.equal(configured, release, "active backend runtime configuration must use
 const controlPlanePaths = [
   ".github/workflows/deployguard-reusable.yml",
   "infrastructure/railpack-runtime/build-release-result.sh",
+  "infrastructure/railpack-runtime/register-release-task-definitions.sh",
   "infrastructure/railpack-runtime/verify-runtime.sh",
   "infrastructure/railpack-runtime/main.tf",
 ] as const;
@@ -38,6 +39,7 @@ const certification = assertReusableWorkflowCompatibility(
   generatedCallerWithKeys(caller),
   {
     releaseResultProducer: atConfiguredRelease["infrastructure/railpack-runtime/build-release-result.sh"],
+    releaseOnlyTaskDefinitions: atConfiguredRelease["infrastructure/railpack-runtime/register-release-task-definitions.sh"],
     runtimeVerifier: atConfiguredRelease["infrastructure/railpack-runtime/verify-runtime.sh"],
     runtimeInfrastructure: atConfiguredRelease["infrastructure/railpack-runtime/main.tf"],
   },
@@ -52,4 +54,4 @@ const admin = readFileSync(join(__dirname, "../src/admin/admin.controller.ts"), 
 assert.match(admin, /releaseIdentity: "exact_immutable"/);
 assert.match(admin, /remoteWorkflowCompatibility: "not_checked"/);
 assert.match(admin, /does not imply that GitHub has remotely[\s\S]*Dispatch performs that live check/);
-console.log(`RELEASE_IDENTITY=PASS CANONICAL_SHA=${canonicalSha} EXACT_EXECUTABLE_BYTES=4 ACTIVE_OLD_SHA=0 IMMUTABLE_PIN_REQUIRED=1`);
+console.log(`RELEASE_IDENTITY=PASS CANONICAL_SHA=${canonicalSha} EXACT_EXECUTABLE_BYTES=5 ACTIVE_OLD_SHA=0 IMMUTABLE_PIN_REQUIRED=1`);

@@ -38,7 +38,7 @@ assert.match(pipeline, /Verification pending/);
 assert.match(pipeline, /destroyVerificationUnresolved/);
 assert.match(pipeline, /Retry failed \$\{operationType\(latest\)\.toLowerCase\(\)\}/, "pipeline retry wording must preserve the failed operation type");
 assert.match(recovery, /operation\.stageLabel/);
-assert.match(recovery, /operation\.aiAnalysisEligible/, "AI analysis must use backend-certified evidence eligibility");
+assert.doesNotMatch(recovery, /aiAnalysisEligible|AI troubleshooting|Analyze failure|Ask AI/, "Pipeline recovery must remain deterministic and AI-free");
 assert.match(overview, /deploymentPhasePresentation/);
 assert.equal(DESTROY_CONFIRMATION_PHRASE, "DESTROY");
 assert.match(overview, /DESTROY_CONFIRMATION_PHRASE/);

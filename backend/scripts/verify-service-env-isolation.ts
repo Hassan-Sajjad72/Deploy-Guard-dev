@@ -8,6 +8,7 @@ const webId = "22222222-2222-4222-8222-222222222222";
 const apiId = "33333333-3333-4333-8333-333333333333";
 const operationId = "44444444-4444-4444-8444-444444444444";
 const service = Object.create(RailpackDeploymentService.prototype) as any;
+const buildTarget = (serviceId: string, directory: string) => ({ id: serviceId === webId ? "77777777-7777-4777-8777-777777777777" : "88888888-8888-4888-8888-888888888888", target: { resolverVersion: "deployguard.build-target/v2", sourceSha: "a".repeat(40), serviceDirectory: directory, workspaceRoot: directory, buildRoot: directory, installRoot: directory, packageIdentity: directory, contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: "npm", buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: serviceId === webId ? "a".repeat(64) : "b".repeat(64) } });
 service.deployableServices = { find: async () => [
   { id: webId, projectId, name: "Web", serviceDirectory: "web", servicePort: 3000, position: 0 },
   { id: apiId, projectId, name: "API", serviceDirectory: "api", servicePort: 8000, position: 1 },
@@ -39,8 +40,8 @@ const admitted = () => ({
   environmentName: "cert-20260831",
   applicationEntryPointServiceId: webId,
   services: [
-    { id: webId, projectId, name: "Web", serviceDirectory: "web", servicePort: 3000, position: 0 },
-    { id: apiId, projectId, name: "API", serviceDirectory: "api", servicePort: 8000, position: 1 },
+    { id: webId, projectId, name: "Web", serviceDirectory: "web", servicePort: 3000, position: 0, resolvedBuildTarget: buildTarget(webId, "web") },
+    { id: apiId, projectId, name: "API", serviceDirectory: "api", servicePort: 8000, position: 1, resolvedBuildTarget: buildTarget(apiId, "api") },
   ],
   variables: variables.map((variable, index) => ({ ...variable, id: `variable-${index}`, encryptedValue: variable.value, isActive: true })),
   managedDatabase: managedTier,
@@ -79,6 +80,7 @@ void (async () => {
   assert.ok(api.managedDatabase.aliases.includes("DATABASE_URL"));
   assert.ok(api.managedDatabase.aliases.includes("POSTGRES_PASSWORD"));
   assert.deepEqual(materializations.map((item) => [item.serviceId, Object.keys(item.secretValues)]), [[webId, ["WEB_BUILD_SECRET", "WEB_BOTH_SECRET", "WEB_RUNTIME_SECRET", "DATABASE_URL"]], [apiId, ["API_TOKEN", "API_BUILD_TOKEN", "MONGODB_URI"]]]);
+  assert.equal(materializations.find((item) => item.serviceId === apiId).secretValues.DATABASE_URL, undefined, "managed PostgreSQL aliases never enter user runtime secret materialization");
   assert.deepEqual(materializations.map((item) => item.environment), ["cert-20260831", "cert-20260831"], "named project environments survive runtime configuration unchanged");
 
   managedTier = null;
@@ -111,13 +113,31 @@ void (async () => {
   assert.equal(materializations.length, 0, "unsupported managed capabilities fail before secret or infrastructure materialization");
 
   let providerCalls = 0;
-  const materializer = new RuntimeSecretMaterializer({
-    describe: async () => { providerCalls += 1; return null; },
-    create: async () => { providerCalls += 1; return "arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/test"; },
+  let deleted = false;
+  let description: any = null;
+  const secretArn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/test";
+  const port: any = {
+    describe: async () => { providerCalls += 1; return description; },
+    create: async (name: string, _value: string, version: string, tags: Record<string, string>) => {
+      providerCalls += 1;
+      description = { arn: secretArn, name, deletionDate: null, tags, versions: { [version]: ["AWSCURRENT"] } };
+      return secretArn;
+    },
     restore: async () => undefined,
-    put: async () => undefined,
-    activateVersion: async () => undefined,
-  });
+    put: async (_arn: string, _value: string, version: string) => {
+      for (const stages of Object.values(description.versions) as string[][]) {
+        const index = stages.indexOf("AWSCURRENT");
+        if (index >= 0) stages.splice(index, 1, "AWSPREVIOUS");
+      }
+      description.versions[version] = ["AWSCURRENT"];
+    },
+    activateVersion: async (_arn: string, move: string, remove: string) => {
+      description.versions[move] = ["AWSCURRENT"];
+      description.versions[remove] = (description.versions[remove] || []).filter((stage: string) => stage !== "AWSCURRENT");
+    },
+    delete: async () => { deleted = true; },
+  };
+  const materializer = new RuntimeSecretMaterializer(port);
   const namedEnvironmentSecret = await materializer.materialize({
     projectId,
     serviceId: apiId,
@@ -128,5 +148,27 @@ void (async () => {
   });
   assert.equal(providerCalls, 2, "a valid named environment reaches secret-provider materialization");
   assert.match(namedEnvironmentSecret?.valueFromByName.API_TOKEN || "", /:API_TOKEN::[0-9a-f]{64}$/);
+  assert.equal(namedEnvironmentSecret?.provisionalChange, "created");
+  await materializer.compensate(namedEnvironmentSecret!);
+  assert.equal(deleted, true, "a newly created pre-dispatch secret is deleted through exact owned identity compensation");
+
+  const previousVersion = "b".repeat(64);
+  description = { ...description, versions: { [previousVersion]: ["AWSCURRENT"] } };
+  deleted = false;
+  const updatedEnvironmentSecret = await materializer.materialize({
+    projectId, serviceId: apiId, generationId: operationId, environment: "cert-20260831",
+    configurationFingerprint: "c".repeat(64), secretValues: { API_TOKEN: "replacement-bounded-test-value" },
+  });
+  assert.equal(updatedEnvironmentSecret?.previousVersionToken, previousVersion);
+  await materializer.compensate(updatedEnvironmentSecret!);
+  assert.equal(description.versions[previousVersion].includes("AWSCURRENT"), true, "pre-dispatch compensation restores the prior verified AWSCURRENT version");
+  assert.equal(deleted, false, "compensation never deletes an existing owned runtime secret");
+
+  const dispatchAuthority = Object.create(RailpackDeploymentService.prototype) as any;
+  let compensationCalls = 0;
+  dispatchAuthority.runtimeSecrets = { compensate: async (items: any[]) => { compensationCalls += 1; return { cleaned: items.length, failed: 0 }; } };
+  assert.deepEqual(await dispatchAuthority.compensateProvisionalRuntimeSecrets([updatedEnvironmentSecret], false), { cleaned: 1, failed: 0 }, "a later pre-dispatch failure compensates the provisional secret mutation");
+  assert.deepEqual(await dispatchAuthority.compensateProvisionalRuntimeSecrets([updatedEnvironmentSecret], true), { skipped: "remote_dispatch_possible" }, "compensation never removes a secret version after a GitHub run may consume it");
+  assert.equal(compensationCalls, 1);
   console.log("SERVICE_ENV_ISOLATION=PASS BUILD_RUNTIME_BOTH=1 SERVICE_SECRET_LEAKS=0 EXTERNAL_DB_ENV=1 MANAGED_DB_CONFLICT_PRE_TERRAFORM=1 DATABASE_ATTACHMENT_EXACT=1 UNSUPPORTED_DATABASE_PREMUTATION=1 PER_SERVICE_PORT_AUTHORITY=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

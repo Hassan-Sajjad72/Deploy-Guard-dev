@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
+import { canonicalOverviewState, failureRecoveryCommand, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
 import { projectStatePresentation } from "../src/utils/projectStatePresentation.js";
 import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPresentation.js";
 
@@ -114,6 +114,18 @@ assert.deepEqual(
 assert.deepEqual(actions("DESTROYING"), [{ kind: "link", target: "pipeline", label: "View progress" }]);
 assert.deepEqual(actions("DESTROYED"), [{ kind: "command", command: "deploy", label: "Deploy Again" }]);
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED" }, canRetry: false }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }]);
+const safeNowFailure = { operationType: "deploy", diagnosis: { failureOwner: "EXTERNAL_PROVIDER", retryDecision: "SAFE_NOW" } };
+const safeAfterFixFailure = { operationType: "deploy", diagnosis: { failureOwner: "REPOSITORY_APPLICATION", retryDecision: "SAFE_AFTER_FIX" } };
+const notSafeFailure = { operationType: "deploy", diagnosis: { failureOwner: "DEPLOYGUARD_PLATFORM", retryDecision: "NOT_SAFE_YET" } };
+assert.equal(failureRecoveryCommand(safeNowFailure, true), "retry");
+assert.equal(failureRecoveryCommand(safeAfterFixFailure, false), "deploy_fixed");
+assert.equal(failureRecoveryCommand(notSafeFailure, false), null);
+assert.equal(failureRecoveryCommand({ ...safeAfterFixFailure, operationType: "rollback" }, false), null, "rollback never becomes a fresh source deployment");
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: safeAfterFixFailure, canRetry: false }, true), [
+  { kind: "link", target: "pipeline", label: "View Pipeline" },
+  { kind: "command", command: "deploy_fixed", label: "Deploy Fixed Commit" },
+]);
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: notSafeFailure, canRetry: true }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }], "NOT_SAFE_YET suppresses unsafe actions even if canRetry is inconsistent");
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "READY" } }, false), []);
 assert.doesNotMatch(lifecycle, /getGithubActionsDeploymentHistory|developerAction|estimatedCost|terraform/i);
 assert.match(lifecycle, /acceptedOperation/);
@@ -121,6 +133,7 @@ assert.match(lifecycle, /authority\.activeOperation\?\.id/, "the accepted-operat
 assert.match(lifecycle, /setAcceptedOperation\(null\)/, "terminal persisted state clears the local accepted-operation banner");
 assert.match(lifecycle, /dispatching\.current/);
 assert.match(lifecycle, /retryGithubActionsDeployment\(projectId\)/, "failed Destroy uses the existing generic retry handler");
+assert.match(lifecycle, /deployGithubActionsDeployment\(projectId\)/, "repository fixes use the existing normal deployment endpoint");
 assert.match(lifecycle, /latestOperationFailed/);
 assert.match(api, /\/deploy\/retry[\s\S]*?method: "POST"/, "failed Destroy uses the existing generic retry endpoint");
 assert.match(lifecycle, /getGithubActionsRollbackCandidates/);

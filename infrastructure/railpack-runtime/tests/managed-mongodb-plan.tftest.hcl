@@ -14,6 +14,7 @@ run "managed_mongodb_with_apply_time_secret_arn_plans" {
     region            = "us-east-1"
     project_id        = "11111111-1111-4111-8111-111111111111"
     operation_id      = "22222222-2222-4222-8222-222222222222"
+    environment_name  = "dev"
     vpc_id            = "vpc-0123456789abcdef0"
     public_subnet_ids = ["subnet-0123456789abcdef0"]
     services = {
@@ -39,5 +40,10 @@ run "managed_mongodb_with_apply_time_secret_arn_plans" {
   assert {
     condition     = length(aws_secretsmanager_secret.database) == 1 && length(aws_ecs_service.database) == 1
     error_message = "Managed MongoDB must retain its independent Secrets Manager and ECS runtime."
+  }
+
+  assert {
+    condition     = aws_ecs_service.application["33333333-3333-4333-8333-333333333333"].desired_count == 0
+    error_message = "The MongoDB-attached application must remain stopped until DeployGuard verifies database readiness."
   }
 }

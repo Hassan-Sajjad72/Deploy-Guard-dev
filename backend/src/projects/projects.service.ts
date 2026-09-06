@@ -35,6 +35,7 @@ import { DeployableServiceInputDto, UpdateDeployableServiceDto } from "./dto/dep
 import { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
 import { PipelineRunStatus, ProjectPipelineRun } from "./project-pipeline-run.entity";
+import { assertBuildTargetOverride } from "./build-target";
 
 type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
@@ -222,7 +223,8 @@ export class ProjectsService {
         projectId: saved.id,
         name: service.name,
         serviceDirectory: service.serviceDirectory,
-        servicePort: service.servicePort,
+        buildTargetOverride: assertBuildTargetOverride((service as DeployableServiceInputDto).buildTargetOverride),
+        servicePort: null,
         position,
       }));
       await manager.getRepository(ProjectDeployableService).save(services);
@@ -277,8 +279,8 @@ export class ProjectsService {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
       const repository = manager.getRepository(ProjectDeployableService);
       const services = await repository.find({ where: { projectId }, order: { position: "ASC" } });
-      const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort })), dto]);
-      return repository.save(repository.create({ projectId, ...normalized[normalized.length - 1], position: services.length }));
+      const normalized = this.normalizeServices([...services.map((service) => ({ name: service.name, serviceDirectory: service.serviceDirectory })), dto]);
+      return repository.save(repository.create({ projectId, ...normalized[normalized.length - 1], buildTargetOverride: assertBuildTargetOverride(dto.buildTargetOverride), position: services.length }));
     });
   }
 
@@ -295,12 +297,13 @@ export class ProjectsService {
       const candidate = all.map((item) => ({
         name: item.id === serviceId && dto.name !== undefined ? dto.name : item.name,
         serviceDirectory: item.id === serviceId && dto.serviceDirectory !== undefined ? dto.serviceDirectory : item.serviceDirectory,
-        servicePort: item.id === serviceId && dto.servicePort !== undefined ? dto.servicePort : item.servicePort,
       }));
       const normalized = this.normalizeServices(candidate)[all.findIndex((item) => item.id === serviceId)];
+      const directoryChanged = normalized.serviceDirectory !== service.serviceDirectory;
       service.name = normalized.name;
       service.serviceDirectory = normalized.serviceDirectory;
-      service.servicePort = normalized.servicePort;
+      if (dto.buildTargetOverride !== undefined) service.buildTargetOverride = assertBuildTargetOverride(dto.buildTargetOverride);
+      if (directoryChanged) service.servicePort = null;
       if (dto.position !== undefined && dto.position !== service.position) {
         const other = await repository.findOne({ where: { projectId, position: dto.position } });
         if (other) { const old = service.position; service.position = -1; await repository.save(service); other.position = old; await repository.save(other); }
@@ -434,7 +437,9 @@ export class ProjectsService {
       current.repositoryProvider = "github";
       current.targetBranch = nextBranch;
       current.status = ProjectStatus.CONFIGURED;
-      return repository.save(current);
+      const saved = await repository.save(current);
+      await manager.getRepository(ProjectDeployableService).update({ projectId }, { servicePort: null });
+      return saved;
     });
 
     await this.auditLogService.record({
@@ -484,7 +489,9 @@ export class ProjectsService {
       this.assertCanManage(user, current);
       current.targetBranch = dto.targetBranch;
       current.status = ProjectStatus.CONFIGURED;
-      return repository.save(current);
+      const saved = await repository.save(current);
+      await manager.getRepository(ProjectDeployableService).update({ projectId }, { servicePort: null });
+      return saved;
     });
 
     await this.auditLogService.record({
@@ -691,11 +698,6 @@ export class ProjectsService {
     const result = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, environment);
       const repository = manager.getRepository(ProjectEnvironmentVariable);
-      const managedDatabase = await this.managedDatabaseForService(projectId, service.id, manager);
-      if (managedDatabase) {
-        const conflict = normalized.map((item) => item.key).find((key) => Boolean(serviceAlias(key, managedDatabase.engine)));
-        if (conflict) throw new BadRequestException(`${conflict} conflicts with the DeployGuard-managed database attached to this service. Remove the variable or disable the managed database.`);
-      }
       const ignoredVariableNames = await this.ignoredEnvironmentVariableNames(projectId, service.id, normalized.map((item) => item.key), manager);
       const { accepted } = partitionSubmittedEnvironmentVariables(normalized, { allowDatabaseAliases: true, repositoryOwnedKeys: new Set(ignoredVariableNames) });
       const duplicateKeys = accepted.map((item) => item.key).filter((key, index, keys) => keys.indexOf(key) !== index);
@@ -951,7 +953,7 @@ export class ProjectsService {
       targetBranch: project.targetBranch,
       environmentName: project.environmentName || "dev",
       applicationEntryPointServiceId: project.applicationEntryPointServiceId || ((project.services || []).length === 1 ? project.services[0].id : null),
-      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort ?? 8080, position: service.position })),
+      services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort, position: service.position, ...(service.buildTargetOverride ? { buildTargetOverride: service.buildTargetOverride } : {}) })),
       status: project.status,
       visibility: project.visibility,
       canManage:
@@ -1021,7 +1023,12 @@ export class ProjectsService {
   }
 
   private async ignoredEnvironmentVariableNames(projectId: string, serviceId: string, keys: string[], manager?: EntityManager) {
-    return partitionSubmittedEnvironmentVariables(keys.map((key) => ({ key })), { allowDatabaseAliases: true }).ignoredVariableNames;
+    const managedDatabase = await this.managedDatabaseForService(projectId, serviceId, manager);
+    return partitionSubmittedEnvironmentVariables(keys.map((key) => ({ key })), {
+      allowDatabaseAliases: true,
+      managedService: Boolean(managedDatabase),
+      service: managedDatabase?.engine,
+    }).ignoredVariableNames;
   }
 
   private async managedDatabaseForService(projectId: string, serviceId: string, manager?: EntityManager) {
@@ -1071,12 +1078,11 @@ export class ProjectsService {
     if (dto.visibility !== undefined) project.visibility = dto.visibility;
   }
 
-  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "id" | "name" | "serviceDirectory" | "servicePort">>) {
-    const values = input?.length ? input : [{ name: "Web", serviceDirectory: ".", servicePort: 8080 }];
+  private normalizeServices(input?: Array<Pick<DeployableServiceInputDto, "id" | "name" | "serviceDirectory">>) {
+    const values = input?.length ? input : [{ name: "Web", serviceDirectory: "." }];
     if (values.length > 20) throw new BadRequestException("A project supports at most 20 explicitly configured services.");
-    const services = values.map((value) => ({ id: value.id, name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory), servicePort: value.servicePort ?? 8080 }));
+    const services = values.map((value) => ({ id: value.id, name: String(value.name || "").trim(), serviceDirectory: normalizeServiceDirectory(value.serviceDirectory), servicePort: null as number | null }));
     if (services.some((service) => !service.name || service.name.length > 80)) throw new BadRequestException("Every service requires a bounded name.");
-    if (services.some((service) => !Number.isInteger(service.servicePort) || service.servicePort < 1 || service.servicePort > 65535)) throw new BadRequestException("Application port must be an integer from 1 to 65535.");
     const ids = services.map((service) => service.id).filter((id): id is string => Boolean(id));
     if (new Set(ids).size !== ids.length) throw new ConflictException("Service identities must be unique within a project.");
     const names = services.map((service) => service.name.toLocaleLowerCase());

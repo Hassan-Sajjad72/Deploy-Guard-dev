@@ -10,7 +10,7 @@ import { ProjectCurrentStateService } from "../src/projects/current-state/projec
 import { isAiTroubleshootingEligible } from "../src/ai-troubleshooting/ai-troubleshooting.service";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { githubActionsFailureLifecyclePhase, githubActionsWorkflowStepPresentation } from "../src/projects/pipeline/github-actions-stage-presentation";
-import { DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
+import { DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, exactZipEntry, GithubActionsDispatchError, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
 import { WorkflowAwsCapabilityError } from "../src/projects/github-actions-aws-capability.service";
 import { verifyEffectiveWorkflowCapabilities } from "../src/projects/github-actions-aws-capability.service";
 import { capabilitiesFor, RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS, WORKFLOW_AWS_CAPABILITIES, WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, workflowCapabilityPolicy } from "../src/projects/github-actions-aws-capability-contract";
@@ -26,6 +26,8 @@ import { ProjectDeployableService } from "../src/projects/project-deployable-ser
 import { ProjectEnvironmentVariable } from "../src/projects/project-environment-variable.entity";
 import { ProjectDatabaseTier } from "../src/projects/project-database-tier.entity";
 import { ProjectConfigurationSnapshot } from "../src/projects/project-configuration-snapshot.entity";
+import { BuildTargetResolutionError } from "../src/projects/build-target-resolver.service";
+import { RuntimeSecretMaterializationError } from "../src/projects/github-actions-runtime-secret.service";
 
 const user = { id: 7 } as any;
 const project = {
@@ -282,6 +284,7 @@ async function verifyPreDispatchFailure() {
   const snapshots: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.projects = { findOne: async () => project };
+  service.managedDatabaseReconciliation = { reconcile: async () => ({ state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: false, persistenceEnabled: false, expectedStorageIdentity: false, bindingStatus: null, bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }) };
   const runRepository = {
     findOne: async () => null,
     count: async () => 0,
@@ -328,10 +331,61 @@ async function verifyPreDispatchFailure() {
   return failed;
 }
 
+async function verifyUnsupportedDeploymentContractBlocksBeforeWorkflowOrAws() {
+  const saved: any[] = [];
+  let workflowRegistrationCalls = 0;
+  let awsCapabilityCalls = 0;
+  let workflowDispatchCalls = 0;
+  let managedDatabaseReconciliationCalls = 0;
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.managedDatabaseReconciliation = { reconcile: async () => { managedDatabaseReconciliationCalls += 1; return { state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: false, persistenceEnabled: false, expectedStorageIdentity: false, bindingStatus: null, bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }; } };
+  const runs = { findOne: async () => null, count: async () => 0, create: (row: any) => row, save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  service.runs = runs;
+  service.config = { get: (key: string, fallback = "") => key === "DEPLOYGUARD_REUSABLE_WORKFLOW" ? "Hassan-Sajjad72/Deploy-Guard-dev/.github/workflows/deployguard-reusable.yml@0123456789abcdef0123456789abcdef01234567" : fallback };
+  const serviceRow = { id: project.applicationEntryPointServiceId, projectId: project.id, name: "Web", serviceDirectory: ".", servicePort: 8080, position: 0 };
+  const snapshots: any[] = [];
+  const manager = {
+    query: async () => undefined,
+    getRepository: (entity: unknown) => entity === Project ? { findOne: async () => ({ ...project }) }
+      : entity === ProjectPipelineRun ? runs
+        : entity === ProjectDeployableService ? { find: async () => [serviceRow] }
+          : entity === ProjectEnvironmentVariable ? { createQueryBuilder: () => ({ addSelect() { return this; }, where() { return this; }, getMany: async () => [] }) }
+            : entity === ProjectDatabaseTier ? { findOne: async () => ({ projectId: project.id, provider: "managed", engine: "postgres", attachedServiceId: serviceRow.id, updatedAt: new Date("2026-09-05T00:00:00.000Z") }) }
+              : entity === ProjectConfigurationSnapshot ? { create: (row: any) => row, save: async (row: any) => { const value = { ...row, id: "88888888-8888-4888-8888-888888888888" }; snapshots.push(value); return value; } }
+                : entity === ProjectEnvironmentRoute ? { findOne: async () => null }
+                  : null,
+  };
+  service.dataSource = { transaction: async (callback: any) => callback(manager) };
+  service.crypto = { decrypt: (value: string) => value, encrypt: () => "encrypted-fixture" };
+  service.githubApp = {
+    tokenForRepository: async () => ({ token: "fixture-token" }),
+    ensureWorkflow: async () => { workflowRegistrationCalls += 1; return { registrationBranch: "main" }; },
+  };
+  service.source = {
+    resolveSourceSha: async () => "a".repeat(40),
+    resolveBuildTargetsAtExactSha: async () => { throw new BuildTargetResolutionError("DG_DEPLOYMENT_CONTRACT_UNSUPPORTED", serviceRow.id, "The selected service is outside the supported deployment contract."); },
+  };
+  service.awsCapabilities = { ensure: async () => { awsCapabilityCalls += 1; } };
+  service.actions = { triggerWorkflow: async () => { workflowDispatchCalls += 1; return { receipt: {} }; } };
+  const result = await service.deploy(user, project.id);
+  assert.equal(result.deployment.state, "blocked");
+  assert.equal(result.deployment.code, "DG_DEPLOYMENT_CONTRACT_UNSUPPORTED");
+  assert.equal(result.deployment.stage, "deployment_contract_admission");
+  assert.equal(workflowRegistrationCalls, 0, "unsupported contracts must not construct a reusable-workflow dispatch");
+  assert.equal(awsCapabilityCalls, 0, "unsupported contracts must not reach AWS capability verification");
+  assert.equal(workflowDispatchCalls, 0, "unsupported contracts must never dispatch GitHub Actions");
+  assert.equal(managedDatabaseReconciliationCalls, 0, "unsupported contracts must not read managed-database EFS, Secrets Manager, or Terraform state");
+  assert.equal(saved.at(-1).failureCode, "DG_DEPLOYMENT_CONTRACT_UNSUPPORTED");
+  assert.equal(saved.at(-1).metadata.failedStage, "deployment_contract_admission");
+  assert.equal(snapshots.length, 1, "blocked contract admission remains attached to the immutable configuration snapshot");
+}
+
 async function verifyAtomicAdmissionAndImmutableConfiguration() {
   const operations: any[] = [];
   const snapshots: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.managedDatabaseReconciliation = { reconcile: async () => ({ state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: true, persistenceEnabled: true, expectedStorageIdentity: false, bindingStatus: "pending", bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }) };
   const serviceRow: any = { id: project.applicationEntryPointServiceId, projectId: project.id, name: "Web", serviceDirectory: "apps/a", servicePort: 3000, position: 0 };
   const variableRows: any[] = [
     { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", serviceId: serviceRow.id, key: "MODE", value: "encrypted-mode-a", isSecret: false, scope: "runtime", isActive: true },
@@ -363,10 +417,10 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
         },
         getRepository: (entity: unknown) => entity === Project ? { findOne: async () => ({ ...project }) }
           : entity === ProjectPipelineRun ? runRepository
-            : entity === ProjectDeployableService ? { find: async () => [{ ...serviceRow }] }
+            : entity === ProjectDeployableService ? { find: async () => [{ ...serviceRow }], save: async (row: any) => row }
               : entity === ProjectEnvironmentVariable ? { createQueryBuilder: () => ({ addSelect() { return this; }, where() { return this; }, getMany: async () => variableRows.map((row) => ({ ...row })) }) }
                 : entity === ProjectDatabaseTier ? { findOne: async () => managedTier ? { ...managedTier } : null }
-                  : entity === ProjectConfigurationSnapshot ? { create: (row: any) => row, save: async (row: any) => { const value = { ...row, id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }; snapshots.push(value); return value; } }
+                  : entity === ProjectConfigurationSnapshot ? { create: (row: any) => row, findOne: async () => snapshots[0] || null, save: async (row: any) => { const value = { ...row, id: row.id || "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }; if (!row.id) snapshots.push(value); else snapshots[0] = value; return value; } }
                     : entity === ProjectEnvironmentRoute ? { findOne: async () => null }
                       : null,
       };
@@ -411,8 +465,10 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   let validatedServices: any[] = [];
   service.source = {
     resolveSourceSha: async () => "a".repeat(40),
-    assertDirectoriesAtExactSha: async (input: any) => { validatedServices = input.services; },
+    resolveBuildTargetsAtExactSha: async (input: any) => { validatedServices = input.services; return { ports: input.services.map((item: any) => ({ serviceId: item.serviceId, servicePort: 3000, evidence: { priority: 2, source: "fixture" } })), targets: input.services.map((item: any) => ({ serviceId: item.serviceId, target: { resolverVersion: "deployguard.build-target/v2", sourceSha: "a".repeat(40), serviceDirectory: item.serviceDirectory, workspaceRoot: ".", buildRoot: item.serviceDirectory, installRoot: item.serviceDirectory, packageIdentity: "fixture", contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: "npm", buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "a".repeat(64) } })) }; },
+    resolveRequirementsAtExactSha: async () => ({ status: "READY", fingerprint: "b".repeat(64), requirements: [], unresolvedRequired: [], prohibitedOverrides: [], duplicateConflicts: [], validationBlockers: [] }),
   };
+  service.buildTargetRevisions = { create: (row: any) => row, save: async (row: any) => ({ ...row, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }) };
   service.oidcTrust = { ensureRepositoryAuthorized: async () => undefined };
   const materializedSecrets: any[] = [];
   service.runtimeSecrets = { materialize: async (input: any) => {
@@ -436,10 +492,11 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   assert.equal(operations.length, 1, "concurrent lifecycle requests persist exactly one authoritative operation");
   assert.equal(dispatchCalls, 1, "the losing caller never reaches workflow dispatch");
   assert.equal(credentialCalls, 1, "the losing caller never crosses the first external boundary");
-  assert.deepEqual(validatedServices, [{ serviceId: serviceRow.id, serviceDirectory: "apps/a" }], "directory validation consumes the admitted service snapshot");
+  assert.deepEqual(validatedServices, [{ serviceId: serviceRow.id, serviceDirectory: "apps/a", buildTargetOverride: undefined }], "build-target resolution consumes the admitted service snapshot");
   const runtime = JSON.parse(Buffer.from(dispatchedInputs.services_base64, "base64").toString("utf8"));
   assert.equal(runtime.services[0].serviceDirectory, "apps/a");
   assert.equal(runtime.services[0].servicePort, 3000);
+  assert.equal(runtime.services[0].buildTarget.buildRoot, "apps/a");
   assert.equal(runtime.services[0].environment.MODE, "mode-a");
   assert.equal(runtime.services[0].databaseAttached, true);
   assert.deepEqual(materializedSecrets[0].secretValues, { TOKEN: "secret-a" }, "secret materialization consumes the admitted encrypted snapshot value in memory");
@@ -907,10 +964,79 @@ async function verifyConcurrentStateReadsShareReconciliation() {
   assert.equal(reconciliationCalls, 1, "concurrent current-state and history reads must share one GitHub reconciliation");
 }
 
+async function verifyDispatchIdentityRecovery() {
+  const operation: any = {
+    id: "abababab-abab-4bab-8bab-abababababab", projectId: project.id, triggeredByUserId: user.id,
+    status: PipelineRunStatus.QUEUED, currentStage: "workflow_dispatch", githubWorkflowRunId: null,
+    startedAt: new Date("2026-09-06T00:00:00.000Z"), metadata: { deploymentAction: "deploy", dispatchState: "dispatching", workflowRegistrationBranch: "main" },
+  };
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.projects = { findOne: async () => project };
+  service.users = { findOne: async () => user };
+  service.githubApp = { tokenForRepository: async () => ({ token: "fixture-token" }) };
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  service.actions = {
+    findWorkflowRunForOperation: async (_repository: string, branch: string, operationId: string) => {
+      assert.equal(branch, "main"); assert.equal(operationId, operation.id); return "987654321";
+    },
+    getWorkflowRun: async () => ({ status: "in_progress", conclusion: null }),
+    getWorkflowStages: async () => [],
+  };
+  await service.reconcile(operation);
+  assert.equal(operation.githubWorkflowRunId, "987654321", "a persisted dispatch intent recovers the exact operation-named GitHub run");
+  assert.equal(operation.status, PipelineRunStatus.RUNNING);
+  assert.equal(operation.metadata.dispatchIdentityRecovered, true);
+  assert.ok(saved.some((row) => row.githubWorkflowRunId === "987654321"), "recovered remote identity becomes authoritative local state");
+}
+
+async function verifyAcceptedDispatchPersistenceSplit() {
+  const operation: any = { id: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd", status: PipelineRunStatus.QUEUED, currentStage: "workflow_dispatch", metadata: { dispatchState: "dispatching" } };
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.runs = { save: async () => { throw new Error("transient database write failure"); } };
+  const persisted = await service.persistAcceptedWorkflowDispatch(operation, { workflowRunId: "24680", workflowRunUrl: "https://github.example/runs/24680" });
+  assert.equal(persisted, false);
+  assert.equal(operation.githubWorkflowRunId, "24680", "the accepted remote identity remains attached in memory when its first local save fails");
+  assert.equal(operation.currentStage, "workflow_dispatch");
+  assert.equal(operation.metadata.dispatchState, "dispatching", "the durable pre-dispatch intent remains eligible for exact run-name recovery");
+}
+
+async function verifyAmbiguousDispatchRemainsRecoverable() {
+  const operation: any = {
+    id: "dededede-dede-4ede-8ede-dededededede",
+    status: PipelineRunStatus.RUNNING,
+    currentStage: "workflow_dispatch",
+    githubWorkflowRunId: null,
+    metadata: { dispatchState: "dispatching" },
+  };
+  const saved: any[] = [];
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; } };
+  await service.preserveAmbiguousWorkflowDispatch(
+    operation,
+    new GithubActionsDispatchError("workflow_run_identity_missing", "accepted without identity", null, true),
+  );
+  assert.equal(operation.status, PipelineRunStatus.QUEUED, "an ambiguous accepted dispatch must remain active instead of becoming retryable");
+  assert.equal(operation.currentStage, "workflow_dispatch");
+  assert.equal(operation.githubWorkflowStatus, "dispatching");
+  assert.equal(operation.metadata.dispatchIdentityRecoveryPending, true);
+  assert.equal(saved.at(-1)?.metadata.dispatchState, "dispatching");
+}
+
+function verifyRuntimeSecretFailureAuthority() {
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  const failure = service.dispatchFailure(new RuntimeSecretMaterializationError(), "runtime_secret_materialization");
+  assert.equal(failure.stage, "runtime_secret_materialization");
+  assert.equal(failure.ownership.failureOwner, "EXTERNAL_PROVIDER");
+  assert.equal(failure.ownership.externalProvider, "aws");
+  assert.equal(failure.ownership.failureCode, "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED");
+}
+
 void (async () => {
   await verifyAtomicAdmissionAndImmutableConfiguration();
   await verifyActiveOperationUniquenessConflictReturnsCanonicalNoOp();
   const failed = await verifyPreDispatchFailure();
+  await verifyUnsupportedDeploymentContractBlocksBeforeWorkflowOrAws();
   verifyCapabilityFailureIsBoundedAndPreDispatch();
   await verifyPerActionCapabilitySimulation();
   await verifyReleaseArtifactEvidenceReconciliation();
@@ -926,6 +1052,10 @@ void (async () => {
   await verifyCurrentStateProjection(terminalFailure, true);
   await verifyCurrentStateReconcilesWithoutPipeline();
   await verifyConcurrentStateReadsShareReconciliation();
+  await verifyDispatchIdentityRecovery();
+  await verifyAcceptedDispatchPersistenceSplit();
+  await verifyAmbiguousDispatchRemainsRecoverable();
+  verifyRuntimeSecretFailureAuthority();
   const root = join(__dirname, "..", "..");
   const phases = readFileSync(join(root, "frontend", "src", "utils", "developerDeploymentPresentation.js"), "utf8");
   const routes = readFileSync(join(root, "frontend", "src", "routes", "AppRoutes.jsx"), "utf8");
@@ -949,7 +1079,7 @@ void (async () => {
   assert.match(workflow, /name: Install Terraform[\s\S]*?if: success\(\)/);
   assert.match(workflow, /name: Materialize release runtime[\s\S]*?steps\.image\.outputs\.published == 'true'/);
   assert.match(workflow, /name: Publish verified release result[\s\S]*?if: success\(\) && hashFiles/);
-  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" --name/);
+  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name/);
   assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
   assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
   assert.match(overviewPage, /getProjectCurrentState/);

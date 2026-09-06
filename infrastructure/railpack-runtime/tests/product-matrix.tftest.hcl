@@ -9,6 +9,7 @@ variables {
   region            = "us-east-1"
   project_id        = "11111111-1111-4111-8111-111111111111"
   operation_id      = "22222222-2222-4222-8222-222222222222"
+  environment_name  = "dev"
   vpc_id            = "vpc-0123456789abcdef0"
   public_subnet_ids = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
 }
@@ -41,6 +42,10 @@ run "one_service_without_database_or_secrets" {
   assert {
     condition     = length(aws_iam_role_policy.runtime_secrets) == 0
     error_message = "No runtime-secret IAM policy is allowed when no secret exists."
+  }
+  assert {
+    condition     = aws_ecs_service.application["33333333-3333-4333-8333-333333333333"].desired_count == 1
+    error_message = "A service without a managed database must start independently at its intended desired count."
   }
   assert {
     condition     = length(output.services) == 1 && output.database_efs_file_system_id == null && output.database_efs_access_point_id == null
@@ -98,6 +103,8 @@ run "two_services_with_generic_runtime_secret" {
       output.services["55555555-5555-4555-8555-555555555555"].service_port == 8000 &&
       aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].port == 3000 &&
       aws_lb_target_group.application["55555555-5555-4555-8555-555555555555"].port == 8000 &&
+      aws_lb_target_group.application["33333333-3333-4333-8333-333333333333"].name == "dg-111111111111-33333333-3000" &&
+      aws_lb_target_group.application["55555555-5555-4555-8555-555555555555"].name == "dg-111111111111-55555555-8000" &&
       jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[0].portMappings[0].containerPort == 3000 &&
       jsondecode(aws_ecs_task_definition.application["55555555-5555-4555-8555-555555555555"].container_definitions)[0].portMappings[0].containerPort == 8000 &&
       jsondecode(aws_ecs_task_definition.application["33333333-3333-4333-8333-333333333333"].container_definitions)[1].environment[0].value == "3000" &&
@@ -128,6 +135,10 @@ run "postgres_database_attached_to_service_a" {
     }
   }
   assert {
+    condition     = aws_ecs_service.database[0].deployment_minimum_healthy_percent == 0 && aws_ecs_service.database[0].deployment_maximum_percent == 100
+    error_message = "A singleton managed database must stop its prior task before replacement to prevent concurrent access to persistent storage."
+  }
+  assert {
     condition     = length(aws_ecs_service.database) == 1 && length(aws_efs_file_system.database) == 1 && length(aws_efs_access_point.database) == 1 && length(aws_service_discovery_private_dns_namespace.database) == 1
     error_message = "Managed PostgreSQL must be an independent persistent runtime with Cloud Map identity."
   }
@@ -138,6 +149,13 @@ run "postgres_database_attached_to_service_a" {
   assert {
     condition     = nonsensitive(output.database).attached_service_id == "33333333-3333-4333-8333-333333333333" && nonsensitive(output.database).engine == "postgres" && nonsensitive(output.database).port == 5432
     error_message = "Database evidence must preserve attachment ownership and PostgreSQL identity."
+  }
+  assert {
+    condition = (
+      aws_ecs_service.application["33333333-3333-4333-8333-333333333333"].desired_count == 0 &&
+      aws_ecs_service.application["55555555-5555-4555-8555-555555555555"].desired_count == 1
+    )
+    error_message = "Only the PostgreSQL-attached application may wait at zero while unrelated services start independently."
   }
 }
 
@@ -157,7 +175,7 @@ run "mysql_database_attached_to_service_b" {
         runtime_config_revision_id = "66666666-6666-4666-8666-666666666666"
         service_port               = 8080
         environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
-        database_attached          = true, managed_database_aliases = ["MYSQL_URL", "MYSQL_HOST", "MYSQL_PORT"], managed_database_engine = "mysql"
+        database_attached          = true, managed_database_aliases = ["DB_HOST", "DATABASE_HOST", "MYSQL_HOST", "DB_PORT", "DATABASE_PORT", "MYSQL_PORT", "DB_USER", "DATABASE_USER", "MYSQL_USER", "DB_PASSWORD", "DATABASE_PASSWORD", "MYSQL_PASSWORD", "DB_NAME", "DATABASE_NAME", "MYSQL_DATABASE", "DATABASE_URL", "MYSQL_URL"], managed_database_engine = "mysql"
       }
     }
   }
@@ -169,6 +187,48 @@ run "mysql_database_attached_to_service_b" {
     condition     = length(aws_ecs_task_definition.application) == 2 && length(aws_ecs_task_definition.database) == 1
     error_message = "The database must remain independent from both application task definitions."
   }
+  assert {
+    condition = (
+      strcontains(join("\n", local.mysql_database_command), "[ ! -d /var/lib/mysql/mysql ]") &&
+      strcontains(join("\n", local.mysql_database_command), "ALTER USER 'root'@'localhost'") &&
+      strcontains(join("\n", local.mysql_database_command), "CREATE DATABASE IF NOT EXISTS application;") &&
+      strcontains(join("\n", local.mysql_database_command), "GRANT ALL PRIVILEGES ON application.* TO 'deployguard'@'%';") &&
+      !strcontains(join("\n", local.mysql_database_command), "`") &&
+      !strcontains(join("\n", local.mysql_grant_reconciler_command), "`") &&
+      strcontains(join("\n", local.mysql_database_command), "--init-file=\"$bootstrap\"")
+    )
+    error_message = "Managed MySQL must recover persisted administrative credentials without replacing fresh-volume initialization."
+  }
+  assert {
+    condition = (
+      aws_ecs_service.application["33333333-3333-4333-8333-333333333333"].desired_count == 1 &&
+      aws_ecs_service.application["55555555-5555-4555-8555-555555555555"].desired_count == 0
+    )
+    error_message = "Only the MySQL-attached application may wait at zero independent of service ordering."
+  }
+  assert {
+    condition = (
+      alltrue([for alias in ["DB_HOST", "DATABASE_HOST", "MYSQL_HOST", "DB_PORT", "DATABASE_PORT", "MYSQL_PORT", "DB_USER", "DATABASE_USER", "MYSQL_USER", "DB_NAME", "DATABASE_NAME", "MYSQL_DATABASE"] : contains(keys(local.database_environment), alias)]) &&
+      alltrue([for alias in ["DB_PASSWORD", "DATABASE_PASSWORD", "MYSQL_PASSWORD", "DATABASE_URL", "MYSQL_URL"] : contains(keys(local.database_secrets), alias)])
+    )
+    error_message = "Every DeployGuard-owned MySQL alias must be prepared for injection into the attached application task definition."
+  }
+}
+
+run "incomplete_mysql_aliases_are_rejected" {
+  command = plan
+  variables {
+    services = {
+      "55555555-5555-4555-8555-555555555555" = {
+        name                       = "Api", image = "registry/api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        runtime_config_revision_id = "66666666-6666-4666-8666-666666666666"
+        service_port               = 8080
+        environment                = { PORT = "8080", HOST = "0.0.0.0" }, secret_references = {}
+        database_attached          = true, managed_database_aliases = ["MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_URL"], managed_database_engine = "mysql"
+      }
+    }
+  }
+  expect_failures = [var.services]
 }
 
 run "rollback_immutable_images_and_config" {

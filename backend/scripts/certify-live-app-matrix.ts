@@ -16,7 +16,6 @@ type MatrixEntry = {
   environmentName?: string;
   serviceName?: string;
   serviceDirectory?: string;
-  servicePort?: number;
   env?: Record<string, EnvironmentValue>;
 };
 
@@ -31,7 +30,7 @@ type Project = {
     id: string;
     name: string;
     serviceDirectory: string;
-    servicePort: number;
+    servicePort: number | null;
   }>;
 };
 
@@ -133,10 +132,8 @@ function validateMatrix(value: unknown): MatrixEntry[] {
     const branch = String(entry.branch || "main").trim();
     const environmentName = String(entry.environmentName || "dev").trim();
     const serviceDirectory = String(entry.serviceDirectory || ".").trim();
-    const servicePort = Number(entry.servicePort || 8080);
     if (!branch) throw new Error(`matrix[${index}].branch is required`);
     if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(environmentName)) throw new Error(`matrix[${index}].environmentName is invalid`);
-    if (!Number.isInteger(servicePort) || servicePort < 1 || servicePort > 65535) throw new Error(`matrix[${index}].servicePort is invalid`);
     if (!serviceDirectory || serviceDirectory.startsWith("/") || serviceDirectory.split("/").includes("..")) throw new Error(`matrix[${index}].serviceDirectory is invalid`);
     if (entry.env && (typeof entry.env !== "object" || Array.isArray(entry.env))) throw new Error(`matrix[${index}].env must be an object`);
     for (const [key, envValue] of Object.entries(entry.env || {})) {
@@ -147,7 +144,7 @@ function validateMatrix(value: unknown): MatrixEntry[] {
     const identity = entry.projectId || `${repository.toLowerCase()}:${branch}:${environmentName}`;
     if (identities.has(identity)) throw new Error(`matrix contains duplicate project identity ${identity}`);
     identities.add(identity);
-    return { ...entry, name: entry.name.trim(), repository, branch, environmentName, serviceDirectory, servicePort };
+    return { ...entry, name: entry.name.trim(), repository, branch, environmentName, serviceDirectory };
   });
 }
 
@@ -233,8 +230,8 @@ function findService(project: Project, entry: MatrixEntry) {
 function validateExistingProject(project: Project, entry: MatrixEntry) {
   const service = findService(project, entry);
   if (!service) throw new Error("existing project has no unambiguous application service");
-  if (service.serviceDirectory !== entry.serviceDirectory || service.servicePort !== entry.servicePort) {
-    throw new Error(`existing service configuration differs from matrix (directory=${service.serviceDirectory}, port=${service.servicePort})`);
+  if (service.serviceDirectory !== entry.serviceDirectory) {
+    throw new Error(`existing service configuration differs from matrix (directory=${service.serviceDirectory})`);
   }
   return service;
 }
@@ -260,7 +257,7 @@ async function prepareApps(entries: MatrixEntry[], api: ApiClient): Promise<Arra
           repositoryFullName: entry.repository,
           targetBranch: entry.branch,
           environmentName: entry.environmentName,
-          services: [{ id: serviceId, name: entry.serviceName || entry.name, serviceDirectory: entry.serviceDirectory, servicePort: entry.servicePort }],
+          services: [{ id: serviceId, name: entry.serviceName || entry.name, serviceDirectory: entry.serviceDirectory }],
           applicationEntryPointServiceId: serviceId,
         });
         project = created.project;

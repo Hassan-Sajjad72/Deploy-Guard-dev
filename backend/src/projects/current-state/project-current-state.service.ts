@@ -21,9 +21,12 @@ import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from 
 import { RailpackDeploymentService } from "../railpack-deployment.service";
 import { LiveRuntimeIdentityRecoveryService } from "./live-runtime-identity-recovery.service";
 import { resolveApplicationEntrypointServiceId, resolveProjectApplicationUrl } from "../application-entrypoint";
+import { failureDiagnosticFromMetadata } from "../failure-diagnostics/failure-diagnostic.types";
 
 function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" | "commitSha">) {
-  return operation.metadata?.executionEngine === "railpack"
+  const diagnostic = failureDiagnosticFromMetadata(operation.metadata);
+  return (!diagnostic || diagnostic.retryDecision === "SAFE_NOW")
+    && operation.metadata?.executionEngine === "railpack"
     && ["deploy", "rollback", "destroy"].includes(String(operation.metadata?.deploymentAction || "deploy"));
 }
 
@@ -300,6 +303,7 @@ export class ProjectCurrentStateService {
       startedAt: (latest.startedAt || latest.createdAt).toISOString(),
       completedAt: latest.completedAt ? latest.completedAt.toISOString() : latest.failedAt ? latest.failedAt.toISOString() : null,
       failureOwner: latest.failureOwner || null,
+      diagnosis: failureDiagnosticFromMetadata(latestMetadata),
       workflowStages: Array.isArray(latestMetadata.workflowStages) ? latestMetadata.workflowStages
         .filter((stage): stage is Record<string, unknown> => Boolean(stage) && typeof stage === "object")
         .map((stage) => ({ key: String(stage.key || ""), status: ["passed", "failed", "running", "skipped"].includes(String(stage.status)) ? String(stage.status) as "passed" | "failed" | "running" | "skipped" : "skipped" })) : [],

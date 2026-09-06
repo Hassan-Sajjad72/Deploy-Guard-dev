@@ -39,6 +39,17 @@ export function latestOverviewOperationType(currentState) {
   return ["deploy", "destroy", "rollback"].includes(type) ? type : "deploy";
 }
 
+export function failureRecoveryCommand(operation, canRetry = false) {
+  const diagnosis = operation?.diagnosis;
+  const retryDecision = diagnosis?.retryDecision;
+  if (canRetry && (!diagnosis || retryDecision === "SAFE_NOW")) return "retry";
+  const operationType = operation?.operationType || operation?.deploymentAction || "deploy";
+  const failureOwner = diagnosis?.failureOwner || operation?.failureOwner;
+  return operationType === "deploy" && retryDecision === "SAFE_AFTER_FIX" && failureOwner === "REPOSITORY_APPLICATION"
+    ? "deploy_fixed"
+    : null;
+}
+
 function deploymentFailureCopy(phase, workflowRunId) {
   if (!workflowRunId) return ["Deployment could not start", "DeployGuard could not create a GitHub Actions run."];
   if (phase === "source") return ["Prepare Source failed", "Deployment stopped before the application build started."];
@@ -87,18 +98,23 @@ export function overviewLifecycleActions(currentState, canManage = false) {
   if (state === "READY") return canManage ? [{ kind: "command", command: "deploy", label: "Deploy" }] : [];
   if (state === "DESTROYED") return canManage ? [{ kind: "command", command: "deploy", label: "Deploy Again" }] : [];
   if (state === "DEPLOYING" || state === "DESTROYING") return [{ kind: "link", target: "pipeline", label: "View progress" }];
-  if (state === "FAILED") return [
-    { kind: "link", target: "pipeline", label: "View Pipeline" },
-    ...(canManage && currentState?.canRetry ? [{
-      kind: "command",
-      command: "retry",
-      label: latestOverviewOperationType(currentState) === "destroy"
-        ? "Retry Failed Destroy"
-        : latestOverviewOperationType(currentState) === "rollback"
-          ? "Retry Failed Rollback"
-          : "Retry Failed Deployment",
-    }] : []),
-  ];
+  if (state === "FAILED") {
+    const recoveryCommand = canManage ? failureRecoveryCommand(currentState?.latestAttempt, currentState?.canRetry) : null;
+    return [
+      { kind: "link", target: "pipeline", label: "View Pipeline" },
+      ...(recoveryCommand ? [{
+        kind: "command",
+        command: recoveryCommand,
+        label: recoveryCommand === "deploy_fixed"
+          ? "Deploy Fixed Commit"
+          : latestOverviewOperationType(currentState) === "destroy"
+            ? "Retry Failed Destroy"
+            : latestOverviewOperationType(currentState) === "rollback"
+              ? "Retry Failed Rollback"
+              : "Retry Failed Deployment",
+      }] : []),
+    ];
+  }
   if (state === "LIVE") return [
     ...(currentState?.stableUrl ? [{ kind: "external", href: currentState.stableUrl, label: "Open Application" }] : []),
     ...(canManage ? [

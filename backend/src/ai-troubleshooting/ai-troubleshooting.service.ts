@@ -15,6 +15,7 @@ import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { presentPipelineStage } from "../projects/pipeline/pipeline-stage-presenter";
 import { deployguardOperationStagePresentation } from "../projects/pipeline/github-actions-stage-presentation";
 import { TROUBLESHOOTING_QUESTIONS, troubleshootingQuestion, TroubleshootingQuestionType } from "./ai-troubleshooting-contract";
+import { failureDiagnosticFromMetadata } from "../projects/failure-diagnostics/failure-diagnostic.types";
 
 export function isAiTroubleshootingEligible(run: Pick<ProjectPipelineRun, "status" | "githubWorkflowRunId" | "metadata">) {
   if (run.status !== PipelineRunStatus.FAILED || typeof run.metadata?.safeLog !== "string" || !run.metadata.safeLog.trim()) return false;
@@ -114,7 +115,7 @@ export class AiTroubleshootingService {
       messages: safeMessages,
       results,
       provider,
-      operation: run ? { id: run.id, action: operationAction, commitSha: run.commitSha, generationId: run.generationId, failedStage, failedStageLabel: deployguardOperationStagePresentation(failedStage, operationAction).label, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage, failureOwner: run.failureOwner || "UNVERIFIED", externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId } : null,
+      operation: run ? { id: run.id, action: operationAction, commitSha: run.commitSha, generationId: run.generationId, failedStage, failedStageLabel: deployguardOperationStagePresentation(failedStage, operationAction).label, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage, failureOwner: run.failureOwner || "UNVERIFIED", externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId, diagnosis: failureDiagnosticFromMetadata(run.metadata) } : null,
       evidence: { context: { ...collected.context, project: project ? { name: project.name, repository: project.repositoryFullName } : null }, groups: collected.groups },
       suggestedQuestions: TROUBLESHOOTING_QUESTIONS,
     };
@@ -148,6 +149,9 @@ export class AiTroubleshootingService {
       externalProvider: run.externalProvider,
       failureCode: run.failureCode,
       failureServiceId: run.failureServiceId,
+      failureDiagnostic: collected.context.failureDiagnostic,
+      rootCauseCode: collected.context.rootCauseCode,
+      retryDecision: collected.context.retryDecision,
       problemType: collected.context.problemType,
       conversation: safeConversation,
     };
@@ -172,7 +176,7 @@ export class AiTroubleshootingService {
     }
     const value = output.value as ReturnType<AiEvidencePreprocessorService["fallback"]>;
     const revision = await this.results.count({ where: { sessionId: session.id } }) + 1;
-    const diagnosticDetails = { likelyResponsibility: value.likelyResponsibility, affectedComponent: value.affectedComponent, completedStages: value.completedStages, recommendedAction: value.recommendedAction, retryRecommendation: value.retryRecommendation, problemType: value.problemType };
+    const diagnosticDetails = { likelyResponsibility: value.likelyResponsibility, rootCauseCode: value.rootCauseCode || collected.context.rootCauseCode || null, affectedComponent: value.affectedComponent, completedStages: value.completedStages, recommendedAction: value.recommendedAction, retryRecommendation: value.retryRecommendation, problemType: value.problemType };
     const result = await this.results.save(this.results.create({ sessionId: session.id, summary: value.summary, rootCause: value.rootCause, technicalDetails: value.technicalDetails, remediationSteps: value.remediationSteps, evidenceReferences: value.evidenceReferences, limitations: value.limitations, confidence: value.confidence, resultMode: output.mode, diagnosticDetails, revision }));
     await this.messages.save(this.messages.create({ sessionId: session.id, role: "assistant", content: this.answer(value, questionType), usageMetadata: { ...(output.usage || {}), ...(questionType ? { questionType } : {}) } }));
     session.status = "completed"; session.provider = output.provider; session.model = output.model; session.providerMode = output.mode; session.initialContext = { ...(session.initialContext || {}), diagnosticContext: context, evidenceSnapshot: collected }; if (output.mode === "live") session.lastError = null;

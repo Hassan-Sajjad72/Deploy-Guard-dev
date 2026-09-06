@@ -6,7 +6,7 @@ const estimates: any[] = [];
 const artifactRequests: Array<{ runId: string; name: string }> = [];
 let artifactsAvailable = true;
 const repository = {
-  findOne: async () => null,
+  findOne: async ({ where }: any) => estimates.find((item) => item.pipelineRunId === where.pipelineRunId) || null,
   find: async () => [...estimates].reverse(),
   create: (value: any) => ({ ...value }),
   save: async (value: any) => {
@@ -71,6 +71,15 @@ async function run() {
   assert.equal(rollbackResult?.metadata?.releaseId, `release-${rollback.id}`);
   assert.deepEqual(rollbackResult?.metadata?.terraformScopes, ["generation", "project_inherited"]);
   assert.equal((rollbackResult?.normalizedBreakdown as any).resources[1].metadata.inheritedFromOperationId, operation.id);
+  const requestsBeforeDirectEcs = artifactRequests.length;
+  const directEcs = {
+    ...operation,
+    id: "55555555-5555-4555-8555-555555555555",
+    generationId: "56555555-5555-4555-8555-555555555555",
+    metadata: { deploymentAction: "deploy", releaseStrategy: "direct_ecs", immutableDispatchInputs: { release_only: "true" } },
+  };
+  assert.equal(await service.capture(directEcs as never, "owner/repository", "token", "dev"), null, "direct ECS releases intentionally have no Terraform cost-plan artifact");
+  assert.equal(artifactRequests.length, requestsBeforeDirectEcs, "direct ECS releases must not request absent Terraform cost artifacts");
   artifactsAvailable = false;
   const unavailable = {
     ...operation,
@@ -82,6 +91,10 @@ async function run() {
   const unavailableResult = await service.capture(unavailable as never, "owner/repository", "token", "dev");
   assert.equal(unavailableResult?.status, CostEstimateStatus.FAILED);
   assert.equal(unavailableResult?.errorMessage, "The immutable generation Terraform cost-plan artifact is unavailable.");
+  assert.equal(unavailableResult?.metadata?.costPlanArtifactUnavailable, true, "a verified artifact without a cost plan is permanently unavailable, not retryable");
+  const requestsBeforeUnavailableRetry = artifactRequests.length;
+  assert.equal(await service.capture(unavailable as never, "owner/repository", "token", "dev"), unavailableResult, "permanently unavailable cost evidence is reused");
+  assert.equal(artifactRequests.length, requestsBeforeUnavailableRetry, "unavailable immutable artifacts must not be repeatedly fetched");
   console.log("GitHub Actions Infracost evidence checks passed: Deploy/Redeploy and Rollback bind exact candidate, operation, generation, release, and preserved project-persistence evidence.");
 }
 run().catch((error) => { console.error(error); process.exitCode = 1; });

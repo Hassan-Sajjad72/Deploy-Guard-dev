@@ -30,6 +30,7 @@ const revisions = serviceIds.map((serviceId, index) => ({
   serviceDirectory: index ? "worker" : "web",
   imageUri: `123456789012.dkr.ecr.us-east-1.amazonaws.com/service-${index}`,
   imageDigest: `sha256:${String(index + 1).repeat(64)}`,
+  runtimeIdentity: { taskDefinitionArn: `arn:aws:ecs:us-east-1:123456789012:task-definition/deployguard-service-${index}:${index + 1}` },
   runtimeConfigRevisionId: configIds[index],
   runtimeConfigRevision: {
     id: configIds[index], projectId, serviceId, isRollbackSafe: true, sealedAt: new Date(),
@@ -57,6 +58,7 @@ void (async () => {
   assertRailpackRuntimeConfiguration(restored);
   const restoredWeb = restored.services.find((item: any) => item.serviceId === serviceIds[0]);
   assert.equal(restoredWeb.rollbackImage, `${revisions[0].imageUri}@${revisions[0].imageDigest}`, "rollback restores image A");
+  assert.equal(restoredWeb.rollbackTaskDefinitionArn, revisions[0].runtimeIdentity.taskDefinitionArn, "rollback restores the exact verified ECS revision from A");
   assert.equal(restoredWeb.environment.RELEASE, "A", "rollback restores config A");
   assert.equal(restoredWeb.secretReferences.TOKEN, immutableRefA, "rollback restores the exact secret version from A");
   assert.doesNotMatch(workflow.match(/Select immutable rollback service images[\s\S]*?Install Terraform/)?.[0] || "", /railpack build/i);

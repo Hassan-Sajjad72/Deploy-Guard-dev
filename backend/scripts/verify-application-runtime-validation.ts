@@ -44,7 +44,7 @@ function executable(path: string, source: string) {
   chmodSync(path, 0o755);
 }
 
-function executeProbe(mode: "success" | "flask_template_not_found" | "timeout" | "exited" | "run_failure" | "workflow_failure") {
+function executeProbe(mode: "success" | "flask_template_not_found" | "port_conflict" | "timeout" | "exited" | "run_failure" | "workflow_failure") {
   const directory = mkdtempSync(join(tmpdir(), "deployguard-runtime-validation-"));
   const trace = join(directory, "trace");
   executable(join(directory, "docker"), `#!/usr/bin/env bash
@@ -55,8 +55,10 @@ case "$1" in
   network) ;;
   run)
     [ "$PROBE_MODE" != run_failure ] || exit 1
+    if [ "$PROBE_MODE" = port_conflict ] && [[ "$*" == *"127.0.0.1:3000:3000"* ]]; then exit 1; fi
     printf 'probe-container\\n'
     ;;
+  port) printf '127.0.0.1:49152\\n' ;;
   inspect)
     if [[ "$*" == *State.Running* ]]; then
       [ "$PROBE_MODE" != exited ] && printf 'true\\n' || printf 'false\\n'
@@ -75,7 +77,7 @@ if [ "$1" = --signal=TERM ]; then
   shift 2
   exec "$@"
 fi
-[ "$PROBE_MODE" = success ] || [ "$PROBE_MODE" = flask_template_not_found ] || [ "$PROBE_MODE" = workflow_failure ]
+[ "$PROBE_MODE" = success ] || [ "$PROBE_MODE" = flask_template_not_found ] || [ "$PROBE_MODE" = port_conflict ] || [ "$PROBE_MODE" = workflow_failure ]
 `);
   executable(join(directory, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
   const downstream = join(directory, "downstream");
@@ -151,7 +153,10 @@ void (async () => {
   assert.match(validationScript, /\.managedDatabase\.aliases\[\]/);
   assert.match(validationScript, /timeout --signal=TERM 45 bash -c/);
   assert.match(validationScript, /while \[ "\$stable" -lt 5 \]/, "readiness must prove a durable process and port");
-  assert.match(validationScript, /\/dev\/tcp\/\\\$1\/\\\$2/);
+  assert.match(validationScript, /\/dev\/tcp\/127\.0\.0\.1\/\\\$1/);
+  assert.match(validationScript, /--publish "127\.0\.0\.1:\$\{service_port\}:\$\{service_port\}"/);
+  assert.match(validationScript, /--publish "127\.0\.0\.1::\$\{service_port\}"/);
+  assert.match(validationScript, /DG_LOCAL_HOST_PORT_ALLOCATION_FAILED/);
   assert.doesNotMatch(validationScript, /\bcurl\b|\bwget\b|https?:\/\//, "pre-publish validation must be TCP-only");
   assert.match(validationScript, /docker logs .*--tail 100[\s\S]*tail -c 12000/);
   assert.match(validationScript, /Application did not listen on PORT=\$service_port within 45 seconds\. Bind to 0\.0\.0\.0 and use the PORT environment variable\./);
@@ -175,6 +180,12 @@ void (async () => {
   assert.equal(templateException.downstream, "ECR\nTerraform\n");
   assert.doesNotMatch(templateException.trace, /docker logs/, "successful TCP validation does not inspect or reinterpret application exceptions");
 
+  const occupiedHostPort = executeProbe("port_conflict");
+  assert.equal(occupiedHostPort.status, 0, "an occupied shared-host port uses an OS-selected temporary host port");
+  assert.match(occupiedHostPort.trace, /127\.0\.0\.1:3000:3000/, "the canonical service port is attempted without mutation");
+  assert.match(occupiedHostPort.trace, /127\.0\.0\.1::3000/, "the retry preserves container port 3000 while requesting a dynamic host port");
+  assert.match(occupiedHostPort.trace, /docker port .* 3000\/tcp/, "the temporary host port is read from Docker only for the current probe");
+
   for (const mode of ["timeout", "exited", "run_failure", "workflow_failure"] as const) {
     const result = executeProbe(mode);
     assert.notEqual(result.status, 0, `${mode} must fail the composed workflow path`);
@@ -185,5 +196,5 @@ void (async () => {
   const timeout = executeProbe("timeout");
   assert.match(timeout.trace, /^tcp --signal=TERM 45 bash -c/m, "the entire wait loop has one hard 45-second deadline");
   await verifyStageProjection();
-  console.log("APPLICATION_RUNTIME_VALIDATION=PASS TCP_ONLY=1 FLASK_TEMPLATE_NOT_FOUND_HTTP_500_DEPLOYABLE=1 TIMEOUT_SECONDS=45 DOWNSTREAM_FAIL_CLOSED=1 CLEANUP_ALL_PATHS=1");
+  console.log("APPLICATION_RUNTIME_VALIDATION=PASS TCP_ONLY=1 FLASK_TEMPLATE_NOT_FOUND_HTTP_500_DEPLOYABLE=1 LOCAL_HOST_CONFLICT_DYNAMIC=1 TIMEOUT_SECONDS=45 DOWNSTREAM_FAIL_CLOSED=1 CLEANUP_ALL_PATHS=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

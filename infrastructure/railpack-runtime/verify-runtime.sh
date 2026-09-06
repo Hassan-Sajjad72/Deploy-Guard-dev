@@ -55,12 +55,14 @@ provider_failure() {
 ecs_diagnostics() {
   local service_id="$1" cluster="$2" service_name="$3" target_group="$4" log_group="$5"
   local stopped_arns tasks service_description target_health logs start_ms diagnostic
+  local -a stopped_task_arns
   echo "DG_FAILURE serviceId=$service_id code=DG_ECS_STABILITY_FAILED stage=ecs_stability" >&2
   append_outcome "$service_id" false DG_ECS_STABILITY_FAILED "ECS service stability or runtime-process verification failed." ecs_stability
   stopped_arns="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status STOPPED --max-results 20 --output json 2>/dev/null || printf '{"taskArns":[]}')"
   tasks='{"tasks":[]}'
   if [ "$(jq '.taskArns | length' <<<"$stopped_arns")" -gt 0 ]; then
-    tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks $(jq -r '.taskArns[]' <<<"$stopped_arns") --output json 2>/dev/null || printf '{"tasks":[]}')"
+    mapfile -t stopped_task_arns < <(jq -r '.taskArns[]' <<<"$stopped_arns")
+    tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "${stopped_task_arns[@]}" --output json 2>/dev/null || printf '{"tasks":[]}')"
   fi
   service_description="$(aws ecs describe-services --cluster "$cluster" --services "$service_name" --output json 2>/dev/null || printf '{"services":[]}')"
   target_health='{"TargetHealthDescriptions":[]}'
@@ -106,6 +108,79 @@ wait_for_target_health() {
   return 1
 }
 
+managed_database_failure() {
+  local service_id="$1" code="$2" summary="$3" diagnostic="$4"
+  echo "DG_FAILURE serviceId=$service_id code=$code stage=managed_database_readiness" >&2
+  append_outcome "$service_id" false "$code" "$summary" managed_database_readiness
+  attach_diagnostics "$service_id" "$diagnostic" || true
+  printf '%s\n' "$diagnostic" | sanitize | sed 's/^/DG_DATABASE_DIAGNOSTICS /' >&2 || true
+  return 1
+}
+
+wait_for_managed_database_readiness() {
+  local service_id="$1" cluster="$2" service_name="$3" task_definition="$4" engine="$5"
+  local max_attempts="${DEPLOYGUARD_DATABASE_READINESS_MAX_ATTEMPTS:-60}"
+  local interval_seconds="${DEPLOYGUARD_DATABASE_READINESS_INTERVAL_SECONDS:-5}"
+  local attempt task_arns tasks last_observation diagnostic
+  [[ "$engine" =~ ^(postgres|mysql|mongodb)$ ]] || configuration_failure "$service_id" "Managed database engine is invalid."
+  [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && [ "$max_attempts" -le 120 ] || configuration_failure "$service_id" "Managed database readiness attempt limit is invalid."
+  [[ "$interval_seconds" =~ ^[0-9]+$ ]] && [ "$interval_seconds" -le 30 ] || configuration_failure "$service_id" "Managed database readiness interval is invalid."
+
+  last_observation='{"tasks":[]}'
+  for ((attempt=1; attempt<=max_attempts; attempt++)); do
+    task_arns="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status RUNNING --output json 2>&1)" || provider_failure "$service_id" "$task_arns"
+    jq -e '.taskArns | type == "array"' <<<"$task_arns" >/dev/null 2>&1 || provider_failure "$service_id" "$task_arns"
+    if [ "$(jq '.taskArns | length' <<<"$task_arns")" -gt 0 ]; then
+      mapfile -t running_task_arns < <(jq -r '.taskArns[]' <<<"$task_arns")
+      tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "${running_task_arns[@]}" --output json 2>&1)" || provider_failure "$service_id" "$tasks"
+      jq -e '.tasks | type == "array"' <<<"$tasks" >/dev/null 2>&1 || provider_failure "$service_id" "$tasks"
+    else
+      tasks='{"tasks":[]}'
+    fi
+
+    last_observation="$(jq -c --arg taskDefinition "$task_definition" '
+      {tasks:[.tasks[]? | select(.taskDefinitionArn == $taskDefinition) | {
+        lastStatus:(.lastStatus // null), healthStatus:(.healthStatus // null), stopCode:(.stopCode // null),
+        databaseContainer:([.containers[]? | select(.name == "database") | {lastStatus:(.lastStatus // null),healthStatus:(.healthStatus // null),exitCode:(.exitCode // null)}] | first // null),
+        mysqlGrantReconciler:([.containers[]? | select(.name == "deployguard-mysql-grant-reconciler") | {lastStatus:(.lastStatus // null),exitCode:(.exitCode // null),reason:(.reason // null)}] | first // null)
+      }]}
+    ' <<<"$tasks")" || configuration_failure "$service_id" "Managed database task evidence is invalid."
+
+    if [ "$engine" = mysql ] && jq -e --arg taskDefinition "$task_definition" '
+      any(.tasks[]?; .taskDefinitionArn == $taskDefinition and any(.containers[]?; .name == "deployguard-mysql-grant-reconciler" and .lastStatus == "STOPPED" and (.exitCode // 1) != 0))
+    ' <<<"$tasks" >/dev/null; then
+      diagnostic="$(jq -cn --argjson observation "$last_observation" '{diagnosticCode:"MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED",observation:$observation}')" || configuration_failure "$service_id" "Managed MySQL grant evidence is invalid."
+      managed_database_failure "$service_id" DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED "Managed MySQL host-grant reconciliation failed." "$diagnostic"
+      return 1
+    fi
+
+    if jq -e --arg taskDefinition "$task_definition" --arg engine "$engine" '
+      any(.tasks[]?;
+        .taskDefinitionArn == $taskDefinition
+        and .lastStatus == "RUNNING"
+        and .healthStatus == "HEALTHY"
+        and any(.containers[]?; .name == "database" and .lastStatus == "RUNNING" and .healthStatus == "HEALTHY")
+        and ($engine != "mysql" or any(.containers[]?; .name == "deployguard-mysql-grant-reconciler" and .lastStatus == "STOPPED" and .exitCode == 0))
+      )
+    ' <<<"$tasks" >/dev/null; then
+      printf 'DG_MANAGED_DATABASE_READY serviceId=%s engine=%s attempts=%s\n' "$service_id" "$engine" "$attempt"
+      return 0
+    fi
+    [ "$attempt" -eq "$max_attempts" ] || sleep "$interval_seconds"
+  done
+
+  diagnostic="$(jq -cn --arg engine "$engine" --argjson attempts "$max_attempts" --argjson observation "$last_observation" '{diagnosticCode:"MANAGED_DATABASE_READINESS_TIMEOUT",engine:$engine,attempts:$attempts,observation:$observation}')" || configuration_failure "$service_id" "Managed database timeout evidence is invalid."
+  managed_database_failure "$service_id" DG_MANAGED_DATABASE_READINESS_FAILED "Managed database did not become ready within the bounded policy." "$diagnostic"
+  return 1
+}
+
+release_database_attached_service() {
+  local service_id="$1" cluster="$2" attached_service="$3" update
+  update="$(aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count 1 --output json 2>&1)" || provider_failure "$service_id" "$update"
+  jq -e --arg service "$attached_service" '.service.serviceName == $service and .service.desiredCount == 1' <<<"$update" >/dev/null || configuration_failure "$service_id" "The attached application service did not accept its intended desired count."
+  printf 'DG_DATABASE_ATTACHED_SERVICE_RELEASED serviceId=%s desiredCount=1\n' "$service_id"
+}
+
 cluster="$(jq -r '.ecs_cluster_name' "$outputs")"
 expected_subnets="$(jq -c 'map(gsub("^\\s+|\\s+$"; "")) | sort' <<<"$(jq -c '.public_subnet_ids // []' "$outputs")")"
 
@@ -113,9 +188,10 @@ database_service="$(jq -r '.database.ecs_service_name // empty' "$outputs")"
 database_id="$(jq -r '.database.attached_service_id // empty' "$outputs")"
 verify_database() {
   database_id="$(jq -r '.database.attached_service_id' "$outputs")"
-  aws ecs wait services-stable --cluster "$cluster" --services "$database_service" || ecs_diagnostics "$database_id" "$cluster" "$database_service" "" "$(jq -r '.database.cloudwatch_log_group_name' "$outputs")"
-  database_description="$(aws ecs describe-services --cluster "$cluster" --services "$database_service" --output json 2>&1)" || provider_failure "$database_id" "$database_description"
   database_task_definition="$(jq -r '.database.task_definition_arn' "$outputs")"
+  database_engine="$(jq -r '.database.engine' "$outputs")"
+  wait_for_managed_database_readiness "$database_id" "$cluster" "$database_service" "$database_task_definition" "$database_engine" || return 1
+  database_description="$(aws ecs describe-services --cluster "$cluster" --services "$database_service" --output json 2>&1)" || provider_failure "$database_id" "$database_description"
   database_task="$(aws ecs list-tasks --cluster "$cluster" --service-name "$database_service" --desired-status RUNNING --output json 2>&1)" || provider_failure "$database_id" "$database_task"
   cloud_map_service="$(jq -r '.database.cloud_map_service_id' "$outputs")"
   cloud_map="$(aws servicediscovery get-service --id "$cloud_map_service" --output json 2>&1)" || provider_failure "$database_id" "$cloud_map"
@@ -133,6 +209,9 @@ verify_database() {
   jq -e --arg vpc "$(jq -r '.vpc_id' "$outputs")" --arg application "$application_sg" --argjson port "$database_port" '
     .SecurityGroups[0].VpcId == $vpc and any(.SecurityGroups[0].IpPermissions[]; .FromPort == $port and .ToPort == $port and any(.UserIdGroupPairs[]; .GroupId == $application))
   ' <<<"$security_group" >/dev/null || configuration_failure "$database_id" "Managed database security group does not admit only its attached application service on the database port."
+  attached_service="$(jq -r --arg id "$database_id" '.services[$id].ecs_service_name // empty' "$outputs")"
+  [ -n "$attached_service" ] || configuration_failure "$database_id" "Managed database attachment does not resolve to an application ECS service."
+  release_database_attached_service "$database_id" "$cluster" "$attached_service"
 }
 
 database_failed=false
@@ -143,6 +222,7 @@ fi
 verify_service() {
   local service="$1" service_id deployed expected service_name target_group log_group service_description task_definition_arn task_definition expected_image expected_port expected_probe_port expected_health_path
   local database expected_environment expected_secrets managed_database application_sg alb_sg security_group target_group_description running tasks target_health expected_targets check
+  local -a running_task_arns
   service_id="$(jq -r '.key' <<<"$service")"; deployed="$(jq -c '.value' <<<"$service")"
   expected="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' "$runtime")"
   service_name="$(jq -r '.ecs_service_name' <<<"$deployed")"; target_group="$(jq -r '.alb_target_group_arn' <<<"$deployed")"; log_group="$(jq -r '.cloudwatch_log_group_name' <<<"$deployed")"
@@ -196,7 +276,8 @@ verify_service() {
   aws ecs wait services-stable --cluster "$cluster" --services "$service_name" || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   running="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status RUNNING --output json 2>&1)" || provider_failure "$service_id" "$running"
   jq -e '.taskArns | length > 0' <<<"$running" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
-  tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks $(jq -r '.taskArns[]' <<<"$running") --output json 2>&1)" || provider_failure "$service_id" "$tasks"
+  mapfile -t running_task_arns < <(jq -r '.taskArns[]' <<<"$running")
+  tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "${running_task_arns[@]}" --output json 2>&1)" || provider_failure "$service_id" "$tasks"
   jq -e --arg task "$task_definition_arn" 'all(.tasks[]; .lastStatus == "RUNNING" and .taskDefinitionArn == $task and any(.containers[]; .name == "application" and .lastStatus == "RUNNING"))' <<<"$tasks" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   expected_targets="$(jq -c '[.tasks[]?.attachments[]?.details[]? | select(.name == "privateIPv4Address") | .value] | sort | unique' <<<"$tasks")"
   jq -e 'length > 0' <<<"$expected_targets" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"

@@ -5,7 +5,6 @@
     "branch": "main",
     "environmentName": "dev",
     "serviceDirectory": ".",
-    "servicePort": 3000,
     "env": {
       "NODE_ENV": "production"
     }

@@ -1,4 +1,5 @@
 import type { FailureOwner } from "../failure-ownership";
+import type { DeploymentFailureDiagnostic } from "../failure-diagnostics/failure-diagnostic.types";
 
 export type CurrentStateStatus =
   | "not_started"
@@ -212,6 +213,7 @@ export type DeveloperProjectCurrentState = {
     startedAt?: string | null;
     completedAt?: string | null;
     failureOwner?: FailureOwner | null;
+    diagnosis?: DeploymentFailureDiagnostic | null;
     workflowStages?: Array<{ key: string; status: "passed" | "failed" | "running" | "skipped" }>;
   } | null;
   stableRelease: {

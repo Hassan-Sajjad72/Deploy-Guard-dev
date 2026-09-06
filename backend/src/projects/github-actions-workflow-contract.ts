@@ -8,18 +8,21 @@ import {
 export const AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION = "deployguard.aws-runtime-verification/v1";
 export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   releaseResultProducer: "infrastructure/railpack-runtime/build-release-result.sh",
+  releaseOnlyTaskDefinitions: "infrastructure/railpack-runtime/register-release-task-definitions.sh",
   runtimeVerifier: "infrastructure/railpack-runtime/verify-runtime.sh",
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "ccbc2e381879b6b7672876f5c0c7ceed36de473068d95feb3abd619c2f5bf9bf",
+  workflow: "d0f028095d6d28193a878d9f50593fe7f45c9303341eb190509689a974de5aff",
   releaseResultProducer: "cbda8bb60b9bd08ae8c305ce0a036ec5ffab960476aabe0b8e9caaa63cf31b80",
-  runtimeVerifier: "eb202a5f60d4ab79b6a8e0415fdeb7d3aa5e6de3df8c543334eeb03c3ce3b76e",
-  runtimeInfrastructure: "bc4febc3f1a32a07ba259398ea8ef3aa22f3726d7d4bd052e2cc10b7d3686daa",
+  releaseOnlyTaskDefinitions: "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
+  runtimeVerifier: "b9f0e6c1e0be1acdf73ab0f78468dcbcab8ffe54be5f6d99b92149960c88f35a",
+  runtimeInfrastructure: "bf85cd5bd65fe0be133837b054c95728bf720bb63ffb6da4aa3d1466d7ec79df",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {
   releaseResultProducer: string;
+  releaseOnlyTaskDefinitions: string;
   runtimeVerifier: string;
   runtimeInfrastructure: string;
 };
@@ -71,7 +74,9 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !workflow.includes("terraform/deployguard-failure-evidence.json")
     || !workflow.includes("if: failure() && steps.runtime.outcome == 'failure'")
     || !workflow.includes("service_port:.servicePort")
-    || !workflow.includes('--env PORT="$service_port"')) {
+    || !workflow.includes('--env PORT="$service_port"')
+    || !workflow.includes("DG_TERRAFORM_PLAN_FAILED stage=terraform_plan")
+    || !workflow.includes("DG_TERRAFORM_APPLY_FAILED stage=terraform_apply")) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not hand verified AWS runtime evidence to the terminal release artifact.`);
   }
   if (!executable.releaseResultProducer.includes("awsRuntimeVerification:$awsRuntimeVerification")
@@ -80,18 +85,34 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.releaseResultProducer.includes("DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation")) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the required terminal evidence producer.`);
   }
+  if (!workflow.includes("register-release-task-definitions.sh")
+    || !workflow.includes('if [ "$RELEASE_ONLY" = true ]; then')
+    || !executable.releaseOnlyTaskDefinitions.includes("aws ecs register-task-definition")
+    || !executable.releaseOnlyTaskDefinitions.includes("aws ecs update-service")
+    || !executable.releaseOnlyTaskDefinitions.includes("rollback_requires_immutable_task_definition")
+    || !executable.releaseOnlyTaskDefinitions.includes("rollback_task_definition_identity_mismatch")
+    || !workflow.includes("release_only_requires_deploy_or_rollback")
+    || !executable.releaseOnlyTaskDefinitions.includes("active_task_definition_topology_mismatch")
+    || !executable.releaseOnlyTaskDefinitions.includes("service_port_changed_requires_terraform")) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the direct ECS release-only boundary.`);
+  }
   if (!executable.runtimeVerifier.includes(`--arg contractVersion ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}`)
     || !executable.runtimeVerifier.includes("expected_port=\"$(jq -r '.servicePort' <<<\"$expected\")\"")
     || !executable.runtimeVerifier.includes('or .state == "draining"')
     || !executable.runtimeVerifier.includes("failureMarker:")
+    || !executable.runtimeVerifier.includes("wait_for_managed_database_readiness")
+    || !executable.runtimeVerifier.includes('aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count 1')
     || (!executable.runtimeVerifier.includes("awsRuntimeVerification") && !executable.runtimeVerifier.includes("services:$services"))) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}.`);
   }
   if (!executable.runtimeInfrastructure.includes('platform_health_check_path = "/_deployguard/transport-ready"')
     || !executable.runtimeInfrastructure.includes('name         = "deployguard-transport-probe"')
     || !executable.runtimeInfrastructure.includes('nc -z -w 1 127.0.0.1')
-    || !executable.runtimeInfrastructure.includes('port    = tostring(local.transport_probe_ports[each.key])')) {
-    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement platform-owned transport readiness.`);
+    || !executable.runtimeInfrastructure.includes('port    = tostring(local.transport_probe_ports[each.key])')
+    || !executable.runtimeInfrastructure.includes('desired_count   = each.value.database_attached ? 0 : 1')
+    || !executable.runtimeInfrastructure.includes('ignore_changes = [desired_count, task_definition]')
+    || executable.runtimeInfrastructure.includes('terraform_data.database_readiness')) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement platform-owned transport and managed-database release readiness.`);
   }
   const declared = reusableWorkflowInputDeclarations(workflow);
   const byName = new Map(declared.map((input) => [input.name, input]));
@@ -115,6 +136,7 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
   const executableHashes = {
     workflow: sha256(workflow),
     releaseResultProducer: sha256(executable.releaseResultProducer),
+    releaseOnlyTaskDefinitions: sha256(executable.releaseOnlyTaskDefinitions),
     runtimeVerifier: sha256(executable.runtimeVerifier),
     runtimeInfrastructure: sha256(executable.runtimeInfrastructure),
   };

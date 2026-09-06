@@ -39,7 +39,7 @@ export function renderDeployguardCallerWorkflow(reusable: string) {
   const forwarded = RAILPACK_WORKFLOW_INPUTS.map(({ name }) => {
     return `      ${name}: \${{ inputs.${name} }}`;
   }).join("\n");
-  return `name: DeployGuard\non:\n  workflow_dispatch:\n    inputs:\n${inputDefinitions}\npermissions:\n  contents: read\n  id-token: write\njobs:\n  deploy:\n    uses: ${reusable}\n    with:\n${forwarded}\n`;
+  return `name: DeployGuard\nrun-name: DeployGuard \${{ inputs.deployment_operation_id }}\non:\n  workflow_dispatch:\n    inputs:\n${inputDefinitions}\npermissions:\n  contents: read\n  id-token: write\njobs:\n  deploy:\n    uses: ${reusable}\n    with:\n${forwarded}\n`;
 }
 
 @Injectable()
@@ -220,9 +220,10 @@ export class GithubAppService {
       };
       const workflow = await readAtPinnedSha(pinned.path);
       const releaseResultProducer = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.releaseResultProducer);
+      const releaseOnlyTaskDefinitions = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.releaseOnlyTaskDefinitions);
       const runtimeVerifier = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.runtimeVerifier);
       const runtimeInfrastructure = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.runtimeInfrastructure);
-      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, runtimeVerifier, runtimeInfrastructure });
+      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier, runtimeInfrastructure });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
       const message = error instanceof GithubActionsWorkflowContractError

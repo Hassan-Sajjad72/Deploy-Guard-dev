@@ -1,7 +1,9 @@
 import { createHash } from "crypto";
+import { aliasesFor } from "./configuration-ownership";
 import { normalizeServiceDirectory } from "./deployable-service-path";
+import { CanonicalBuildTarget } from "./build-target";
 
-export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v4";
+export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v5";
 export const RAILPACK_RESULT_CONTRACT_VERSION = "deployguard.release-result/v5";
 export const DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH = "/_deployguard/transport-ready";
 export const RAILPACK_WORKFLOW_INPUTS = [
@@ -14,13 +16,14 @@ export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "public_subnet_ids", required: true, type: "string" }, { name: "terraform_state_bucket", required: true, type: "string" },
   { name: "control_plane_sha", required: true, type: "string" },
   { name: "result_contract_version", required: true, type: "string" },
+  { name: "release_only", required: true, type: "string" },
 ] as const;
 export type RailpackWorkflowInputName = typeof RAILPACK_WORKFLOW_INPUTS[number]["name"];
 export type RailpackWorkflowInputs = Record<RailpackWorkflowInputName, string>;
 export const RAILPACK_CALLER_INPUT_NAMES = RAILPACK_WORKFLOW_INPUTS.map(({ name }) => name);
 export const RAILPACK_OPTIONAL_CALLER_INPUT_NAMES = [] as const;
 
-export type RailpackServiceRuntimeConfiguration = { serviceId: string; serviceName: string; serviceDirectory: string; servicePort: number; runtimeConfigRevisionId: string; buildEnvironment: Record<string, string>; buildSecretReferences: Record<string, string>; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null }; rollbackImage?: string };
+export type RailpackServiceRuntimeConfiguration = { serviceId: string; serviceName: string; serviceDirectory: string; servicePort: number; runtimeConfigRevisionId: string; buildTargetRevisionId?: string; buildTarget?: CanonicalBuildTarget; buildEnvironment: Record<string, string>; buildSecretReferences: Record<string, string>; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null }; rollbackImage?: string; rollbackTaskDefinitionArn?: string };
 export type RailpackRuntimeConfiguration = { schemaVersion: 3; projectId: string; environmentName: string; operationId: string; sourceSha: string; services: RailpackServiceRuntimeConfiguration[]; projectDeletion?: { generationIds: string[] } };
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -30,6 +33,8 @@ const KEY = /^[A-Z][A-Z0-9_]{0,127}$/;
 const SECRET_VALUE_FROM = /^arn:(?:aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+:[A-Z][A-Z0-9_]{0,127}::[0-9a-f]{64}$/;
 const SECRETS_MANAGER_VERSION_ID = /^[A-Za-z0-9-]{32,64}$/;
 const IMMUTABLE_IMAGE = /^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*@sha256:[0-9a-f]{64}$/i;
+const TASK_DEFINITION_ARN = /^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition\/[A-Za-z0-9_-]+:\d+$/;
+const MANAGED_MYSQL_RUNTIME_ALIASES = (["host", "port", "username", "password", "database", "url"] as const).flatMap((property) => aliasesFor("mysql", property)).sort();
 
 export function immutableRailpackServiceImageTag(commitSha: string, operationId: string, serviceId: string) {
   if (!SHA.test(commitSha) || !UUID.test(operationId) || !UUID.test(serviceId)) throw new Error("Railpack service release identity is invalid.");
@@ -47,6 +52,28 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     ids.add(service.serviceId); names.add(loweredName);
     if (!Number.isInteger(service.servicePort) || service.servicePort < 1 || service.servicePort > 65535) throw new Error("Railpack service port is invalid.");
     if (normalizeServiceDirectory(service.serviceDirectory) !== service.serviceDirectory) throw new Error("Railpack service directory is not canonical.");
+    if (service.buildTargetRevisionId && !UUID.test(service.buildTargetRevisionId)) throw new Error("Railpack build target is invalid.");
+    if (service.buildTarget) {
+      const target = service.buildTarget;
+      const execution = target.execution;
+      const expectedWorkspaceCommands = execution?.packageManager === "pnpm" ? { build: `pnpm --filter ${target.packageIdentity} run build`, start: `pnpm --filter ${target.packageIdentity} run start` }
+        : execution?.packageManager === "yarn" ? { build: `yarn workspace ${target.packageIdentity} run build`, start: `yarn workspace ${target.packageIdentity} run start` }
+          : execution?.packageManager === "bun" ? { build: `bun --filter ${target.packageIdentity} run build`, start: `bun --filter ${target.packageIdentity} run start` }
+            : execution?.packageManager === "npm" ? { build: `npm --workspace ${target.packageIdentity} run build`, start: `npm --workspace ${target.packageIdentity} run start` }
+              : null;
+      const workspaceExecution = target.contract === "JS_WORKSPACE_MEMBER"
+        && execution?.packageTarget === target.packageIdentity
+        && ["npm", "pnpm", "yarn", "bun"].includes(execution?.packageManager || "")
+        && execution?.buildCommand === expectedWorkspaceCommands?.build
+        // A null start command is an immutable, resolver-authorized static
+        // application fact.  Railpack must retain its native static behavior.
+        && (execution?.startCommand === expectedWorkspaceCommands?.start || execution?.startCommand === null);
+      const standaloneExecution = target.contract === "JS_STANDALONE"
+        && execution?.packageTarget === null && ["npm", "pnpm", "yarn", "bun"].includes(execution?.packageManager || "") && execution?.buildCommand === null && execution?.startCommand === null;
+      const pythonStandaloneExecution = target.contract === "PYTHON_STANDALONE"
+        && execution?.packageTarget === null && execution?.packageManager === null && execution?.buildCommand === null && execution?.startCommand === null;
+      if (target.resolverVersion !== "deployguard.build-target/v2" || target.status !== "resolved" || target.serviceDirectory !== service.serviceDirectory || !/^[0-9a-f]{64}$/.test(target.fingerprint) || (!workspaceExecution && !standaloneExecution && !pythonStandaloneExecution)) throw new Error("Railpack build target is invalid.");
+    }
     if (!service.buildEnvironment || typeof service.buildEnvironment !== "object" || Array.isArray(service.buildEnvironment) || !service.buildSecretReferences || typeof service.buildSecretReferences !== "object" || Array.isArray(service.buildSecretReferences) || !service.environment || typeof service.environment !== "object" || Array.isArray(service.environment) || !service.secretReferences || typeof service.secretReferences !== "object" || Array.isArray(service.secretReferences)) throw new Error("Railpack build/runtime references are invalid.");
     for (const [key, item] of Object.entries(service.buildEnvironment)) if (!KEY.test(key) || typeof item !== "string" || ["PORT", "HOST"].includes(key) || (service.databaseAttached && service.managedDatabase.aliases.includes(key))) throw new Error("Railpack build environment is invalid.");
     for (const [key, reference] of Object.entries(service.buildSecretReferences)) if (!KEY.test(key) || !SECRET_VALUE_FROM.test(reference) || ["PORT", "HOST"].includes(key) || (service.databaseAttached && service.managedDatabase.aliases.includes(key))) throw new Error("Railpack build secret reference is invalid.");
@@ -57,8 +84,10 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     if (service.managedDatabase.secretVersionId != null && !SECRETS_MANAGER_VERSION_ID.test(service.managedDatabase.secretVersionId)) throw new Error("Railpack managed database secret-version identity is invalid.");
     if (service.databaseAttached) databaseAttachments += 1;
     if (service.databaseAttached && (!service.managedDatabase.engine || !service.managedDatabase.aliases.length)) throw new Error("Attached managed database configuration is incomplete.");
+    if (service.databaseAttached && service.managedDatabase.engine === "mysql" && (service.managedDatabase.aliases.length !== MANAGED_MYSQL_RUNTIME_ALIASES.length || [...new Set(service.managedDatabase.aliases)].sort().join("\0") !== MANAGED_MYSQL_RUNTIME_ALIASES.join("\0"))) throw new Error("Managed MySQL runtime aliases are incomplete.");
     if (!service.databaseAttached && (service.managedDatabase.engine !== null || service.managedDatabase.aliases.length)) throw new Error("Database configuration may only be present on its attached service.");
     if (service.rollbackImage && !IMMUTABLE_IMAGE.test(service.rollbackImage)) throw new Error("Railpack rollback service image is invalid.");
+    if (service.rollbackTaskDefinitionArn && !TASK_DEFINITION_ARN.test(service.rollbackTaskDefinitionArn)) throw new Error("Railpack rollback task definition is invalid.");
   }
   if (databaseAttachments > 1) throw new Error("Managed database may be attached to only one service.");
   if (value.projectDeletion && (!Array.isArray(value.projectDeletion.generationIds) || !value.projectDeletion.generationIds.length || value.projectDeletion.generationIds.some((id) => !UUID.test(id)) || new Set(value.projectDeletion.generationIds).size !== value.projectDeletion.generationIds.length)) throw new Error("Railpack destroy generation identity is invalid.");

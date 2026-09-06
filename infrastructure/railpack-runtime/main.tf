@@ -14,16 +14,48 @@ terraform {
 provider "aws" { region = var.region }
 
 locals {
-  project_name               = "dg-${substr(replace(var.project_id, "-", ""), 0, 12)}"
-  database_services          = { for id, service in var.services : id => service if service.database_attached }
-  database_enabled           = length(local.database_services) == 1
-  database_service_id        = local.database_enabled ? keys(local.database_services)[0] : null
-  database_service           = local.database_enabled ? values(local.database_services)[0] : null
-  database_engine            = local.database_enabled ? local.database_service.managed_database_engine : "postgres"
-  database_aliases           = local.database_enabled ? local.database_service.managed_database_aliases : []
-  database_port              = local.database_engine == "mysql" ? 3306 : local.database_engine == "mongodb" ? 27017 : 5432
-  database_image             = local.database_engine == "mysql" ? "mysql:8" : local.database_engine == "mongodb" ? "mongo:8" : "postgres:16"
-  database_path              = local.database_engine == "mysql" ? "/var/lib/mysql" : local.database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
+  project_name                = "dg-${substr(replace(var.project_id, "-", ""), 0, 12)}"
+  database_services           = { for id, service in var.services : id => service if service.database_attached }
+  database_enabled            = length(local.database_services) == 1
+  database_service_id         = local.database_enabled ? keys(local.database_services)[0] : null
+  database_service            = local.database_enabled ? values(local.database_services)[0] : null
+  database_engine             = local.database_enabled ? local.database_service.managed_database_engine : "postgres"
+  database_aliases            = local.database_enabled ? local.database_service.managed_database_aliases : []
+  database_port               = local.database_engine == "mysql" ? 3306 : local.database_engine == "mongodb" ? 27017 : 5432
+  database_image              = local.database_engine == "mysql" ? "mysql:8" : local.database_engine == "mongodb" ? "mongo:8" : "postgres:16"
+  database_path               = local.database_engine == "mysql" ? "/var/lib/mysql" : local.database_engine == "mongodb" ? "/data/db" : "/var/lib/postgresql/data"
+  database_health_check       = local.database_engine == "mysql" ? ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u\"$MYSQL_USER\" -p\"$MYSQL_PASSWORD\" --silent"] : local.database_engine == "mongodb" ? ["CMD-SHELL", "mongosh --quiet --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 })' >/dev/null"] : ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+  mysql_grant_reconciler_name = "deployguard-mysql-grant-reconciler"
+  mysql_database_command = ["sh", "-ec", <<-EOT
+    set -eu
+    if [ ! -d /var/lib/mysql/mysql ]; then
+      exec docker-entrypoint.sh mysqld
+    fi
+    bootstrap=/tmp/deployguard-mysql-bootstrap.sql
+    umask 077
+    printf '%s\n' \
+      "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';" \
+      "CREATE DATABASE IF NOT EXISTS application;" \
+      "CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD';" \
+      "ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD';" \
+      "GRANT ALL PRIVILEGES ON application.* TO 'deployguard'@'%';" \
+      "FLUSH PRIVILEGES;" > "$bootstrap"
+    chown mysql:mysql "$bootstrap"
+    exec docker-entrypoint.sh mysqld --init-file="$bootstrap"
+  EOT
+  ]
+  mysql_grant_reconciler_command = ["sh", "-ec", <<-EOT
+    set -eu
+    ready=false
+    for _ in $(seq 1 90); do
+      if MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -uroot -e "SELECT 1" >/dev/null 2>&1; then ready=true; break; fi
+      sleep 2
+    done
+    [ "$ready" = true ] || exit 1
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -uroot -e "CREATE DATABASE IF NOT EXISTS application; CREATE USER IF NOT EXISTS 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; ALTER USER 'deployguard'@'%' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON application.* TO 'deployguard'@'%'; FLUSH PRIVILEGES;"
+    MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -udeployguard -e "SELECT 1" application
+  EOT
+  ]
   database_host              = local.database_enabled ? "database.${local.project_name}.internal" : ""
   platform_health_check_path = "/_deployguard/transport-ready"
   transport_probe_image      = "public.ecr.aws/docker/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
@@ -38,6 +70,7 @@ locals {
   database_tags = {
     ManagedBy            = "DeployGuard"
     DeployGuardProjectId = var.project_id
+    Environment          = var.environment_name
     DeployGuardResource  = "managed-database"
   }
   runtime_secret_arns = distinct(concat(
@@ -72,7 +105,7 @@ resource "aws_cloudwatch_log_group" "application" {
 }
 resource "aws_cloudwatch_log_group" "database" {
   count             = local.database_enabled ? 1 : 0
-  name              = "/deployguard/${var.project_id}/database"
+  name              = "/deployguard/${var.project_id}/${var.environment_name}/database"
   retention_in_days = 14
   tags              = local.database_tags
 }
@@ -185,7 +218,7 @@ resource "random_password" "database" {
 }
 resource "aws_secretsmanager_secret" "database" {
   count = local.database_enabled ? 1 : 0
-  name  = "deployguard/${var.project_id}/database"
+  name  = "deployguard/${var.project_id}/${var.environment_name}/database"
   tags  = local.database_tags
 }
 resource "aws_secretsmanager_secret_version" "database" {
@@ -240,7 +273,7 @@ resource "aws_lb" "application" {
 }
 resource "aws_lb_target_group" "application" {
   for_each    = var.services
-  name        = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}"
+  name        = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}-${each.value.service_port}"
   port        = each.value.service_port
   protocol    = "HTTP"
   target_type = "ip"
@@ -249,6 +282,9 @@ resource "aws_lb_target_group" "application" {
     path    = local.platform_health_check_path
     port    = tostring(local.transport_probe_ports[each.key])
     matcher = "200-299"
+  }
+  lifecycle {
+    create_before_destroy = true
   }
   tags = merge(local.tags, { DeployGuardServiceId = each.key })
 }
@@ -325,16 +361,35 @@ resource "aws_ecs_task_definition" "database" {
   cpu                      = "512"
   memory                   = "1024"
   execution_role_arn       = aws_iam_role.execution.arn
-  container_definitions = jsonencode([{
-    name             = "database"
-    image            = local.database_image
-    essential        = true
-    portMappings     = [{ containerPort = local.database_port, hostPort = local.database_port, protocol = "tcp" }]
-    mountPoints      = [{ sourceVolume = "database", containerPath = local.database_path, readOnly = false }]
-    environment      = local.database_engine == "mysql" ? [{ name = "MYSQL_DATABASE", value = "application" }, { name = "MYSQL_USER", value = "deployguard" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_DATABASE", value = "application" }, { name = "MONGO_INITDB_ROOT_USERNAME", value = "deployguard" }] : [{ name = "POSTGRES_DB", value = "application" }, { name = "POSTGRES_USER", value = "deployguard" }]
-    secrets          = local.database_engine == "mysql" ? [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : [{ name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }]
+  container_definitions = jsonencode(concat([merge({
+    name         = "database"
+    image        = local.database_image
+    essential    = true
+    portMappings = [{ containerPort = local.database_port, hostPort = local.database_port, protocol = "tcp" }]
+    mountPoints = concat(
+      [{ sourceVolume = "database", containerPath = local.database_path, readOnly = false }],
+      local.database_engine == "mysql" ? [{ sourceVolume = "mysql-runtime", containerPath = "/var/run/mysqld", readOnly = false }] : [],
+    )
+    environment = local.database_engine == "mysql" ? [{ name = "MYSQL_DATABASE", value = "application" }, { name = "MYSQL_USER", value = "deployguard" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_DATABASE", value = "application" }, { name = "MONGO_INITDB_ROOT_USERNAME", value = "deployguard" }] : [{ name = "POSTGRES_DB", value = "application" }, { name = "POSTGRES_USER", value = "deployguard" }]
+    secrets     = local.database_engine == "mysql" ? [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : local.database_engine == "mongodb" ? [{ name = "MONGO_INITDB_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }] : [{ name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }]
+    healthCheck = {
+      command     = local.database_health_check
+      interval    = 5
+      timeout     = 5
+      retries     = 3
+      startPeriod = 30
+    }
     logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.region, awslogs-stream-prefix = "database" } }
-  }])
+    }, local.database_engine == "mysql" ? { command = local.mysql_database_command } : {})], local.database_engine == "mysql" ? [{
+    name             = local.mysql_grant_reconciler_name
+    image            = local.database_image
+    essential        = false
+    dependsOn        = [{ containerName = "database", condition = "HEALTHY" }]
+    command          = local.mysql_grant_reconciler_command
+    mountPoints      = [{ sourceVolume = "mysql-runtime", containerPath = "/var/run/mysqld", readOnly = false }]
+    secrets          = [{ name = "MYSQL_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }, { name = "MYSQL_ROOT_PASSWORD", valueFrom = "${aws_secretsmanager_secret.database[0].arn}:password::${aws_secretsmanager_secret_version.database[0].version_id}" }]
+    logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.database[0].name, awslogs-region = var.region, awslogs-stream-prefix = "mysql-grant-reconciler" } }
+  }] : []))
   volume {
     name = "database"
     efs_volume_configuration {
@@ -343,15 +398,21 @@ resource "aws_ecs_task_definition" "database" {
       authorization_config { access_point_id = aws_efs_access_point.database[0].id }
     }
   }
+  dynamic "volume" {
+    for_each = local.database_engine == "mysql" ? [1] : []
+    content { name = "mysql-runtime" }
+  }
   tags = local.database_tags
 }
 resource "aws_ecs_service" "database" {
-  count           = local.database_enabled ? 1 : 0
-  name            = "${local.project_name}-database"
-  cluster         = aws_ecs_cluster.project.id
-  task_definition = aws_ecs_task_definition.database[0].arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  count                              = local.database_enabled ? 1 : 0
+  name                               = "${local.project_name}-database"
+  cluster                            = aws_ecs_cluster.project.id
+  task_definition                    = aws_ecs_task_definition.database[0].arn
+  desired_count                      = 1
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+  launch_type                        = "FARGATE"
   network_configuration {
     subnets         = var.public_subnet_ids
     security_groups = [aws_security_group.database_runtime[0].id]
@@ -368,7 +429,7 @@ resource "aws_ecs_service" "application" {
   name            = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}"
   cluster         = aws_ecs_cluster.project.id
   task_definition = aws_ecs_task_definition.application[each.key].arn
-  desired_count   = 1
+  desired_count   = each.value.database_attached ? 0 : 1
   launch_type     = "FARGATE"
   network_configuration {
     subnets          = var.public_subnet_ids
@@ -380,6 +441,11 @@ resource "aws_ecs_service" "application" {
     container_name   = "application"
     container_port   = each.value.service_port
   }
-  depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets, aws_ecs_service.database]
+  lifecycle {
+    # Terraform creates and destroys this service, but DeployGuard owns its
+    # post-bootstrap desired count and immutable ECS release revision.
+    ignore_changes = [desired_count, task_definition]
+  }
+  depends_on = [aws_lb_listener.application, aws_iam_role_policy.runtime_secrets]
   tags       = merge(local.tags, { DeployGuardServiceId = each.key })
 }

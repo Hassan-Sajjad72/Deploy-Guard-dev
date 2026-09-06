@@ -58,7 +58,14 @@ export function classifyManagedDatabase(
 ): ManagedDatabaseReconciliation {
   const secretsPresent = evidence.passwordSecretPresent || evidence.urlSecretPresent;
   const statePresent = evidence.terraformDatabaseAddresses.length > 0;
-  const anyMetadata = evidence.expectedStorageIdentity || Boolean(evidence.bindingStatus) || secretsPresent || statePresent;
+  // A tier lifecycle status (notably the initial PENDING status) describes
+  // desired configuration, not durable database persistence. Durable binding
+  // identity is represented by the storage/generation fields above.
+  const anyMetadata = evidence.expectedStorageIdentity
+    || Boolean(evidence.currentFileSystem?.owned)
+    || Boolean(evidence.accessPoint?.owned)
+    || secretsPresent
+    || statePresent;
 
   if (!evidence.managed || !evidence.persistenceEnabled) {
     return anyMetadata
@@ -103,7 +110,7 @@ export function classifyManagedDatabase(
     );
   }
 
-  if (secretsPresent || statePresent || evidence.bindingStatus) {
+  if (secretsPresent || statePresent) {
     return result(
       ManagedDatabaseReconciliationState.STALE_METADATA,
       "Stale managed database state",

@@ -88,6 +88,21 @@ async function run() {
   const unrelatedEngineAlias = await boundary.createEnvVar({ id: 7 }, projectId, { key: "MONGODB_URI", value: "external-mongo" }, undefined, serviceId);
   assert.equal(unrelatedEngineAlias.variable.key, "MONGODB_URI", "managed PostgreSQL owns only the aliases it injects");
 
+  for (const engine of ["postgres", "mysql", "mongodb"] as const) {
+    managedDatabase = { provider: "managed", engine, attachedServiceId: serviceId };
+    const aliases = [...new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service === engine).flatMap((group) => [...group.aliases]))].sort();
+    const savedBefore = saved.length;
+    const imported = await boundary.bulkUpsertEnvVars({ id: 7 }, projectId, { variables: [
+      ...aliases.map((key) => ({ key, value: `must-not-persist-${engine}`, isSecret: /PASSWORD|URL|URI/.test(key) })),
+      { key: "APP_MODE", value: "production", isSecret: false },
+    ] }, undefined, serviceId);
+    assert.deepEqual(imported.ignoredVariableNames, aliases, `${engine} managed aliases are reported ignored by the real bulk service path`);
+    assert.deepEqual(imported.variables.map((item: any) => item.key), ["APP_MODE"], `${engine} bulk import persists only unrelated application ENV`);
+    assert.deepEqual(saved.slice(savedBefore).map((item) => item.key), ["APP_MODE"], `${engine} managed aliases never reach persistence`);
+    assert.doesNotMatch(JSON.stringify(saved.slice(savedBefore)), new RegExp(`must-not-persist-${engine}`), `${engine} managed values never reach encrypted persistence`);
+  }
+  managedDatabase = { provider: "managed", engine: "postgres", attachedServiceId: serviceId };
+
   const custom = await boundary.createEnvVar({ id: 7 }, projectId, { key: "CUSTOM_API_ORIGIN", value: "https://example.test", isSecret: false }, undefined, serviceId);
   assert.equal(custom.variable.key, "CUSTOM_API_ORIGIN", "unrelated service-scoped application ENV remains supported");
   for (const key of ["PORT", "HOST"]) {
@@ -96,7 +111,7 @@ async function run() {
   const canonicalAliases = new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service !== "storage").flatMap((group) => [...group.aliases]));
   assert.equal(canonicalAliases.has("MONGODB_URI"), true);
   assert.equal(canonicalAliases.has("REDIS_URL"), true, "recognized external connection aliases remain ordinary user configuration without provisioning authority");
-  console.log("DATABASE_ENV_OWNERSHIP=PASS EXTERNAL_ENV_ACCEPTED=1 MANAGED_CONFLICT_REJECTED=1 ENGINE_ALIAS_SCOPED=1 SERVICE_SCOPED=1 CUSTOM_ENV=1 PLATFORM_PORT_HOST_UNCHANGED=1");
+  console.log("DATABASE_ENV_OWNERSHIP=PASS EXTERNAL_ENV_ACCEPTED=1 MANAGED_SINGLE_WRITE_CONFLICT_REJECTED=1 MANAGED_BULK_ALIASES_IGNORED=POSTGRES,MYSQL,MONGODB ENGINE_ALIAS_SCOPED=1 SERVICE_SCOPED=1 CUSTOM_ENV=1 PLATFORM_PORT_HOST_UNCHANGED=1");
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; });

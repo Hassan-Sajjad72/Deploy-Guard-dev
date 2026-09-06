@@ -13,6 +13,8 @@ import { ProjectStableRelease, StableReleaseStatus } from "../orchestration/proj
 import { GithubActionsService } from "./pipeline/github-actions.service";
 import { ProjectPipelineRun } from "./project-pipeline-run.entity";
 
+class CostPlanArtifactUnavailableError extends Error {}
+
 @Injectable()
 export class GithubActionsCostEvidenceService {
   private readonly logger = new Logger(GithubActionsCostEvidenceService.name);
@@ -30,8 +32,15 @@ export class GithubActionsCostEvidenceService {
     const candidateWorkflowRunId = String(operation.metadata?.candidateWorkflowRunId || operation.githubWorkflowRunId || "").trim();
     const deploymentAction = String(operation.metadata?.deploymentAction || "");
     if (!this.config.get<string>("INFRACOST_API_KEY", "").trim() || !candidateWorkflowRunId || !operation.generationId || !["deploy", "rollback"].includes(deploymentAction)) return null;
+    const releaseOnly = operation.metadata?.releaseStrategy === "direct_ecs"
+      || (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.release_only === "true";
+    // Direct ECS releases intentionally skip Terraform planning. There is no
+    // immutable plan artifact to price, so they must not enter the artifact
+    // retrieval/retry path that belongs to Terraform-backed releases.
+    if (releaseOnly) return null;
     const existing = await this.estimates.findOne({ where: { pipelineRunId: operation.id } });
     if (existing?.source === CostEstimateSource.INFRACOST && existing.status !== CostEstimateStatus.FAILED) return existing;
+    if (existing?.status === CostEstimateStatus.FAILED && existing.metadata?.costPlanArtifactUnavailable === true) return existing;
     if (existing?.status === CostEstimateStatus.FAILED
       && existing.updatedAt
       && Date.now() - existing.updatedAt.getTime() < 5 * 60_000) return existing;
@@ -59,7 +68,7 @@ export class GithubActionsCostEvidenceService {
         this.actions.getArtifactEntry(repository, candidateWorkflowRunId, operation.id, token, "deployguard-cost-plan.json", 10 * 1024 * 1024),
         this.actions.getArtifactEntry(repository, candidateWorkflowRunId, operation.id, token, "deployguard-project-cost-plan.json", 10 * 1024 * 1024),
       ]);
-      if (!generationPlan) throw new Error("The immutable generation Terraform cost-plan artifact is unavailable.");
+      if (!generationPlan) throw new CostPlanArtifactUnavailableError("The immutable generation Terraform cost-plan artifact is unavailable.");
       const plans = [
         { scope: "generation", plan: generationPlan },
         ...(projectPlan ? [{ scope: "project", plan: projectPlan }] : []),
@@ -150,6 +159,9 @@ export class GithubActionsCostEvidenceService {
     } catch (error) {
       estimate.status = CostEstimateStatus.FAILED;
       estimate.errorMessage = error instanceof Error ? error.message.slice(0, 500) : "Infracost operation evidence failed.";
+      if (error instanceof CostPlanArtifactUnavailableError) {
+        estimate.metadata = { ...(estimate.metadata || {}), costPlanArtifactUnavailable: true };
+      }
       await this.estimates.save(estimate);
       this.logger.warn(`Infracost evidence failed for ${operation.id}: ${estimate.errorMessage}`);
       return estimate;
