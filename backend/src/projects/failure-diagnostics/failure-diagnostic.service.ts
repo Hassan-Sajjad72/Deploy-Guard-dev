@@ -35,6 +35,13 @@ const repositoryFix = (tool: string, rootCauseCode: string, toolErrorCode: strin
   retryDecision: "SAFE_AFTER_FIX", confidence: "DETERMINISTIC", evidencePattern: pattern,
 });
 
+const externalRetry = (tool: string, rootCauseCode: string, summary: string, technicalReason: string, pattern: RegExp): Diagnosis => ({
+  rootCauseCode, owner: "EXTERNAL_PROVIDER", provider: "network", affectedComponent: "External package registry", tool,
+  summary, technicalReason, recommendedAction: "Retry the same immutable deployment after the proven registry or network outage clears.",
+  remediationSteps: ["Review the bounded registry/provider evidence.", "Wait for the external registry or network path to recover.", "Retry the same immutable source without changing dependencies."],
+  retryDecision: "SAFE_NOW", confidence: "DETERMINISTIC", evidencePattern: pattern,
+});
+
 @Injectable()
 export class FailureDiagnosticService {
   constructor(private readonly sanitizer: LogSanitizerService) {}
@@ -85,8 +92,12 @@ export class FailureDiagnosticService {
       return this.managedDatabaseDiagnosis(managedDatabase);
     }
     const authoritative = failureContractFor(terminalCode);
-    const evidenceClassifiable = !authoritative || ["DG_APPLICATION_RUNTIME_FAILED", "DG_RAILPACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED", "DG_FAILURE_UNVERIFIED"].includes(terminalCode);
+    const evidenceClassifiable = !authoritative || ["DG_APPLICATION_RUNTIME_FAILED", "DG_APPLICATION_STARTUP_FAILED", "DG_RAILPACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED", "DG_FAILURE_UNVERIFIED"].includes(terminalCode);
     if (authoritative && !evidenceClassifiable) return { ...authoritative, confidence: "DETERMINISTIC" };
+    const managedUrlEvidence = evidence.match(/DG_MANAGED_DATABASE_URL_EVIDENCE[^\n]*\bsealedScheme=([a-z][a-z0-9+._-]*)\s+suppliedScheme=([a-z][a-z0-9+._-]*)/i);
+    if (managedUrlEvidence && managedUrlEvidence[1].toLowerCase() !== managedUrlEvidence[2].toLowerCase() && /ModuleNotFoundError/i.test(evidence) && /sqlalchemy\/dialects\/(?:postgresql|mysql)\//i.test(evidence)) {
+      return { ...failureContractFor("DG_MANAGED_DATABASE_DRIVER_CONTRACT_MISMATCH")!, confidence: "DETERMINISTIC", evidencePattern: /(?:sqlalchemy\/dialects\/(?:postgresql|mysql)\/[^\n]{0,300}|ModuleNotFoundError[^\n]{0,300}|DG_MANAGED_DATABASE_URL_EVIDENCE[^\n]{0,300})/i };
+    }
     if (/ERR_PNPM_OUTDATED_LOCKFILE|pnpm-lock\.yaml[^\n]{0,160}(?:not up to date|outdated)|frozen-lockfile[^\n]{0,120}(?:fail|mismatch)/i.test(evidence)) {
       const mismatch = evidence.match(/([@\w./-]*package\.json)[^\n]*?([@\w./-]+)\s*=\s*([^\s,;]+)[^\n]*?(?:lockfile|pnpm-lock\.yaml)[^\n]*?\2\s*=\s*([^\s,;]+)/i);
       const reason = mismatch
@@ -113,6 +124,18 @@ export class FailureDiagnosticService {
       [/(?:pipenv[^\n]{0,120}(?:locking failed|failed to lock)|Locking Failed!)/i, "pipenv", "DG_PYTHON_DEPENDENCY_RESOLUTION_FAILED", undefined],
     ];
     for (const [pattern, tool, code, toolCode] of python) if (pattern.test(evidence)) return repositoryFix(tool, code, toolCode, "Python dependencies cannot be resolved.", `${tool} deterministically rejected the repository dependency declarations.`, `Correct the ${tool} dependency declarations or lock state.`, pattern);
+
+    const registryOutage = /(?:(?:registry\.npmjs\.org|pypi\.org|files\.pythonhosted\.org|crates\.io|index\.crates\.io)[^\n]{0,240}(?:EAI_AGAIN|ETIMEDOUT|ECONNRESET|HTTP\s+(?:502|503|504)|(?:502|503|504)\s+(?:Bad Gateway|Service Unavailable|Gateway Timeout))|(?:EAI_AGAIN|ETIMEDOUT|ECONNRESET|HTTP\s+(?:502|503|504))[^\n]{0,240}(?:registry\.npmjs\.org|pypi\.org|files\.pythonhosted\.org|crates\.io|index\.crates\.io))/i;
+    if (registryOutage.test(evidence)) return externalRetry("package-registry", "DG_PACKAGE_REGISTRY_PROVIDER_UNAVAILABLE", "The external package registry or network path is unavailable.", "A named public package registry and a provider-grade timeout, reset, DNS, or 5xx response are both present in the terminal evidence.", registryOutage);
+
+    const nativeCapability = /(?:pg_config(?: executable)? (?:not found|is required|could not be found)|fatal error:\s*[^:\n]+\.h:\s*No such file or directory|gyp ERR! find (?:Python|make)|node-gyp[^\n]{0,180}(?:could not find|not found)(?:[^\n]{0,80})(?:compiler|python|make)|(?:cargo|rustc)[^\n]{0,220}(?:linker [`'\"]?(?:cc|gcc|clang)[`'\"]? not found|failed to find tool)|(?:C|C\+\+) compiler[^\n]{0,160}(?:not found|cannot create executables)|(?:gcc|g\+\+|clang|make): (?:command )?not found)/i;
+    if (nativeCapability.test(evidence)) return repositoryFix("native-build", "DG_RAILPACK_NATIVE_BUILD_CAPABILITY_MISSING", evidence.match(/pg_config|node-gyp|gyp ERR!|cargo|rustc|gcc|g\+\+|clang|make/i)?.[0], "A native build capability is missing.", "Compiler, header, pg_config, node-gyp, or Cargo evidence proves that the repository build requires an undeclared Railpack system capability.", "Declare the required supported Railpack build capability for this service; keep dependency resolution in Railpack.", nativeCapability);
+
+    const runtimeSharedLibrary = /(?:error while loading shared libraries:\s*[^\s:]+\.so(?:\.[0-9]+)*:\s*cannot open shared object file|(?:ImportError|OSError):\s*[^\n]*\.so(?:\.[0-9]+)*[^\n]*(?:cannot open shared object file|No such file or directory))/i;
+    if (runtimeSharedLibrary.test(evidence)) return repositoryFix("runtime-loader", "DG_RUNTIME_SHARED_LIBRARY_MISSING", undefined, "A required runtime shared library is missing.", "The runtime loader named a missing .so library in the immutable application image.", "Declare the required supported Railpack deploy-time system capability for this service.", runtimeSharedLibrary);
+
+    const runtimeVersion = /(?:EBADENGINE[^\n]{0,240}(?:required|wanted)[^\n]{0,160}(?:current|actual)|(?:requires|requires-python)\s+(?:Python|Node(?:\.js)?)\s*(?:>=|<=|==|>|<|\^|~)[^\n]{0,100}(?:but|current|running|installed)[^\n]{0,120}|Package ['\"][^'\"]+['\"] requires a different Python|Unsupported (?:Python|Node(?:\.js)?) version[^\n]{0,180}(?:required|current))/i;
+    if (runtimeVersion.test(evidence)) return repositoryFix("runtime-version", "DG_RAILPACK_RUNTIME_VERSION_INCOMPATIBLE", evidence.match(/EBADENGINE|requires-python/i)?.[0]?.toUpperCase(), "The selected interpreter/runtime version is incompatible.", "Installer or runtime evidence states both the required and current interpreter/runtime constraints.", "Correct the service's supported Railpack runtime-version capability or repository version constraint.", runtimeVersion);
 
     if (/error TS\d{4}:|TypeScript compilation failed/i.test(evidence)) return repositoryFix("typescript", "DG_APPLICATION_COMPILATION_FAILED", evidence.match(/TS\d{4}/i)?.[0].toUpperCase(), "Application compilation failed.", "The TypeScript compiler reported a repository-owned source error.", "Correct the reported TypeScript source error.", /(?:error TS\d{4}:|TypeScript compilation failed)[^\n]{0,300}/i);
     if (/(?:ModuleNotFoundError|Cannot find module|Module not found: Error: Can't resolve)/i.test(evidence)) return repositoryFix(/ModuleNotFoundError/i.test(evidence) ? "python" : "javascript", "DG_APPLICATION_MODULE_MISSING", evidence.match(/ModuleNotFoundError|MODULE_NOT_FOUND/i)?.[0], "A required application module is missing.", "Application build or startup evidence identifies a missing repository dependency/module.", "Add or correct the missing declared module and its import.", /(?:ModuleNotFoundError|Cannot find module|Module not found)[^\n]{0,300}/i);

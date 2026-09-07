@@ -467,7 +467,7 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   service.source = {
     resolveSourceSha: async () => "a".repeat(40),
     resolveBuildTargetsAtExactSha: async (input: any) => { validatedServices = input.services; return { ports: input.services.map((item: any) => ({ serviceId: item.serviceId, servicePort: 3000, evidence: { priority: 2, source: "fixture" } })), targets: input.services.map((item: any) => ({ serviceId: item.serviceId, target: { resolverVersion: "deployguard.build-target/v2", sourceSha: "a".repeat(40), serviceDirectory: item.serviceDirectory, workspaceRoot: ".", buildRoot: item.serviceDirectory, installRoot: item.serviceDirectory, packageIdentity: "fixture", contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: "npm", buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "a".repeat(64) } })) }; },
-    resolveRequirementsAtExactSha: async () => ({ status: "READY", fingerprint: "b".repeat(64), requirements: [], unresolvedRequired: [], prohibitedOverrides: [], duplicateConflicts: [], validationBlockers: [] }),
+    resolveRequirementsAtExactSha: async () => ({ status: "READY", fingerprint: "b".repeat(64), requirements: [], unresolvedRequired: [], prohibitedOverrides: [], duplicateConflicts: [], validationBlockers: [], managedDatabaseUrlSchemes: { [serviceRow.id]: "postgresql+psycopg" } }),
   };
   service.buildTargetRevisions = { create: (row: any) => row, save: async (row: any) => ({ ...row, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }) };
   service.oidcTrust = { ensureRepositoryAuthorized: async () => undefined };
@@ -500,6 +500,7 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   assert.equal(runtime.services[0].buildTarget.buildRoot, "apps/a");
   assert.equal(runtime.services[0].environment.MODE, "mode-a");
   assert.equal(runtime.services[0].databaseAttached, true);
+  assert.equal(runtime.services[0].managedDatabase.urlScheme, "postgresql+psycopg", "the exact-source consumer URL scheme is sealed into the dispatched runtime configuration");
   assert.deepEqual(materializedSecrets[0].secretValues, { TOKEN: "secret-a" }, "secret materialization consumes the admitted encrypted snapshot value in memory");
   assert.equal(snapshots.length, 1);
   assert.doesNotMatch(JSON.stringify(snapshots[0].sanitizedManifest), /secret-a/, "sanitized snapshot metadata contains no plaintext secret value");
