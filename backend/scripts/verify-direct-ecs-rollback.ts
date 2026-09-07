@@ -30,7 +30,7 @@ const runtime: RailpackRuntimeConfiguration = {
   schemaVersion: 3, projectId, operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "b".repeat(40), services: [{
     serviceId, serviceName: "API", serviceDirectory: "backend", servicePort: 8000, runtimeConfigRevisionId: revisionId,
     buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8000", HOST: "0.0.0.0", RELEASE: "historical" }, secretReferences: {},
-    databaseAttached: true, managedDatabase: { engine: "mysql", aliases, secretVersionId: databaseSecretVersion }, rollbackImage: image, rollbackTaskDefinitionArn: historicalTaskDefinition,
+    databaseAttached: true, managedDatabase: { engine: "mysql", aliases, urlScheme: "mysql", secretVersionId: databaseSecretVersion }, rollbackImage: image, rollbackTaskDefinitionArn: historicalTaskDefinition,
   }],
 };
 const outputs = {
@@ -93,7 +93,7 @@ void (async () => {
   const candidate = Object.create(RailpackDeploymentService.prototype) as any;
   candidate.dataSource = { getRepository: (entity: unknown) => ({ findOne: async () => entity === ProjectEnvironmentRoute ? { liveGenerationId } : entity === ProjectDatabaseTier ? tier : null }) };
   candidate.serviceRevisions = { find: async () => [current] };
-  candidate.runtimeConfigRevisions = { find: async () => [{ id: currentRevisionId, databaseConfiguration: { attached: true, engine: "mysql", aliases, secretVersionId: databaseSecretVersion } }] };
+  candidate.runtimeConfigRevisions = { find: async () => [{ id: currentRevisionId, databaseConfiguration: { attached: true, engine: "mysql", aliases, urlScheme: "mysql", secretVersionId: databaseSecretVersion } }] };
   assert.equal(await candidate.directEcsRollbackEligible(projectId, "dev", target, runtime), true, "sealed target and compatible LIVE topology may use direct ECS rollback");
   const incompatible = structuredClone(runtime); incompatible.services[0].managedDatabase.secretVersionId = "different-20260901000000000000000001";
   assert.equal(await candidate.directEcsRollbackEligible(projectId, "dev", target, incompatible), false, "database secret-version drift retains Terraform rollback fallback");

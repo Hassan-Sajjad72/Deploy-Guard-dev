@@ -80,3 +80,25 @@ export function managedDatabaseProfile(value: unknown): ManagedDatabaseEnginePro
   const engine = managedDatabaseEngine(value);
   return engine ? MANAGED_DATABASE_ENGINE_PROFILES[engine] : null;
 }
+
+export type ManagedDatabaseUrlSchemeEvidence = { scheme: string; source: string };
+
+export function resolveManagedDatabaseUrlScheme(engine: ManagedDatabaseEngine, evidence: ManagedDatabaseUrlSchemeEvidence[]) {
+  const expectedBase = MANAGED_DATABASE_ENGINE_PROFILES[engine].urlScheme;
+  const supportedBases = new Set(Object.values(MANAGED_DATABASE_ENGINE_PROFILES).map((profile) => profile.urlScheme));
+  const relevant = [...new Map(evidence
+    .map((item) => ({ scheme: item.scheme.trim().toLowerCase(), source: item.source }))
+    .filter((item) => supportedBases.has(item.scheme.split("+")[0] as ManagedDatabaseEngineProfile["urlScheme"]))
+    .map((item) => [`${item.scheme}\0${item.source}`, item])).values()];
+  const invalid = relevant.filter((item) => !/^[a-z][a-z0-9.-]*(?:\+[a-z0-9][a-z0-9._-]*)?$/.test(item.scheme));
+  const mismatched = relevant.filter((item) => item.scheme.split("+")[0] !== expectedBase);
+  const driverSchemes = [...new Set(relevant
+    .filter((item) => item.scheme.split("+")[0] === expectedBase && item.scheme.includes("+") && !invalid.includes(item))
+    .map((item) => item.scheme))].sort();
+  const blockers = [
+    ...invalid.map((item) => `Managed database URL scheme '${item.scheme}' from ${item.source} is invalid.`),
+    ...mismatched.map((item) => `Managed database URL scheme '${item.scheme}' from ${item.source} does not match the attached ${engine} engine.`),
+    ...(driverSchemes.length > 1 ? [`Conflicting managed database consumer URL schemes were declared: ${driverSchemes.join(", ")}.`] : []),
+  ];
+  return { scheme: driverSchemes.length === 1 ? driverSchemes[0] : expectedBase, blockers: [...new Set(blockers)].sort() };
+}

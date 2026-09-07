@@ -20,6 +20,7 @@ locals {
   database_service_id         = local.database_enabled ? keys(local.database_services)[0] : null
   database_service            = local.database_enabled ? values(local.database_services)[0] : null
   database_engine             = local.database_enabled ? local.database_service.managed_database_engine : "postgres"
+  database_url_scheme         = local.database_enabled ? local.database_service.managed_database_url_scheme : ""
   database_aliases            = local.database_enabled ? local.database_service.managed_database_aliases : []
   database_port               = local.database_engine == "mysql" ? 3306 : local.database_engine == "mongodb" ? 27017 : 5432
   database_image              = local.database_engine == "mysql" ? "mysql:8" : local.database_engine == "mongodb" ? "mongo:8" : "postgres:16"
@@ -226,7 +227,7 @@ resource "aws_secretsmanager_secret_version" "database" {
   secret_id = aws_secretsmanager_secret.database[0].id
   secret_string = jsonencode({
     password = random_password.database[0].result
-    url      = "${local.database_engine == "mysql" ? "mysql" : local.database_engine == "mongodb" ? "mongodb" : "postgresql"}://deployguard:${random_password.database[0].result}@${local.database_host}:${local.database_port}/application${local.database_engine == "mongodb" ? "?authSource=admin" : ""}"
+    url      = "${local.database_url_scheme}://deployguard:${random_password.database[0].result}@${local.database_host}:${local.database_port}/application${local.database_engine == "mongodb" ? "?authSource=admin" : ""}"
   })
 }
 
