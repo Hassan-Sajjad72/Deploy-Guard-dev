@@ -13,11 +13,11 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "43cf487f1cbd1a6378609a09e2801440b49cf57038e2bb06071b1732bd3476af",
+  workflow: "3e07e576b788ebdf4afdbe357e073739cadd967638d9908a7839a17153e6f8d9",
   releaseResultProducer: "e8fbc1d858f5bd5742e20ae761f769f6e028e87723432d00a889c1b8274460ab",
   releaseOnlyTaskDefinitions: "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
   runtimeVerifier: "adcd8c5f5b9eb535a53ee868d894caccc67b415f92d89eafb46b0a7d51843c90",
-  runtimeInfrastructure: "3d1df4aeb9a38eaf5f1195b1c7c6e04e995718d907ecd24a363ee37720deb234",
+  runtimeInfrastructure: "a57d0142ff63eed47399aad6a3f6f8bf5dd4f8bd7ade731bac98c9c0d7cf955a",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {
@@ -74,6 +74,9 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !workflow.includes("terraform/deployguard-failure-evidence.json")
     || !workflow.includes("if: failure() && steps.runtime.outcome == 'failure'")
     || !workflow.includes("service_port:.servicePort")
+    || !workflow.includes("managed_database_url_scheme:(.managedDatabase.urlScheme//\"\")")
+    || !workflow.includes('database_url="${database_url_scheme}://')
+    || !workflow.includes("DG_APPLICATION_STARTUP_FAILED")
     || !workflow.includes('--env PORT="$service_port"')
     || !workflow.includes("DG_TERRAFORM_PLAN_FAILED stage=terraform_plan")
     || !workflow.includes("DG_TERRAFORM_APPLY_FAILED stage=terraform_apply")) {
@@ -115,6 +118,8 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.runtimeInfrastructure.includes('task_ip=\\"$(hostname -i')
     || !executable.runtimeInfrastructure.includes('nc -z -w 1 \\"$task_ip\\"')
     || !executable.runtimeInfrastructure.includes('port    = tostring(local.transport_probe_ports[each.key])')
+    || !executable.runtimeInfrastructure.includes('database_url_scheme         = local.database_enabled ? local.database_service.managed_database_url_scheme : ""')
+    || !executable.runtimeInfrastructure.includes('url      = "${local.database_url_scheme}://')
     || !executable.runtimeInfrastructure.includes('desired_count   = each.value.database_attached ? 0 : 1')
     || !executable.runtimeInfrastructure.includes('ignore_changes = [desired_count, task_definition]')
     || executable.runtimeInfrastructure.includes('terraform_data.database_readiness')) {

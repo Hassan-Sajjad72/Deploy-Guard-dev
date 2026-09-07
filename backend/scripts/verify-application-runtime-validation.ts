@@ -66,6 +66,8 @@ case "$1" in
   inspect)
     if [[ "$*" == *State.Running* ]]; then
       [ "$PROBE_MODE" != exited ] && printf 'true\\n' || printf 'false\\n'
+    elif [[ "$*" == *State.ExitCode* ]]; then
+      printf '17\\n'
     else
       printf '172.18.0.2\\n'
     fi
@@ -165,8 +167,10 @@ void (async () => {
   assert.match(validationScript, /DG_LOCAL_HOST_PORT_ALLOCATION_FAILED/);
   assert.doesNotMatch(validationScript, /\bcurl\b|\bwget\b|https?:\/\//, "pre-publish validation must be TCP-only");
   assert.match(validationScript, /docker logs .*--tail 100[\s\S]*tail -c 12000/);
+  assert.match(validationScript, /DG_APPLICATION_EXIT_STATE[\s\S]*exitCode=\$exit_code/);
+  assert.match(validationScript, /DG_APPLICATION_STARTUP_FAILED/);
   assert.match(validationScript, /DG_APPLICATION_EXTERNAL_BINDING_FAILED/);
-  assert.match(validationScript, /Application was not reachable from a separate network peer on PORT=\$service_port within 45 seconds\. Bind to 0\.0\.0\.0 and use the PORT environment variable\./);
+  assert.match(validationScript, /Application remained running but was not reachable from a separate network peer on PORT=\$service_port within 45 seconds\. Bind to 0\.0\.0\.0 and use the PORT environment variable\./);
   assert.match(workflow, /name: Clean up application runtime validation[\s\S]*if: always\(\) && inputs\.deployment_action == 'deploy'[\s\S]*deployguard-runtime-probe-\$\{OPERATION_ID\}-/);
   assert.match(stepBlock("Publish immutable images to ECR", "Select immutable rollback service images"), /if: success\(\)/);
   assert.match(stepBlock("Install Terraform", "Materialize release runtime"), /if: success\(\)/);
@@ -197,16 +201,23 @@ void (async () => {
   assert.notEqual(loopbackOnly.status, 0, "an application reachable only through container loopback must fail before publication");
   assert.equal(loopbackOnly.downstream, "");
   assert.match(loopbackOnly.stderr, /DG_APPLICATION_EXTERNAL_BINDING_FAILED/);
+  assert.doesNotMatch(loopbackOnly.stderr, /DG_APPLICATION_STARTUP_FAILED/);
+
+  const exited = executeProbe("exited");
+  assert.notEqual(exited.status, 0);
+  assert.match(exited.stderr, /DG_APPLICATION_EXIT_STATE[^\n]*running=false[^\n]*exitCode=17/);
+  assert.match(exited.stderr, /DG_APPLICATION_STARTUP_FAILED/);
+  assert.doesNotMatch(exited.stderr, /DG_APPLICATION_EXTERNAL_BINDING_FAILED|Bind to 0\.0\.0\.0 and use the PORT/);
 
   for (const mode of ["timeout", "exited", "run_failure", "workflow_failure"] as const) {
     const result = executeProbe(mode);
     assert.notEqual(result.status, 0, `${mode} must fail the composed workflow path`);
     assert.equal(result.downstream, "", `${mode} must not reach ECR or Terraform`);
     assert.match(result.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/, `${mode} must clean up the probe container`);
-    if (mode === "timeout" || mode === "exited") assert.match(result.stderr, /Application was not reachable from a separate network peer on PORT=3000 within 45 seconds/);
+    if (mode === "timeout") assert.match(result.stderr, /Application remained running but was not reachable from a separate network peer on PORT=3000 within 45 seconds/);
   }
   const timeout = executeProbe("timeout");
   assert.match(timeout.trace, /^tcp --signal=TERM 45 bash -c/m, "the entire wait loop has one hard 45-second deadline");
   await verifyStageProjection();
-  console.log("APPLICATION_RUNTIME_VALIDATION=PASS EXTERNAL_NETWORK_PEER=1 LOOPBACK_ONLY_REJECTED=1 FLASK_TEMPLATE_NOT_FOUND_HTTP_500_DEPLOYABLE=1 LOCAL_HOST_CONFLICT_DYNAMIC=1 TIMEOUT_SECONDS=45 DOWNSTREAM_FAIL_CLOSED=1 CLEANUP_ALL_PATHS=1");
+  console.log("APPLICATION_RUNTIME_VALIDATION=PASS EXTERNAL_NETWORK_PEER=1 LOOPBACK_ONLY_REJECTED=1 STARTUP_EXIT_CLASSIFIED=1 RUNNING_NON_LISTENING_CLASSIFIED=1 LOCAL_HOST_CONFLICT_DYNAMIC=1 TIMEOUT_SECONDS=45 DOWNSTREAM_FAIL_CLOSED=1 CLEANUP_ALL_PATHS=1");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { AiEvidencePreprocessorService } from "../src/ai-troubleshooting/ai-evidence-preprocessor.service";
 import { currentFailureDiagnostic, FailureDiagnosticService } from "../src/projects/failure-diagnostics/failure-diagnostic.service";
-import { DeploymentFailureDiagnosticInput } from "../src/projects/failure-diagnostics/failure-diagnostic.types";
+import { DeploymentFailureDiagnosticInput, FailureRetryDecision } from "../src/projects/failure-diagnostics/failure-diagnostic.types";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
 import { FAILURE_CONTRACT } from "../src/projects/failure-diagnostics/failure-contract.catalog";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
@@ -120,6 +120,24 @@ assert.equal(applicationBindingFailure.externalProvider, null);
 assert.equal(applicationBindingFailure.retryDecision, "SAFE_AFTER_FIX");
 assert.equal(applicationBindingFailure.confidence, "DETERMINISTIC");
 
+const platformDriverMismatch = diagnose([
+  "File /app/.venv/lib/python/site-packages/sqlalchemy/dialects/postgresql/psycopg2.py, line 690, in import_dbapi",
+  "ModuleNotFoundError: No module named 'psycopg2'",
+  `DG_MANAGED_DATABASE_URL_EVIDENCE serviceId=${serviceId} sealedScheme=postgresql+psycopg suppliedScheme=postgresql`,
+].join("\n"), { failureStage: "application_runtime", terminalFailureCode: "DG_APPLICATION_STARTUP_FAILED", failureOwner: "REPOSITORY_APPLICATION", serviceId });
+assert.equal(platformDriverMismatch.rootCauseCode, "DG_MANAGED_DATABASE_DRIVER_CONTRACT_MISMATCH");
+assert.equal(platformDriverMismatch.failureOwner, "DEPLOYGUARD_PLATFORM");
+assert.equal(platformDriverMismatch.retryDecision, "NOT_SAFE_YET");
+
+const repositoryDeclaredDriverMissing = diagnose([
+  "File /app/.venv/lib/python/site-packages/sqlalchemy/dialects/postgresql/psycopg.py, line 418, in import_dbapi",
+  "ModuleNotFoundError: No module named 'psycopg'",
+  `DG_MANAGED_DATABASE_URL_EVIDENCE serviceId=${serviceId} sealedScheme=postgresql+psycopg suppliedScheme=postgresql+psycopg`,
+].join("\n"), { failureStage: "application_runtime", terminalFailureCode: "DG_APPLICATION_STARTUP_FAILED", failureOwner: "REPOSITORY_APPLICATION", serviceId });
+assert.equal(repositoryDeclaredDriverMissing.rootCauseCode, "DG_APPLICATION_MODULE_MISSING");
+assert.equal(repositoryDeclaredDriverMissing.failureOwner, "REPOSITORY_APPLICATION");
+assert.equal(repositoryDeclaredDriverMissing.retryDecision, "SAFE_AFTER_FIX");
+
 for (const [code, contract] of Object.entries(FAILURE_CONTRACT)) {
   const result = diagnose(`DG_FAILURE code=${code} stage=contract_audit`, { terminalFailureCode: code, failureStage: "contract_audit" });
   assert.equal(result.terminalFailureCode, code, `${code} retains terminal identity`);
@@ -161,6 +179,30 @@ assert.match(pnpm.technicalReason, /packages\/client\/package\.json requires nex
 assert.doesNotMatch(pnpm.evidenceReferences[0].excerpt, /docker\/tmp/i, "secondary Docker fallout must not replace the causal pnpm evidence");
 assert.deepEqual(pnpm.completedStages, [{ stage: "checkout", label: "Checkout" }]);
 
+const railpackEvidenceCases: Array<[string, string, DeploymentFailureDiagnosticInput["failureOwner"], DeploymentFailureDiagnosticInput["externalProvider"], FailureRetryDecision]> = [
+  ["checking for pg_config... not found\nerror: pg_config executable not found", "DG_RAILPACK_NATIVE_BUILD_CAPABILITY_MISSING", "REPOSITORY_APPLICATION", null, "SAFE_AFTER_FIX"],
+  ["gyp ERR! find Python Python is not set from command line or npm configuration", "DG_RAILPACK_NATIVE_BUILD_CAPABILITY_MISSING", "REPOSITORY_APPLICATION", null, "SAFE_AFTER_FIX"],
+  ["cargo: error: linker `cc` not found", "DG_RAILPACK_NATIVE_BUILD_CAPABILITY_MISSING", "REPOSITORY_APPLICATION", null, "SAFE_AFTER_FIX"],
+  ["ImportError: libpq.so.5: cannot open shared object file: No such file or directory", "DG_RUNTIME_SHARED_LIBRARY_MISSING", "REPOSITORY_APPLICATION", null, "SAFE_AFTER_FIX"],
+  ["npm ERR! code EBADENGINE\nnpm ERR! required: { node: '>=22' } current: { node: '20.19.0' }", "DG_RAILPACK_RUNTIME_VERSION_INCOMPATIBLE", "REPOSITORY_APPLICATION", null, "SAFE_AFTER_FIX"],
+  ["GET https://registry.npmjs.org/example failed: ETIMEDOUT", "DG_PACKAGE_REGISTRY_PROVIDER_UNAVAILABLE", "EXTERNAL_PROVIDER", "network", "SAFE_NOW"],
+];
+for (const [evidence, rootCauseCode, owner, provider, retryDecision] of railpackEvidenceCases) {
+  const result = diagnose(evidence, { terminalFailureCode: "DG_RAILPACK_BUILD_FAILED", failureStage: rootCauseCode === "DG_RUNTIME_SHARED_LIBRARY_MISSING" ? "application_runtime" : "railpack_build" });
+  assert.equal(result.rootCauseCode, rootCauseCode);
+  assert.equal(result.failureOwner, owner);
+  assert.equal(result.externalProvider, provider);
+  assert.equal(result.retryDecision, retryDecision);
+  assert.equal(result.confidence, "DETERMINISTIC");
+}
+const ambiguousNative = diagnose("node-gyp exited with code 1 after compiling addon.cc", { terminalFailureCode: "DG_RAILPACK_BUILD_FAILED", failureStage: "railpack_build" });
+assert.equal(ambiguousNative.rootCauseCode, "DG_RAILPACK_BUILD_FAILED", "native tool presence without a missing-capability signature remains ambiguous");
+assert.equal(ambiguousNative.failureOwner, "UNVERIFIED");
+assert.equal(ambiguousNative.confidence, "UNVERIFIED");
+const startupSharedLibrary = diagnose("error while loading shared libraries: libssl.so.3: cannot open shared object file: No such file or directory", { terminalFailureCode: "DG_APPLICATION_STARTUP_FAILED", failureStage: "application_runtime" });
+assert.equal(startupSharedLibrary.rootCauseCode, "DG_RUNTIME_SHARED_LIBRARY_MISSING", "runtime loader evidence refines the startup boundary without changing its terminal identity");
+assert.equal(startupSharedLibrary.terminalFailureCode, "DG_APPLICATION_STARTUP_FAILED");
+
 const structuredCases: Array<[string, string, DeploymentFailureDiagnosticInput["failureOwner"], DeploymentFailureDiagnosticInput["externalProvider"], string]> = [
   ["DG_DEPLOYMENT_INPUT_REQUIRED", "deployment_requirement_admission", "DEPLOYGUARD_PLATFORM", null, "DG_CONFIGURATION_INPUT_REQUIRED"],
   ["DG_DEPLOYMENT_REQUIREMENTS_BLOCKED", "deployment_requirement_admission", "DEPLOYGUARD_PLATFORM", null, "DG_CONFIGURATION_ADMISSION_BLOCKED"],
@@ -168,6 +210,9 @@ const structuredCases: Array<[string, string, DeploymentFailureDiagnosticInput["
   ["DG_MANAGED_DATABASE_READINESS_FAILED", "database_readiness", "DEPLOYGUARD_PLATFORM", null, "DG_MANAGED_DATABASE_PLATFORM_READINESS_FAILED"],
   ["DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED", "database_grants", "DEPLOYGUARD_PLATFORM", null, "DG_MANAGED_MYSQL_GRANT_RECONCILIATION_FAILED"],
   ["DG_RAILPACK_PREREQUISITE_FAILED", "railpack_setup", "EXTERNAL_PROVIDER", "railpack", "DG_RAILPACK_PROVIDER_PREREQUISITE_FAILED"],
+  ["DG_RAILPACK_CAPABILITY_INVALID", "railpack_capability_admission", "REPOSITORY_APPLICATION", null, "DG_RAILPACK_CAPABILITY_INVALID"],
+  ["DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED", "railpack_capability_admission", "REPOSITORY_APPLICATION", null, "DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED"],
+  ["DG_RAILPACK_CAPABILITY_FORWARDING_FAILED", "railpack_build", "DEPLOYGUARD_PLATFORM", null, "DG_RAILPACK_CAPABILITY_FORWARDING_FAILED"],
   ["DG_GITHUB_PROVIDER_FAILED", "workflow_dispatch", "EXTERNAL_PROVIDER", "github", "DG_GITHUB_PROVIDER_OPERATION_FAILED"],
   ["DG_AWS_PROVIDER_FAILED", "aws_provider", "EXTERNAL_PROVIDER", "aws", "DG_AWS_PROVIDER_FAILED"],
   ["DG_TERRAFORM_VALIDATE_FAILED", "terraform_validate", "DEPLOYGUARD_PLATFORM", null, "DG_TERRAFORM_VALIDATE_FAILED"],

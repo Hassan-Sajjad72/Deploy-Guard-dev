@@ -27,7 +27,7 @@ const runtime: RailpackRuntimeConfiguration = {
     serviceId, serviceName: "API", serviceDirectory: "backend", servicePort: 8000, runtimeConfigRevisionId: runtimeRevisionId,
     buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8000", HOST: "0.0.0.0", RELEASE: "candidate" },
     secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/test:TOKEN::${"c".repeat(64)}` },
-    databaseAttached: true, managedDatabase: { engine: "mysql", aliases },
+    databaseAttached: true, managedDatabase: { engine: "mysql", aliases, urlScheme: "mysql" },
   }],
 };
 const outputs = {
@@ -106,7 +106,7 @@ const candidate = Object.create(RailpackDeploymentService.prototype) as any;
 const liveRevision = { serviceId, serviceName: "API", serviceDirectory: "backend", runtimeConfigRevisionId: "55555555-5555-4555-8555-555555555555", runtimeIdentity: { servicePort: 8000 } };
 candidate.dataSource = { getRepository: () => ({ findOne: async () => ({ liveGenerationId: "66666666-6666-4666-8666-666666666666" }) }) };
 candidate.serviceRevisions = { find: async () => [liveRevision] };
-candidate.runtimeConfigRevisions = { find: async () => [{ id: liveRevision.runtimeConfigRevisionId, databaseConfiguration: { attached: true, engine: "mysql", aliases } }] };
+candidate.runtimeConfigRevisions = { find: async () => [{ id: liveRevision.runtimeConfigRevisionId, databaseConfiguration: { attached: true, engine: "mysql", aliases, urlScheme: "mysql" } }] };
 const configuration: any = { managedDatabase: { status: DatabaseTierStatus.READY, activeGenerationId: "66666666-6666-4666-8666-666666666666", attachedServiceId: serviceId, engine: "mysql" } };
 assert.equal(await candidate.releaseOnlyRedeployEligible(projectId, "dev", configuration, runtime), true, "same live topology is eligible for direct ECS release");
 const changedPort: any = structuredClone(runtime); changedPort.services[0].servicePort = 9000; changedPort.services[0].environment.PORT = "9000";
