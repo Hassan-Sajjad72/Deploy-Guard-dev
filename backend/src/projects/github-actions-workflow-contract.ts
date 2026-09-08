@@ -13,7 +13,7 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "3e07e576b788ebdf4afdbe357e073739cadd967638d9908a7839a17153e6f8d9",
+  workflow: "64b7a37d1e902bf5dd5837f373218a42242140e63faba83cac7d0a9007694cea",
   releaseResultProducer: "e8fbc1d858f5bd5742e20ae761f769f6e028e87723432d00a889c1b8274460ab",
   releaseOnlyTaskDefinitions: "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
   runtimeVerifier: "adcd8c5f5b9eb535a53ee868d894caccc67b415f92d89eafb46b0a7d51843c90",
@@ -95,6 +95,10 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.releaseOnlyTaskDefinitions.includes("rollback_requires_immutable_task_definition")
     || !executable.releaseOnlyTaskDefinitions.includes("rollback_task_definition_identity_mismatch")
     || !workflow.includes("release_only_requires_deploy_or_rollback")
+    || !workflow.includes("trivy_enforce_requires_enabled")
+    || !workflow.includes("deployguard.security-result/v1")
+    || !workflow.includes("DG_TRIVY_POLICY_BLOCKED")
+    || !workflow.includes("securityScan:$security[0]")
     || !executable.releaseOnlyTaskDefinitions.includes("active_task_definition_topology_mismatch")
     || !executable.releaseOnlyTaskDefinitions.includes("service_port_changed_requires_terraform")) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the direct ECS release-only boundary.`);

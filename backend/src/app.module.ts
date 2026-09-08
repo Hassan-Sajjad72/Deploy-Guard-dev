@@ -63,6 +63,14 @@ import { NotificationDelivery } from "./notifications/notification-delivery.enti
 import { NotificationPreference } from "./notifications/notification-preference.entity";
 import { NotificationSubscription } from "./notifications/notification-subscription.entity";
 import { ObservabilityModule } from "./observability/observability.module";
+import { BillingModule } from "./billing/billing.module";
+import { BillingAccount } from "./billing/billing-account.entity";
+import { BillingSubscription } from "./billing/billing-subscription.entity";
+import { BillingUsageCounter } from "./billing/billing-usage-counter.entity";
+import { BillingUsageEvent } from "./billing/billing-usage-event.entity";
+import { BillingCheckoutSession } from "./billing/billing-checkout-session.entity";
+import { BillingInvoice } from "./billing/billing-invoice.entity";
+import { BillingWebhookEvent } from "./billing/billing-webhook-event.entity";
 
 /** The supported local product: PostgreSQL + authenticated GitHub App + GitHub Actions. */
 @Module({
@@ -99,6 +107,8 @@ import { ObservabilityModule } from "./observability/observability.module";
           ProjectLogStreamSession, ProjectObservabilityEvent, TerraformExportArtifact,
           AiAnalysisSession, AiAnalysisMessage, AiAnalysisResult,
           NotificationPreference, NotificationSubscription, NotificationDelivery,
+          BillingAccount, BillingSubscription, BillingUsageCounter, BillingUsageEvent,
+          BillingCheckoutSession, BillingInvoice, BillingWebhookEvent,
         ],
         synchronize: false,
         logging: ["error", "warn"],
@@ -106,7 +116,7 @@ import { ObservabilityModule } from "./observability/observability.module";
       }),
     }),
     AuthModule, UsersModule, AdminModule, AuditLogModule, ProjectsModule,
-    TerraformExportModule, AiTroubleshootingModule, ObservabilityModule,
+    TerraformExportModule, AiTroubleshootingModule, ObservabilityModule, BillingModule,
   ],
   controllers: [HealthController],
   providers: [AuthenticatedUserMiddleware, HealthService],

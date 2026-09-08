@@ -1,0 +1,21 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ConfigService } from "@nestjs/config";
+import { getTrivyConfig } from "../src/projects/trivy.config";
+import { RAILPACK_WORKFLOW_INPUTS } from "../src/projects/railpack-workflow-contract";
+
+assert.deepEqual(getTrivyConfig(new ConfigService({})), { enabled: false, enforce: false });
+assert.deepEqual(getTrivyConfig(new ConfigService({ TRIVY_ENABLED: "true", TRIVY_ENFORCE: "false" })), { enabled: true, enforce: false });
+assert.deepEqual(getTrivyConfig(new ConfigService({ TRIVY_ENABLED: "true", TRIVY_ENFORCE: "true" })), { enabled: true, enforce: true });
+assert.deepEqual(getTrivyConfig(new ConfigService({ TRIVY_ENABLED: "false", TRIVY_ENFORCE: "true" })), { enabled: false, enforce: false });
+assert.throws(() => getTrivyConfig(new ConfigService({ TRIVY_ENABLED: "sometimes" })), /true or false/);
+assert.ok(RAILPACK_WORKFLOW_INPUTS.some(({ name }) => name === "trivy_enabled"));
+assert.ok(RAILPACK_WORKFLOW_INPUTS.some(({ name }) => name === "trivy_enforce"));
+const workflow = readFileSync(join(__dirname, "../../.github/workflows/deployguard-reusable.yml"), "utf8");
+assert.match(workflow, /inputs\.trivy_enabled == 'true'/);
+assert.match(workflow, /status:\"advisory\"|echo advisory/);
+assert.match(workflow, /DG_TRIVY_POLICY_BLOCKED/);
+assert.match(workflow, /deployguard\.security-result\/v1/);
+assert.match(workflow, /securityScan:\$security\[0\]/);
+console.log("Trivy control certification passed: disabled, advisory, enforced, immutable evidence, and workflow forwarding paths are present.");

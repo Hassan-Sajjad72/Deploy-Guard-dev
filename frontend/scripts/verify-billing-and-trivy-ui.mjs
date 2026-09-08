@@ -1,0 +1,15 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const billing = read("src/pages/Billing.jsx");
+const pipeline = read("src/components/projects/PipelineExecution.jsx");
+const routes = read("src/routes/AppRoutes.jsx");
+assert.match(routes, /path="\/billing"/);
+assert.match(billing, /Mock \/ FYP billing/);
+assert.match(billing, /Current projects/);
+assert.match(billing, /LIVE projects/);
+assert.match(billing, /48 hours/);
+assert.match(billing, /Invoice history/);
+assert.match(pipeline, /data-trivy-status/);
+assert.match(pipeline, /Finding evidence/);
+console.log("Billing and Trivy UI certification passed.");

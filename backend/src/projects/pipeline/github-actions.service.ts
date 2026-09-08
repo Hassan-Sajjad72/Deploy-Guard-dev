@@ -132,6 +132,7 @@ export type GithubActionsTerminalFailureEvidence = {
   failedStage: string;
   rawEvidence: string;
   workflowStages: GithubActionsWorkflowStage[];
+  securityScan?: Record<string, unknown> | null;
 };
 
 @Injectable()
@@ -417,11 +418,13 @@ export class GithubActionsService {
       || jobs.find((job) => String(job.status || "").toLowerCase() === "completed" && String(job.conclusion || "").toLowerCase() !== "success");
     let persistedFailure: string | null = null;
     let persistedMarkers: string[] = [];
+    let securityScan: Record<string, unknown> | null = null;
     try {
       const raw = await this.getArtifactEntry(repository, workflowRunId, operationId, token, DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, 512 * 1024);
       if (raw) {
         const artifact = JSON.parse(raw) as Record<string, unknown>;
         const verification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
+        const security = artifact.securityScan as Record<string, unknown> | null;
         const services = Array.isArray(verification?.services) ? verification.services as Array<Record<string, unknown>> : [];
         if (artifact.contractVersion === "deployguard.release-failure/v1"
           && artifact.operationId === operationId
@@ -431,6 +434,13 @@ export class GithubActionsService {
           && services.some((service) => service.verified === false && typeof service.failureMarker === "string" && service.failureMarker.startsWith("DG_FAILURE "))) {
           persistedFailure = JSON.stringify(artifact).slice(-8_000);
           persistedMarkers = services.flatMap((service) => service.verified === false && typeof service.failureMarker === "string" ? [service.failureMarker.slice(0, 500)] : []);
+        } else if (artifact.contractVersion === "deployguard.release-failure/v1"
+          && artifact.operationId === operationId && artifact.action === action && artifact.failedStage === "trivy_scan"
+          && security?.contractVersion === "deployguard.security-result/v1" && security.deploymentOperationId === operationId
+          && ["blocked", "error"].includes(String(security.status))) {
+          securityScan = security;
+          persistedFailure = JSON.stringify(artifact).slice(-8_000);
+          persistedMarkers = ["DG_FAILURE code=DG_TRIVY_POLICY_BLOCKED stage=trivy_scan"];
         }
       }
     } catch {
@@ -460,7 +470,7 @@ export class GithubActionsService {
       }
     }
     summary.push(...persistedMarkers);
-    return { failedStage, rawEvidence: summary.join("\n").slice(-16_000), workflowStages };
+    return { failedStage, rawEvidence: summary.join("\n").slice(-16_000), workflowStages, securityScan };
   }
 
   async getResultArtifact(repository: string, workflowRunId: string, operationId: string, token: string) {

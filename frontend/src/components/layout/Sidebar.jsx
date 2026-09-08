@@ -7,6 +7,7 @@ import { useDialogFocus } from "../common/DesignSystem.jsx";
 const primary = [
   { icon: "dashboard", label: "Home", to: "/dashboard" },
   { icon: "box", label: "Projects", to: "/projects" },
+  { icon: "cost", label: "Plan & Usage", to: "/billing" },
 ];
 
 const projectNavigation = [

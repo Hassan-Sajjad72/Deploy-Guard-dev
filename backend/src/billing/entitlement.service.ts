@@ -1,20 +1,25 @@
 import { ForbiddenException, Injectable } from "@nestjs/common";
 import { DataSource, EntityManager } from "typeorm";
+import { ConfigService } from "@nestjs/config";
 import { BillingSubscription } from "./billing-subscription.entity";
 import { BillingUsageCounter } from "./billing-usage-counter.entity";
 import { BillingUsageEvent } from "./billing-usage-event.entity";
 import { BillingMetric, BillingPlan, METRIC_LIMIT_KEY, PLAN_ENTITLEMENTS } from "./billing-plan";
+import { getBillingConfig } from "./billing.config";
 import { ProjectUsageService } from "./project-usage.service";
-import { getPlanUsageEnforcementConfig } from "./plan-usage-enforcement.config";
+import { ProjectEnvironmentRoute } from "../projects/project-environment-route.entity";
 
 @Injectable()
 export class EntitlementService {
-  constructor(private readonly dataSource: DataSource, private readonly projectUsageService: ProjectUsageService) {}
+  constructor(private readonly dataSource: DataSource, private readonly projectUsageService: ProjectUsageService, private readonly config: ConfigService = new ConfigService()) {}
 
   async planForUser(userId: number, manager?: EntityManager): Promise<BillingPlan> {
     const repo = (manager || this.dataSource.manager).getRepository(BillingSubscription);
     const subscription = await repo.findOne({ where: { userId } });
-    return subscription?.plan === "pro" && subscription.provider === "stripe" && subscription.mode === "live" && ["trialing", "active", "past_due"].includes(subscription.status) ? "pro" : "free";
+    const billing = getBillingConfig(this.config);
+    if (billing.testPlan) return billing.testPlan;
+    return ["free", "pro", "pro_plus"].includes(subscription?.plan || "") && ["active", "trialing", "past_due"].includes(subscription?.status || "")
+      ? subscription!.plan as BillingPlan : "free";
   }
 
   async projectUsage(userId: number, manager?: EntityManager) {
@@ -23,17 +28,21 @@ export class EntitlementService {
     return {
       ...counts,
       plan,
-      projectLimit: PLAN_ENTITLEMENTS[plan].activeProjects,
-      enforcement: getPlanUsageEnforcementConfig(),
+      currentProjectLimit: PLAN_ENTITLEMENTS[plan].currentProjects,
+      liveProjectLimit: PLAN_ENTITLEMENTS[plan].liveProjects,
+      projectLimit: PLAN_ENTITLEMENTS[plan].currentProjects,
+      enforcement: { enabled: getBillingConfig(this.config).enabled, reason: getBillingConfig(this.config).enabled ? "billing_enabled" : "billing_disabled" },
     };
   }
 
   async assertCanCreateProject(userId: number, existingManager?: EntityManager) {
     const check = async (manager: EntityManager) => {
+      const billing = getBillingConfig(this.config);
+      if (!billing.enabled) return { allowed: true, enforcement: billing };
       await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-create:${userId}`]);
       const usage = await this.projectUsage(userId, manager);
-      if (usage.enforcement.enabled && usage.activeProjects >= usage.projectLimit) {
-        throw new ForbiddenException(`${usage.plan === "free" ? "Free" : "Pro"} plan allows ${usage.projectLimit} active projects; you currently have ${usage.activeProjects}. Open Projects and archive one before creating another.`);
+      if (usage.enforcement.enabled && usage.currentProjects >= usage.currentProjectLimit) {
+        throw new ForbiddenException({ code: "DG_CURRENT_PROJECT_QUOTA_REACHED", message: `${usage.plan.toUpperCase()} allows ${usage.currentProjectLimit} current projects; you currently have ${usage.currentProjects}. Upgrade or archive a project before creating another.` });
       }
       return {
         ...usage,
@@ -42,6 +51,42 @@ export class EntitlementService {
       };
     };
     return existingManager ? check(existingManager) : this.dataSource.transaction(check);
+  }
+
+  async assertCanDeployProject(userId: number, projectId: string, existingManager?: EntityManager) {
+    const check = async (manager: EntityManager) => {
+      const billing = getBillingConfig(this.config);
+      if (!billing.enabled) return { allowed: true, enforcement: billing };
+      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`billing-live:${userId}`]);
+      const plan = await this.planForUser(userId, manager);
+      const subscription = await manager.getRepository(BillingSubscription).findOne({ where: { userId } });
+      if (plan === "free" && subscription?.trialEndsAt && subscription.trialEndsAt.getTime() <= Date.now()) {
+        throw new ForbiddenException({ code: "DG_FREE_TRIAL_EXPIRED", message: "The 48-hour Free LIVE deployment trial has expired. Upgrade before deploying or continuing this runtime." });
+      }
+      const usage = await this.projectUsage(userId, manager);
+      const alreadyLive = await manager.getRepository(ProjectEnvironmentRoute).createQueryBuilder("route")
+        .where("route.projectId = :projectId", { projectId }).andWhere("route.liveGenerationId IS NOT NULL").getExists();
+      if (!alreadyLive && usage.liveProjects >= usage.liveProjectLimit) {
+        throw new ForbiddenException({ code: "DG_LIVE_PROJECT_QUOTA_REACHED", message: `${plan.toUpperCase()} allows ${usage.liveProjectLimit} simultaneously LIVE project${usage.liveProjectLimit === 1 ? "" : "s"}; you currently have ${usage.liveProjects}. Upgrade or stop an existing LIVE project.` });
+      }
+      return { ...usage, allowed: true };
+    };
+    return existingManager ? check(existingManager) : this.dataSource.transaction(check);
+  }
+
+  async recordSuccessfulLiveDeployment(userId: number, projectId: string, activatedAt: Date, manager: EntityManager) {
+    if (!getBillingConfig(this.config).enabled || await this.planForUser(userId, manager) !== "free") return null;
+    const repo = manager.getRepository(BillingSubscription);
+    let subscription = await repo.findOne({ where: { userId } });
+    subscription ||= repo.create({ userId, plan: "free", status: "active", provider: "none", mode: "mock" });
+    if (!subscription.trialStartedAt) {
+      subscription.trialStartedAt = activatedAt;
+      subscription.trialEndsAt = new Date(activatedAt.getTime() + 48 * 60 * 60 * 1000);
+      subscription.trialProjectId = projectId;
+      subscription.mode = "mock";
+      await repo.save(subscription);
+    }
+    return subscription;
   }
 
   async consume(userId: number, metric: BillingMetric, idempotencyKey: string, quantity = 1, metadata: Record<string, unknown> = {}) {
@@ -57,7 +102,8 @@ export class EntitlementService {
       let counter = await counterRepo.findOne({ where: { userId, metric, periodStart } });
       if (!counter) counter = counterRepo.create({ userId, metric, periodStart, periodEnd, quantity: 0 });
       const limit = Number(PLAN_ENTITLEMENTS[plan][METRIC_LIMIT_KEY[metric]]);
-      const enforcement = getPlanUsageEnforcementConfig();
+      const billing = getBillingConfig(this.config);
+      const enforcement = { enabled: billing.enabled, reason: billing.enabled ? "billing_enabled" : "billing_disabled" };
       if (enforcement.enabled && counter.quantity + quantity > limit) throw new ForbiddenException(`${plan === "free" ? "Free" : "Pro"} plan ${metric.replaceAll("_", " ")} limit reached (${limit} per month).`);
       counter.quantity += quantity;
       await counterRepo.save(counter);
@@ -70,7 +116,8 @@ export class EntitlementService {
     const plan = await this.planForUser(userId);
     const rows = await this.dataSource.getRepository(BillingUsageCounter).find({ where: { userId, periodStart: this.periodStart() } });
     const usage = Object.fromEntries(rows.map((row) => [row.metric, row.quantity]));
-    return { plan, entitlements: PLAN_ENTITLEMENTS[plan], usage, periodStart: this.periodStart(), periodEnd: this.periodEnd(), enforcement: getPlanUsageEnforcementConfig() };
+    const billing = getBillingConfig(this.config);
+    return { plan, entitlements: PLAN_ENTITLEMENTS[plan], usage, periodStart: this.periodStart(), periodEnd: this.periodEnd(), enforcement: { enabled: billing.enabled, reason: billing.enabled ? "billing_enabled" : "billing_disabled" }, billing };
   }
 
   periodStart(date = new Date()) { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-01`; }

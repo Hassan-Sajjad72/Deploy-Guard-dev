@@ -10,6 +10,8 @@ const FRIENDLY_GITHUB_ACTIONS_STAGES: Record<string, string> = {
   validate_application_runtime: "Validate Application Runtime",
   publish_immutable_image_to_ecr: "Publish Image",
   publish_immutable_images_to_ecr: "Publish Images",
+  install_trivy_scanner: "Prepare Security Scan",
+  scan_exact_immutable_service_images: "Scan Container Images",
   workflow_dispatch: "Prepare Source",
   workflow_bootstrap: "Prepare Source",
   workflow_run_discovery: "GitHub Actions run was not created",
@@ -56,6 +58,8 @@ const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
   validate_application_runtime: { key: "validate_application_runtime", label: "Validate Application Runtime" },
   publish_immutable_image_to_ecr: { key: "publish_immutable_image_to_ecr", label: "Publish Image" },
   publish_immutable_images_to_ecr: { key: "publish_immutable_images_to_ecr", label: "Publish Images" },
+  install_trivy_scanner: { key: "install_trivy_scanner", label: "Prepare Security Scan" },
+  scan_exact_immutable_service_images: { key: "scan_exact_immutable_service_images", label: "Scan Container Images" },
   select_immutable_rollback_image: { key: "select_immutable_rollback_image", label: "Restore Release" },
   select_immutable_rollback_service_images: { key: "select_immutable_rollback_service_images", label: "Restore Release" },
   install_terraform: { key: "install_terraform", label: "Deploy Runtime" },
@@ -65,7 +69,7 @@ const WORKFLOW_STEP_STAGES: Record<string, { key: string; label: string }> = {
 
 export type GithubActionsPresentationAction = "deploy" | "destroy" | "rollback";
 const ACTION_WORKFLOW_STAGES: Record<GithubActionsPresentationAction, Set<string>> = {
-  deploy: new Set(["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack", "build_immutable_railpack_images", "validate_application_runtime", "publish_immutable_images_to_ecr", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
+  deploy: new Set(["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack", "build_immutable_railpack_images", "validate_application_runtime", "publish_immutable_images_to_ecr", "install_trivy_scanner", "scan_exact_immutable_service_images", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
   rollback: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "select_immutable_rollback_service_images", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
   destroy: new Set(["configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_terraform", "materialize_release_runtime", "publish_verified_release_result"]),
 };

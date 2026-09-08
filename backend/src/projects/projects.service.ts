@@ -36,6 +36,7 @@ import { ProjectGenerationServiceRevision } from "./project-generation-service-r
 import { requireApplicationEntrypointServiceId } from "./application-entrypoint";
 import { PipelineRunStatus, ProjectPipelineRun } from "./project-pipeline-run.entity";
 import { assertBuildTargetOverride } from "./build-target";
+import { EntitlementService } from "../billing/entitlement.service";
 
 type RequestInfo = { ip?: string; headers?: Record<string, string | string[] | undefined> };
 
@@ -58,7 +59,8 @@ export class ProjectsService {
     private readonly config: ConfigService,
     private readonly environmentCrypto: ProjectEnvironmentCryptoService,
     private readonly projectActivity: ProjectActivityService,
-    private readonly githubApp: GithubAppService
+    private readonly githubApp: GithubAppService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async githubConnectionStatus(user: User) {
@@ -202,6 +204,7 @@ export class ProjectsService {
           environmentName,
         });
       }
+      await this.entitlements.assertCanCreateProject(user.id, manager);
       const configuredServices = this.normalizeServices(dto.services);
       const project = repository.create({
         ownerUserId: user.id,

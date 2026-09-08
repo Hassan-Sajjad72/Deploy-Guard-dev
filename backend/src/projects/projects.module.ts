@@ -53,6 +53,8 @@ import { BuildTargetResolverService } from "./build-target-resolver.service";
 import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
 import { DeploymentRequirementResolverService } from "./deployment-requirement-resolver.service";
 import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
+import { BillingModule } from "../billing/billing.module";
+import { FreeTrialRuntimeEnforcerService } from "./free-trial-runtime-enforcer.service";
 
 @Module({
   imports: [
@@ -72,6 +74,7 @@ import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnost
     UsersModule,
     AwsCliModule,
     NotificationsModule,
+    BillingModule,
   ],
   controllers: [ProjectsController],
   providers: [
@@ -93,6 +96,7 @@ import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnost
     ProductStartSchemaIntegrityService,
     LiveRuntimeIdentityRecoveryService,
     ManagedDatabaseReconciliationService,
+    FreeTrialRuntimeEnforcerService,
   ],
   exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService, LiveRuntimeIdentityRecoveryService],
 })

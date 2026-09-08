@@ -21,6 +21,8 @@ on:
       control_plane_sha: { required: true, type: string }
       result_contract_version: { required: true, type: string }
       release_only: { required: true, type: string }
+      trivy_enabled: { required: true, type: string }
+      trivy_enforce: { required: true, type: string }
 
 permissions:
   contents: read
@@ -44,6 +46,8 @@ jobs:
       CONTROL_PLANE_SHA: ${{ inputs.control_plane_sha }}
       RESULT_CONTRACT_VERSION: ${{ inputs.result_contract_version }}
       RELEASE_ONLY: ${{ inputs.release_only }}
+      TRIVY_ENABLED: ${{ inputs.trivy_enabled }}
+      TRIVY_ENFORCE: ${{ inputs.trivy_enforce }}
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
@@ -64,6 +68,8 @@ jobs:
           set -euo pipefail
           [[ "$DEPLOYMENT_ACTION" =~ ^(deploy|rollback|destroy)$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_deployment_action' >&2; exit 1; }
           [[ "$RELEASE_ONLY" =~ ^(true|false)$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_release_only_mode' >&2; exit 1; }
+          [[ "$TRIVY_ENABLED" =~ ^(true|false)$ && "$TRIVY_ENFORCE" =~ ^(true|false)$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_trivy_flags' >&2; exit 1; }
+          { [ "$TRIVY_ENABLED" = true ] || [ "$TRIVY_ENFORCE" = false ]; } || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=trivy_enforce_requires_enabled' >&2; exit 1; }
           { [ "$RELEASE_ONLY" = false ] || [ "$DEPLOYMENT_ACTION" = deploy ] || [ "$DEPLOYMENT_ACTION" = rollback ]; } || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=release_only_requires_deploy_or_rollback' >&2; exit 1; }
           [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ && "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_immutable_release_identity' >&2; exit 1; }
           [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v5 ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=incompatible_result_contract' >&2; exit 1; }
@@ -285,6 +291,45 @@ jobs:
             jq --slurpfile item .deployguard/one-artifact.json '. + $item' .deployguard/service-artifacts.json > .deployguard/service-artifacts.next; mv .deployguard/service-artifacts.next .deployguard/service-artifacts.json
           done < <(jq -c '.[]' .deployguard/build-artifacts.json)
           echo 'published=true' >> "$GITHUB_OUTPUT"
+      - name: Install Trivy scanner
+        if: success() && inputs.deployment_action == 'deploy' && inputs.trivy_enabled == 'true'
+        continue-on-error: true
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with: { version: v0.72.0 }
+      - name: Scan exact immutable service images
+        if: success() && inputs.deployment_action == 'deploy' && inputs.trivy_enabled == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p .deployguard/security terraform
+          result=.deployguard/security/deployguard-security-result.json
+          findings=.deployguard/security/findings.json
+          printf '[]' > "$findings"
+          scan_error=false
+          if ! command -v trivy >/dev/null 2>&1; then scan_error=true; fi
+          if [ "$scan_error" = false ]; then
+            while IFS= read -r image; do
+              service_id="$(jq -r '.serviceId' <<<"$image")"; immutable="$(jq -r '.image' <<<"$image")"; raw=".deployguard/security/${service_id}.json"
+              if ! trivy image --quiet --format json --output "$raw" "$immutable"; then scan_error=true; break; fi
+              jq -c --arg serviceId "$service_id" --arg image "$immutable" '[.Results[]? as $result | ($result.Vulnerabilities // [])[] | {serviceId:$serviceId,image:$image,vulnerabilityId:(.VulnerabilityID//"UNKNOWN"),severity:((.Severity//"UNKNOWN")|ascii_upcase),packageName:(.PkgName//"unknown"),installedVersion:(.InstalledVersion//null),fixedVersion:(.FixedVersion//null),target:($result.Target//"unknown"),type:($result.Type//"unknown"),origin:(if (($result.Type//"")|ascii_downcase|IN("node-pkg","python-pkg","gobinary","gomod","jar","pom","bundler","cargo","composer","nuget")) or (($result.Target//"")|ascii_downcase|test("(^|/)(package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|requirements[^/]*\\.txt|poetry\\.lock|pipfile\\.lock|gemfile\\.lock|go\\.sum|pom\\.xml|cargo\\.lock)$")) then "app_dependency" elif (($result.Type//"")|ascii_downcase|IN("alpine","debian","ubuntu","redhat","centos","rocky","amazon","oracle","suse","os")) then "base_image" else "unknown" end)}]' "$raw" | jq -s '.[0] + .[1]' "$findings" - > "$findings.next" || { scan_error=true; break; }
+              mv "$findings.next" "$findings"
+            done < <(jq -c '.[]' .deployguard/service-artifacts.json)
+          fi
+          if [ "$scan_error" = true ]; then
+            jq -cn --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg commit "$SOURCE_SHA" --argjson enforce "$TRIVY_ENFORCE" '{contractVersion:"deployguard.security-result/v1",status:"error",deploymentOperationId:$operation,projectId:$project,commitSha:$commit,scanner:"trivy",enforced:$enforce,counts:{critical:0,high:0,medium:0,low:0,unknown:0,total:0},blockingFindingCount:0,evidence:[],evidenceHash:null,policy:{rule:"fixable Critical application dependencies"}}' > "$result"
+          else
+            counts="$(jq -c '{critical:map(select(.severity=="CRITICAL"))|length,high:map(select(.severity=="HIGH"))|length,medium:map(select(.severity=="MEDIUM"))|length,low:map(select(.severity=="LOW"))|length,unknown:map(select(.severity=="UNKNOWN"))|length,total:length}' "$findings")"
+            blocking="$(jq '[.[] | select(.severity=="CRITICAL" and .origin=="app_dependency" and (.fixedVersion//"")!="")] | length' "$findings")"
+            status=passed; [ "$blocking" -eq 0 ] || status="$([ "$TRIVY_ENFORCE" = true ] && echo blocked || echo advisory)"
+            evidence="$(jq -c 'sort_by(.serviceId,.severity,.vulnerabilityId,.packageName)|.[0:500]' "$findings")"
+            hash="$(printf '%s' "$evidence" | sha256sum | cut -d' ' -f1)"
+            jq -cn --arg status "$status" --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg commit "$SOURCE_SHA" --arg hash "$hash" --argjson enforce "$TRIVY_ENFORCE" --argjson counts "$counts" --argjson blocking "$blocking" --argjson evidence "$evidence" '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:$operation,projectId:$project,commitSha:$commit,scanner:"trivy",enforced:$enforce,counts:$counts,blockingFindingCount:$blocking,evidence:$evidence,evidenceHash:$hash,hashAlgorithm:"deployguard.security-evidence-sha256/v1",policy:{rule:"fixable Critical application dependencies"}}' > "$result"
+          fi
+          if [ "$TRIVY_ENFORCE" = true ] && { [ "$scan_error" = true ] || [ "$(jq -r '.status' "$result")" = blocked ]; }; then
+            jq -cn --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --slurpfile security "$result" '{contractVersion:"deployguard.release-failure/v1",action:$action,sourceSha:$sourceSha,operationId:$operationId,failedStage:"trivy_scan",securityScan:$security[0]}' > terraform/deployguard-failure-evidence.json
+            echo 'DG_FAILURE code=DG_TRIVY_POLICY_BLOCKED stage=trivy_scan' >&2
+            exit 1
+          fi
       - name: Select immutable rollback service images
         if: success() && (inputs.deployment_action == 'rollback' || inputs.deployment_action == 'destroy')
         shell: bash
@@ -397,6 +442,10 @@ jobs:
             bash .deployguard/terraform/build-release-result.sh "$DEPLOYMENT_ACTION" "$RESULT_CONTRACT_VERSION" "$SOURCE_SHA" "$OPERATION_ID" .deployguard/service-artifacts.json .deployguard/terraform-outputs.json .deployguard/aws-runtime-verification.json .deployguard/release-runtime.json
           fi
           mkdir -p terraform; cp .deployguard/release-runtime.json terraform/deployguard-result.json
+          if [ -f .deployguard/security/deployguard-security-result.json ]; then
+            jq --slurpfile security .deployguard/security/deployguard-security-result.json '. + {securityScan:$security[0]}' terraform/deployguard-result.json > terraform/deployguard-result.next.json
+            mv terraform/deployguard-result.next.json terraform/deployguard-result.json
+          fi
           if [ -f .deployguard/terraform/deployguard-cost-plan.json ]; then
             cp .deployguard/terraform/deployguard-cost-plan.json terraform/deployguard-cost-plan.json
           fi

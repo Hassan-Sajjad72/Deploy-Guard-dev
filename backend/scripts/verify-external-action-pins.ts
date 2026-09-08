@@ -7,12 +7,14 @@ const APPROVED_ACTIONS = new Map<string, string>([
   ["aws-actions/configure-aws-credentials", "e3dd6a429d7300a6a4c196c26e071d42e0343502"],
   ["hashicorp/setup-terraform", "b9cd54a3c349d3f38e8881555d616ced269862dd"],
   ["actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"],
+  ["aquasecurity/setup-trivy", "81e514348e19b6112ce2a7e3ecbafe19c1e1f567"],
 ]);
 const APPROVED_ACTION_OCCURRENCES = new Map<string, number>([
   ["actions/checkout", 1],
   ["aws-actions/configure-aws-credentials", 1],
   ["hashicorp/setup-terraform", 1],
   ["actions/upload-artifact", 2],
+  ["aquasecurity/setup-trivy", 1],
 ]);
 
 type ActionReference = { repository: string; sha: string };

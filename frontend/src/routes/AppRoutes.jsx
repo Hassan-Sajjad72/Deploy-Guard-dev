@@ -22,6 +22,7 @@ const ProjectPipeline = lazy(() => import("../pages/ProjectPipeline.jsx"));
 const ProjectSettings = lazy(() => import("../pages/ProjectSettings.jsx"));
 const ProjectTroubleshooting = lazy(() => import("../pages/ProjectTroubleshooting.jsx"));
 const Projects = lazy(() => import("../pages/Projects.jsx"));
+const Billing = lazy(() => import("../pages/Billing.jsx"));
 
 export default function AppRoutes() {
   return (
@@ -38,6 +39,7 @@ export default function AppRoutes() {
         <Route element={<AppLayout />}>
           <Route element={<Dashboard />} path="/dashboard" />
           <Route element={<Projects />} path="/projects" />
+          <Route element={<Billing />} path="/billing" />
           <Route element={<ProjectDetails />} path="/projects/:projectId" />
           <Route element={<ProjectPipeline />} path="/projects/:projectId/pipeline" />
           <Route element={<ProjectInfrastructure />} path="/projects/:projectId/infrastructure" />

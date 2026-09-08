@@ -12,5 +12,7 @@ export const refreshNotificationStatus = (projectId) => apiRequest(`/api/project
 export const resendNotificationConfirmation = (projectId) => apiRequest(`/api/projects/${id(projectId)}/notifications/resend-confirmation`, { method: "POST" });
 export const unsubscribeNotifications = (projectId) => apiRequest(`/api/projects/${id(projectId)}/notifications/unsubscribe`, { method: "POST" });
 export const testNotification = (projectId) => apiRequest(`/api/projects/${id(projectId)}/notifications/test`, { method: "POST" });
+export const getBillingSummary = () => apiRequest("/api/billing/summary", { cache: "no-store" });
+export const setMockBillingPlan = (plan, userId) => apiRequest("/api/billing/mock/plan", { method: "POST", body: { plan, ...(userId ? { userId } : {}) } });
 export const createTerraformExport = (projectId) => apiRequest(`/api/projects/${id(projectId)}/infrastructure/exports`, { method: "POST" });
 export async function downloadTerraformExport(projectId, artifact) { const response = await fetch(`${getApiBaseUrl()}/api/projects/${id(projectId)}/infrastructure/exports/${id(artifact.id)}/download`, { credentials: "include" }); if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.message || "Export download failed"); } const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = artifact.filename; anchor.click(); URL.revokeObjectURL(url); }

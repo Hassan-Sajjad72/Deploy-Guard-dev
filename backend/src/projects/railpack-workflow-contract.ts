@@ -19,6 +19,8 @@ export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "control_plane_sha", required: true, type: "string" },
   { name: "result_contract_version", required: true, type: "string" },
   { name: "release_only", required: true, type: "string" },
+  { name: "trivy_enabled", required: true, type: "string" },
+  { name: "trivy_enforce", required: true, type: "string" },
 ] as const;
 export type RailpackWorkflowInputName = typeof RAILPACK_WORKFLOW_INPUTS[number]["name"];
 export type RailpackWorkflowInputs = Record<RailpackWorkflowInputName, string>;

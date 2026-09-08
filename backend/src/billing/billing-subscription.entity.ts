@@ -11,6 +11,9 @@ export class BillingSubscription {
   @Column({ default: "not_configured" }) mode: string;
   @Column({ nullable: true, name: "billing_period_start", type: "timestamptz" }) billingPeriodStart: Date | null;
   @Column({ nullable: true, name: "billing_period_end", type: "timestamptz" }) billingPeriodEnd: Date | null;
+  @Column({ nullable: true, name: "trial_started_at", type: "timestamptz" }) trialStartedAt: Date | null;
+  @Column({ nullable: true, name: "trial_ends_at", type: "timestamptz" }) trialEndsAt: Date | null;
+  @Column({ nullable: true, name: "trial_project_id", type: "uuid" }) trialProjectId: string | null;
   @Column({ default: false, name: "cancel_at_period_end" }) cancelAtPeriodEnd: boolean;
   @Column({ nullable: true, name: "cancelled_at", type: "timestamptz" }) cancelledAt: Date | null;
   @Column({ nullable: true, name: "provider_event_created_at", type: "timestamptz" }) providerEventCreatedAt: Date | null;

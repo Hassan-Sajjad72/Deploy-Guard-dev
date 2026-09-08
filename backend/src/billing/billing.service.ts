@@ -1,4 +1,6 @@
-import { BadRequestException, forwardRef, Inject, Injectable } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, forwardRef, Inject, Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { randomUUID } from "crypto";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Request } from "express";
 import { DataSource, EntityManager, Repository } from "typeorm";
@@ -14,6 +16,8 @@ import { BillingSubscription } from "./billing-subscription.entity";
 import { BillingWebhookEvent } from "./billing-webhook-event.entity";
 import { EntitlementService } from "./entitlement.service";
 import { ProjectUsageService } from "./project-usage.service";
+import { BILLING_PLAN_ORDER, BillingPlan, MINIMUM_LIVE_PROJECT_COST_USD, PLAN_ENTITLEMENTS, publicBillingPlan } from "./billing-plan";
+import { getBillingConfig } from "./billing.config";
 
 @Injectable()
 export class BillingService {
@@ -28,6 +32,7 @@ export class BillingService {
     private readonly entitlements: EntitlementService,
     private readonly projectUsage: ProjectUsageService,
     private readonly auditLog: AuditLogService,
+    private readonly config: ConfigService,
     @Inject(forwardRef(() => NotificationDispatcherService)) private readonly notifications: NotificationDispatcherService
   ) {}
 
@@ -38,13 +43,6 @@ export class BillingService {
       this.invoiceRepo.find({ where: { userId: user.id }, order: { createdAt: "DESC" }, take: 25 }),
     ]);
     const provider = this.provider.status();
-    if (!provider.configured && subscription.mode === "demo") {
-      subscription.plan = "free";
-      subscription.provider = "none";
-      subscription.mode = "not_configured";
-      subscription.cancelAtPeriodEnd = false;
-      await this.subscriptionRepo.save(subscription);
-    }
     const usage = await this.entitlements.usage(user.id);
     const projectUsage = await this.entitlements.projectUsage(user.id);
     const deploymentRuns = await this.projectUsage.deploymentRunsSince(user.id, new Date(usage.periodStart));
@@ -52,18 +50,23 @@ export class BillingService {
       ...projectUsage,
       deploymentRuns,
       limits: {
-        activeProjects: usage.enforcement.enabled ? projectUsage.projectLimit : null,
+        currentProjects: usage.enforcement.enabled ? projectUsage.currentProjectLimit : null,
+        liveProjects: usage.enforcement.enabled ? projectUsage.liveProjectLimit : null,
         deploymentRuns: null,
       },
     };
     return {
       provider,
       enforcement: usage.enforcement,
-      plan: subscription.plan,
+      plan: usage.plan,
+      planName: publicBillingPlan(usage.plan),
+      pricing: { monthlyUsd: PLAN_ENTITLEMENTS[usage.plan].priceUsdMonthly, minimumLiveProjectCostUsd: MINIMUM_LIVE_PROJECT_COST_USD },
+      billing: usage.billing,
       status: subscription.status,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
       billingPeriodStart: subscription.billingPeriodStart,
       billingPeriodEnd: subscription.billingPeriodEnd,
+      trial: { startedAt: subscription.trialStartedAt, endsAt: subscription.trialEndsAt, projectId: subscription.trialProjectId, expired: Boolean(subscription.trialEndsAt && subscription.trialEndsAt.getTime() <= Date.now()), hours: PLAN_ENTITLEMENTS.free.freeTrialHours },
       entitlements: usage.entitlements,
       usage: usage.usage,
       usagePeriod: { start: usage.periodStart, end: usage.periodEnd },
@@ -87,9 +90,29 @@ export class BillingService {
     return { url: portal.url, mode: "live" };
   }
 
-  async setDemoPlan(user: User, plan: "free" | "pro", req?: Request) {
-    void user; void plan; void req;
-    throw new BadRequestException("Demo billing is disabled.");
+  async setDemoPlan(user: User, plan: BillingPlan, req?: Request, targetUserId = user.id) {
+    const billing = getBillingConfig(this.config);
+    if (!billing.enabled || billing.mode !== "mock") throw new BadRequestException("Mock billing is not enabled.");
+    if (targetUserId !== user.id && user.role !== "admin") throw new ForbiddenException("Only an administrator can assign another account's mock plan.");
+    const target = await this.dataSource.getRepository(User).findOne({ where: { id: targetUserId } });
+    if (!target) throw new BadRequestException("Target account does not exist.");
+    const subscription = await this.ensureSubscription(targetUserId);
+    const current = ["free", "pro", "pro_plus"].includes(subscription.plan) ? subscription.plan as BillingPlan : "free";
+    if (user.role !== "admin" && targetUserId === user.id && BILLING_PLAN_ORDER.indexOf(plan) < BILLING_PLAN_ORDER.indexOf(current)) throw new BadRequestException("Self-service mock plan changes may only upgrade FREE to PRO to PRO_PLUS.");
+    const now = new Date();
+    subscription.plan = plan;
+    subscription.status = "active";
+    subscription.provider = "mock";
+    subscription.mode = "mock";
+    subscription.cancelAtPeriodEnd = false;
+    subscription.billingPeriodStart = now;
+    subscription.billingPeriodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    await this.subscriptionRepo.save(subscription);
+    if (PLAN_ENTITLEMENTS[plan].priceUsdMonthly > 0) {
+      await this.invoiceRepo.save(this.invoiceRepo.create({ userId: targetUserId, providerInvoiceId: `mock-${randomUUID()}`, status: "paid", amountDue: PLAN_ENTITLEMENTS[plan].priceUsdMonthly * 100, currency: "usd", hostedInvoiceUrl: null, invoicePdfUrl: null, issuedAt: now, providerEventCreatedAt: now }));
+    }
+    await this.auditLog.record({ actorUser: user, action: "MOCK_BILLING_PLAN_ASSIGNED", resourceType: "billing", resourceId: subscription.id, status: "success", metadata: { targetUserId, plan, mode: "mock", testBilling: true }, req });
+    return this.summary(target);
   }
 
   async cancel(user: User, req?: Request) {

@@ -47,6 +47,8 @@ import { ProjectBuildTargetRevision } from "./project-build-target-revision.enti
 import { CanonicalBuildTarget } from "./build-target";
 import { DeploymentRequirementAdmissionError, RequirementAdmission } from "./deployment-requirement-resolver.service";
 import { currentFailureDiagnostic, FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
+import { EntitlementService } from "../billing/entitlement.service";
+import { getTrivyConfig } from "./trivy.config";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -131,6 +133,7 @@ export class RailpackDeploymentService {
     private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
     private readonly audit: AuditLogService,
     private readonly failureDiagnostics: FailureDiagnosticService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy", null, null, "DEPLOY"); }
@@ -431,6 +434,8 @@ export class RailpackDeploymentService {
         terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"),
         control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
         release_only: releaseOnly ? "true" : "false",
+        trivy_enabled: getTrivyConfig(this.config).enabled ? "true" : "false",
+        trivy_enforce: getTrivyConfig(this.config).enforce ? "true" : "false",
       };
       operation.imageTag = null;
       operation.currentStage = "workflow_dispatch";
@@ -562,6 +567,9 @@ export class RailpackDeploymentService {
         const runs = manager.getRepository(ProjectPipelineRun);
         const active = await runs.findOne({ where: { projectId: project.id, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
         if (active) return { active };
+        // Prototype-only certification fixtures predate the injected billing
+        // provider; production construction requires it through Nest.
+        if (action === "deploy" && this.entitlements) await this.entitlements.assertCanDeployProject(user.id, project.id, manager);
 
         if (action === "deploy" && deployAdmission?.resetDatabaseIdentity) {
           await this.reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission);
@@ -1049,6 +1057,8 @@ export class RailpackDeploymentService {
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       aiRuntimeAnalysisCandidate: operation.status === PipelineRunStatus.COMPLETED && Boolean(operation.generationId) && metadata.releaseEvidenceVerified === true,
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
+      securityScan: metadata.releaseArtifact && typeof metadata.releaseArtifact === "object"
+        ? (metadata.releaseArtifact as Record<string, unknown>).securityScan || null : metadata.securityScan || null,
       workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages
         .filter((stage) => stage && typeof stage === "object" && githubActionsWorkflowStageRelevant((stage as Record<string, unknown>).key, action))
         .map((stage) => {
@@ -1347,6 +1357,7 @@ export class RailpackDeploymentService {
             evidenceSource: "github_actions", evidenceEventId: operation.githubWorkflowRunId,
             metadata: { workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
               ...(failureEvidence ? { workflowStages: terminalStages.length ? terminalStages : failureEvidence.workflowStages } : terminalStages.length ? { workflowStages: terminalStages } : {}),
+              ...(failureEvidence?.securityScan ? { securityScan: failureEvidence.securityScan } : {}),
               failureSource: "github_actions" },
           });
         }
@@ -1494,6 +1505,11 @@ export class RailpackDeploymentService {
       return { releaseArtifact: artifact, destroyed: true, destroyVerification };
     }
     if (!artifact.terraform || typeof artifact.terraform !== "object" || !Array.isArray(artifact.services) || !artifact.services.length) throw new Error("The release result artifact does not prove the complete service runtime.");
+    const expectedTrivy = (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.trivy_enabled === "true";
+    const expectedTrivyEnforce = (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.trivy_enforce === "true";
+    const securityScan = artifact.securityScan as Record<string, unknown> | undefined;
+    if (expectedTrivy && (!securityScan || securityScan.contractVersion !== "deployguard.security-result/v1" || securityScan.deploymentOperationId !== operation.id || securityScan.projectId !== operation.projectId || securityScan.commitSha !== operation.commitSha || !["passed", "advisory", "error"].includes(String(securityScan.status)) || (securityScan.status !== "error" && !/^[0-9a-f]{64}$/.test(String(securityScan.evidenceHash || ""))) || (expectedTrivyEnforce && securityScan.status !== "passed"))) throw new Error("The release result artifact does not contain valid Trivy evidence for the immutable operation.");
+    if (!expectedTrivy && securityScan) throw new Error("The release result artifact contains an unrequested Trivy scan.");
     const awsRuntimeVerification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
     if (!awsRuntimeVerification || awsRuntimeVerification.contractVersion !== "deployguard.aws-runtime-verification/v1" || awsRuntimeVerification.verified !== true || !Array.isArray(awsRuntimeVerification.services)) {
       throw new Error("The release result artifact does not contain verified AWS runtime evidence.");
@@ -1760,6 +1776,7 @@ export class RailpackDeploymentService {
       route.candidateGenerationId = null;
       route.metadata = { ...route.metadata, lastPromotionOperationId: current.id, runtimeIdentity };
       await routes.save(route);
+      if (this.entitlements) await this.entitlements.recordSuccessfulLiveDeployment(project.ownerUserId, project.id, generation.activatedAt || new Date(), manager);
 
       await materializeStableRelease(manager, {
         projectId: project.id,
