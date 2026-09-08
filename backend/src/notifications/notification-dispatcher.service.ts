@@ -86,7 +86,7 @@ export class NotificationDispatcherService {
       try {
         delivery.attempts = attempt;
         const result = await this.sns.send(project.ownerUserId, project.id, delivery.subject, delivery.message);
-        delivery.status = result.status; delivery.providerMessageId = result.messageId; delivery.sentAt = result.status === "sent" ? new Date() : null; delivery.lastError = null;
+        delivery.status = result.status; delivery.providerMessageId = result.messageId; delivery.publishedAt = result.status === "published" ? new Date() : null; delivery.lastError = null;
         await this.deliveryRepo.save(delivery);
         await this.audit.record({ action: "NOTIFICATION_DISPATCHED", resourceType: "notification", resourceId: delivery.id, status: "success", metadata: { projectId: project.id, eventType: classification.type, attempts: attempt } });
         return delivery;
@@ -107,7 +107,7 @@ export class NotificationDispatcherService {
     if (existing) return existing;
     let delivery: NotificationDelivery;
     try {
-      delivery = await this.deliveryRepo.save(this.deliveryRepo.create({ userId, projectId: null, pipelineRunId: null, eventType, deduplicationKey: key, status: "pending", providerMessageId: null, attempts: 0, lastError: null, subject: "DeployGuard: billing payment failed", message: this.sanitizer.sanitize(message).slice(0, 1000), safeMetadata: { eventType }, sentAt: null }));
+      delivery = await this.deliveryRepo.save(this.deliveryRepo.create({ userId, projectId: null, pipelineRunId: null, eventType, deduplicationKey: key, status: "pending", providerMessageId: null, attempts: 0, lastError: null, subject: "DeployGuard: billing payment failed", message: this.sanitizer.sanitize(message).slice(0, 1000), safeMetadata: { eventType }, publishedAt: null }));
     } catch (error) {
       if (String((error as { code?: unknown }).code) !== "23505") throw error;
       const concurrent = await this.deliveryRepo.findOne({ where: { deduplicationKey: key } });
@@ -117,7 +117,7 @@ export class NotificationDispatcherService {
     if (!this.sns.status().configured) { delivery.status = "skipped_unconfigured"; return this.deliveryRepo.save(delivery); }
     const confirmed = await this.subscriptionRepo.findOne({ where: { userId, status: "confirmed" } });
     if (!confirmed) { delivery.status = "skipped_unconfirmed"; return this.deliveryRepo.save(delivery); }
-    for (let attempt = 1; attempt <= 3; attempt += 1) { try { const result = await this.sns.send(userId, "account", delivery.subject, delivery.message); delivery.attempts = attempt; delivery.status = result.status; delivery.providerMessageId = result.messageId; delivery.sentAt = result.status === "sent" ? new Date() : null; return this.deliveryRepo.save(delivery); } catch { delivery.attempts = attempt; delivery.status = attempt === 3 ? "failed_permanent" : "retrying"; await this.deliveryRepo.save(delivery); } }
+    for (let attempt = 1; attempt <= 3; attempt += 1) { try { const result = await this.sns.send(userId, "account", delivery.subject, delivery.message); delivery.attempts = attempt; delivery.status = result.status; delivery.providerMessageId = result.messageId; delivery.publishedAt = result.status === "published" ? new Date() : null; return this.deliveryRepo.save(delivery); } catch { delivery.attempts = attempt; delivery.status = attempt === 3 ? "failed_permanent" : "retrying"; await this.deliveryRepo.save(delivery); } }
     return delivery;
   }
 }

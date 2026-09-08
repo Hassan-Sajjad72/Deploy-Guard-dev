@@ -24,6 +24,8 @@ assert.match(admin, /loadIndependentAdminSources/);
 assert.match(admin, /sourceErrors\.projects/);
 assert.match(admin, /Platform data unavailable/);
 assert.match(admin, /Project operation evidence unavailable/);
+assert.match(admin, /state !== "DESTROYED"/, "destroyed projects are filtered from the admin presentation without deleting lifecycle records");
+assert.doesNotMatch(admin, /\["ALL", "LIVE", "DEPLOYING", "FAILED", "DESTROYED"\]/, "Admin does not offer an empty destroyed-state filter");
 assert.doesNotMatch(admin, /Last updated: \$\{date\(overview\?\.generatedAt\)\}/);
 assert.doesNotMatch(admin, /Check the guidance above/);
 assert.doesNotMatch(admin, /<dl[\s>]/);

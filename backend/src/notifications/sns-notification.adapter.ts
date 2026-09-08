@@ -77,7 +77,9 @@ export class SnsNotificationAdapter {
   async send(userId: number, projectId: string, subject: string, message: string) {
     if (!this.status().configured) return { status: "skipped_unconfigured", messageId: null };
     const response = await this.client().send(new PublishCommand({ TopicArn: await this.ensureProjectTopic(projectId), Subject: subject.slice(0, 100), Message: message, MessageAttributes: { deployguardUserId: { DataType: "String", StringValue: String(userId) }, deployguardProjectId: { DataType: "String", StringValue: projectId } } }));
-    return { status: "sent", messageId: response.MessageId || null };
+    // SNS Publish confirms provider acceptance and returns a message ID. It
+    // does not confirm that an email reached the subscriber's inbox.
+    return { status: "published", messageId: response.MessageId || null };
   }
   async deleteProjectResources(projectId: string, subscriptions: Array<{ providerSubscriptionArn: string | null; providerTopicArn: string | null }>) {
     if (!this.status().configured) {

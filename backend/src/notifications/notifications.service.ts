@@ -39,13 +39,13 @@ export class NotificationsService {
       deliveries: deliveries.map((item) => ({
         id: item.id,
         eventType: item.eventType,
-        status: item.status,
+        status: item.status === "sent" ? "published" : item.status,
         subject: item.subject,
         attempts: item.attempts,
         lastError: item.lastError,
         metadata: item.safeMetadata || {},
         createdAt: item.createdAt,
-        sentAt: item.sentAt,
+        publishedAt: item.publishedAt,
       })),
     };
   }

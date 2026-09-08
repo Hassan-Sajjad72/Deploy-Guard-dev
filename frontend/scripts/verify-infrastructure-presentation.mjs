@@ -41,7 +41,7 @@ assert.ok(currentState.includes("endpoint: /^https?:\\/\\//i.test(stableUrl) ? s
 assert.match(currentState, /lastApplyAt: authoritativeLiveRelease \? liveReleaseObservedAt : null/, "a failed Destroy must not be presented as a newer Terraform apply");
 assert.match(page, /subscribeProjectStateChanged/);
 assert.match(page, /Destroy cleanup required/);
-assert.match(page, /Retry Failed Destroy/);
+assert.doesNotMatch(page, />Retry Failed Destroy<|>View Destroy progress</, "Infrastructure does not expose destroy controls");
 assert.match(page, /evidence\?\.cloudWatch\?\.status/);
 for (const selector of ["infrastructure-summary-grid", "infrastructure-inventory-card", "infrastructure-topology", "infrastructure-finops-card", "infrastructure-support-grid"]) assert.match(styles, new RegExp(selector));
 assert.match(designSystem, /\.advanced-resource-details/);

@@ -11,14 +11,12 @@ import ErrorState from "../common/ErrorState.jsx";
 import { useToast } from "../../hooks/useToast.js";
 import {
   deployGithubActionsDeployment,
-  destroyGithubActionsDeployment,
   getGithubActionsRollbackCandidates,
   rollbackGithubActionsDeployment,
   retryGithubActionsDeployment,
 } from "../../api/projectApi.js";
 import { deploymentPhasePresentation } from "../../utils/developerDeploymentPresentation.js";
 import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
-import { DESTROY_CONFIRMATION_PHRASE } from "../../utils/deploymentConfirmation.js";
 
 function formatDate(value) {
   return value
@@ -55,8 +53,6 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   const dispatching = useRef(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [destroyOpen, setDestroyOpen] = useState(false);
-  const [destroyPhrase, setDestroyPhrase] = useState("");
   const [acceptedOperation, setAcceptedOperation] = useState(null);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [rollbackCandidates, setRollbackCandidates] = useState([]);
@@ -118,26 +114,6 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
     }
   }
 
-  async function destroy() {
-    if (dispatching.current || !canManage || destroyPhrase !== DESTROY_CONFIRMATION_PHRASE) return;
-    dispatching.current = true;
-    setBusy("destroy");
-    setError("");
-    try {
-      const response = await destroyGithubActionsDeployment(projectId, destroyPhrase);
-      setAcceptedOperation(response.deployment?.operation || null);
-      setDestroyOpen(false);
-      setDestroyPhrase("");
-      await onRefresh();
-      notify(response.deployment?.message || "Infrastructure destruction submitted.", "success");
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      dispatching.current = false;
-      setBusy("");
-    }
-  }
-
   async function openRollback() {
     if (dispatching.current || !canManage || busy) return;
     setRollbackOpen(true);
@@ -180,7 +156,6 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       if (action.kind === "link") return <Button key={action.label} to={`/projects/${projectId}/pipeline`} tone="secondary">{action.label}</Button>;
       if (action.kind === "external") return <Button className="overview-action overview-action-open" href={action.href} key={action.label} rel="noreferrer" target="_blank">{action.label}</Button>;
       if (action.kind === "disabled") return <Button className="overview-action overview-action-disabled" disabled key={action.label} title={action.reason}>{action.label}</Button>;
-      if (action.command === "destroy") return <Button className="overview-action overview-action-destroy" disabled={Boolean(busy)} key={action.label} onClick={() => setDestroyOpen(true)} tone="danger">{action.label}</Button>;
       if (action.command === "retry") return <Button disabled={Boolean(busy)} key={action.label} onClick={() => void retry()}>{busy === "retry" ? "Retrying…" : action.label}</Button>;
       if (action.command === "rollback") return <Button className="overview-action overview-action-rollback" disabled={Boolean(busy)} key={action.label} onClick={() => void openRollback()} tone="secondary">{action.label}</Button>;
       const redeploying = action.command === "redeploy" && busy === "deploy";
@@ -211,13 +186,6 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       <MetricCard label="Latest operation" tone={latest?.status === "failed_application" ? "danger" : "neutral"} value={latest ? `Attempt ${latest.attempt || "—"}` : "No deployment yet"} />
       <MetricCard label="Last deployment duration" value={duration(latest?.startedAt, latest?.completedAt)} />
     </section>
-
-    {destroyOpen ? <Modal labelledBy="overview-destroy-title" onClose={() => { if (!busy) { setDestroyOpen(false); setDestroyPhrase(""); } }}>
-      <p className="eyebrow">Permanent project deletion</p><h2 id="overview-destroy-title">Delete this project and its owned resources?</h2>
-      <p>Each recorded generation and the separate project resources will be cleaned by exact identity. Shared platform networking, cluster and load balancer remain untouched. Type <strong>{DESTROY_CONFIRMATION_PHRASE}</strong> to confirm.</p>
-      <label className="field"><span>Confirmation</span><input autoComplete="off" autoFocus onChange={(event) => setDestroyPhrase(event.target.value)} value={destroyPhrase} /></label>
-      <div className="overview-modal-actions"><Button disabled={Boolean(busy)} onClick={() => { setDestroyOpen(false); setDestroyPhrase(""); }} tone="ghost">Cancel</Button><Button disabled={busy === "destroy" || destroyPhrase !== DESTROY_CONFIRMATION_PHRASE} onClick={() => void destroy()} tone="danger">{busy === "destroy" ? "Destroying…" : "Confirm destroy"}</Button></div>
-    </Modal> : null}
 
     {rollbackOpen ? <Modal labelledBy="overview-rollback-title" onClose={() => { if (!busy) setRollbackOpen(false); }}>
       <p className="eyebrow">Application release</p><h2 id="overview-rollback-title">Rollback application?</h2>

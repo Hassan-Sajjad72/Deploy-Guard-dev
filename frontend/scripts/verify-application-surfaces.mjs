@@ -9,6 +9,7 @@ const api = read("../src/api/projectApi.js");
 const infrastructure = read("../src/pages/ProjectInfrastructure.jsx");
 const monitoring = read("../src/pages/ProjectMetrics.jsx");
 const settings = read("../src/pages/ProjectSettings.jsx");
+const notifications = read("../src/components/projects/NotificationSettingsPanel.jsx");
 const troubleshooting = read("../src/pages/ProjectTroubleshooting.jsx");
 const admin = read("../src/pages/AdminUsers.jsx");
 const deployment = read("../src/components/projects/PipelineExecution.jsx");
@@ -54,6 +55,9 @@ assert.doesNotMatch(settings, /<span>Application port<\/span>|servicePort: Numbe
 assert.match(settings, /EnvironmentVariablesPanel[\s\S]*serviceId=\{selectedService\.id\}/, "service-scoped ENV remains available");
 assert.match(settings, /updateProjectDatabaseTier/, "managed database controls remain available");
 assert.match(settings, /NotificationSettingsPanel/, "notifications remain available in Settings");
+assert.match(notifications, /published: "Published to SNS"/, "notification history labels provider acceptance without claiming email delivery");
+assert.match(notifications, /delivery\.publishedAt \|\| delivery\.createdAt/, "notification history uses the provider-publication timestamp");
+assert.doesNotMatch(notifications, /sent: "Sent"|delivery\.sentAt/, "notification history does not expose misleading sent semantics");
 assert.match(troubleshooting, /No troubleshooting evidence available/);
 assert.match(troubleshooting, /eligibleOperations\.length && !selected/, "the troubleshooting view requires bounded failed-deployment or LIVE runtime evidence");
 assert.match(admin, /data-admin-section="overview"/);

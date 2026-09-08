@@ -136,7 +136,7 @@ async function main() {
       send: async () => {
         providerCalls += 1;
         if (providerCalls < 3) throw new Error("fixture provider failure with secret=never-persist");
-        return { status: "sent", messageId: "fixture-provider-message" };
+        return { status: "published", messageId: "fixture-provider-message" };
       },
     } as never,
     { sanitize: (value: unknown) => String(value).replace(/secret=[^ ]+/g, "secret=[REDACTED]") } as never,
@@ -146,7 +146,7 @@ async function main() {
   await Promise.all([dispatcher.dispatch(notification), dispatcher.dispatch(notification)]);
   const persistedDeliveries = await deliveries.find({ where: { projectId: project.id } });
   assert.equal(persistedDeliveries.length, 1);
-  assert.equal(persistedDeliveries[0].status, "sent");
+  assert.equal(persistedDeliveries[0].status, "published");
   assert.equal(persistedDeliveries[0].attempts, 3);
   assert.equal(persistedDeliveries[0].lastError, null);
   assert.equal(providerCalls, 3);

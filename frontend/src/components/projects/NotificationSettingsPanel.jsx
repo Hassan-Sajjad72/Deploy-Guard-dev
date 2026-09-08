@@ -10,7 +10,7 @@ import {
 import { Card, DataTable, StatusChip } from "../common/DesignSystem.jsx";
 
 const statusLabels = { disabled: "Disabled", not_configured: "Not configured", pending_confirmation: "Pending confirmation", confirmed: "Confirmed", error: "Error" };
-const deliveryLabels = { sent: "Sent", pending: "Pending", retrying: "Retrying", failed_permanent: "Error", skipped_unconfirmed: "Pending confirmation", skipped_unconfigured: "Not configured" };
+const deliveryLabels = { published: "Published to SNS", pending: "Pending", retrying: "Retrying", failed_permanent: "Error", skipped_unconfirmed: "Pending confirmation", skipped_unconfigured: "Not configured" };
 function timestamp(value) { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—"; }
 function title(value) { return String(value || "notification").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
 
@@ -67,6 +67,6 @@ export default function NotificationSettingsPanel({ projectId, canManage }) {
         <label><input checked={Boolean(settings?.preference?.stageUpdatesEnabled)} onChange={(event) => void update("stageUpdatesEnabled", event.target.checked)} type="checkbox" /> Optional start and stage updates</label>
       </fieldset>
     </div>
-    <div className="notification-history"><h3>Recent delivery history</h3>{settings?.deliveries?.length ? <DataTable caption="Recent project notification delivery history" className="responsive-record-table" label="Notification delivery history"><thead><tr><th>Event</th><th>Delivery</th><th>Context</th><th>Time</th></tr></thead><tbody>{settings.deliveries.map((delivery) => <tr key={delivery.id}><td data-label="Event">{title(delivery.eventType)}</td><td data-label="Delivery"><StatusChip status={delivery.status === "sent" ? "healthy" : delivery.status.includes("failed") ? "failed" : delivery.status}>{deliveryLabels[delivery.status] || title(delivery.status)}</StatusChip></td><td data-label="Context">{delivery.metadata?.action ? `${title(delivery.metadata.action)} operation` : "Project event"}</td><td data-label="Time">{timestamp(delivery.sentAt || delivery.createdAt)}</td></tr>)}</tbody></DataTable> : <p className="muted">No lifecycle notification deliveries have been recorded for this project.</p>}</div>
+    <div className="notification-history"><h3>Recent delivery history</h3>{settings?.deliveries?.length ? <DataTable caption="Recent project notification delivery history" className="responsive-record-table" label="Notification delivery history"><thead><tr><th>Event</th><th>Delivery</th><th>Context</th><th>Time</th></tr></thead><tbody>{settings.deliveries.map((delivery) => <tr key={delivery.id}><td data-label="Event">{title(delivery.eventType)}</td><td data-label="Delivery"><StatusChip status={delivery.status === "published" ? "healthy" : delivery.status.includes("failed") ? "failed" : delivery.status}>{deliveryLabels[delivery.status] || title(delivery.status)}</StatusChip></td><td data-label="Context">{delivery.metadata?.action ? `${title(delivery.metadata.action)} operation` : "Project event"}</td><td data-label="Time">{timestamp(delivery.publishedAt || delivery.createdAt)}</td></tr>)}</tbody></DataTable> : <p className="muted">No lifecycle notification deliveries have been recorded for this project.</p>}</div>
   </Card>;
 }

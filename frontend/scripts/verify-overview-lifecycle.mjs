@@ -46,7 +46,7 @@ const failedRollback = { stateAuthority: { state: "FAILED", latestCompletedOpera
 assert.equal(overviewLifecycleCopy(failedDeploy).title, "Deployment failed");
 assert.equal(overviewLifecycleActions(failedDeploy, true)[1].label, "Retry Failed Deployment");
 assert.equal(overviewLifecycleCopy(failedDestroy).title, "Destroy failed");
-assert.equal(overviewLifecycleActions(failedDestroy, true)[1].label, "Retry Failed Destroy");
+assert.deepEqual(overviewLifecycleActions(failedDestroy, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }]);
 assert.equal(overviewLifecycleCopy(failedRollback).title, "Rollback failed");
 assert.equal(overviewLifecycleActions(failedRollback, true)[1].label, "Retry Failed Rollback");
 assert.equal(overviewFailureOwnershipLabel({ ...failedDeploy, latestAttempt: { ...failedDeploy.latestAttempt, failureOwner: "REPOSITORY_APPLICATION" } }), "Repository failure");
@@ -98,13 +98,11 @@ assert.equal(overviewLifecycleCopy(failedDestroyWithStableRuntime).title, "Destr
 assert.match(overviewLifecycleCopy(failedDestroyWithStableRuntime).message, /remains live/i);
 assert.deepEqual(overviewLifecycleActions(failedDestroyWithStableRuntime, true), [
   { kind: "link", target: "pipeline", label: "View Pipeline" },
-  { kind: "command", command: "retry", label: "Retry Failed Destroy" },
 ]);
 assert.deepEqual(actions("LIVE"), [
   { kind: "external", href: "https://example.test", label: "Open Application" },
   { kind: "command", command: "redeploy", label: "Redeploy" },
   { kind: "disabled", command: "rollback", label: "Rollback application", reason: "No previous successful release is available." },
-  { kind: "command", command: "destroy", label: "Destroy Infrastructure" },
 ]);
 assert.deepEqual(
   overviewLifecycleActions({ stateAuthority: { state: "LIVE" }, stableUrl: "https://example.test", stableRelease: { rollbackAvailable: true } }, true)[2],
@@ -125,6 +123,7 @@ assert.equal(failureRecoveryCommand(applicationBindingFailure, false), "deploy_f
 assert.equal(failureRecoveryCommand(safeAfterFixFailure, false), "deploy_fixed");
 assert.equal(failureRecoveryCommand(notSafeFailure, false), null);
 assert.equal(failureRecoveryCommand({ ...safeAfterFixFailure, operationType: "rollback" }, false), null, "rollback never becomes a fresh source deployment");
+assert.equal(failureRecoveryCommand({ ...safeNowFailure, operationType: "destroy" }, true), null, "destroy retry controls remain hidden from the UI");
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: safeAfterFixFailure, canRetry: false }, true), [
   { kind: "link", target: "pipeline", label: "View Pipeline" },
   { kind: "command", command: "deploy_fixed", label: "Deploy Fixed Commit" },
@@ -139,15 +138,16 @@ assert.match(lifecycle, /acceptedOperation/);
 assert.match(lifecycle, /authority\.activeOperation\?\.id/, "the accepted-operation banner clears when persisted state has no matching active operation");
 assert.match(lifecycle, /setAcceptedOperation\(null\)/, "terminal persisted state clears the local accepted-operation banner");
 assert.match(lifecycle, /dispatching\.current/);
-assert.match(lifecycle, /retryGithubActionsDeployment\(projectId\)/, "failed Destroy uses the existing generic retry handler");
+assert.match(lifecycle, /retryGithubActionsDeployment\(projectId\)/, "non-destroy retries continue to use the existing generic retry handler");
 assert.match(lifecycle, /deployGithubActionsDeployment\(projectId\)/, "repository fixes use the existing normal deployment endpoint");
 assert.match(lifecycle, /latestOperationFailed/);
-assert.match(api, /\/deploy\/retry[\s\S]*?method: "POST"/, "failed Destroy uses the existing generic retry endpoint");
+assert.match(api, /\/deploy\/retry[\s\S]*?method: "POST"/, "the existing generic retry endpoint remains unchanged");
 assert.match(lifecycle, /getGithubActionsRollbackCandidates/);
 assert.match(lifecycle, /rollbackGithubActionsDeployment/);
 assert.match(lifecycle, /No previous successful release is available/);
 assert.match(lifecycle, /rollbackError/);
 assert.match(lifecycle, /Repository code will not be rebuilt/);
+assert.doesNotMatch(lifecycle, /destroyGithubActionsDeployment|DESTROY_CONFIRMATION_PHRASE|Destroy Infrastructure/, "Overview does not expose infrastructure destruction");
 assert.match(lifecycle, /<MetricCard/g);
 assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 3, "Overview has exactly three summary cards");
 assert.match(lifecycle, /<MetricCard detail=\{copy\.message\} label="Current state"/, "Current State retains its verified-release message");
