@@ -11,6 +11,7 @@ import {
 } from "../components/common/DesignSystem.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
+import { grafanaDashboardUrl } from "../utils/grafanaDashboardUrl.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 
@@ -66,10 +67,13 @@ function RuntimeLogViewer({ projectId, serviceId, live }) {
   const [filter, setFilter] = useState("");
   const [reconnectKey, setReconnectKey] = useState(0);
   useEffect(() => {
-    if (!live) return undefined;
-    setConnection((value) => ({ ...value, state: "connecting", message: "Connecting to the LIVE CloudWatch log group…" }));
+    setEvents([]);
+    setConnection({ state: "connecting", message: "Connecting to the LIVE CloudWatch log group…", generationId: null });
+    if (!live || !serviceId) return undefined;
+    let active = true;
     const source = new EventSource(getApplicationLogStreamUrl(projectId, serviceId), { withCredentials: true });
     const receiveIdentity = (name) => (event) => {
+      if (!active) return;
       const payload = JSON.parse(event.data);
       setEvents((current) => mergeLogEvents(name === "generation_changed" ? [] : current, payload.history || []));
       const next = { state: "connected", message: name === "generation_changed" ? "Switched to the new authoritative LIVE generation." : "Streaming the authoritative LIVE application logs.", generationId: payload.generationId };
@@ -78,23 +82,24 @@ function RuntimeLogViewer({ projectId, serviceId, live }) {
     const connected = receiveIdentity("connected");
     const generationChanged = receiveIdentity("generation_changed");
     const log = (event) => {
+      if (!active) return;
       const payload = JSON.parse(event.data);
       setEvents((current) => mergeLogEvents(current, [payload]));
     };
     const warning = (event) => {
+      if (!active) return;
       const payload = JSON.parse(event.data);
-      const next = { state: "reconnecting", message: payload.message || "CloudWatch is temporarily unavailable; retrying.", generationId: connection.generationId };
-      setConnection(next);
+      setConnection((value) => ({ state: "reconnecting", message: payload.message || "CloudWatch is temporarily unavailable; retrying.", generationId: value.generationId }));
     };
     source.addEventListener("connected", connected);
     source.addEventListener("generation_changed", generationChanged);
     source.addEventListener("log", log);
     source.addEventListener("warning", warning);
     source.onerror = () => {
-      const next = { state: "reconnecting", message: "The log connection was interrupted. Reconnecting automatically…", generationId: connection.generationId };
-      setConnection(next);
+      if (!active) return;
+      setConnection((value) => ({ state: "reconnecting", message: "The log connection was interrupted. Reconnecting automatically…", generationId: value.generationId }));
     };
-    return () => source.close();
+    return () => { active = false; source.close(); };
   }, [live, projectId, serviceId, reconnectKey]);
   const visibleEvents = filter.trim() ? events.filter((entry) => `${entry.source || ""} ${entry.message || ""}`.toLowerCase().includes(filter.trim().toLowerCase())) : events;
   return <Card className="monitoring-log-card">
@@ -161,6 +166,9 @@ export default function ProjectMetrics() {
   const metricsState = runtime?.availabilityState || (authority?.monitoring?.available ? "temporarily_unavailable" : "disabled_by_configuration");
   const runtimeAvailable = metricsState === "available";
   const grafanaConfigured = runtime?.grafana?.configured === true && Boolean(runtime?.grafana?.url);
+  const grafanaUrl = grafanaConfigured
+    ? grafanaDashboardUrl(runtime.grafana.url, projectId, selectedService?.ecs?.service || "")
+    : "";
   const destroyOperation = authority?.activeOperation?.type === "destroy" ? "running" : authority?.latestCompletedOperation?.type === "destroy" && authority?.latestCompletedOperation?.outcome === "failed" ? "failed" : null;
   return <div className="monitoring-page page-stack" data-authoritative-state={presentation.state} data-monitoring-available={authority?.monitoring?.available ? "true" : "false"}>
     <PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} context={`Updated ${date(evidence?.lastUpdatedAt)} · ${label(evidence?.freshness)}`} description="Current performance and runtime health." eyebrow="Runtime" status={authority?.applicationHealth?.status || presentation.state} title="Monitoring" />
@@ -181,7 +189,7 @@ export default function ProjectMetrics() {
         <article><span>Evidence freshness</span><strong>{label(evidence?.freshness)}</strong></article>
         <article><span>ALB health</span><strong>{albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"}</strong></article>
         <article><span>ECS task health</span><strong>{ecs ? `${ecs.runningCount} running / ${ecs.desiredCount} desired / ${ecs.pendingCount} pending` : "Unavailable"}</strong></article>
-        <article><span>Grafana</span><strong>{grafanaConfigured ? <a href={runtime.grafana.url} rel="noreferrer" target="_blank">Open Grafana</a> : "Not configured"}</strong></article>
+        <article><span>Grafana</span><strong>{grafanaConfigured ? <a href={grafanaUrl} rel="noreferrer" target="_blank">Open Grafana</a> : "Not configured"}</strong></article>
       </div>
     </details></Card>
     <>
@@ -191,6 +199,6 @@ export default function ProjectMetrics() {
       {runtimeAvailable && runtimeCharts.length ? <section aria-label="Runtime metric charts" className="monitoring-chart-grid">{runtimeCharts.map(({ key, title, unit }) => <MetricChart key={key} metric={runtime[key]} title={title} unit={unit} />)}</section> : null}
       {metricsState === "no_samples_yet" || (runtimeAvailable && !runtimeCharts.length) ? <EmptyState icon="activity" message="CloudWatch is available, but this range has no timestamped samples yet." title="No samples yet" /> : null}
     </>
-    <RuntimeLogViewer live={liveInfrastructure} projectId={projectId} serviceId={selectedService?.serviceId || ""} />
+    <RuntimeLogViewer key={selectedService?.serviceId || "default"} live={liveInfrastructure} projectId={projectId} serviceId={selectedService?.serviceId || ""} />
   </div>;
 }

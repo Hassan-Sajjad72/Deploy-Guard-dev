@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { grafanaDashboardUrl } from "../src/utils/grafanaDashboardUrl.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const page = read("../src/pages/ProjectMetrics.jsx");
@@ -11,6 +12,7 @@ const currentState = read("../../backend/src/projects/current-state/project-curr
 const api = read("../src/api/projectApi.js");
 const resolver = read("../../backend/src/observability/live-runtime-resolver.service.ts");
 const logs = read("../../backend/src/observability/cloudwatch-logs.service.ts");
+const dashboard = JSON.parse(read("../../monitoring/grafana/dashboards/deployguard-runtime.json"));
 
 assert.match(routes, /element=\{<ProjectMetrics \/>\} path="\/projects\/:projectId\/monitoring"/);
 assert.match(sidebar, /label: "Monitoring", path: "monitoring"/);
@@ -37,12 +39,31 @@ assert.match(page, /LIVE CloudWatch log group/);
 assert.match(page, /aria-label="Runtime service"/, "multi-service Monitoring exposes an explicit runtime selector");
 assert.match(page, /getApplicationRuntimeMetrics\(projectId, \{ range, serviceId: effectiveServiceId \}\)/);
 assert.match(page, /getApplicationLogStreamUrl\(projectId, serviceId\)/);
+assert.match(page, /<RuntimeLogViewer key=\{selectedService\?\.serviceId \|\| "default"\}/, "service selection remounts the log viewer without rendering prior-service events");
+assert.match(page, /setEvents\(\[\]\);[\s\S]*setConnection\(\{ state: "connecting"[\s\S]*new EventSource/, "a service change clears prior logs and connection identity before opening the next stream");
+assert.match(page, /active = false; source\.close\(\)/, "the previous service stream is closed and cannot append late events");
 assert.match(api, /params\.set\("serviceId", options\.serviceId\)/);
 assert.match(resolver, /selectedServiceId|requestedServiceId/);
 assert.match(resolver, /resolveApplicationEntrypointServiceId\([\s\S]*project\.applicationEntryPointServiceId/);
 assert.match(logs, /serviceId !== resolved\.serviceId/, "log identity changes when the selected service changes");
 assert.match(page, /metricsState === "no_samples_yet"/);
 for (const item of ["Runtime telemetry", "Last scrape", "AWS observation", "Evidence freshness", "ALB health", "ECS task health", "Grafana"]) assert.match(page, new RegExp(item));
+assert.match(page, /grafanaConfigured \? <a href=\{grafanaUrl\}/, "Open Grafana renders whenever the configured integration is available");
+assert.match(page, /selectedService\?\.ecs\?\.service/, "Grafana uses the selected authoritative ECS service identity");
+const variables = new Map(dashboard.templating.list.map((variable) => [variable.name, variable]));
+assert.ok(variables.has("project"));
+assert.ok(variables.has("service"));
+assert.equal(variables.get("service").query.query, 'label_values(deployguard_runtime_available{project_id=~"$project"}, service)');
+for (const panel of dashboard.panels) for (const target of panel.targets) {
+  assert.match(target.expr, /project_id=~"\$project"/);
+  assert.match(target.expr, /service=~"\$service"/);
+}
+const grafanaA = grafanaDashboardUrl("http://localhost:3001/d/deployguard-runtime/deployguard-runtime", "project-a", "service-a");
+const grafanaB = grafanaDashboardUrl("http://localhost:3001/d/deployguard-runtime/deployguard-runtime", "project-a", "service-b");
+assert.equal(new URL(grafanaA).searchParams.get("var-project"), "project-a");
+assert.equal(new URL(grafanaA).searchParams.get("var-service"), "service-a");
+assert.equal(new URL(grafanaB).searchParams.get("var-service"), "service-b");
+assert.notEqual(grafanaA, grafanaB, "switching service changes the Grafana deep-link");
 assert.doesNotMatch(page, /<span>LIVE generation<\/span>/, "generation identity belongs in technical Infrastructure details");
 assert.match(currentState, /const awsRuntimeMonitoringEnabled = getObservabilityConfig\(this\.config\)\.awsRuntimeMonitoringEnabled/);
 assert.match(currentState, /monitoring: authoritativeLiveRelease[\s\S]*!awsRuntimeMonitoringEnabled/);

@@ -87,6 +87,20 @@ async function canonicalRevisionRecovery() {
   resolver.cache.clear();
   const defaultResolved = await resolver.resolveProject(project);
   assert.equal(defaultResolved.serviceId, b, "default Monitoring resolves the explicit application entrypoint, never service order");
+
+  const requestedServiceIds: string[] = [];
+  resolver.resolveProject = async (_project: unknown, serviceId: string) => {
+    requestedServiceIds.push(serviceId);
+    return { serviceId };
+  };
+  const allServices = await resolver.resolveAllProjectServices(project.id);
+  assert.deepEqual(requestedServiceIds, [a, b], "Prometheus enumeration resolves every authoritative LIVE service revision");
+  assert.deepEqual(allServices.map((service: any) => service.serviceId), [a, b]);
+  resolver.resolveProject = async (_project: unknown, serviceId: string) => {
+    if (serviceId === a) throw new AwsRuntimeUnavailableException("service A unavailable");
+    return { serviceId };
+  };
+  assert.deepEqual((await resolver.resolveAllProjectServices(project.id)).map((service: any) => service.serviceId), [b], "one unresolved LIVE service cannot suppress other service telemetry");
 }
 
 async function attributionAndHealth() {

@@ -87,6 +87,19 @@ export class LiveRuntimeResolverService {
     return [...new Set(rows.filter((row) => row.generationId).map((row) => row.projectId))];
   }
 
+  async resolveAllProjectServices(projectId: string) {
+    const project = await this.projects.findOne({ where: { id: projectId } });
+    if (!project || project.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
+    const manifest = await this.runtimeIdentityRecovery.recover(project) || {};
+    const services = Array.isArray(manifest.services)
+      ? manifest.services.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object")
+      : [];
+    const serviceIds = [...new Set(services.flatMap((service) => typeof service.serviceId === "string" && service.serviceId ? [service.serviceId] : []))];
+    if (!serviceIds.length) return [await this.resolveProject(project)];
+    const resolved = await Promise.allSettled(serviceIds.map((serviceId) => this.resolveProject(project, serviceId)));
+    return resolved.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  }
+
   invalidate(projectId: string) {
     for (const key of this.cache.keys()) if (key === projectId || key.startsWith(`${projectId}:`)) this.cache.delete(key);
   }
