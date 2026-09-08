@@ -23,6 +23,9 @@ COPY --from=build /build/dist ./dist
 COPY backend/templates ./templates
 COPY backend/terraform ./terraform
 COPY .github/workflows/deployguard-reusable.yml /app/.github/workflows/deployguard-reusable.yml
+COPY infrastructure/railpack-runtime/main.tf /app/infrastructure/railpack-runtime/main.tf
+COPY infrastructure/railpack-runtime/variables.tf /app/infrastructure/railpack-runtime/variables.tf
+COPY infrastructure/railpack-runtime/outputs.tf /app/infrastructure/railpack-runtime/outputs.tf
 
 RUN mkdir -p /app/backend/.deployguard/terraform-workspaces \
     && chown -R node:node /app

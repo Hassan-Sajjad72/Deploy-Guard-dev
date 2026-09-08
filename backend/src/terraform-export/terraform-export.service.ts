@@ -11,6 +11,7 @@ import { ProjectInfrastructureEnvironment } from "../infrastructure/project-infr
 import { Project } from "../projects/project.entity";
 import { User, UserRole } from "../users/user.entity";
 import { TerraformExportArtifact } from "./terraform-export-artifact.entity";
+import { loadCanonicalTerraformFiles } from "./canonical-terraform-files";
 import { buildDeterministicZip } from "./zip-builder";
 
 @Injectable()
@@ -24,7 +25,7 @@ export class TerraformExportService {
     const root = getInfrastructureConfig(this.config).terraformWorkingBaseDir;
     const files = environment?.terraformWorkspacePath
       ? await this.collect(await this.assertSafeDirectory(environment.terraformWorkspacePath, root), root)
-      : await this.githubActionsTerraformFiles();
+      : await this.canonicalTerraformFiles();
     this.assertNoSecretContent(files);
     files.push({ path: "README.md", content: Buffer.from("# DeployGuard Terraform export\n\nReview variables and backend settings before running Terraform. This bundle contains no state, plan, credentials, or real tfvars values.\n") });
     files.push({ path: "MIGRATION_NOTES.md", content: Buffer.from("Import existing resources deliberately if moving this configuration. Configure a remote backend, validate, and plan before apply. DeployGuard does not export its managed state.\n") });
@@ -46,18 +47,15 @@ export class TerraformExportService {
     for (const source of new Set(sources)) { const modulePath = resolve(workspace, source); if (modulePath === workspace || !modulePath.startsWith(`${resolve(root)}${sep}`)) continue; try { await this.assertSafeDirectory(modulePath, root); await visit(modulePath, `modules/${basename(modulePath)}`); } catch { /* Omit inaccessible or unsafe module sources. */ } }
     return output;
   }
-  private async githubActionsTerraformFiles() {
-    const candidates = [resolve(process.cwd(), "../.github/workflows/deployguard-reusable.yml"), resolve(process.cwd(), ".github/workflows/deployguard-reusable.yml")];
-    for (const candidate of candidates) {
-      try {
-        const workflow = await readFile(candidate, "utf8");
-        const match = workflow.match(/cat > \.deployguard\/terraform\/main\.tf <<'TERRAFORM'\n([\s\S]*?)\n\s+TERRAFORM/);
-        if (!match) continue;
-        const main = match[1].split("\n").map((line) => line.replace(/^ {10}/, "")).join("\n") + "\n";
-        return [{ path: "main.tf", content: Buffer.from(main) }];
-      } catch { /* try the next packaged workflow location */ }
+  private async canonicalTerraformFiles() {
+    try {
+      return await loadCanonicalTerraformFiles([
+        resolve(process.cwd(), "../infrastructure/railpack-runtime"),
+        resolve(process.cwd(), "infrastructure/railpack-runtime"),
+      ]);
+    } catch {
+      throw new NotFoundException("The canonical Terraform runtime files are unavailable for export.");
     }
-    throw new NotFoundException("The GitHub Actions Terraform template is unavailable for export.");
   }
   private allowed(path: string) { const lower = path.toLowerCase(); if (/terraform\.tfstate|\.tfplan|(^|\/)tfplan$|terraform\.tfvars\.json|backend\.hcl$|\.terraform\.lock\.hcl|\.pem$|credentials|secret|token/.test(lower)) return false; return lower.endsWith(".tf") || lower.endsWith(".md") || lower.endsWith(".example") || lower.endsWith(".json.example"); }
   private assertNoSecretContent(files: Array<{ path: string; content: Buffer }>) {

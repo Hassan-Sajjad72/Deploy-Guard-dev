@@ -43,6 +43,7 @@
     "test:architecture-dependencies": "depcruise --validate .dependency-cruiser.cjs src && npm run test:no-legacy-architecture",
     "test:lifecycle-properties": "ts-node scripts/verify-lifecycle-properties.ts && npm run test:unified-railpack-lifecycle && npm run test:dispatch-state-projection && npm run test:destroy-lifecycle-authority",
     "test:api-contract-equivalence": "node scripts/verify-api-contract-equivalence.mjs",
+    "test:terraform-export": "ts-node scripts/verify-terraform-export.ts",
     "test:uuid-admission": "ts-node scripts/verify-uuid-admission-contract.ts",
     "test:configuration-admission": "ts-node scripts/verify-configuration-admission.ts && npm run test:dispatch-state-projection && npm run test:railpack-runtime-contract && npm run test:uuid-admission",
     "test:real-full-stack": "ts-node scripts/run-real-full-stack-certification.ts",
