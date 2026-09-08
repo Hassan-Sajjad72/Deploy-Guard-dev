@@ -29,7 +29,11 @@ export class NotificationsService {
   async settings(user: User, projectId: string) {
     const project = await this.manage(user, projectId);
     const preference = await this.dispatcher.getOrCreatePreference(user.id, project.id);
-    const subscription = await this.latestSubscription(user.id, projectId);
+    let subscription = await this.latestSubscription(user.id, projectId);
+    if (subscription && this.sns.status().configured) {
+      await this.refreshStatus(user, projectId);
+      subscription = await this.latestSubscription(user.id, projectId);
+    }
     const deliveries = await this.deliveryRepo.find({ where: { userId: user.id, projectId }, order: { createdAt: "DESC" }, take: 20 });
     return {
       preference,
@@ -121,6 +125,12 @@ export class NotificationsService {
         subscription.providerSubscriptionArn = current.subscriptionArn;
         subscription.providerTopicArn = current.topicArn;
         subscription.confirmedAt = current.status === "confirmed" ? new Date() : null;
+        subscription.lastError = null;
+        await this.subRepo.save(subscription);
+      } else if (subscription.status === "confirmed") {
+        subscription.status = "not_configured";
+        subscription.providerSubscriptionArn = null;
+        subscription.confirmedAt = null;
         subscription.lastError = null;
         await this.subRepo.save(subscription);
       }

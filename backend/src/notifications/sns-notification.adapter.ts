@@ -33,7 +33,10 @@ export class SnsNotificationAdapter {
     const topicArn = await this.ensureProjectTopic(projectId);
     const response = await this.client().send(new SubscribeCommand({ TopicArn: topicArn, Protocol: "email", Endpoint: email, ReturnSubscriptionArn: true, Attributes: { FilterPolicy: JSON.stringify({ deployguardUserId: [String(userId)], deployguardProjectId: [projectId] }) } }));
     const arn = response.SubscriptionArn || null;
-    return { status: this.pending(arn) ? "pending_confirmation" : "confirmed", subscriptionArn: arn, topicArn };
+    // ReturnSubscriptionArn can return the eventual ARN before an email
+    // recipient has accepted the confirmation request. Only a provider lookup
+    // may promote an email subscription to confirmed.
+    return { status: "pending_confirmation", subscriptionArn: arn, topicArn };
   }
   async recreateSubscription(email: string, userId: number, projectId: string, topicArn: string | null) {
     if (!this.status().configured) return { status: "not_configured", subscriptionArn: null, topicArn: null };
@@ -57,11 +60,12 @@ export class SnsNotificationAdapter {
     if (!this.status().configured) return null;
     if (!topicArn) return null;
     let nextToken: string | undefined;
+    let pendingMatch = false;
     do {
       const response = await this.client().send(new ListSubscriptionsByTopicCommand({ TopicArn: topicArn, NextToken: nextToken }));
       for (const candidate of response.Subscriptions || []) {
         if (candidate.Protocol !== "email" || candidate.Endpoint?.toLowerCase() !== email.toLowerCase() || !candidate.SubscriptionArn) continue;
-        if (this.pending(candidate.SubscriptionArn)) continue;
+        if (this.pending(candidate.SubscriptionArn)) { pendingMatch = true; continue; }
         const attributes = await this.client().send(new GetSubscriptionAttributesCommand({ SubscriptionArn: candidate.SubscriptionArn }));
         let policy: Record<string, unknown> = {};
         try { policy = JSON.parse(attributes.Attributes?.FilterPolicy || "{}"); } catch { continue; }
@@ -71,6 +75,7 @@ export class SnsNotificationAdapter {
       }
       nextToken = response.NextToken;
     } while (nextToken);
+    if (pendingMatch) return { status: "pending_confirmation", subscriptionArn: expectedArn || "PendingConfirmation", topicArn, userId, projectId };
     if (expectedArn && this.pending(expectedArn)) return { status: "pending_confirmation", subscriptionArn: expectedArn, topicArn, userId, projectId };
     return null;
   }
