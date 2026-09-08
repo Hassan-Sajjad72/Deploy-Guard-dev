@@ -7,8 +7,8 @@ import { renderDeployguardCallerWorkflow } from "../src/projects/github-app.serv
 import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
 import { MANAGED_DATABASE_ENGINE_PROFILES, ManagedDatabaseEngine } from "../src/projects/managed-database-engine";
-import { RailpackRuntimeConfiguration, servicesBase64 } from "../src/projects/railpack-workflow-contract";
-import { aliasesFor, SERVICE_ALIAS_GROUPS } from "../src/projects/configuration-ownership";
+import { immutableRailpackBuildCapabilityFingerprint, RailpackRuntimeConfiguration, servicesBase64 } from "../src/projects/railpack-workflow-contract";
+import { aliasesFor, assertRailpackCapabilityDeclaration, RAILPACK_BUILD_CAPABILITY_KEYS, RAILPACK_EXECUTION_OVERRIDE_KEYS, SERVICE_ALIAS_GROUPS } from "../src/projects/configuration-ownership";
 
 const root = join(__dirname, "..", "..");
 const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
@@ -38,6 +38,34 @@ assert.ok(jqContract, "the workflow service-contract jq filter must be extractab
 const contractFixture: RailpackRuntimeConfiguration = { schemaVersion: 3, projectId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "a".repeat(40), services: [{ serviceId: "33333333-3333-4333-8333-333333333333", runtimeConfigRevisionId: "44444444-4444-4444-8444-444444444444", buildTargetRevisionId: "55555555-5555-4555-8555-555555555555", buildTarget: { resolverVersion: "deployguard.build-target/v2", sourceSha: "a".repeat(40), serviceDirectory: ".", workspaceRoot: ".", buildRoot: ".", installRoot: ".", packageIdentity: "fixture", contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: "npm", buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "d".repeat(64) }, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, buildEnvironment: { PUBLIC_BUILD_MODE: "production" }, buildSecretReferences: { BUILD_TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:BUILD_TOKEN::${"c".repeat(64)}` }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/example:TOKEN::${"b".repeat(64)}` }, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] };
 const jqResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(contractFixture), encoding: "utf8" });
 assert.equal(jqResult.status, 0, `workflow service contract must accept the canonical runtime fixture: ${jqResult.stderr}`);
+const capabilitiesFixture: any = structuredClone(contractFixture);
+capabilitiesFixture.services[0].buildEnvironment = {
+  RAILPACK_BUILD_APT_PACKAGES: "build-essential libpq-dev",
+  RAILPACK_DEPLOY_APT_PACKAGES: "libpq5",
+  RAILPACK_PACKAGES: "node@22 jq@latest",
+  RAILPACK_PYTHON_VERSION: "3.12.4",
+  RAILPACK_NODE_VERSION: "lts",
+};
+capabilitiesFixture.services[0].railpackBuildCapabilityFingerprint = immutableRailpackBuildCapabilityFingerprint(capabilitiesFixture.services[0].buildEnvironment);
+assert.deepEqual(RAILPACK_BUILD_CAPABILITY_KEYS, ["RAILPACK_BUILD_APT_PACKAGES", "RAILPACK_DEPLOY_APT_PACKAGES", "RAILPACK_PACKAGES", "RAILPACK_PYTHON_VERSION", "RAILPACK_NODE_VERSION"]);
+assert.doesNotThrow(() => servicesBase64(capabilitiesFixture), "pinned Railpack capabilities must be accepted and sealed");
+const capabilitiesJq = spawnSync("jq", ["-e", "--arg", "project", capabilitiesFixture.projectId, "--arg", "operation", capabilitiesFixture.operationId, "--arg", "sha", capabilitiesFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(capabilitiesFixture), encoding: "utf8" });
+assert.equal(capabilitiesJq.status, 0, `workflow must accept the sealed capability contract: ${capabilitiesJq.stderr}`);
+const changedCapabilities = structuredClone(capabilitiesFixture);
+changedCapabilities.services[0].buildEnvironment.RAILPACK_NODE_VERSION = "22.22.0";
+assert.notEqual(immutableRailpackBuildCapabilityFingerprint(changedCapabilities.services[0].buildEnvironment), capabilitiesFixture.services[0].railpackBuildCapabilityFingerprint, "accepted values participate in immutable capability identity");
+assert.throws(() => servicesBase64(changedCapabilities), /capability fingerprint is invalid/, "a changed accepted value cannot retain the old seal");
+for (const key of RAILPACK_EXECUTION_OVERRIDE_KEYS) {
+  assert.throws(() => assertRailpackCapabilityDeclaration({ key, value: "echo unsafe", isSecret: false, scope: "build" }), /DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED/, `${key} must not replace canonical execution authority`);
+  const overrideFixture: any = structuredClone(contractFixture); overrideFixture.services[0].buildEnvironment[key] = "echo unsafe";
+  assert.throws(() => servicesBase64(overrideFixture), /execution override/, `${key} must be rejected before dispatch`);
+}
+for (const [key, value] of [["RAILPACK_PACKAGES", "node@22  jq"], ["RAILPACK_BUILD_APT_PACKAGES", "curl;id"], ["RAILPACK_PYTHON_VERSION", ">=3.12"]]) {
+  assert.throws(() => assertRailpackCapabilityDeclaration({ key, value, isSecret: false, scope: "build" }), /DG_RAILPACK_CAPABILITY_INVALID/, `${key} malformed values must be rejected`);
+}
+assert.throws(() => assertRailpackCapabilityDeclaration({ key: "RAILPACK_PACKAGES", value: "jq", isSecret: true, scope: "build" }), /public build-only/);
+assert.throws(() => assertRailpackCapabilityDeclaration({ key: "RAILPACK_NODE_VERSION", value: "22", isSecret: false, scope: "runtime" }), /public build-only/);
+assert.match(workflow, /sealed_capability_fingerprint[\s\S]*DG_RAILPACK_CAPABILITY_FORWARDING_FAILED[\s\S]*sealed_capability_not_forwarded/, "workflow verifies the seal and exact exported value before Railpack execution");
 const workspaceServerFixture: any = structuredClone(contractFixture);
 Object.assign(workspaceServerFixture.services[0], { serviceDirectory: "packages/server" });
 workspaceServerFixture.services[0].buildTarget = {
@@ -78,7 +106,7 @@ assert.throws(() => servicesBase64(invalidBuildReference), /build secret referen
 const managedMysqlAliases = (["host", "port", "username", "password", "database", "url"] as const).flatMap((property) => aliasesFor("mysql", property)).sort();
 const completeMysqlFixture: any = structuredClone(contractFixture);
 completeMysqlFixture.services[0].databaseAttached = true;
-completeMysqlFixture.services[0].managedDatabase = { engine: "mysql", aliases: managedMysqlAliases };
+completeMysqlFixture.services[0].managedDatabase = { engine: "mysql", aliases: managedMysqlAliases, urlScheme: "mysql+pymysql" };
 assert.doesNotThrow(() => servicesBase64(completeMysqlFixture), "the complete DeployGuard-owned MySQL alias set must be admitted");
 const completeMysqlJqResult = spawnSync("jq", ["-e", "--arg", "project", completeMysqlFixture.projectId, "--arg", "operation", completeMysqlFixture.operationId, "--arg", "sha", completeMysqlFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(completeMysqlFixture), encoding: "utf8" });
 assert.equal(completeMysqlJqResult.status, 0, `workflow service contract must admit the complete MySQL alias set: ${completeMysqlJqResult.stderr}`);
@@ -99,7 +127,7 @@ for (const key of managedDatabaseAliases) {
     assert.equal(externalResult.status, 0, `the workflow must accept external database alias ${key} when no managed database is attached`);
     const managedConflict: any = structuredClone(externalDatabaseAlias);
     managedConflict.services[0].databaseAttached = true;
-    managedConflict.services[0].managedDatabase = { engine: "postgres", aliases: [key] };
+    managedConflict.services[0].managedDatabase = { engine: "postgres", aliases: [key], urlScheme: "postgresql" };
     assert.throws(() => servicesBase64(managedConflict), /(?:environment|secret reference) is invalid/, `a managed database must reject the exact ${key} alias it injects`);
     const managedResult = spawnSync("jq", ["-e", "--arg", "project", contractFixture.projectId, "--arg", "operation", contractFixture.operationId, "--arg", "sha", contractFixture.sourceSha, "--arg", "action", "deploy", jqContract], { input: JSON.stringify(managedConflict), encoding: "utf8" });
     assert.notEqual(managedResult.status, 0, `the workflow must reject managed alias ${key} at the execution boundary`);
@@ -111,6 +139,7 @@ rollbackDatabaseFixture.services[0].databaseAttached = true;
 rollbackDatabaseFixture.services[0].managedDatabase = {
   engine: "mongodb",
   aliases: ["MONGODB_URI"],
+  urlScheme: "mongodb",
   secretVersionId: historicalDatabaseVersionId,
 };
 rollbackDatabaseFixture.services[0].rollbackImage = `123456789012.dkr.ecr.us-east-1.amazonaws.com/deployguard-test@sha256:${"d".repeat(64)}`;
@@ -265,17 +294,27 @@ assert.doesNotMatch(workflow, /moby\/buildkit:latest/);
 assert.match(workflow, /\^\(deploy\|rollback\|destroy\)\$/);
 assert.match(workflow, /key=projects\/\$PROJECT_ID\/\$ENVIRONMENT_NAME\/runtime\/terraform\.tfstate/);
 assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
-assert.match(runtimeVerification, /aws ecs wait services-stable/);
-assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/);
-assert.doesNotMatch(runtimeVerification, /curl --fail --show-error --silent --retry 20/, "application HTTP status is outside deployment readiness");
+assert.match(runtimeVerification, /timeout "\$ecs_stability_timeout_seconds" aws ecs wait services-stable/, "ECS waiter must have an explicit finite deadline");
+for (const convergence of ["wait_for_cloud_map_registration", "wait_for_alb_active", "wait_for_listener", "wait_for_public_dns", "wait_for_public_transport"]) assert.match(runtimeVerification, new RegExp(convergence), `${convergence} must remain in the orchestration verifier`);
+assert.match(runtimeVerification, /curl --silent --show-error --connect-timeout "\$effective_connect_timeout" --max-time "\$effective_attempt_timeout"/, "public transport attempts need explicit connection and transfer deadlines capped by the overall convergence deadline");
+for (const deadline of ["DEPLOYGUARD_DATABASE_READINESS_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_TARGET_HEALTH_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_CLOUD_MAP_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_ALB_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_LISTENER_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_DNS_MAX_ELAPSED_SECONDS", "DEPLOYGUARD_PUBLIC_MAX_ELAPSED_SECONDS"]) assert.match(runtimeVerification, new RegExp(deadline), `${deadline} must remain explicit and finite`);
+assert.doesNotMatch(runtimeVerification, /curl --fail/, "application HTTP status must remain distinct from transport readiness");
 assert.match(terraform, /platform_health_check_path\s*=\s*"\/_deployguard\/transport-ready"/, "the platform owns its transport-readiness endpoint");
-assert.match(terraform, /name\s*=\s*"deployguard-transport-probe"[\s\S]*?APPLICATION_PORT[\s\S]*?nc -z -w 1 127\.0\.0\.1/, "the task-local probe succeeds only while the declared application port accepts TCP");
+assert.match(workflow, /database_url_scheme="\$\(jq -r '\.managedDatabase\.urlScheme'/, "the local database probe must consume the sealed URL scheme");
+assert.match(workflow, /database_url="\$\{database_url_scheme\}:\/\//, "the local probe must not choose a database URL scheme independently");
+assert.match(workflow, /managed_database_url_scheme:\(\.managedDatabase\.urlScheme\/\/""\)/, "Terraform materialization must receive the same sealed URL scheme");
+assert.match(terraform, /database_url_scheme\s*=\s*local\.database_enabled\s*\?\s*local\.database_service\.managed_database_url_scheme/);
+assert.match(terraform, /url\s*=\s*"\$\{local\.database_url_scheme\}:\/\//, "the production secret must consume the sealed URL scheme");
+assert.doesNotMatch(terraform, /url\s*=.*local\.database_engine\s*==.*\?.*postgresql/, "Terraform must not independently select the PostgreSQL URL scheme");
+assert.match(terraform, /name\s*=\s*"deployguard-transport-probe"[\s\S]*?task_ip=\\"\$\(hostname -i[\s\S]*?nc -z -w 1 \\"\$task_ip\\"/, "the transport probe must reach the application through the task ENI rather than loopback");
 assert.match(terraform, /name\s*=\s*"application"[\s\S]*?awslogs-stream-prefix = "application"/, "developer application errors remain available in the existing runtime log stream");
 assert.match(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*local\.platform_health_check_path[\s\S]*?port\s*=\s*tostring\(local\.transport_probe_ports\[each\.key\]\)[\s\S]*?matcher\s*=\s*"200-299"/, "ALB stability uses DeployGuard transport readiness instead of application response status");
 assert.match(terraform, /resource "aws_lb_target_group" "application"[\s\S]*?name\s*=\s*"\$\{local\.project_name\}-\$\{substr\(replace\(each\.key, "-", ""\), 0, 8\)\}-\$\{each\.value\.service_port\}"[\s\S]*?lifecycle\s*\{[\s\S]*?create_before_destroy\s*=\s*true/, "service-port changes must create a distinctly named target group before retiring the listener's current target group");
 assert.doesNotMatch(terraform, /health_check\s*\{[\s\S]*?path\s*=\s*"\/"/, "developer root-route semantics are not a default deployment gate");
 assert.match(runtimeVerification, /readinessMode:"platform_transport"/);
 assert.match(releaseResultProducer, /\$outcome\.readinessMode == "platform_transport"/);
+assert.match(releaseResultProducer, /\$outcome\.applicationReachabilityPath == "alb_to_task_eni"/);
+for (const evidenceField of ["taskIpAddresses", "targetRegistrations", "alb", "listener", "publicProbe"]) assert.match(releaseResultProducer, new RegExp(`\\$outcome\\.${evidenceField}`), `terminal release evidence must require ${evidenceField}`);
 const normalizedTerraform = terraform.replaceAll('\\"', '"');
 for (const engine of ["postgres", "mysql", "mongodb"] as ManagedDatabaseEngine[]) {
   const profile = MANAGED_DATABASE_ENGINE_PROFILES[engine];
@@ -297,6 +336,10 @@ assert.ok(verifyDatabase, "the managed-database release orchestration must be ex
 assert.ok(
   verifyDatabase.indexOf('wait_for_managed_database_readiness "$database_id"') < verifyDatabase.indexOf('release_database_attached_service "$database_id"'),
   "the attached application scale-up must occur strictly after managed-database readiness",
+);
+assert.ok(
+  verifyDatabase.indexOf('wait_for_cloud_map_registration "$database_id"') < verifyDatabase.indexOf('release_database_attached_service "$database_id"'),
+  "the attached application scale-up must occur strictly after current-task Cloud Map registration",
 );
 assert.equal((runtimeVerification.match(/aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/g) || []).length, 1, "the runtime boundary has one explicit attached-service release action");
 assert.match(terraform, /mysql_grant_reconciler_name\s+=\s+"deployguard-mysql-grant-reconciler"/, "managed MySQL must name its grant reconciler explicitly");
@@ -368,6 +411,7 @@ attach_diagnostics() { :; }
 sanitize() { cat; }
 configuration_failure() { return 1; }
 provider_failure() { return 1; }
+sleep_within_deadline() { [ "$3" -eq 0 ] || sleep "$3"; }
 ${databaseReadiness}
 wait_for_managed_database_readiness "33333333-3333-4333-8333-333333333333" cluster database "database-task-definition:1" "$DATABASE_ENGINE"
 release_database_attached_service "33333333-3333-4333-8333-333333333333" cluster application

@@ -55,7 +55,7 @@ export class CloudWatchMetricsService {
   async collect(identity: LiveRuntimeIdentity, range = "1h"): Promise<AwsRuntimeTelemetry> {
     if (!this.isEnabled()) throw new Error("AWS runtime monitoring is disabled.");
     if (!["1h", "6h", "24h"].includes(range)) throw new Error("Unsupported metrics time range.");
-    const key = `${identity.projectId}:${identity.generationId}:${range}`;
+    const key = `${identity.projectId}:${identity.generationId}:${identity.serviceId}:${range}`;
     const now = Date.now();
     const cached = this.cache.get(key);
     if (cached?.expiresAt && cached.expiresAt > now) return { ...cached.telemetry, cacheStatus: "cached" };
@@ -74,7 +74,11 @@ export class CloudWatchMetricsService {
   async collectAllLatest() {
     const output: AwsRuntimeTelemetry[] = [];
     for (const projectId of await this.liveRuntime.liveProjectIds()) {
-      try { output.push(await this.getForProject(projectId, "1h")); } catch { /* one project cannot break all Prometheus output */ }
+      let identities: LiveRuntimeIdentity[] = [];
+      try { identities = await this.liveRuntime.resolveAllProjectServices(projectId); } catch { /* one project cannot break all Prometheus output */ }
+      for (const identity of identities) {
+        try { output.push(await this.collect(identity, "1h")); } catch { /* one service cannot break all Prometheus output */ }
+      }
     }
     return output;
   }
@@ -163,7 +167,7 @@ export class CloudWatchMetricsService {
       }).catch(() => undefined);
     }
     const ttl = getObservabilityConfig(this.config).awsMetricsCacheSeconds * 1_000;
-    this.cache.set(`${identity.projectId}:${identity.generationId}:${range}`, {
+    this.cache.set(`${identity.projectId}:${identity.generationId}:${identity.serviceId}:${range}`, {
       telemetry,
       expiresAt: Date.now() + ttl,
       staleUntil: Date.now() + Math.max(ttl * 5, 300_000),

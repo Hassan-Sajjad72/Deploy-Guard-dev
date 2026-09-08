@@ -15,6 +15,57 @@ export type ReservedVariableDefinition = {
   source: string;
 };
 
+export const RAILPACK_BUILD_CAPABILITY_KEYS = [
+  "RAILPACK_BUILD_APT_PACKAGES",
+  "RAILPACK_DEPLOY_APT_PACKAGES",
+  "RAILPACK_PACKAGES",
+  "RAILPACK_PYTHON_VERSION",
+  "RAILPACK_NODE_VERSION",
+] as const;
+export const RAILPACK_EXECUTION_OVERRIDE_KEYS = [
+  "RAILPACK_BUILD_CMD",
+  "RAILPACK_START_CMD",
+  "RAILPACK_INSTALL_CMD",
+  "RAILPACK_CONFIG_FILE",
+] as const;
+
+const RAILPACK_BUILD_CAPABILITIES = new Set<string>(RAILPACK_BUILD_CAPABILITY_KEYS);
+const RAILPACK_EXECUTION_OVERRIDES = new Set<string>(RAILPACK_EXECUTION_OVERRIDE_KEYS);
+const RAILPACK_PACKAGE_TOKEN = /^(?:\.\.\.|[A-Za-z0-9][A-Za-z0-9+._:@=~-]{0,127})$/;
+const RAILPACK_RUNTIME_VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
+
+export class RailpackCapabilityDeclarationError extends Error {
+  readonly code: "DG_RAILPACK_CAPABILITY_INVALID" | "DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED";
+  constructor(readonly key: string, reason: string, readonly serviceId: string | null = null) {
+    const override = RAILPACK_EXECUTION_OVERRIDES.has(key);
+    super(`${key} ${reason}. DG_FAILURE${serviceId ? ` serviceId=${serviceId}` : ""} code=${override ? "DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED" : "DG_RAILPACK_CAPABILITY_INVALID"} stage=railpack_capability_admission`);
+    this.name = "RailpackCapabilityDeclarationError";
+    this.code = override ? "DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED" : "DG_RAILPACK_CAPABILITY_INVALID";
+  }
+}
+
+/** Validates only DeployGuard's pinned public Railpack capability surface. */
+export function assertRailpackCapabilityDeclaration(input: { key: string; value: string; isSecret: boolean; scope: "build" | "runtime" | "both"; serviceId?: string | null }) {
+  const key = normalizeConfigurationKey(input.key);
+  const serviceId = input.serviceId || null;
+  if (RAILPACK_EXECUTION_OVERRIDES.has(key)) throw new RailpackCapabilityDeclarationError(key, "is an execution override owned by DeployGuard's canonical BuildTarget", serviceId);
+  if (!key.startsWith("RAILPACK_")) return false;
+  if (!RAILPACK_BUILD_CAPABILITIES.has(key)) throw new RailpackCapabilityDeclarationError(key, "is not in the pinned Railpack capability allowlist", serviceId);
+  if (input.isSecret || input.scope !== "build") throw new RailpackCapabilityDeclarationError(key, "must be public build-only configuration", serviceId);
+  if (typeof input.value !== "string" || !input.value.length || input.value !== input.value.trim() || /[\u0000-\u001F\u007F]/.test(input.value)) throw new RailpackCapabilityDeclarationError(key, "has a malformed value", serviceId);
+  if (key.endsWith("_VERSION")) {
+    if (!RAILPACK_RUNTIME_VERSION.test(input.value)) throw new RailpackCapabilityDeclarationError(key, "has a malformed runtime-version selector", serviceId);
+    return true;
+  }
+  const tokens = input.value.split(" ");
+  if (input.value.length > 2048 || !tokens.length || tokens.some((token) => !RAILPACK_PACKAGE_TOKEN.test(token))) throw new RailpackCapabilityDeclarationError(key, "must be a bounded single-space-separated Railpack package list", serviceId);
+  return true;
+}
+
+export function railpackBuildCapabilities(environment: Record<string, string>) {
+  return Object.fromEntries(Object.entries(environment).filter(([key]) => RAILPACK_BUILD_CAPABILITIES.has(key)).sort(([left], [right]) => left.localeCompare(right)));
+}
+
 export const RESERVED_VARIABLE_REGISTRY: readonly ReservedVariableDefinition[] = [
   { key: "PORT", category: "platform_managed", delivery: "runtime", secret: false, source: "deployment contract" },
   { key: "HOST", category: "platform_managed", delivery: "runtime", secret: false, source: "deployment contract" },
@@ -67,7 +118,7 @@ export function classifyConfigurationVariable(key: string, options: { secret?: b
   const normalized = normalizeConfigurationKey(key);
   const alias = serviceAlias(normalized, options.service) || serviceAlias(normalized);
   const reserved = alias && !options.managedService ? null : reservedVariable(normalized, options.service);
-  const publicBuild = isPublicFrontendConfigurationKey(normalized) && ["build", "both"].includes(options.scope || "runtime");
+  const publicBuild = (isPublicFrontendConfigurationKey(normalized) && ["build", "both"].includes(options.scope || "runtime")) || (RAILPACK_BUILD_CAPABILITIES.has(normalized) && options.scope === "build" && options.secret !== true);
   const management = reserved?.category === "infrastructure_generated" || Boolean(options.managedService && alias)
     ? "infrastructure_generated" as const
     : reserved ? "platform_managed" as const : "user_defined" as const;

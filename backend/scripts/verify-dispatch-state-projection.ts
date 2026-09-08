@@ -20,7 +20,7 @@ import { ProjectServiceRuntimeConfigRevision } from "../src/projects/project-ser
 import { ProjectGenerationServiceRevision } from "../src/projects/project-generation-service-revision.entity";
 import { Project } from "../src/projects/project.entity";
 import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError } from "../src/projects/github-app.service";
-import { terminalStructuredFailureMarker } from "../src/projects/failure-ownership";
+import { classifyStructuredFailure, terminalStructuredFailureMarker } from "../src/projects/failure-ownership";
 import { QueryFailedError } from "typeorm";
 import { ProjectDeployableService } from "../src/projects/project-deployable-service.entity";
 import { ProjectEnvironmentVariable } from "../src/projects/project-environment-variable.entity";
@@ -28,6 +28,7 @@ import { ProjectDatabaseTier } from "../src/projects/project-database-tier.entit
 import { ProjectConfigurationSnapshot } from "../src/projects/project-configuration-snapshot.entity";
 import { BuildTargetResolutionError } from "../src/projects/build-target-resolver.service";
 import { RuntimeSecretMaterializationError } from "../src/projects/github-actions-runtime-secret.service";
+import { FailureDiagnosticService } from "../src/projects/failure-diagnostics/failure-diagnostic.service";
 
 const user = { id: 7 } as any;
 const project = {
@@ -61,7 +62,7 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   const image = `${imageUri}@${imageDigest}`;
   const runtimeConfigRevisionId = serviceId;
   const runtime = { name: "Web", image, runtime_config_revision_id: runtimeConfigRevisionId, service_port: 8080, ecs_service_arn: "arn:aws:ecs:us-east-1:123456789012:service/dg/dg", ecs_service_name: "dg", task_definition_arn: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:1", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/a", alb_target_group_name: "dg", public_url: "http://example.test", cloudwatch_log_group_name: `/deployguard/${project.id}/services/${serviceId}`, application_container_name: "application", transport_probe_container_name: "deployguard-transport-probe", transport_probe_port: 65535, platform_health_check_path: "/_deployguard/transport-ready" };
-  const valid = { contractVersion: "deployguard.release-result/v5", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", services: [{ serviceId, runtimeConfigRevisionId, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, imageUri, imageDigest, image }], terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: { [serviceId]: runtime }, database: null }, awsRuntimeVerification: { contractVersion: "deployguard.aws-runtime-verification/v1", verified: true, verifiedAt: "2026-09-01T00:00:00Z", databaseVerified: false, services: [{ serviceId, verified: true, image, ecsServiceArn: runtime.ecs_service_arn, taskDefinitionArn: runtime.task_definition_arn, runningTaskArns: ["arn:aws:ecs:us-east-1:123456789012:task/dg/1"], ecsTasksRunning: 1, runtimePort: 8080, readinessMode: "platform_transport", transportProbePort: runtime.transport_probe_port, platformHealthCheckPath: runtime.platform_health_check_path, targetGroupArn: runtime.alb_target_group_arn, targetHealth: ["healthy"], environment: { PORT: "8080", HOST: "0.0.0.0" }, secretValueFrom: {}, managedDatabase: { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null }, publicUrl: runtime.public_url, publicEndpointVerified: true, taskDefinition: true, secretsInjection: true, vpcConnectivity: true, publicReachability: true, checkedAt: "2026-09-01T00:00:00Z" }] } };
+  const valid = { contractVersion: "deployguard.release-result/v5", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", services: [{ serviceId, runtimeConfigRevisionId, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, imageUri, imageDigest, image }], terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: { [serviceId]: runtime }, database: null }, awsRuntimeVerification: { contractVersion: "deployguard.aws-runtime-verification/v1", verified: true, verifiedAt: "2026-09-01T00:00:00Z", databaseVerified: false, services: [{ serviceId, verified: true, image, ecsServiceArn: runtime.ecs_service_arn, taskDefinitionArn: runtime.task_definition_arn, runningTaskArns: ["arn:aws:ecs:us-east-1:123456789012:task/dg/1"], ecsTasksRunning: 1, taskIpAddresses: ["10.0.0.10"], runtimePort: 8080, readinessMode: "platform_transport", applicationReachabilityPath: "alb_to_task_eni", transportProbePort: runtime.transport_probe_port, platformHealthCheckPath: runtime.platform_health_check_path, targetGroupArn: runtime.alb_target_group_arn, targetHealth: ["healthy"], targetRegistrations: [{ targetId: "10.0.0.10", port: 8080, state: "healthy" }], alb: { state: "active", dnsName: "example.test", scheme: "internet-facing", type: "application", ipAddressType: "ipv4", securityGroups: ["sg-alb"] }, listener: { listenerArn: "listener", port: 80, protocol: "HTTP", defaultTargetGroupArn: runtime.alb_target_group_arn }, publicProbe: { classification: "READY", hostname: "example.test", resolvedIpAddresses: ["203.0.113.10"], dnsAttempts: 1, dnsElapsedSeconds: 0, attemptCount: 1, elapsedSeconds: 0, curlExitCode: 0, httpStatus: "200", remoteIp: "203.0.113.10", connectTimeSeconds: "0.01", startTransferTimeSeconds: "0.02", totalTimeSeconds: "0.02" }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretValueFrom: {}, managedDatabase: { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null }, publicUrl: runtime.public_url, publicEndpointVerified: true, taskDefinition: true, secretsInjection: true, vpcConnectivity: true, publicReachability: true, checkedAt: "2026-09-01T00:00:00Z" }] } };
   assert.equal(DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, "deployguard-result.json");
   const archive = storedZipEntry("deployguard-result.json", JSON.stringify(valid));
   assert.equal(exactZipEntry(archive, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY), JSON.stringify(valid));
@@ -466,7 +467,7 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   service.source = {
     resolveSourceSha: async () => "a".repeat(40),
     resolveBuildTargetsAtExactSha: async (input: any) => { validatedServices = input.services; return { ports: input.services.map((item: any) => ({ serviceId: item.serviceId, servicePort: 3000, evidence: { priority: 2, source: "fixture" } })), targets: input.services.map((item: any) => ({ serviceId: item.serviceId, target: { resolverVersion: "deployguard.build-target/v2", sourceSha: "a".repeat(40), serviceDirectory: item.serviceDirectory, workspaceRoot: ".", buildRoot: item.serviceDirectory, installRoot: item.serviceDirectory, packageIdentity: "fixture", contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: "npm", buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "a".repeat(64) } })) }; },
-    resolveRequirementsAtExactSha: async () => ({ status: "READY", fingerprint: "b".repeat(64), requirements: [], unresolvedRequired: [], prohibitedOverrides: [], duplicateConflicts: [], validationBlockers: [] }),
+    resolveRequirementsAtExactSha: async () => ({ status: "READY", fingerprint: "b".repeat(64), requirements: [], unresolvedRequired: [], prohibitedOverrides: [], duplicateConflicts: [], validationBlockers: [], managedDatabaseUrlSchemes: { [serviceRow.id]: "postgresql+psycopg" } }),
   };
   service.buildTargetRevisions = { create: (row: any) => row, save: async (row: any) => ({ ...row, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }) };
   service.oidcTrust = { ensureRepositoryAuthorized: async () => undefined };
@@ -499,6 +500,7 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   assert.equal(runtime.services[0].buildTarget.buildRoot, "apps/a");
   assert.equal(runtime.services[0].environment.MODE, "mode-a");
   assert.equal(runtime.services[0].databaseAttached, true);
+  assert.equal(runtime.services[0].managedDatabase.urlScheme, "postgresql+psycopg", "the exact-source consumer URL scheme is sealed into the dispatched runtime configuration");
   assert.deepEqual(materializedSecrets[0].secretValues, { TOKEN: "secret-a" }, "secret materialization consumes the admitted encrypted snapshot value in memory");
   assert.equal(snapshots.length, 1);
   assert.doesNotMatch(JSON.stringify(snapshots[0].sanitizedManifest), /secret-a/, "sanitized snapshot metadata contains no plaintext secret value");
@@ -652,6 +654,94 @@ async function verifyCurrentStateProjection(failed: any, realGithubRun = false) 
     assert.match(state.developerMessage, /could not start/i);
     assert.doesNotMatch(state.developerMessage, /GitHub Actions failed/i);
   }
+}
+
+async function verifyPublicReachabilityRetryProjection() {
+  const failedAt = new Date("2026-09-06T00:03:00.000Z");
+  const commitSha = "d".repeat(40);
+  const failureCode = "DG_PUBLIC_REACHABILITY_FAILED";
+  const failureStage = "public_health";
+  const ownership = classifyStructuredFailure(failureStage, `DG_FAILURE code=${failureCode} stage=${failureStage}`);
+  const diagnosis = new FailureDiagnosticService(new LogSanitizerService()).diagnose({
+    operationId: "34343434-3434-4434-8434-343434343434",
+    deploymentAction: "deploy",
+    sourceSha: commitSha,
+    failureStage,
+    terminalFailureCode: failureCode,
+    failureOwner: ownership.failureOwner,
+    externalProvider: ownership.externalProvider,
+    errorMessage: "The ALB continued returning a gateway reachability failure after bounded convergence.",
+    safeEvidence: `DG_FAILURE code=${failureCode} stage=${failureStage}`,
+    evidenceSource: "github_actions",
+    evidenceEventId: "123",
+    failedAt,
+  });
+  const failed: any = {
+    id: diagnosis.operationId,
+    projectId: project.id,
+    generationId: null,
+    status: PipelineRunStatus.FAILED,
+    currentStage: failureStage,
+    githubWorkflowRunId: "123",
+    commitSha,
+    createdAt: failedAt,
+    startedAt: failedAt,
+    completedAt: failedAt,
+    updatedAt: failedAt,
+    failedAt,
+    errorMessage: diagnosis.summary,
+    failureOwner: ownership.failureOwner,
+    externalProvider: ownership.externalProvider,
+    failureCode,
+    metadata: { executionEngine: "railpack", deploymentAction: "deploy", attempt: 1, failedStage: failureStage, failureDiagnostic: diagnosis },
+  };
+  const builder: any = {
+    where() { return this; }, andWhere() { return this; }, orderBy() { return this; }, clone() { return this; }, getOne: async () => failed,
+  };
+  const service = Object.create(ProjectCurrentStateService.prototype) as any;
+  service.runRepository = { createQueryBuilder: () => builder };
+  service.releaseRepository = { findOne: async () => null };
+  const state = await service.withGithubActionsState(project.id, "dev", {
+    repository: project.repositoryFullName, branch: project.targetBranch, commit: null, latestAttempt: null,
+    stableRelease: null, stableUrl: null, estimatedCost: null, missingConfiguration: [], advisories: [], applicationError: null,
+    canRetry: false, stateAuthority: null, developerState: "ready", developerAction: "deploy", developerMessage: "ready", progress: { percentage: 0, phase: null, label: "Ready" },
+  }, null);
+  assert.equal(state.latestAttempt.diagnosis?.rootCauseCode, failureCode, "current-state preserves the deterministic reachability diagnosis");
+  assert.equal(state.latestAttempt.diagnosis?.retryDecision, "SAFE_NOW");
+  assert.equal(state.latestAttempt.commit, commitSha, "retry eligibility remains bound to the failed immutable source SHA");
+  assert.equal(state.canRetry, true, "SAFE_NOW public reachability failure enables the existing immutable retry path");
+
+  failed.commitSha = null;
+  const invalidSource = await service.withGithubActionsState(project.id, "dev", state, null);
+  assert.equal(invalidSource.canRetry, false, "SAFE_NOW cannot expose Retry without the failed operation's exact immutable source SHA");
+  failed.commitSha = commitSha;
+
+  failed.failureCode = "DG_UNKNOWN_TERMINAL_FAILURE";
+  const unknownFailure = await service.withGithubActionsState(project.id, "dev", state, null);
+  assert.equal(unknownFailure.latestAttempt.diagnosis?.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED");
+  assert.equal(unknownFailure.canRetry, false, "unknown terminal evidence never exposes an unsafe Retry action");
+  failed.failureCode = failureCode;
+
+  const historicalDiagnosis = structuredClone(failed.metadata.failureDiagnostic);
+  historicalDiagnosis.rootCauseCode = "DG_FAILURE_CAUSE_UNVERIFIED";
+  historicalDiagnosis.retryDecision = "INSUFFICIENT_EVIDENCE";
+  historicalDiagnosis.confidence = "UNVERIFIED";
+  historicalDiagnosis.terminalFailureCode = "DG_APPLICATION_EXTERNAL_BINDING_FAILED";
+  failed.failureCode = "DG_APPLICATION_EXTERNAL_BINDING_FAILED";
+  failed.failureOwner = "REPOSITORY_APPLICATION";
+  failed.externalProvider = null;
+  failed.metadata = {
+    ...failed.metadata,
+    safeLog: "DG_FAILURE serviceId=77777777-7777-4777-8777-777777777777 code=DG_APPLICATION_EXTERNAL_BINDING_FAILED stage=application_runtime",
+    failedStage: "application_runtime",
+    failureDiagnostic: historicalDiagnosis,
+  };
+  const immutableHistoricalSnapshot = JSON.stringify(failed.metadata.failureDiagnostic);
+  const corrected = await service.withGithubActionsState(project.id, "dev", state, null);
+  assert.equal(corrected.latestAttempt.diagnosis?.rootCauseCode, "DG_APPLICATION_EXTERNAL_BINDING_FAILED");
+  assert.equal(corrected.latestAttempt.diagnosis?.retryDecision, "SAFE_AFTER_FIX");
+  assert.equal(corrected.canRetry, false, "SAFE_AFTER_FIX never enables immutable retry");
+  assert.equal(JSON.stringify(failed.metadata.failureDiagnostic), immutableHistoricalSnapshot, "current projection must not rewrite historical audit diagnosis");
 }
 
 async function verifyVerifiedReleaseProjectsLive() {
@@ -1050,6 +1140,7 @@ void (async () => {
   await verifyActiveGithubStagesPersistWithoutPipeline();
   await verifyTerminalStageMetadataConvergenceAndBackfill();
   await verifyCurrentStateProjection(terminalFailure, true);
+  await verifyPublicReachabilityRetryProjection();
   await verifyCurrentStateReconcilesWithoutPipeline();
   await verifyConcurrentStateReadsShareReconciliation();
   await verifyDispatchIdentityRecovery();

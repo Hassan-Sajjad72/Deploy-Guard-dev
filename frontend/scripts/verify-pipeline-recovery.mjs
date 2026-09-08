@@ -16,6 +16,7 @@ assert.match(recovery, /confidenceLabel\(diagnosis\.confidence\)/);
 assert.match(recovery, /Repository \/ Application issue/);
 assert.match(recovery, /diagnosis\.rootCauseCode/);
 assert.match(recovery, /diagnosis\.remediationSteps/);
+assert.match(recovery, /diagnosis\.recommendedAction/);
 assert.match(recovery, /diagnosis\.retryDecision === "SAFE_AFTER_FIX"/);
 assert.match(recovery, /Do not retry the same immutable commit/);
 assert.match(recovery, /retrySummary\(diagnosis\.retryDecision\)/);

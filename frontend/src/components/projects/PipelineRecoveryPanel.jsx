@@ -40,6 +40,7 @@ function FailureDiagnosis({ diagnosis, operation }) {
     <p><strong>{ownershipLabel(diagnosis)}</strong></p>
     <div className="pipeline-failure-authority"><span><strong>Affected component</strong>{diagnosis.affectedComponent}</span><span><strong>Root cause</strong>{diagnosis.rootCauseCode}</span><span><strong>Retry</strong>{retrySummary(diagnosis.retryDecision)}</span></div>
     <p>{diagnosis.technicalReason}</p>
+    <p><strong>Recovery action:</strong> {diagnosis.recommendedAction}</p>
     <h4>How to fix</h4><ol className="remediation-list">{diagnosis.remediationSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol>
     <p className="state warning"><strong>Next action:</strong> {retryLabel(diagnosis)}</p>
     {diagnosis.completedStages?.length ? <div><h4>Completed successfully</h4><ul>{diagnosis.completedStages.map((stage) => <li key={stage.stage}>{stage.label}</li>)}</ul></div> : null}

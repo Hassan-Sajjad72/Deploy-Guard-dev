@@ -12,7 +12,7 @@ const projectId = "11111111-1111-4111-8111-111111111111";
 const operationId = "22222222-2222-4222-8222-222222222222";
 const ids = ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"];
 const sourceSha = "a".repeat(40);
-const runtime: RailpackRuntimeConfiguration = { schemaVersion: 3, projectId, operationId, environmentName: "dev", sourceSha, services: ids.map((serviceId, index) => ({ serviceId, runtimeConfigRevisionId: `${index ? "66666666-6666-4666-8666-666666666666" : "55555555-5555-4555-8555-555555555555"}`, serviceName: index ? "API" : "Web", serviceDirectory: index ? "api" : "web", servicePort: index ? 8000 : 3000, buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: String(index ? 8000 : 3000), HOST: "0.0.0.0", RELEASE: index ? "api" : "web" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/${serviceId}:TOKEN::${index ? "b".repeat(64) : "a".repeat(64)}` }, databaseAttached: index === 1, managedDatabase: index === 1 ? { engine: "postgres", aliases: ["DATABASE_URL"] } : { engine: null, aliases: [] } })) };
+const runtime: RailpackRuntimeConfiguration = { schemaVersion: 3, projectId, operationId, environmentName: "dev", sourceSha, services: ids.map((serviceId, index) => ({ serviceId, runtimeConfigRevisionId: `${index ? "66666666-6666-4666-8666-666666666666" : "55555555-5555-4555-8555-555555555555"}`, serviceName: index ? "API" : "Web", serviceDirectory: index ? "api" : "web", servicePort: index ? 8000 : 3000, buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: String(index ? 8000 : 3000), HOST: "0.0.0.0", RELEASE: index ? "api" : "web" }, secretReferences: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:deployguard/${serviceId}:TOKEN::${index ? "b".repeat(64) : "a".repeat(64)}` }, databaseAttached: index === 1, managedDatabase: index === 1 ? { engine: "postgres", aliases: ["DATABASE_URL"], urlScheme: "postgresql+psycopg" } : { engine: null, aliases: [] } })) };
 const service = Object.create(RailpackDeploymentService.prototype) as any;
 const operation: any = { id: operationId, commitSha: sourceSha, metadata: { deploymentAction: "deploy", immutableDispatchInputs: { services_base64: servicesBase64(runtime) } } };
 const serviceEvidence = runtime.services.map((expected, index) => {
@@ -30,12 +30,18 @@ const runtimeOutcomes = runtime.services.map((expected, index) => ({
   taskDefinitionArn: terraformServices[expected.serviceId].task_definition_arn,
   runningTaskArns: [`arn:aws:ecs:us-east-1:123456789012:task/dg/${index + 1}`],
   ecsTasksRunning: 1,
+  taskIpAddresses: [`10.0.0.${index + 10}`],
   runtimePort: expected.servicePort,
   readinessMode: "platform_transport",
+  applicationReachabilityPath: "alb_to_task_eni",
   transportProbePort: terraformServices[expected.serviceId].transport_probe_port,
   platformHealthCheckPath: terraformServices[expected.serviceId].platform_health_check_path,
   targetGroupArn: terraformServices[expected.serviceId].alb_target_group_arn,
   targetHealth: ["healthy"],
+  targetRegistrations: [{ targetId: `10.0.0.${index + 10}`, port: expected.servicePort, state: "healthy" }],
+  alb: { state: "active", dnsName: `service-${index}.example.test`, scheme: "internet-facing", type: "application", ipAddressType: "ipv4", securityGroups: [`sg-${index}`] },
+  listener: { listenerArn: `listener-${index}`, port: 80, protocol: "HTTP", defaultTargetGroupArn: terraformServices[expected.serviceId].alb_target_group_arn },
+  publicProbe: { classification: "READY", hostname: `service-${index}.example.test`, resolvedIpAddresses: [`203.0.113.${index + 10}`], dnsAttempts: 1, dnsElapsedSeconds: 0, attemptCount: 1, elapsedSeconds: 0, curlExitCode: 0, httpStatus: "200", remoteIp: `203.0.113.${index + 10}`, connectTimeSeconds: "0.01", startTransferTimeSeconds: "0.02", totalTimeSeconds: "0.02" },
   environment: expected.environment,
   secretValueFrom: {
     ...expected.secretReferences,
@@ -94,6 +100,11 @@ writeFileSync(evidencePath, JSON.stringify({ ...awsRuntimeVerification, services
 const rejected = spawnSync("bash", [producer, "deploy", "deployguard.release-result/v5", sourceSha, operationId, artifactsPath, terraformPath, evidencePath, join(handoffDirectory, "invalid-result.json")], { encoding: "utf8" });
 assert.notEqual(rejected.status, 0, "the workflow producer must fail before upload when terminal AWS evidence is incomplete");
 assert.match(rejected.stderr, /DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation/);
+const missingPublicProbeEvidence = structuredClone(awsRuntimeVerification) as any;
+delete missingPublicProbeEvidence.services[0].publicProbe;
+writeFileSync(evidencePath, JSON.stringify(missingPublicProbeEvidence), "utf8");
+const missingPublicProbe = spawnSync("bash", [producer, "deploy", "deployguard.release-result/v5", sourceSha, operationId, artifactsPath, terraformPath, evidencePath, join(handoffDirectory, "missing-public-probe.json")], { encoding: "utf8" });
+assert.notEqual(missingPublicProbe.status, 0, "the terminal artifact producer must reject SUCCESS evidence without public ALB-path proof");
 const valid = service.validatedReleaseEvidence(operation, artifact);
 assert.equal(valid.services.length, 2);
 assert.deepEqual(valid.services.map((item: any) => item.serviceId), ids);
@@ -103,6 +114,16 @@ for (const invalid of [
   { ...artifact, terraform: { ...artifact.terraform, services: { [ids[0]]: terraformServices[ids[0]] } } },
   { ...artifact, awsRuntimeVerification: { ...artifact.awsRuntimeVerification, services: [{ serviceId: ids[0], verified: true }] } },
 ]) assert.throws(() => service.validatedReleaseEvidence(operation, invalid), /complete|does not match/);
+for (const mutate of [
+  (candidate: any) => { delete candidate.awsRuntimeVerification.services[0].taskIpAddresses; },
+  (candidate: any) => { candidate.awsRuntimeVerification.services[0].targetRegistrations[0].port = 9090; },
+  (candidate: any) => { candidate.awsRuntimeVerification.services[0].listener.defaultTargetGroupArn = "wrong-target-group"; },
+  (candidate: any) => { candidate.awsRuntimeVerification.services[0].publicProbe.httpStatus = "503"; },
+]) {
+  const invalid = structuredClone(artifact);
+  mutate(invalid);
+  assert.throws(() => service.validatedReleaseEvidence(operation, invalid), /does not match/, "backend ingestion must reject incomplete or mismatched production-path evidence");
+}
 const partialArtifact = { ...artifact, awsRuntimeVerification: { ...artifact.awsRuntimeVerification, verified: false, services: [runtimeOutcomes[0], { serviceId: ids[1], verified: false, failureCode: "DG_ECS_STABILITY_FAILED" }] } };
 assert.throws(() => service.validatedReleaseEvidence(operation, partialArtifact), /verified AWS runtime evidence|failed or unknown service outcome/, "verified=false cannot be consumed as a successful release");
 writeFileSync(evidencePath, JSON.stringify(partialArtifact.awsRuntimeVerification), "utf8");
@@ -127,14 +148,14 @@ for (const shape of shapes) {
     ...runtime.services[index], serviceId, serviceName: index ? "Backend" : shape.ports.length > 1 ? "Frontend" : "Application", serviceDirectory: shape.directories[index], servicePort: shape.ports[index],
     environment: { PORT: String(shape.ports[index]), HOST: "0.0.0.0", RELEASE: index ? "api" : "web" },
     databaseAttached: serviceId === attachedServiceId,
-    managedDatabase: serviceId === attachedServiceId ? { engine: shape.databaseEngine, aliases: [shape.databaseEngine === "mongodb" ? "MONGODB_URI" : "DATABASE_URL"] } : { engine: null, aliases: [] },
+    managedDatabase: serviceId === attachedServiceId ? { engine: shape.databaseEngine, aliases: [shape.databaseEngine === "mongodb" ? "MONGODB_URI" : "DATABASE_URL"], urlScheme: shape.databaseEngine === "postgres" ? "postgresql" : shape.databaseEngine } : { engine: null, aliases: [] },
   }));
   const shapeRuntime: RailpackRuntimeConfiguration = { ...runtime, services: shapeServices as RailpackRuntimeConfiguration["services"] };
   const shapeTerraformServices = Object.fromEntries(shapeServices.map((expected, index) => [expected.serviceId, { ...terraformServices[expected.serviceId], service_port: expected.servicePort, public_url: `http://${shape.name}-${index}.example.test` }]));
   const shapeArtifacts = shapeServices.map((expected, index) => ({ ...serviceEvidence[index], serviceId: expected.serviceId, serviceName: expected.serviceName, serviceDirectory: expected.serviceDirectory, servicePort: expected.servicePort }));
   const shapeOutcomes = shapeServices.map((expected, index) => {
     const managedSecret = expected.databaseAttached ? { [expected.managedDatabase.aliases[0]]: `${shapeDatabase!.credentials_secret_arn}:url::${shapeDatabase!.secret_version_id}` } : {};
-    return { ...runtimeOutcomes[index], serviceId: expected.serviceId, image: shapeTerraformServices[expected.serviceId].image, ecsServiceArn: shapeTerraformServices[expected.serviceId].ecs_service_arn, taskDefinitionArn: shapeTerraformServices[expected.serviceId].task_definition_arn, runtimePort: expected.servicePort, targetGroupArn: shapeTerraformServices[expected.serviceId].alb_target_group_arn, environment: expected.environment, secretValueFrom: { ...expected.secretReferences, ...managedSecret }, managedDatabase: expected.databaseAttached ? { attached: true, attachedServiceId: expected.serviceId, engine: shape.databaseEngine, aliases: expected.managedDatabase.aliases, credentialsSecretArn: shapeDatabase!.credentials_secret_arn, secretVersionId: shapeDatabase!.secret_version_id } : { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null }, publicUrl: shapeTerraformServices[expected.serviceId].public_url };
+    return { ...runtimeOutcomes[index], serviceId: expected.serviceId, image: shapeTerraformServices[expected.serviceId].image, ecsServiceArn: shapeTerraformServices[expected.serviceId].ecs_service_arn, taskDefinitionArn: shapeTerraformServices[expected.serviceId].task_definition_arn, runtimePort: expected.servicePort, targetGroupArn: shapeTerraformServices[expected.serviceId].alb_target_group_arn, targetRegistrations: [{ targetId: `10.0.0.${index + 10}`, port: expected.servicePort, state: "healthy" }], alb: { ...runtimeOutcomes[index].alb, dnsName: `${shape.name}-${index}.example.test` }, publicProbe: { ...runtimeOutcomes[index].publicProbe, hostname: `${shape.name}-${index}.example.test` }, environment: expected.environment, secretValueFrom: { ...expected.secretReferences, ...managedSecret }, managedDatabase: expected.databaseAttached ? { attached: true, attachedServiceId: expected.serviceId, engine: shape.databaseEngine, aliases: expected.managedDatabase.aliases, credentialsSecretArn: shapeDatabase!.credentials_secret_arn, secretVersionId: shapeDatabase!.secret_version_id } : { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null }, publicUrl: shapeTerraformServices[expected.serviceId].public_url };
   });
   const shapeTerraform = { ...terraform, services: shapeTerraformServices, database: shapeDatabase };
   const shapeVerification = { ...awsRuntimeVerification, services: shapeOutcomes, databaseVerified: Boolean(shapeDatabase) };

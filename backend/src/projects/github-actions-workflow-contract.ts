@@ -13,11 +13,11 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "d0f028095d6d28193a878d9f50593fe7f45c9303341eb190509689a974de5aff",
-  releaseResultProducer: "cbda8bb60b9bd08ae8c305ce0a036ec5ffab960476aabe0b8e9caaa63cf31b80",
+  workflow: "3e07e576b788ebdf4afdbe357e073739cadd967638d9908a7839a17153e6f8d9",
+  releaseResultProducer: "e8fbc1d858f5bd5742e20ae761f769f6e028e87723432d00a889c1b8274460ab",
   releaseOnlyTaskDefinitions: "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
-  runtimeVerifier: "b9f0e6c1e0be1acdf73ab0f78468dcbcab8ffe54be5f6d99b92149960c88f35a",
-  runtimeInfrastructure: "bf85cd5bd65fe0be133837b054c95728bf720bb63ffb6da4aa3d1466d7ec79df",
+  runtimeVerifier: "adcd8c5f5b9eb535a53ee868d894caccc67b415f92d89eafb46b0a7d51843c90",
+  runtimeInfrastructure: "a57d0142ff63eed47399aad6a3f6f8bf5dd4f8bd7ade731bac98c9c0d7cf955a",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {
@@ -74,6 +74,9 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !workflow.includes("terraform/deployguard-failure-evidence.json")
     || !workflow.includes("if: failure() && steps.runtime.outcome == 'failure'")
     || !workflow.includes("service_port:.servicePort")
+    || !workflow.includes("managed_database_url_scheme:(.managedDatabase.urlScheme//\"\")")
+    || !workflow.includes('database_url="${database_url_scheme}://')
+    || !workflow.includes("DG_APPLICATION_STARTUP_FAILED")
     || !workflow.includes('--env PORT="$service_port"')
     || !workflow.includes("DG_TERRAFORM_PLAN_FAILED stage=terraform_plan")
     || !workflow.includes("DG_TERRAFORM_APPLY_FAILED stage=terraform_apply")) {
@@ -101,14 +104,22 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.runtimeVerifier.includes('or .state == "draining"')
     || !executable.runtimeVerifier.includes("failureMarker:")
     || !executable.runtimeVerifier.includes("wait_for_managed_database_readiness")
+    || !executable.runtimeVerifier.includes("wait_for_cloud_map_registration")
     || !executable.runtimeVerifier.includes('aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count 1')
+    || !executable.runtimeVerifier.includes("wait_for_alb_active")
+    || !executable.runtimeVerifier.includes("wait_for_listener")
+    || !executable.runtimeVerifier.includes("wait_for_public_dns")
+    || !executable.runtimeVerifier.includes("wait_for_public_transport")
     || (!executable.runtimeVerifier.includes("awsRuntimeVerification") && !executable.runtimeVerifier.includes("services:$services"))) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement ${AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION}.`);
   }
   if (!executable.runtimeInfrastructure.includes('platform_health_check_path = "/_deployguard/transport-ready"')
     || !executable.runtimeInfrastructure.includes('name         = "deployguard-transport-probe"')
-    || !executable.runtimeInfrastructure.includes('nc -z -w 1 127.0.0.1')
+    || !executable.runtimeInfrastructure.includes('task_ip=\\"$(hostname -i')
+    || !executable.runtimeInfrastructure.includes('nc -z -w 1 \\"$task_ip\\"')
     || !executable.runtimeInfrastructure.includes('port    = tostring(local.transport_probe_ports[each.key])')
+    || !executable.runtimeInfrastructure.includes('database_url_scheme         = local.database_enabled ? local.database_service.managed_database_url_scheme : ""')
+    || !executable.runtimeInfrastructure.includes('url      = "${local.database_url_scheme}://')
     || !executable.runtimeInfrastructure.includes('desired_count   = each.value.database_attached ? 0 : 1')
     || !executable.runtimeInfrastructure.includes('ignore_changes = [desired_count, task_definition]')
     || executable.runtimeInfrastructure.includes('terraform_data.database_readiness')) {

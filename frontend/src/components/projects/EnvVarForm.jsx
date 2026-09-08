@@ -12,6 +12,7 @@ export default function EnvVarForm({
         <label htmlFor="envKey">Key</label>
         <input
           id="envKey"
+          autoComplete="off"
           name="key"
           onChange={onChange}
           placeholder="APP_BASE_URL"
@@ -23,6 +24,7 @@ export default function EnvVarForm({
         <label htmlFor="envValue">Value</label>
         <input
           id="envValue"
+          autoComplete="new-password"
           name="value"
           onChange={onChange}
           required={!form.id}
@@ -43,7 +45,7 @@ export default function EnvVarForm({
       <p className="muted">Custom variables are optional. Database connection aliases may be supplied here when no conflicting managed database is attached.</p>
       <div className="quick-actions">
         <button className="button" disabled={isSubmitting} type="submit">
-          {isSubmitting ? "Saving..." : submitLabel}
+          {isSubmitting ? "Saving…" : submitLabel}
         </button>
         {onCancel ? (
           <button className="secondary-button" onClick={onCancel} type="button">

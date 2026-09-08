@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { AWS_RUNTIME_MONITORING_ACTIONS, AWS_RUNTIME_MONITORING_CAPABILITY_VERSION } from "../src/observability/aws-runtime-monitoring-capabilities";
 import { AwsPrometheusExportService } from "../src/observability/aws-prometheus-export.service";
-import { CloudWatchMetricsService } from "../src/observability/cloudwatch-metrics.service";
+import { AwsRuntimeTelemetry, CloudWatchMetricsService } from "../src/observability/cloudwatch-metrics.service";
 import { LiveRuntimeIdentity } from "../src/observability/live-runtime-resolver.service";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 
@@ -66,6 +66,9 @@ async function verifyBehavior() {
     generationId: "generation-a",
     releaseId: "release-a",
     operationId: "operation-a",
+    serviceId: "service-id-a",
+    serviceDisplayName: "Service A",
+    publicUrl: "https://service-a.example.test",
     region: "us-east-1",
     cluster: "arn:aws:ecs:us-east-1:123456789012:cluster/shared",
     clusterName: "shared",
@@ -95,9 +98,12 @@ async function verifyBehavior() {
       requests += 1;
       assert.equal(command.input.MetricDataQueries.length, 5);
       const timestamp = new Date("2026-08-14T00:00:00.000Z");
+      const dimensions = command.input.MetricDataQueries[0] as { MetricStat?: { Metric?: { Dimensions?: Array<{ Name: string; Value: string }> } } };
+      const serviceName = dimensions.MetricStat?.Metric?.Dimensions?.find((item) => item.Name === "ServiceName")?.Value;
+      const cpu = serviceName === "service-b" ? 82.5 : 12.5;
       return {
         MetricDataResults: [
-          { Id: "ecs_cpu", Timestamps: [timestamp], Values: [12.5] },
+          { Id: "ecs_cpu", Timestamps: [timestamp], Values: [cpu] },
           { Id: "ecs_memory", Timestamps: [timestamp], Values: [37.5] },
           { Id: "alb_latency", Timestamps: [timestamp], Values: [0.125] },
           { Id: "healthy_hosts", Timestamps: [timestamp], Values: [1] },
@@ -112,12 +118,31 @@ async function verifyBehavior() {
   assert.equal(first.cpu.points[0].value, 12.5);
   assert.equal(first.runtimeAvailability.points[0].value, 1);
   assert.equal(cached.cacheStatus, "cached");
+  const secondService: LiveRuntimeIdentity = {
+    ...identity,
+    serviceId: "service-id-b",
+    serviceDisplayName: "Service B",
+    publicUrl: "https://service-b.example.test",
+    serviceArn: "arn:aws:ecs:us-east-1:123456789012:service/shared/service-b",
+    serviceName: "service-b",
+    taskDefinitionArn: "arn:aws:ecs:us-east-1:123456789012:task-definition/app-b:1",
+    taskArns: ["arn:aws:ecs:us-east-1:123456789012:task/task-b"],
+    targetGroupArn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/app-b/xyz",
+    logGroupName: "/deployguard/project-a/dev/generation-a/app-b",
+    containerName: "app-b",
+  };
+  const second = await metrics.collect(secondService, "1h");
+  assert.equal(requests, 2, "two services in one generation must use independent metric cache entries");
+  assert.equal(second.cpu.points[0].value, 82.5, "Service B cannot receive Service A cached telemetry");
+  const cachedFirst = await metrics.collect(identity, "1h");
+  assert.equal(requests, 2);
+  assert.equal(cachedFirst.cpu.points[0].value, 12.5);
   const nextGeneration = { ...identity, generationId: "generation-b", releaseId: "release-b" };
   const switched = await metrics.collect(nextGeneration, "1h");
-  assert.equal(requests, 2, "a new LIVE generation must receive an independent metric query/cache key");
+  assert.equal(requests, 3, "a new LIVE generation must receive an independent metric query/cache key");
   assert.equal(switched.generationId, "generation-b");
 
-  const exporter = new AwsPrometheusExportService({ collectAllLatest: async () => [first] } as never);
+  const exporter = new AwsPrometheusExportService({ collectAllLatest: async () => [first, second] } as never);
   const exposition = await exporter.render();
   for (const family of [
     "deployguard_ecs_cpu_utilization_percent",
@@ -127,6 +152,21 @@ async function verifyBehavior() {
     "deployguard_unhealthy_target_count",
     "deployguard_runtime_available",
   ]) assert.match(exposition, new RegExp(`${family}\\{[^}]*generation_id="generation-a"`));
+  assert.match(exposition, /service="service-a"/);
+  assert.match(exposition, /service="service-b"/);
+  assert.equal((exposition.match(/deployguard_runtime_available\{/g) || []).length, 2, "Prometheus exports both LIVE services");
+
+  const allServiceMetrics = new CloudWatchMetricsService(config as never, {
+    liveProjectIds: async () => [identity.projectId],
+    resolveAllProjectServices: async () => [identity, secondService],
+  } as never, { dispatch: async () => null } as never);
+  (allServiceMetrics as unknown as { collect: (candidate: LiveRuntimeIdentity) => Promise<AwsRuntimeTelemetry> }).collect = async (candidate) => candidate.serviceId === secondService.serviceId ? second : first;
+  assert.deepEqual((await allServiceMetrics.collectAllLatest()).map((sample) => sample.identity.serviceName), ["service-a", "service-b"]);
+  (allServiceMetrics as unknown as { collect: (candidate: LiveRuntimeIdentity) => Promise<AwsRuntimeTelemetry> }).collect = async (candidate) => {
+    if (candidate.serviceId === secondService.serviceId) throw new Error("service B telemetry unavailable");
+    return first;
+  };
+  assert.deepEqual((await allServiceMetrics.collectAllLatest()).map((sample) => sample.identity.serviceName), ["service-a"], "one service failure cannot suppress other Prometheus samples");
 
   const sanitized = new LogSanitizerService().sanitize("password=hunter2 Authorization: Bearer eyJabcdefghijklmnopqrstuv");
   assert.doesNotMatch(sanitized, /hunter2|eyJabcdefghijklmnopqrstuv/);
@@ -135,9 +175,9 @@ async function verifyBehavior() {
 verifyBehavior().then(() => {
   console.log("AWS runtime monitoring verification passed.");
   console.log("  authoritative LIVE identity: enforced");
-  console.log("  CloudWatch metrics cache and generation switch: verified");
+  console.log("  CloudWatch metrics cache, service isolation, and generation switch: verified");
   console.log("  sanitized SSE generation following: configured");
-  console.log("  Prometheus/Grafana provisioning: configured");
+  console.log("  multi-service Prometheus/Grafana provisioning: configured");
   console.log("  IAM capability set: read-only and exact");
 }).catch((error) => {
   console.error(error);

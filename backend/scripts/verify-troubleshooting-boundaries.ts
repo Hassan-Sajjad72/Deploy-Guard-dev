@@ -103,6 +103,27 @@ async function verifyServiceBoundaries(collected: any, run: any) {
   service.evidenceService = { collect: async () => { recollections += 1; return collected; } }; service.sessions = { save: async () => { saves += 1; } };
   assert.equal(await service.collectedForSession(session, run, user), collected); assert.equal(await service.collectedForSession(session, run, user), collected);
   assert.equal(recollections, 0, "follow-ups reuse the same evidence snapshot"); assert.equal(saves, 0);
+
+  const historicalDiagnosis = { terminalFailureCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED", rootCauseCode: "DG_FAILURE_CAUSE_UNVERIFIED", retryDecision: "INSUFFICIENT_EVIDENCE" };
+  const historicalSnapshot: any = {
+    context: { pipelineRunId: "failed-operation", failureOwner: "UNVERIFIED", failureCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED", failureDiagnostic: historicalDiagnosis, rootCauseCode: historicalDiagnosis.rootCauseCode, retryDecision: historicalDiagnosis.retryDecision },
+    evidence: [{ source: "deployguard_diagnosis", text: JSON.stringify(historicalDiagnosis) }],
+    groups: { deployguard_diagnosis: [] },
+  };
+  const failedRun: any = {
+    id: "failed-operation", status: PipelineRunStatus.FAILED, commitSha: "f".repeat(40), currentStage: "application_runtime",
+    failureCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED", failureOwner: "UNVERIFIED", externalProvider: null,
+    failedAt: new Date("2026-09-02T00:02:00.000Z"),
+    metadata: { deploymentAction: "deploy", failedStage: "application_runtime", safeLog: "DG_FAILURE code=DG_APPLICATION_EXTERNAL_BINDING_FAILED stage=application_runtime", failureDiagnostic: historicalDiagnosis },
+  };
+  const failedSession: any = { pipelineRunId: failedRun.id, initialContext: { evidenceSnapshot: historicalSnapshot } };
+  const immutableSnapshot = JSON.stringify(historicalSnapshot);
+  const current = await service.collectedForSession(failedSession, failedRun, user);
+  assert.equal(current.context.failureOwner, "REPOSITORY_APPLICATION");
+  assert.equal(current.context.retryDecision, "SAFE_AFTER_FIX");
+  assert.equal(current.context.rootCauseCode, "DG_APPLICATION_EXTERNAL_BINDING_FAILED");
+  assert.equal(JSON.stringify(historicalSnapshot), immutableSnapshot, "current troubleshooting recovery projection must not rewrite its historical evidence snapshot");
+  assert.equal(saves, 0, "reclassification of a persisted snapshot is read-only");
 }
 
 async function verifyProviderFallbackAndStateAuthority(evidence: ProcessedEvidence[]) {

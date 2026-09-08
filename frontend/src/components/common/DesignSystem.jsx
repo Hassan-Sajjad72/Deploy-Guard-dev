@@ -20,12 +20,14 @@ export function statusTone(status) {
   return "neutral";
 }
 
-function useDialogFocus(onClose) {
+export function useDialogFocus(onClose, { active = true } = {}) {
   const dialogRef = useRef(null);
   const onCloseRef = useRef(onClose);
-  const previousFocusRef = useRef(typeof document === "undefined" ? null : document.activeElement);
+  const previousFocusRef = useRef(null);
   onCloseRef.current = onClose;
+  if (active && previousFocusRef.current === null && typeof document !== "undefined") previousFocusRef.current = document.activeElement;
   useEffect(() => {
+    if (!active || typeof document === "undefined") return undefined;
     const previous = previousFocusRef.current;
     const bodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -36,7 +38,7 @@ function useDialogFocus(onClose) {
       initial?.focus();
     }, 0);
     function onKeyDown(event) {
-      if (event.key === "Escape") onCloseRef.current?.();
+      if (event.key === "Escape") { event.preventDefault(); onCloseRef.current?.(); }
       if (event.key !== "Tab" || !dialogRef.current) return;
       const focusable = [...dialogRef.current.querySelectorAll(focusableSelector)].filter((element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true");
       if (!focusable.length) { event.preventDefault(); dialogRef.current.focus(); return; }
@@ -54,8 +56,9 @@ function useDialogFocus(onClose) {
       document.removeEventListener("focusin", containFocus);
       document.body.style.overflow = bodyOverflow;
       previous?.focus?.();
+      previousFocusRef.current = null;
     };
-  }, []);
+  }, [active]);
   return dialogRef;
 }
 
@@ -126,11 +129,11 @@ export function ReadinessSummary({ children, level = "blocked", message, require
   </section>;
 }
 
-export function Modal({ children, labelledBy, onClose }) {
+export function Modal({ children, className = "", labelledBy, onClose }) {
   const dialogRef = useDialogFocus(onClose);
   if (typeof document === "undefined") return null;
   return createPortal(<div className="ds-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
-    <section aria-labelledby={labelledBy} aria-modal="true" className="ds-modal glass-modal" ref={dialogRef} role="dialog" tabIndex={-1}>{children}</section>
+    <section aria-labelledby={labelledBy} aria-modal="true" className={`ds-modal glass-modal ${className}`.trim()} ref={dialogRef} role="dialog" tabIndex={-1}>{children}</section>
   </div>, document.body);
 }
 
@@ -140,7 +143,7 @@ export function ViewportPortal({ children }) {
 }
 
 export function Banner({ children, tone = "info", title }) {
-  return <section className={`ds-banner ds-banner-${tone}`} role={tone === "danger" ? "alert" : undefined}>
+  return <section aria-live={tone === "success" ? "polite" : undefined} className={`ds-banner ds-banner-${tone}`} role={tone === "danger" ? "alert" : tone === "success" ? "status" : undefined}>
     <AppIcon name={tone === "danger" ? "shield" : tone === "success" ? "check" : "activity"} size={18} />
     <div>{title ? <strong>{title}</strong> : null}{children}</div>
   </section>;
@@ -204,7 +207,7 @@ export function Tabs({ activeId, idPrefix, items, label = "Sections", onChange }
     onChange(items[next].id);
     window.requestAnimationFrame(() => tabsRef.current?.querySelector(`[data-tab-id="${items[next].id}"]`)?.focus());
   }
-  return <div aria-label={label} className="ds-tabs glass-tabs" ref={tabsRef} role="tablist">
+  return <div aria-label={label} aria-orientation="horizontal" className="ds-tabs glass-tabs" ref={tabsRef} role="tablist">
     {items.map((item) => <button aria-controls={`${id}-panel-${item.id}`} aria-selected={activeId === item.id} className={activeId === item.id ? "is-active" : ""} data-tab-id={item.id} id={`${id}-tab-${item.id}`} key={item.id} onClick={() => onChange(item.id)} onKeyDown={handleKeyDown} role="tab" tabIndex={activeId === item.id ? 0 : -1} type="button">{item.icon ? <AppIcon name={item.icon} size={16} /> : null}{item.label}</button>)}
   </div>;
 }

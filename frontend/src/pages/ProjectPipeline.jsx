@@ -51,7 +51,7 @@ export default function ProjectPipeline() {
 
   const state = projectStatePresentation(currentState);
   return <div className="workspace-page project-pipeline-page" data-authoritative-state={state.state}>
-    <PageHeader context={`${currentState.repository || project.repositoryFullName} · ${currentState.branch || project.targetBranch}`} eyebrow="Deployments" status={state.state} title="Deployment pipeline" />
+    <PageHeader context={[project.name, project.environmentName ? `Environment ${project.environmentName}` : null, currentState.repository || project.repositoryFullName, currentState.branch || project.targetBranch, currentState.stableRelease?.commit ? `Release ${currentState.stableRelease.commit.slice(0, 12)}` : null].filter(Boolean).join(" · ")} eyebrow="Deployments" status={state.state} title="Deployment pipeline" />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     <PipelineExecution canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} operations={operations} projectId={projectId} />
     <PipelineRecoveryPanel operations={operations} />

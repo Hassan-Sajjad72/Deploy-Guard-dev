@@ -25,7 +25,7 @@ import { ProjectEnvironmentCryptoService } from "./project-environment-crypto.se
 import { BulkEnvVarsDto } from "./dto/bulk-env-vars.dto";
 import { ProjectActivityService } from "./project-activity.service";
 import { ProjectDatabaseTier, DatabaseTierProvider } from "./project-database-tier.entity";
-import { classifyConfigurationVariable, isDeployGuardManagedDatabaseAlias, isSecretConfigurationKey, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, serviceAlias, SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
+import { assertRailpackCapabilityDeclaration, classifyConfigurationVariable, isDeployGuardManagedDatabaseAlias, isSecretConfigurationKey, normalizeConfigurationKey, partitionSubmittedEnvironmentVariables, RAILPACK_BUILD_CAPABILITY_KEYS, RESERVED_VARIABLE_REGISTRY, reservedVariable, reservedVariableError, serviceAlias, SERVICE_ALIAS_GROUPS } from "./configuration-ownership";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { acquireProjectConfigurationAdvisoryLock } from "./project-configuration-lock";
 import { GithubAppService } from "./github-app.service";
@@ -569,6 +569,7 @@ export class ProjectsService {
       if (ignoredVariableNames.length) return { variable: null, ignoredVariableNames };
       await this.assertEnvKeyAvailable(project.id, service.id, key, undefined, manager);
       const defaults = this.environmentDefaults(key);
+      this.assertRailpackEnvironmentVariable(key, dto.value, defaults.isSecret || dto.isSecret === true, dto.scope || defaults.scope);
       const repository = manager.getRepository(ProjectEnvironmentVariable);
       const encryptedValue = this.environmentCrypto.encrypt(dto.value);
       const variable = repository.create({
@@ -649,6 +650,7 @@ export class ProjectsService {
       }
       if (dto.isSecret !== undefined || dto.key !== undefined) variable.isSecret = isSecretConfigurationKey(submittedKey) || dto.isSecret === true;
       if (dto.scope !== undefined) variable.scope = dto.scope;
+      if (submittedKey.startsWith("RAILPACK_")) this.assertRailpackEnvironmentVariable(submittedKey, dto.value !== undefined ? dto.value : this.environmentCrypto.decrypt(variable.value), variable.isSecret, variable.scope);
       variable.isRequired = false;
       variable.environment = environment;
       if (dto.detectedSource !== undefined) variable.detectedSource = dto.detectedSource;
@@ -707,6 +709,7 @@ export class ProjectsService {
       const rows: ProjectEnvironmentVariable[] = [];
       for (const item of accepted) {
         const defaults = this.environmentDefaults(item.key);
+        this.assertRailpackEnvironmentVariable(item.key, item.value, defaults.isSecret || item.isSecret === true, item.scope || defaults.scope);
         const variable = byKey.get(item.key) || repository.create({ projectId, serviceId: service.id, key: item.key });
         const encryptedValue = this.environmentCrypto.encrypt(item.value);
         variable.key = item.key;
@@ -1003,13 +1006,19 @@ export class ProjectsService {
   }
 
   private environmentDefaults(key: string) {
+    const railpackCapability = (RAILPACK_BUILD_CAPABILITY_KEYS as readonly string[]).includes(key);
     return {
       key,
       isRequired: false,
-      scope: "runtime" as const,
-      isSecret: isSecretConfigurationKey(key),
+      scope: railpackCapability ? "build" as const : "runtime" as const,
+      isSecret: railpackCapability ? false : isSecretConfigurationKey(key),
       detectedSource: "user configuration",
     };
+  }
+
+  private assertRailpackEnvironmentVariable(key: string, value: string, isSecret: boolean, scope: "build" | "runtime" | "both") {
+    try { assertRailpackCapabilityDeclaration({ key, value, isSecret, scope }); }
+    catch (error) { throw new BadRequestException(error instanceof Error ? error.message : "Invalid Railpack capability declaration."); }
   }
 
   private async assertEnvironmentOwnership(projectId: string, serviceId: string, key: string, manager?: EntityManager) {

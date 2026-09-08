@@ -15,7 +15,7 @@ import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { presentPipelineStage } from "../projects/pipeline/pipeline-stage-presenter";
 import { deployguardOperationStagePresentation } from "../projects/pipeline/github-actions-stage-presentation";
 import { TROUBLESHOOTING_QUESTIONS, troubleshootingQuestion, TroubleshootingQuestionType } from "./ai-troubleshooting-contract";
-import { failureDiagnosticFromMetadata } from "../projects/failure-diagnostics/failure-diagnostic.types";
+import { currentFailureDiagnostic } from "../projects/failure-diagnostics/failure-diagnostic.service";
 
 export function isAiTroubleshootingEligible(run: Pick<ProjectPipelineRun, "status" | "githubWorkflowRunId" | "metadata">) {
   if (run.status !== PipelineRunStatus.FAILED || typeof run.metadata?.safeLog !== "string" || !run.metadata.safeLog.trim()) return false;
@@ -109,13 +109,14 @@ export class AiTroubleshootingService {
     ]);
     const operationAction = (run?.metadata?.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
     const failedStage = run?.metadata?.failedStage || run?.currentStage;
+    const diagnosis = run ? currentFailureDiagnostic(run) : null;
     const safeMessages = await Promise.all(messages.map(async (message) => ({ ...message, content: await this.evidenceService.sanitizeUserInput(projectId, message.content) })));
     return {
       session,
       messages: safeMessages,
       results,
       provider,
-      operation: run ? { id: run.id, action: operationAction, commitSha: run.commitSha, generationId: run.generationId, failedStage, failedStageLabel: deployguardOperationStagePresentation(failedStage, operationAction).label, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage, failureOwner: run.failureOwner || "UNVERIFIED", externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId, diagnosis: failureDiagnosticFromMetadata(run.metadata) } : null,
+      operation: run ? { id: run.id, action: operationAction, commitSha: run.commitSha, generationId: run.generationId, failedStage, failedStageLabel: deployguardOperationStagePresentation(failedStage, operationAction).label, failedAt: run.failedAt, completedAt: run.completedAt, startedAt: run.startedAt, createdAt: run.createdAt, summary: run.errorMessage, failureOwner: diagnosis?.failureOwner || run.failureOwner || "UNVERIFIED", externalProvider: diagnosis?.externalProvider ?? run.externalProvider, failureCode: diagnosis?.terminalFailureCode || run.failureCode, failureServiceId: diagnosis?.serviceId || run.failureServiceId, diagnosis } : null,
       evidence: { context: { ...collected.context, project: project ? { name: project.name, repository: project.repositoryFullName } : null }, groups: collected.groups },
       suggestedQuestions: TROUBLESHOOTING_QUESTIONS,
     };
@@ -145,10 +146,10 @@ export class AiTroubleshootingService {
       failedStage: failedPresentation.key,
       failedStageLabel: failedPresentation.label,
       failureMessage: run.errorMessage,
-      failureOwner: run.failureOwner || "UNVERIFIED",
-      externalProvider: run.externalProvider,
-      failureCode: run.failureCode,
-      failureServiceId: run.failureServiceId,
+      failureOwner: collected.context.failureOwner,
+      externalProvider: collected.context.externalProvider,
+      failureCode: collected.context.failureCode,
+      failureServiceId: collected.context.failureServiceId,
       failureDiagnostic: collected.context.failureDiagnostic,
       rootCauseCode: collected.context.rootCauseCode,
       retryDecision: collected.context.retryDecision,
@@ -195,12 +196,35 @@ export class AiTroubleshootingService {
 
   private async collectedForSession(session: AiAnalysisSession, run: ProjectPipelineRun, user: User) {
     const snapshot = session.initialContext?.evidenceSnapshot as Awaited<ReturnType<AiEvidenceService["collect"]>> | undefined;
-    if (snapshot?.context?.pipelineRunId === run.id && Array.isArray(snapshot.evidence) && snapshot.groups && typeof snapshot.groups === "object") return snapshot;
+    if (snapshot?.context?.pipelineRunId === run.id && Array.isArray(snapshot.evidence) && snapshot.groups && typeof snapshot.groups === "object") {
+      return this.withCurrentFailureContract(snapshot, run);
+    }
     const serviceId = typeof session.initialContext?.requestedServiceId === "string" ? session.initialContext.requestedServiceId : undefined;
     const collected = await this.evidenceService.collect(session.projectId, run.id, user, serviceId);
     session.initialContext = { ...(session.initialContext || {}), requestedServiceId: serviceId || null, evidenceSnapshot: collected };
     await this.sessions.save(session);
-    return collected;
+    return this.withCurrentFailureContract(collected, run);
+  }
+
+  private withCurrentFailureContract(collected: Awaited<ReturnType<AiEvidenceService["collect"]>>, run: ProjectPipelineRun) {
+    const diagnosis = currentFailureDiagnostic(run);
+    if (!diagnosis) return collected;
+    // Preserve the persisted evidence snapshot as immutable audit history. Only
+    // the response-time recovery projection follows the current deterministic
+    // failure contract.
+    return {
+      ...collected,
+      context: {
+        ...collected.context,
+        failureOwner: diagnosis.failureOwner,
+        externalProvider: diagnosis.externalProvider,
+        failureCode: diagnosis.terminalFailureCode,
+        failureServiceId: diagnosis.serviceId,
+        failureDiagnostic: diagnosis,
+        rootCauseCode: diagnosis.rootCauseCode,
+        retryDecision: diagnosis.retryDecision,
+      },
+    };
   }
 
   private answer(value: ReturnType<AiEvidencePreprocessorService["fallback"]>, questionType: TroubleshootingQuestionType | null) {

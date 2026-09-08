@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { createTerraformExport, downloadTerraformExport } from "../api/platformApi.js";
 import { getProjectDetailedCurrentState } from "../api/projectApi.js";
 import { Card, ChartCard, CopyValue, DataTable, EmptyState, MetricCard, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
+import { useToast } from "../hooks/useToast.js";
 import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 
@@ -23,6 +25,26 @@ function shortened(value, max = 34) {
 
 function healthStatus(value, available) {
   return available ? "active" : value === "destroyed" ? "historical" : "unavailable";
+}
+
+function TerraformExportAction({ projectId }) {
+  const { notify } = useToast();
+  const [exporting, setExporting] = useState(false);
+
+  async function exportTerraform() {
+    setExporting(true);
+    try {
+      const artifact = await createTerraformExport(projectId);
+      await downloadTerraformExport(projectId, artifact);
+      notify(`Terraform export downloaded as ${artifact.filename}.`, "success");
+    } catch (caught) {
+      notify(caught.message || "Terraform export failed.", "danger");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return <button aria-busy={exporting} className="secondary-button" disabled={exporting} onClick={exportTerraform} type="button">{exporting ? "Preparing export…" : "Export Terraform"}</button>;
 }
 
 function ServiceFlow({ state, evidence }) {
@@ -107,15 +129,16 @@ export default function ProjectInfrastructure() {
   const absent = infrastructure?.exists === false || infrastructure?.status === "not_provisioned";
   const provisioningFailed = infrastructure?.status === "provisioning_failed";
   const destroyRemoved = state?.stateAuthority?.activeOperation?.type === "destroy" && state?.stateAuthority?.runtime?.state === "removed";
-  if (cleanupRequired) return <div className="infrastructure-page grid"><PageHeader eyebrow="Infrastructure" title="Destroy cleanup required" status="blocked" /><Card><p className="eyebrow">Runtime is not LIVE</p><h2>Destroy failed after runtime removal or before the previous runtime could be verified.</h2><p>{state?.stateAuthority?.reason || "DeployGuard will not treat historical release evidence as current infrastructure health."}</p><div className="infrastructure-support-grid"><article><span>ECS</span><strong>{label(evidence?.resources?.find((resource) => resource.type === "ECS Fargate")?.status)}</strong></article><article><span>Load balancer</span><strong>{label(evidence?.resources?.find((resource) => resource.type === "ALB")?.status)}</strong></article><article><span>Terraform cleanup</span><strong>{label(evidence?.terraformState?.status)}</strong></article></div><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Retry Failed Destroy</Link></Card></div>;
-  if (destroyRemoved) return <div className="infrastructure-page grid"><PageHeader eyebrow="Infrastructure" title="Runtime removed · Destroy finalizing" status="destroying" /><Card><p className="eyebrow">Authoritative runtime observation</p><h2>ECS and ALB resources are removed.</h2><p>The Destroy operation remains active while DeployGuard verifies deletion and finalizes control-plane cleanup.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>View Destroy progress</Link></Card></div>;
-  if (absent) return <div className="infrastructure-page grid"><PageHeader eyebrow="Infrastructure" title="Runtime infrastructure" status="not_provisioned" /><Card><p className="eyebrow">Runtime infrastructure not provisioned</p><h2>Deployment stopped during {state?.progress?.phase === "build" ? "Build Application" : "source preparation"}.</h2><p>Runtime infrastructure was not provisioned. Open Pipeline for the bounded failure evidence.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open Pipeline</Link></Card></div>;
-  if (provisioningFailed) return <div className="infrastructure-page grid"><PageHeader eyebrow="Infrastructure" title="Runtime infrastructure" status="provisioning_failed" /><Card><p className="eyebrow">Provisioning failed</p><h2>Runtime provisioning did not complete.</h2><p>Some resources may exist. Open Pipeline for bounded Terraform evidence.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open Pipeline</Link></Card></div>;
+  const exportAction = <TerraformExportAction projectId={projectId} />;
+  if (cleanupRequired) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Destroy cleanup required" status="blocked" /><Card><p className="eyebrow">Runtime is not LIVE</p><h2>Destroy failed after runtime removal or before the previous runtime could be verified.</h2><p>{state?.stateAuthority?.reason || "DeployGuard will not treat historical release evidence as current infrastructure health."}</p><div className="infrastructure-support-grid"><article><span>ECS</span><strong>{label(evidence?.resources?.find((resource) => resource.type === "ECS Fargate")?.status)}</strong></article><article><span>Load balancer</span><strong>{label(evidence?.resources?.find((resource) => resource.type === "ALB")?.status)}</strong></article><article><span>Terraform cleanup</span><strong>{label(evidence?.terraformState?.status)}</strong></article></div><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Retry Failed Destroy</Link></Card></div>;
+  if (destroyRemoved) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Runtime removed · Destroy finalizing" status="destroying" /><Card><p className="eyebrow">Authoritative runtime observation</p><h2>ECS and ALB resources are removed.</h2><p>The Destroy operation remains active while DeployGuard verifies deletion and finalizes control-plane cleanup.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>View Destroy progress</Link></Card></div>;
+  if (absent) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Runtime infrastructure" status="not_provisioned" /><Card><p className="eyebrow">Runtime infrastructure not provisioned</p><h2>Deployment stopped during {state?.progress?.phase === "build" ? "Build Application" : "source preparation"}.</h2><p>Runtime infrastructure was not provisioned. Open Pipeline for the bounded failure evidence.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open Pipeline</Link></Card></div>;
+  if (provisioningFailed) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Runtime infrastructure" status="provisioning_failed" /><Card><p className="eyebrow">Provisioning failed</p><h2>Runtime provisioning did not complete.</h2><p>Some resources may exist. Open Pipeline for bounded Terraform evidence.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open Pipeline</Link></Card></div>;
   const runtimePresent = state?.stateAuthority?.runtime?.state === "present";
   const runtimeTitle = runtimePresent ? (state?.stateAuthority?.state === "DESTROYING" ? "Runtime healthy · Destroy in progress" : failedDestroy ? "Runtime healthy · Latest Destroy failed" : "Runtime service architecture") : "Runtime infrastructure state";
   const observedServices = Array.isArray(evidence?.services) ? evidence.services : [];
   const runningServices = observedServices.filter((service) => service?.ecs?.runningCount === service?.ecs?.desiredCount).length;
   const targetHealth = observedServices.flatMap((service) => service?.alb?.targetHealth || []);
   const healthyTargets = targetHealth.filter((target) => target === "healthy").length;
-  return <div className="infrastructure-page grid"><PageHeader eyebrow="Infrastructure" title={runtimeTitle} status={infrastructure?.status || "unavailable"} description="Current AWS state for this release." />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}<section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="Application" value={runtimePresent ? (state?.stableUrl ? <a href={state.stableUrl} rel="noreferrer" target="_blank">Open application ↗</a> : "Healthy") : label(state?.stateAuthority?.runtime?.state)} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="Services" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="Targets" value={targetHealth.length ? `${healthyTargets}/${targetHealth.length} healthy` : evidence?.alb?.targetHealth?.length ? `${evidence.alb.targetHealth.filter((item) => item === "healthy").length}/${evidence.alb.targetHealth.length} healthy` : "Unavailable"} tone={(targetHealth.length && healthyTargets === targetHealth.length) || (evidence?.alb?.targetHealth?.length && evidence.alb.targetHealth.every((item) => item === "healthy")) ? "success" : "neutral"} /><MetricCard label="Region" value={evidence?.region || "Unavailable"} /></section><ServiceFlow evidence={evidence} state={state} /><ServiceRuntimeList evidence={evidence} /><SupportingServices evidence={evidence} /><Pricing cost={evidence?.cost} /><TechnicalDetails evidence={evidence} state={state} /></div>;
+  return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title={runtimeTitle} status={infrastructure?.status || "unavailable"} description="Current AWS state for this release." />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}<section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="Application" value={runtimePresent ? (state?.stableUrl ? <a href={state.stableUrl} rel="noreferrer" target="_blank">Open application ↗</a> : "Healthy") : label(state?.stateAuthority?.runtime?.state)} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="Services" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="Targets" value={targetHealth.length ? `${healthyTargets}/${targetHealth.length} healthy` : evidence?.alb?.targetHealth?.length ? `${evidence.alb.targetHealth.filter((item) => item === "healthy").length}/${evidence.alb.targetHealth.length} healthy` : "Unavailable"} tone={(targetHealth.length && healthyTargets === targetHealth.length) || (evidence?.alb?.targetHealth?.length && evidence.alb.targetHealth.every((item) => item === "healthy")) ? "success" : "neutral"} /><MetricCard label="Region" value={evidence?.region || "Unavailable"} /></section><ServiceFlow evidence={evidence} state={state} /><ServiceRuntimeList evidence={evidence} /><SupportingServices evidence={evidence} /><Pricing cost={evidence?.cost} /><TechnicalDetails evidence={evidence} state={state} /></div>;
 }

@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHash, randomUUID } from "crypto";
@@ -18,9 +18,9 @@ import { Project } from "./project.entity";
 import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
 import { effectiveServicePort } from "./railpack-release";
 import { GithubActionsRuntimeSecretService, RuntimeSecretMaterialization, RuntimeSecretMaterializationError } from "./github-actions-runtime-secret.service";
-import { isSupportedManagedDatabaseEngine } from "./managed-database-engine";
-import { aliasesFor } from "./configuration-ownership";
-import { assertRailpackRuntimeConfiguration, DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
+import { isSupportedManagedDatabaseEngine, resolveManagedDatabaseUrlScheme } from "./managed-database-engine";
+import { aliasesFor, assertRailpackCapabilityDeclaration, railpackBuildCapabilities, RailpackCapabilityDeclarationError } from "./configuration-ownership";
+import { assertRailpackRuntimeConfiguration, DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH, immutableRailpackBuildCapabilityFingerprint, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
@@ -46,8 +46,7 @@ import { BuildTargetResolutionError } from "./build-target-resolver.service";
 import { ProjectBuildTargetRevision } from "./project-build-target-revision.entity";
 import { CanonicalBuildTarget } from "./build-target";
 import { DeploymentRequirementAdmissionError, RequirementAdmission } from "./deployment-requirement-resolver.service";
-import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
-import { failureDiagnosticFromMetadata } from "./failure-diagnostics/failure-diagnostic.types";
+import { currentFailureDiagnostic, FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -57,7 +56,7 @@ type RollbackTargetIdentity = {
   targetOperationId: string;
   generationId: string | null;
   sourceSha: string;
-  services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; taskDefinitionArn?: string; runtimeConfigRevisionId: string; runtimeConfiguration: { servicePort: number; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; secretVersionId?: string | null } } }>;
+  services: Array<{ serviceId: string; serviceName: string; serviceDirectory: string; imageUri: string; imageDigest: string; immutableImage: string; taskDefinitionArn?: string; runtimeConfigRevisionId: string; runtimeConfiguration: { servicePort: number; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; urlScheme: string | null; secretVersionId?: string | null } } }>;
 };
 
 type AdmittedEnvironmentVariable = {
@@ -173,8 +172,19 @@ export class RailpackDeploymentService {
         return { deployment: { state: "no_op", message: "Verified AWS release evidence remains valid; DeployGuard finalization still needs attention and can be retried without changing AWS.", operation: previous } };
       }
     }
+    if (!previous) throw new BadRequestException("No failed deployment operation is available to retry.");
+    const recovery = currentFailureDiagnostic(previous);
+    if (recovery?.retryDecision !== "SAFE_NOW") {
+      return { deployment: { state: "rejected", message: recovery?.recommendedAction || "The authoritative failure evidence does not permit a safe retry.", operation: previous } };
+    }
+    if (previous.metadata?.executionEngine !== "railpack" || !["deploy", "rollback", "destroy"].includes(action)) {
+      return { deployment: { state: "rejected", message: "Only a failed Railpack lifecycle operation can be retried through this endpoint.", operation: previous } };
+    }
+    if (action === "deploy" && !/^[0-9a-f]{40}$/i.test(previous.commitSha || "")) {
+      return { deployment: { state: "rejected", message: "The failed deployment has no valid immutable source SHA to retry.", operation: previous } };
+    }
     const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
-    const retrySourceSha = action === "deploy" && /^[0-9a-f]{40}$/i.test(previous?.commitSha || "") ? previous!.commitSha : null;
+    const retrySourceSha = action === "deploy" ? previous.commitSha : null;
     return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null, action === "deploy" ? "RETRY" : "DEPLOY", null, null, undefined, retrySourceSha);
   }
   async resetAndDeployFresh(user: User, projectId: string, confirmationPhrase: string, _request?: unknown) {
@@ -227,7 +237,9 @@ export class RailpackDeploymentService {
   async latest(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
     const operation = await this.runs.findOne({ where: { projectId }, order: { createdAt: "DESC" } });
-    return { deployment: operation ? { ...operation, diagnosis: failureDiagnosticFromMetadata(operation.metadata) } : null };
+    if (!operation) return { deployment: null };
+    const diagnosis = currentFailureDiagnostic(operation);
+    return { deployment: { ...operation, failureOwner: diagnosis?.failureOwner || operation.failureOwner, externalProvider: diagnosis?.externalProvider ?? operation.externalProvider, failureCode: diagnosis?.terminalFailureCode || operation.failureCode, diagnosis } };
   }
   async history(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
@@ -330,6 +342,7 @@ export class RailpackDeploymentService {
     const environmentName = configuration.environmentName;
     const operationId = operation.id;
     const provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [];
+    let requirementAdmission: RequirementAdmission | null = null;
     try {
       operation.currentStage = "control_plane_release";
       await this.runs.save(operation);
@@ -369,7 +382,7 @@ export class RailpackDeploymentService {
         }
         operation.currentStage = "deployment_requirement_admission";
         await this.runs.save(operation);
-        const requirementAdmission = await this.source.resolveRequirementsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, targets: resolved.targets, variables: configuration.variables.map(({ serviceId, key, isSecret, scope }) => ({ serviceId, key, isSecret, scope })), managedDatabase: configuration.managedDatabase?.attachedServiceId && isSupportedManagedDatabaseEngine(configuration.managedDatabase.engine) ? { engine: configuration.managedDatabase.engine, attachedServiceId: configuration.managedDatabase.attachedServiceId } : null, accessToken: credential.token });
+        requirementAdmission = await this.source.resolveRequirementsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, targets: resolved.targets, variables: configuration.variables.map(({ serviceId, key, isSecret, scope }) => ({ serviceId, key, isSecret, scope })), managedDatabase: configuration.managedDatabase?.attachedServiceId && isSupportedManagedDatabaseEngine(configuration.managedDatabase.engine) ? { engine: configuration.managedDatabase.engine, attachedServiceId: configuration.managedDatabase.attachedServiceId } : null, accessToken: credential.token });
         await this.sealRequirementAdmission(operation, configuration, targetRevisions, sourceSha, requirementAdmission);
         if (requirementAdmission.status !== "READY") throw new DeploymentRequirementAdmissionError(requirementAdmission);
         operation.currentStage = "managed_database_reconciliation";
@@ -400,7 +413,7 @@ export class RailpackDeploymentService {
       await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled });
       operation.currentStage = action === "deploy" ? "runtime_secret_materialization" : "runtime_configuration";
       await this.runs.save(operation);
-      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration, provisionalRuntimeSecrets);
+      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration, provisionalRuntimeSecrets, requirementAdmission);
       // A direct ECS release is deliberately limited to an already-LIVE
       // topology.  Any first deployment or topology change remains on the
       // existing Terraform bootstrap path until that path has made it LIVE.
@@ -522,7 +535,7 @@ export class RailpackDeploymentService {
       snapshot.duplicateConflicts = admission.duplicateConflicts;
       snapshot.validationBlockers = admission.validationBlockers;
       snapshot.sourceRevisions = { ...snapshot.sourceRevisions, sourceSha, buildTargetRevisions: JSON.stringify(targets.map((target) => ({ serviceId: target.serviceId, id: target.id, fingerprint: target.fingerprint })).sort((a, b) => a.serviceId.localeCompare(b.serviceId))), requirementFingerprint: admission.fingerprint };
-      snapshot.sanitizedManifest = { ...snapshot.sanitizedManifest, requirementAdmission: { status: admission.status, fingerprint: admission.fingerprint, requirements: admission.requirements.map(({ secret: _secret, ...requirement }) => requirement), unresolvedRequired: admission.unresolvedRequired, prohibitedOverrides: admission.prohibitedOverrides, duplicateConflicts: admission.duplicateConflicts, validationBlockers: admission.validationBlockers } };
+      snapshot.sanitizedManifest = { ...snapshot.sanitizedManifest, requirementAdmission: { status: admission.status, fingerprint: admission.fingerprint, requirements: admission.requirements.map(({ secret: _secret, ...requirement }) => requirement), unresolvedRequired: admission.unresolvedRequired, prohibitedOverrides: admission.prohibitedOverrides, duplicateConflicts: admission.duplicateConflicts, validationBlockers: admission.validationBlockers, managedDatabaseUrlSchemes: admission.managedDatabaseUrlSchemes } };
       snapshot.configurationFingerprint = createHash("sha256").update(JSON.stringify({ admitted: snapshot.configurationFingerprint, sourceSha, buildTargets: targets.map((target) => target.fingerprint).sort(), requirements: admission.fingerprint })).digest("hex");
       await snapshots.save(snapshot);
       operation.metadata = { ...(operation.metadata || {}), admittedConfigurationFingerprint: snapshot.configurationFingerprint, deploymentRequirementAdmission: { status: admission.status, fingerprint: admission.fingerprint } };
@@ -783,6 +796,9 @@ export class RailpackDeploymentService {
         managedDatabase: {
           engine: (revision.runtimeConfigRevision.databaseConfiguration.engine || null) as "postgres" | "mysql" | "mongodb" | null,
           aliases: Array.isArray(revision.runtimeConfigRevision.databaseConfiguration.aliases) ? revision.runtimeConfigRevision.databaseConfiguration.aliases as string[] : [],
+          urlScheme: revision.runtimeConfigRevision.databaseConfiguration.attached === true && isSupportedManagedDatabaseEngine(revision.runtimeConfigRevision.databaseConfiguration.engine)
+            ? (typeof revision.runtimeConfigRevision.databaseConfiguration.urlScheme === "string" ? revision.runtimeConfigRevision.databaseConfiguration.urlScheme : resolveManagedDatabaseUrlScheme(revision.runtimeConfigRevision.databaseConfiguration.engine, []).scheme)
+            : null,
           secretVersionId: typeof revision.runtimeConfigRevision.databaseConfiguration.secretVersionId === "string" ? revision.runtimeConfigRevision.databaseConfiguration.secretVersionId : null,
         },
       },
@@ -831,6 +847,9 @@ export class RailpackDeploymentService {
         managedDatabase: {
           engine: (revision.runtimeConfigRevision?.databaseConfiguration?.engine || null) as "postgres" | "mysql" | "mongodb" | null,
           aliases: Array.isArray(revision.runtimeConfigRevision?.databaseConfiguration?.aliases) ? revision.runtimeConfigRevision.databaseConfiguration.aliases as string[] : [],
+          urlScheme: revision.runtimeConfigRevision?.databaseConfiguration?.attached === true && isSupportedManagedDatabaseEngine(revision.runtimeConfigRevision.databaseConfiguration.engine)
+            ? (typeof revision.runtimeConfigRevision.databaseConfiguration.urlScheme === "string" ? revision.runtimeConfigRevision.databaseConfiguration.urlScheme : resolveManagedDatabaseUrlScheme(revision.runtimeConfigRevision.databaseConfiguration.engine, []).scheme)
+            : null,
           secretVersionId: typeof revision.runtimeConfigRevision?.databaseConfiguration?.secretVersionId === "string" ? revision.runtimeConfigRevision.databaseConfiguration.secretVersionId : null,
         },
       },
@@ -907,6 +926,14 @@ export class RailpackDeploymentService {
         message: `${error.message} DG_FAILURE code=${error.diagnosticCode} stage=runtime_secret_materialization`,
         evidence: { classification: "aws_runtime_secret_materialization", code: error.diagnosticCode },
         ownership: { failureOwner: "EXTERNAL_PROVIDER" as const, externalProvider: "aws" as const, failureCode: error.diagnosticCode, failureServiceId: null },
+      };
+    }
+    if (error instanceof RailpackCapabilityDeclarationError) {
+      return {
+        stage: "railpack_capability_admission",
+        message: error.message.slice(0, 500),
+        evidence: { classification: "railpack_capability_declaration", code: error.code, key: error.key, serviceId: error.serviceId },
+        ownership: { failureOwner: "REPOSITORY_APPLICATION" as const, externalProvider: null, failureCode: error.code, failureServiceId: error.serviceId },
       };
     }
     if (error instanceof GithubActionsDispatchError) {
@@ -1003,6 +1030,7 @@ export class RailpackDeploymentService {
 
   private presentOperation(operation: ProjectPipelineRun) {
     const metadata = operation.metadata || {};
+    const diagnosis = currentFailureDiagnostic(operation);
     const action = (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
     const dispatchFailed = metadata.dispatchState === "failed" && !operation.githubWorkflowRunId;
     const failureServiceName = this.failureServiceName(metadata, operation.failureServiceId);
@@ -1016,8 +1044,8 @@ export class RailpackDeploymentService {
       failedStageLabel: dispatchFailed ? deployguardOperationStagePresentation(metadata.failedStage || "dispatch", action).label : operation.status === PipelineRunStatus.FAILED ? deployguardOperationStagePresentation(metadata.failedStage || operation.currentStage, action).label : null,
       errorMessage: operation.errorMessage || null, githubRunCreated: Boolean(operation.githubWorkflowRunId),
       workflowStagesUnavailable: metadata.terminalWorkflowStagesUnavailable === true,
-      failureOwner: operation.failureOwner || null, externalProvider: operation.externalProvider || null, failureCode: operation.failureCode || null, failureServiceId: operation.failureServiceId || null, failureServiceName,
-      diagnosis: failureDiagnosticFromMetadata(metadata),
+      failureOwner: diagnosis?.failureOwner || operation.failureOwner || null, externalProvider: diagnosis?.externalProvider ?? operation.externalProvider ?? null, failureCode: diagnosis?.terminalFailureCode || operation.failureCode || null, failureServiceId: diagnosis?.serviceId || operation.failureServiceId || null, failureServiceName,
+      diagnosis,
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       aiRuntimeAnalysisCandidate: operation.status === PipelineRunStatus.COMPLETED && Boolean(operation.generationId) && metadata.releaseEvidenceVerified === true,
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
@@ -1031,7 +1059,7 @@ export class RailpackDeploymentService {
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = []): Promise<RailpackRuntimeConfiguration> {
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [], requirementAdmission: RequirementAdmission | null = null): Promise<RailpackRuntimeConfiguration> {
     if (action !== "deploy") {
       if (!target?.services.length) throw new ServiceUnavailableException("The lifecycle target does not contain canonical service revisions.");
       const services = target.services.map((service) => ({
@@ -1082,6 +1110,7 @@ export class RailpackDeploymentService {
         if (databaseAttached && managedAliases.includes(row.key)) throw new ServiceUnavailableException(`${row.key} conflicts with the DeployGuard-managed database attached to ${service.name}. Remove the variable or disable the managed database before deployment.`);
         const value = this.crypto.decrypt(row.encryptedValue);
         const scope = row.scope || "runtime";
+        assertRailpackCapabilityDeclaration({ key: row.key, value, isSecret: row.isSecret, scope, serviceId: service.id });
         const build = scope === "build" || scope === "both";
         const runtime = scope === "runtime" || scope === "both";
         if (row.isSecret) {
@@ -1094,8 +1123,12 @@ export class RailpackDeploymentService {
         }
       }
       const secretValueDigests = Object.fromEntries(Object.keys(allSecretValues).sort().map((key) => [key, createHash("sha256").update(allSecretValues[key]).digest("hex")]));
-      const databaseConfiguration = { attached: databaseAttached, engine: databaseAttached ? tier?.engine || null : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] };
-      const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, servicePort, buildEnvironment, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(servicePort), HOST: "0.0.0.0" } })).digest("hex");
+      const urlScheme = databaseAttached ? requirementAdmission?.managedDatabaseUrlSchemes[service.id] : null;
+      if (databaseAttached && !urlScheme) throw new ServiceUnavailableException(`Managed database URL consumer contract is unavailable for ${service.name}.`);
+      const databaseConfiguration = { attached: databaseAttached, engine: databaseAttached ? tier?.engine || null : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [], urlScheme };
+      const railpackCapabilities = railpackBuildCapabilities(buildEnvironment);
+      const railpackBuildCapabilityFingerprint = Object.keys(railpackCapabilities).length ? immutableRailpackBuildCapabilityFingerprint(buildEnvironment) : undefined;
+      const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, servicePort, buildEnvironment, railpackBuildCapabilityFingerprint, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(servicePort), HOST: "0.0.0.0" } })).digest("hex");
       const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues: allSecretValues });
       if (materialized?.provisionalChange) provisionalRuntimeSecrets.push(materialized);
       const materializedReferences = materialized?.valueFromByName || {};
@@ -1118,7 +1151,7 @@ export class RailpackDeploymentService {
       }));
       const buildTargetRevision = (service as ProjectDeployableService & { resolvedBuildTarget?: ProjectBuildTargetRevision }).resolvedBuildTarget;
       if (!buildTargetRevision) throw new ServiceUnavailableException(`Canonical build-target evidence is unavailable for ${service.name}.`);
-      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, servicePort, runtimeConfigRevisionId: revision.id, buildTargetRevisionId: buildTargetRevision.id, buildTarget: buildTargetRevision.target as unknown as CanonicalBuildTarget, buildEnvironment, buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [] } });
+      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, servicePort, runtimeConfigRevisionId: revision.id, buildTargetRevisionId: buildTargetRevision.id, buildTarget: buildTargetRevision.target as unknown as CanonicalBuildTarget, buildEnvironment, ...(railpackBuildCapabilityFingerprint ? { railpackBuildCapabilityFingerprint } : {}), buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [], urlScheme } });
     }
     return { schemaVersion: 3, projectId: project.id, environmentName, operationId, sourceSha, services: services.sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
   }
@@ -1152,7 +1185,8 @@ export class RailpackDeploymentService {
         const database = priorRuntime.databaseConfiguration as Record<string, unknown>;
         if (database?.attached !== service.databaseAttached
           || (database?.engine || null) !== service.managedDatabase.engine
-          || !sameAliases(database?.aliases, service.managedDatabase.aliases)) return false;
+          || !sameAliases(database?.aliases, service.managedDatabase.aliases)
+          || (database?.urlScheme || null) !== (service.managedDatabase.urlScheme || null)) return false;
       }
       const attached = runtime.services.find((service) => service.databaseAttached);
       if (!attached) return true;
@@ -1201,7 +1235,8 @@ export class RailpackDeploymentService {
         const currentDatabase = currentConfiguration.databaseConfiguration as Record<string, unknown>;
         if (currentDatabase?.attached !== service.databaseAttached
           || (currentDatabase?.engine || null) !== service.managedDatabase.engine
-          || !sameAliases(currentDatabase?.aliases, service.managedDatabase.aliases)) return false;
+          || !sameAliases(currentDatabase?.aliases, service.managedDatabase.aliases)
+          || (currentDatabase?.urlScheme || null) !== (service.managedDatabase.urlScheme || null)) return false;
         if (service.databaseAttached && (typeof service.managedDatabase.secretVersionId !== "string" || currentDatabase?.secretVersionId !== service.managedDatabase.secretVersionId)) return false;
       }
       const attached = runtime.services.find((service) => service.databaseAttached);
@@ -1511,7 +1546,15 @@ export class RailpackDeploymentService {
       const expectedManagedDatabase = expectedService.databaseAttached ? { attached: true, attachedServiceId: expectedService.serviceId, engine: expectedService.managedDatabase.engine, aliases, credentialsSecretArn: database?.credentials_secret_arn, secretVersionId: database?.secret_version_id } : { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null };
       const runningTaskArns = Array.isArray(outcome.runningTaskArns) ? outcome.runningTaskArns : [];
       const targetHealth = Array.isArray(outcome.targetHealth) ? outcome.targetHealth : [];
-      if (outcome.image !== intended.image || outcome.ecsServiceArn !== intended.ecsServiceArn || outcome.taskDefinitionArn !== intended.taskDefinitionArn || !runningTaskArns.length || Number(outcome.ecsTasksRunning) !== runningTaskArns.length || Number(outcome.runtimePort) !== intended.servicePort || outcome.readinessMode !== "platform_transport" || Number(outcome.transportProbePort) !== intended.transportProbePort || outcome.platformHealthCheckPath !== intended.platformHealthCheckPath || outcome.targetGroupArn !== intended.targetGroupArn || !targetHealth.length || targetHealth.some((state) => state !== "healthy") || !equalObject(observedEnvironment, expectedEnvironment) || !equalObject(outcome.secretValueFrom, expectedSecrets) || !equalObject(outcome.managedDatabase, expectedManagedDatabase) || outcome.publicUrl !== intended.publicUrl || outcome.publicEndpointVerified !== true || outcome.taskDefinition !== true || outcome.secretsInjection !== true || outcome.vpcConnectivity !== true || outcome.publicReachability !== true || typeof outcome.checkedAt !== "string") throw new Error("AWS runtime verification does not match the complete immutable per-service runtime contract.");
+      const taskIpAddresses = Array.isArray(outcome.taskIpAddresses) ? outcome.taskIpAddresses.map(String) : [];
+      const targetRegistrations = Array.isArray(outcome.targetRegistrations) ? outcome.targetRegistrations : [];
+      const alb = outcome.alb && typeof outcome.alb === "object" ? outcome.alb as Record<string, unknown> : null;
+      const listener = outcome.listener && typeof outcome.listener === "object" ? outcome.listener as Record<string, unknown> : null;
+      const publicProbe = outcome.publicProbe && typeof outcome.publicProbe === "object" ? outcome.publicProbe as Record<string, unknown> : null;
+      const publicHostname = new URL(intended.publicUrl as string).hostname;
+      const exactTargetsHealthy = taskIpAddresses.length > 0 && taskIpAddresses.every((ip) => targetRegistrations.some((registration) => registration && typeof registration === "object" && String((registration as Record<string, unknown>).targetId) === ip && Number((registration as Record<string, unknown>).port) === intended.servicePort && (registration as Record<string, unknown>).state === "healthy")) && targetRegistrations.every((registration) => registration && typeof registration === "object" && (taskIpAddresses.includes(String((registration as Record<string, unknown>).targetId)) || (registration as Record<string, unknown>).state === "draining"));
+      const publicHttpStatus = String(publicProbe?.httpStatus || "");
+      if (outcome.image !== intended.image || outcome.ecsServiceArn !== intended.ecsServiceArn || outcome.taskDefinitionArn !== intended.taskDefinitionArn || !runningTaskArns.length || Number(outcome.ecsTasksRunning) !== runningTaskArns.length || Number(outcome.runtimePort) !== intended.servicePort || outcome.readinessMode !== "platform_transport" || outcome.applicationReachabilityPath !== "alb_to_task_eni" || Number(outcome.transportProbePort) !== intended.transportProbePort || outcome.platformHealthCheckPath !== intended.platformHealthCheckPath || outcome.targetGroupArn !== intended.targetGroupArn || !targetHealth.length || targetHealth.some((state) => state !== "healthy") || !exactTargetsHealthy || !alb || alb.state !== "active" || alb.dnsName !== publicHostname || alb.scheme !== "internet-facing" || alb.type !== "application" || !listener || Number(listener.port) !== 80 || listener.protocol !== "HTTP" || listener.defaultTargetGroupArn !== intended.targetGroupArn || !publicProbe || publicProbe.classification !== "READY" || publicProbe.hostname !== publicHostname || !Array.isArray(publicProbe.resolvedIpAddresses) || !publicProbe.resolvedIpAddresses.length || Number(publicProbe.dnsAttempts) < 1 || Number(publicProbe.attemptCount) < 1 || Number(publicProbe.curlExitCode) !== 0 || !/^[1-5][0-9]{2}$/.test(publicHttpStatus) || ["502", "503", "504"].includes(publicHttpStatus) || !/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(String(publicProbe.remoteIp || "")) || !equalObject(observedEnvironment, expectedEnvironment) || !equalObject(outcome.secretValueFrom, expectedSecrets) || !equalObject(outcome.managedDatabase, expectedManagedDatabase) || outcome.publicUrl !== intended.publicUrl || outcome.publicEndpointVerified !== true || outcome.taskDefinition !== true || outcome.secretsInjection !== true || outcome.vpcConnectivity !== true || outcome.publicReachability !== true || typeof outcome.checkedAt !== "string") throw new Error("AWS runtime verification does not match the complete immutable per-service runtime contract.");
     }
     const services = intendedServices;
     if ((attached && (!database || database.attached_service_id !== attached.serviceId || database.engine !== attached.managedDatabase.engine || typeof database.secret_version_id !== "string" || !database.secret_version_id)) || (!attached && database !== null)) {

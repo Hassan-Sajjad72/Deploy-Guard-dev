@@ -63,18 +63,32 @@ async function verifyRollbackAuthority() {
   assert.equal(dispatchArgs[3].services[0].taskDefinitionArn, revision.runtimeIdentity.taskDefinitionArn);
   assert.equal(dispatchArgs[3].sourceSha, sourceA);
 
-  const failed: any = { projectId, metadata: { deploymentAction: "rollback", rollbackTarget: dispatchArgs[3] } };
+  const failed: any = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", projectId, commitSha: sourceA, status: PipelineRunStatus.FAILED, currentStage: "aws_provider", failureCode: "DG_AWS_PROVIDER_FAILED", metadata: { executionEngine: "railpack", deploymentAction: "rollback", rollbackTarget: dispatchArgs[3] } };
   service.runs = { findOne: async () => failed };
   dispatchArgs = [];
   await service.retry({ id: 1 }, projectId);
   assert.deepEqual(dispatchArgs[3], failed.metadata.rollbackTarget, "failed rollback retry must preserve the exact immutable target");
   assert.equal(dispatchArgs[4], undefined === failed.id ? null : failed.id);
 
-  const failedDeploy: any = { id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", projectId, commitSha: sourceA, status: PipelineRunStatus.FAILED, metadata: { deploymentAction: "deploy" } };
+  const failedDeploy: any = { id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", projectId, commitSha: sourceA, status: PipelineRunStatus.FAILED, currentStage: "aws_provider", failureCode: "DG_AWS_PROVIDER_FAILED", metadata: { executionEngine: "railpack", deploymentAction: "deploy" } };
   service.runs.findOne = async () => failedDeploy;
   dispatchArgs = [];
   await service.retry({ id: 1 }, projectId);
   assert.equal(dispatchArgs[9], sourceA, "a failed normal Deploy retry must reuse the original admitted exact source SHA");
+
+  failedDeploy.commitSha = null;
+  dispatchArgs = [];
+  const shaLessRetry = await service.retry({ id: 1 }, projectId);
+  assert.equal(shaLessRetry.deployment.state, "rejected", "a Deploy retry without an exact immutable source SHA is rejected");
+  assert.equal(dispatchArgs.length, 0, "a SHA-less retry is never dispatched");
+  failedDeploy.commitSha = sourceA;
+
+  failedDeploy.failureCode = "DG_APPLICATION_EXTERNAL_BINDING_FAILED";
+  failedDeploy.currentStage = "application_runtime";
+  dispatchArgs = [];
+  const unsafeRetry = await service.retry({ id: 1 }, projectId);
+  assert.equal(unsafeRetry.deployment.state, "rejected", "SAFE_AFTER_FIX cannot bypass recovery safety through the retry API");
+  assert.equal(dispatchArgs.length, 0, "an unsafe immutable retry is never dispatched");
 
   service.serviceRevisions.find = async () => [{ ...revision, imageUri: "docker.io/example/app" }];
   assert.equal((await service.rollbackCandidates({ id: 1 }, projectId)).candidates.length, 0, "unsafe historical identity is not offered as a rollback target");
@@ -141,8 +155,9 @@ function verifyWorkflowAndUiContract() {
   assert.match(workflow, /terraform -chdir=\.deployguard\/terraform apply/);
   assert.match(workflow, /bash \.deployguard\/terraform\/verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
   assert.match(runtimeVerification, /aws ecs wait services-stable/);
-  assert.match(runtimeVerification, /curl --show-error --silent --retry 20[\s\S]*--output \/dev\/null/);
-  assert.doesNotMatch(runtimeVerification, /curl --fail --show-error --silent --retry 20/);
+  assert.match(runtimeVerification, /wait_for_public_dns[\s\S]*wait_for_public_transport/);
+  assert.match(runtimeVerification, /curl --silent --show-error --connect-timeout "\$effective_connect_timeout" --max-time "\$effective_attempt_timeout"/);
+  assert.doesNotMatch(runtimeVerification, /curl --fail/, "application-owned HTTP errors must not be conflated with transport reachability");
   assert.match(workflow, /Publish verified release result/);
   const detailsRoute = /@Get\(":projectId\/current-state\/details"\)([\s\S]*?)async getDetailedCurrentState/.exec(controller)?.[1] || "";
   assert.doesNotMatch(detailsRoute, /UserRole\.ADMIN/, "normal Infrastructure details must not require ADMIN");

@@ -59,9 +59,18 @@ async function run() {
   boundary.assertCanManage = () => undefined;
   boundary.requireService = async (_projectId: string, requestedServiceId?: string) => { assert.equal(requestedServiceId || serviceId, serviceId); return deployableService; };
   boundary.dataSource = { transaction: async (work: any) => work(manager) };
-  boundary.environmentCrypto = { encrypt: (value: string) => `encrypted:${value}` };
+  boundary.environmentCrypto = { encrypt: (value: string) => `encrypted:${value}`, decrypt: (value: string) => value.replace(/^encrypted:/, "") };
   boundary.auditLogService = { record: async () => undefined };
   boundary.databaseTierRepository = { findOne: async () => managedDatabase };
+
+  const railpackCapability = await boundary.createEnvVar({ id: 7 }, projectId, { key: "RAILPACK_PACKAGES", value: "node@22 jq@latest" }, undefined, serviceId);
+  assert.equal(railpackCapability.variable.scope, "build", "supported Railpack capabilities default to build-only delivery");
+  assert.equal(railpackCapability.variable.isSecret, false, "supported Railpack capabilities remain public configuration");
+  assert.equal(railpackCapability.variable.classification.delivery, "build_time_public");
+  for (const [key, value] of [["RAILPACK_BUILD_CMD", "npm run build"], ["RAILPACK_CONFIG_FILE", "railpack.json"], ["RAILPACK_PACKAGES", "node@22;id"]]) {
+    await assert.rejects(() => boundary.createEnvVar({ id: 7 }, projectId, { key, value }, undefined, serviceId), /DG_RAILPACK_(?:EXECUTION_OVERRIDE_REJECTED|CAPABILITY_INVALID)/, `${key} must be rejected at public configuration admission`);
+  }
+  await assert.rejects(() => boundary.createEnvVar({ id: 7 }, projectId, { key: "RAILPACK_NODE_VERSION", value: "22", scope: "runtime" }, undefined, serviceId), /public build-only/);
 
   for (const key of ["DATABASE_URL", "MONGODB_URI", "REDIS_URL", "DB_HOST", "MYSQL_PASSWORD"]) {
     assert.equal(isDeployGuardManagedDatabaseAlias(key), true);
@@ -111,7 +120,7 @@ async function run() {
   const canonicalAliases = new Set(SERVICE_ALIAS_GROUPS.filter((group) => group.service !== "storage").flatMap((group) => [...group.aliases]));
   assert.equal(canonicalAliases.has("MONGODB_URI"), true);
   assert.equal(canonicalAliases.has("REDIS_URL"), true, "recognized external connection aliases remain ordinary user configuration without provisioning authority");
-  console.log("DATABASE_ENV_OWNERSHIP=PASS EXTERNAL_ENV_ACCEPTED=1 MANAGED_SINGLE_WRITE_CONFLICT_REJECTED=1 MANAGED_BULK_ALIASES_IGNORED=POSTGRES,MYSQL,MONGODB ENGINE_ALIAS_SCOPED=1 SERVICE_SCOPED=1 CUSTOM_ENV=1 PLATFORM_PORT_HOST_UNCHANGED=1");
+  console.log("DATABASE_ENV_OWNERSHIP=PASS EXTERNAL_ENV_ACCEPTED=1 MANAGED_SINGLE_WRITE_CONFLICT_REJECTED=1 MANAGED_BULK_ALIASES_IGNORED=POSTGRES,MYSQL,MONGODB ENGINE_ALIAS_SCOPED=1 SERVICE_SCOPED=1 CUSTOM_ENV=1 PLATFORM_PORT_HOST_UNCHANGED=1 RAILPACK_CAPABILITY_ADMISSION=1");
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; });

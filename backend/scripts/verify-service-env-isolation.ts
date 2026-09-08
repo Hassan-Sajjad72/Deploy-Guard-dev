@@ -16,12 +16,17 @@ service.deployableServices = { find: async () => [
 const variables = [
   { serviceId: webId, key: "PUBLIC_NAME", value: "web-value", isSecret: false, scope: "runtime" },
   { serviceId: webId, key: "WEB_BUILD", value: "web-build", isSecret: false, scope: "build" },
+  { serviceId: webId, key: "RAILPACK_PACKAGES", value: "node@22 jq@latest", isSecret: false, scope: "build" },
+  { serviceId: webId, key: "RAILPACK_NODE_VERSION", value: "lts", isSecret: false, scope: "build" },
   { serviceId: webId, key: "WEB_BOTH", value: "web-both", isSecret: false, scope: "both" },
   { serviceId: webId, key: "WEB_BUILD_SECRET", value: "web-build-secret", isSecret: true, scope: "build" },
   { serviceId: webId, key: "WEB_BOTH_SECRET", value: "web-both-secret", isSecret: true, scope: "both" },
   { serviceId: webId, key: "WEB_RUNTIME_SECRET", value: "web-runtime-secret", isSecret: true, scope: "runtime" },
   { serviceId: webId, key: "DATABASE_URL", value: "legacy-user-database-url", isSecret: true, scope: "both" },
   { serviceId: apiId, key: "API_BUILD", value: "api-build", isSecret: false, scope: "build" },
+  { serviceId: apiId, key: "RAILPACK_BUILD_APT_PACKAGES", value: "build-essential libpq-dev", isSecret: false, scope: "build" },
+  { serviceId: apiId, key: "RAILPACK_DEPLOY_APT_PACKAGES", value: "libpq5", isSecret: false, scope: "build" },
+  { serviceId: apiId, key: "RAILPACK_PYTHON_VERSION", value: "3.12.4", isSecret: false, scope: "build" },
   { serviceId: apiId, key: "API_TOKEN", value: "api-secret", isSecret: true, scope: "runtime" },
   { serviceId: apiId, key: "API_BUILD_TOKEN", value: "api-build-secret", isSecret: true, scope: "build" },
   { serviceId: apiId, key: "MONGODB_URI", value: "legacy-user-mongodb-uri", isSecret: true, scope: "runtime" },
@@ -46,6 +51,7 @@ const admitted = () => ({
   variables: variables.map((variable, index) => ({ ...variable, id: `variable-${index}`, encryptedValue: variable.value, isActive: true })),
   managedDatabase: managedTier,
 });
+const requirementAdmission = () => ({ managedDatabaseUrlSchemes: managedTier?.engine === "postgres" ? { [apiId]: "postgresql" } : {} });
 
 void (async () => {
   await assert.rejects(
@@ -53,11 +59,13 @@ void (async () => {
     /admitted deployment configuration is unavailable/,
     "normal deploy runtime construction must never fall back to rereading mutable repositories",
   );
-  const runtime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", operationId, "a".repeat(40), "deploy", null, admitted());
+  const runtime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", operationId, "a".repeat(40), "deploy", null, admitted(), [], requirementAdmission());
   assert.equal(runtime.services.length, 2);
   const web = runtime.services.find((item: any) => item.serviceId === webId);
   const api = runtime.services.find((item: any) => item.serviceId === apiId);
-  assert.deepEqual(web.buildEnvironment, { WEB_BUILD: "web-build", WEB_BOTH: "web-both" });
+  assert.deepEqual(web.buildEnvironment, { WEB_BUILD: "web-build", RAILPACK_PACKAGES: "node@22 jq@latest", RAILPACK_NODE_VERSION: "lts", WEB_BOTH: "web-both" });
+  assert.match(web.railpackBuildCapabilityFingerprint, /^[0-9a-f]{64}$/);
+  assert.equal(web.environment.RAILPACK_PACKAGES, undefined, "Railpack capabilities are build-only");
   assert.deepEqual(web.environment, { PORT: "3000", HOST: "0.0.0.0", PUBLIC_NAME: "web-value", WEB_BOTH: "web-both" });
   assert.equal(web.servicePort, 3000);
   assert.deepEqual(Object.keys(web.buildSecretReferences), ["DATABASE_URL", "WEB_BOTH_SECRET", "WEB_BUILD_SECRET"]);
@@ -71,8 +79,11 @@ void (async () => {
   assert.equal(api.servicePort, 8000);
   assert.equal(api.environment.HOST, "0.0.0.0");
   assert.equal(api.environment.PUBLIC_NAME, undefined);
-  assert.deepEqual(api.buildEnvironment, { API_BUILD: "api-build" });
+  assert.deepEqual(api.buildEnvironment, { API_BUILD: "api-build", RAILPACK_BUILD_APT_PACKAGES: "build-essential libpq-dev", RAILPACK_DEPLOY_APT_PACKAGES: "libpq5", RAILPACK_PYTHON_VERSION: "3.12.4" });
+  assert.match(api.railpackBuildCapabilityFingerprint, /^[0-9a-f]{64}$/);
+  assert.notEqual(web.railpackBuildCapabilityFingerprint, api.railpackBuildCapabilityFingerprint, "capability seals remain service-specific");
   assert.equal(api.buildEnvironment.WEB_BUILD, undefined, "build ENV remains service-scoped");
+  assert.equal(api.buildEnvironment.RAILPACK_NODE_VERSION, undefined, "Railpack capability values remain service-scoped");
   assert.match(api.buildSecretReferences.API_BUILD_TOKEN, new RegExp(apiId));
   assert.match(api.secretReferences.API_TOKEN, new RegExp(apiId));
   assert.match(api.secretReferences.MONGODB_URI, new RegExp(apiId), "managed PostgreSQL does not claim a MongoDB alias it does not inject");
@@ -83,12 +94,19 @@ void (async () => {
   assert.equal(materializations.find((item) => item.serviceId === apiId).secretValues.DATABASE_URL, undefined, "managed PostgreSQL aliases never enter user runtime secret materialization");
   assert.deepEqual(materializations.map((item) => item.environment), ["cert-20260831", "cert-20260831"], "named project environments survive runtime configuration unchanged");
 
+  variables.push({ serviceId: webId, key: "RAILPACK_BUILD_CMD", value: "npm run unsafe", isSecret: false, scope: "build" });
+  await assert.rejects(() => service.runtimeConfiguration({ id: projectId }, "cert-20260831", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "a".repeat(40), "deploy", null, admitted(), [], requirementAdmission()), /DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED/);
+  variables.pop();
+  variables.push({ serviceId: webId, key: "RAILPACK_PACKAGES", value: "node@22;id", isSecret: false, scope: "build" });
+  await assert.rejects(() => service.runtimeConfiguration({ id: projectId }, "cert-20260831", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "a".repeat(40), "deploy", null, admitted(), [], requirementAdmission()), /DG_RAILPACK_CAPABILITY_INVALID/);
+  variables.pop();
+
   managedTier = null;
   materializations.length = 0;
-  const unmanagedRuntime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", "77777777-7777-4777-8777-777777777777", "b".repeat(40), "deploy", null, admitted());
+  const unmanagedRuntime = await service.runtimeConfiguration({ id: projectId }, "cert-20260831", "77777777-7777-4777-8777-777777777777", "b".repeat(40), "deploy", null, admitted(), [], requirementAdmission());
   for (const item of unmanagedRuntime.services) {
     assert.equal(item.databaseAttached, false);
-    assert.deepEqual(item.managedDatabase, { engine: null, aliases: [] });
+    assert.deepEqual(item.managedDatabase, { engine: null, aliases: [], urlScheme: null });
     if (item.serviceId === webId) assert.match(item.secretReferences.DATABASE_URL, new RegExp(webId));
     if (item.serviceId === apiId) assert.match(item.secretReferences.MONGODB_URI, new RegExp(apiId));
   }

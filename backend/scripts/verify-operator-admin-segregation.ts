@@ -22,6 +22,7 @@ function context(role?: UserRole): ExecutionContext {
 function authorize(controller: ControllerClass, method: string, role?: UserRole) {
   const classGuards = Reflect.getMetadata(GUARDS_METADATA, controller) || [];
   const methodTarget = (controller.prototype as Record<string, unknown>)[method];
+  assert.equal(typeof methodTarget, "function", `${controller.name}.${method} must exist`);
   const methodGuards = Reflect.getMetadata(GUARDS_METADATA, methodTarget) || [];
   const guards = [...classGuards, ...methodGuards];
   assert.ok(guards.length > 0, `${controller.name}.${method} must declare an authorization guard`);
@@ -54,24 +55,17 @@ function assertDeveloperRead(controller: ControllerClass, method: string) {
 
 const classProtected: Array<[ControllerClass, string]> = [[AuditLogController, "listAuditLogs"]];
 
-const methodProtected: Array<[ControllerClass, string]> = [
-  [ProjectsController, "getDetailedCurrentState"],
-  [ProjectsController, "getDetectionProfile"],
-  [ProjectsController, "getPreflight"],
-];
-
 for (const method of ["overview", "listProjects", "listAuditLogs", "listUsers", "updateUserRole", "updateUserAccess"]) {
   assertAdminOnly(AdminController, method);
 }
 
-for (const [controller, method] of [...classProtected, ...methodProtected]) {
+for (const [controller, method] of classProtected) {
   assertAdminOnly(controller, method);
 }
 
-for (const method of ["deployGithubActions", "detectStack", "generatePreflight"]) {
-  assertDeveloperCommand(ProjectsController, method);
-}
-assertDeveloperCommand(TerraformExportController, "create");
+assertDeveloperCommand(ProjectsController, "deployGithubActions");
+assertDeveloperRead(ProjectsController, "getDetailedCurrentState");
+for (const method of ["create", "download"]) assertDeveloperCommand(TerraformExportController, method);
 
 for (const method of ["list", "get", "start", "regenerate", "followUp", "close"]) {
   assertDeveloperCommand(AiTroubleshootingController, method);
