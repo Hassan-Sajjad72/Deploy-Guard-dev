@@ -1,28 +1,31 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import AppLayout from "../components/layout/AppLayout.jsx";
-import AdminUsers from "../pages/AdminUsers.jsx";
-import Forbidden from "../pages/Forbidden.jsx";
-import GithubConnecting from "../pages/GithubConnecting.jsx";
-import Landing from "../pages/Landing.jsx";
-import NewProject from "../pages/NewProject.jsx";
-import ProjectDetails from "../pages/ProjectDetails.jsx";
-import ProjectMetrics from "../pages/ProjectMetrics.jsx";
-import ProjectPipeline from "../pages/ProjectPipeline.jsx";
-import ProjectInfrastructure from "../pages/ProjectInfrastructure.jsx";
-import ProjectSettings from "../pages/ProjectSettings.jsx";
-import ProjectTroubleshooting from "../pages/ProjectTroubleshooting.jsx";
-import Projects from "../pages/Projects.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
 import ProtectedRoute from "./ProtectedRoute.jsx";
 import RoleProtectedRoute from "./RoleProtectedRoute.jsx";
 import AdminProtectedRoute from "./AdminProtectedRoute.jsx";
 import AdminLayout from "../components/layout/AdminLayout.jsx";
-import AdminLogin from "../pages/AdminLogin.jsx";
-import About from "../pages/About.jsx";
-import Dashboard from "../pages/Dashboard.jsx";
+
+const About = lazy(() => import("../pages/About.jsx"));
+const AdminLogin = lazy(() => import("../pages/AdminLogin.jsx"));
+const AdminUsers = lazy(() => import("../pages/AdminUsers.jsx"));
+const Dashboard = lazy(() => import("../pages/Dashboard.jsx"));
+const Forbidden = lazy(() => import("../pages/Forbidden.jsx"));
+const GithubConnecting = lazy(() => import("../pages/GithubConnecting.jsx"));
+const Landing = lazy(() => import("../pages/Landing.jsx"));
+const NewProject = lazy(() => import("../pages/NewProject.jsx"));
+const ProjectDetails = lazy(() => import("../pages/ProjectDetails.jsx"));
+const ProjectInfrastructure = lazy(() => import("../pages/ProjectInfrastructure.jsx"));
+const ProjectMetrics = lazy(() => import("../pages/ProjectMetrics.jsx"));
+const ProjectPipeline = lazy(() => import("../pages/ProjectPipeline.jsx"));
+const ProjectSettings = lazy(() => import("../pages/ProjectSettings.jsx"));
+const ProjectTroubleshooting = lazy(() => import("../pages/ProjectTroubleshooting.jsx"));
+const Projects = lazy(() => import("../pages/Projects.jsx"));
 
 export default function AppRoutes() {
   return (
-    <Routes>
+    <Suspense fallback={<LoadingState message="Loading page…" />}><Routes>
       <Route element={<Landing />} path="/" />
       <Route element={<About />} path="/about" />
       <Route element={<Navigate replace to="/" />} path="/login" />
@@ -74,7 +77,7 @@ export default function AppRoutes() {
       </Route>
 
       <Route element={<Navigate replace to="/" />} path="*" />
-    </Routes>
+    </Routes></Suspense>
   );
 }
 

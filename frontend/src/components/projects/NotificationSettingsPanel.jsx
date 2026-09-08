@@ -46,12 +46,12 @@ export default function NotificationSettingsPanel({ projectId, canManage }) {
       <div><p className="eyebrow">Project notifications</p><h2>Email lifecycle notifications</h2><p>Amazon SNS notifications are scoped to this project and emitted from authoritative backend lifecycle transitions.</p></div>
       <StatusChip status={status === "confirmed" ? "healthy" : status === "error" ? "failed" : status}>{statusLabels[status] || title(status)}</StatusChip>
     </div>
-    {error ? <p className="state error">{error}</p> : null}{notice ? <p className="state success">{notice}</p> : null}
+    {error ? <p className="state error">{error}</p> : null}{notice ? <p aria-live="polite" className="state success" role="status">{notice}</p> : null}
     {!settings?.provider?.configured ? <p className="state warning">Amazon SNS delivery is disabled in the current environment. Preferences can be saved, but confirmation email cannot be sent until NOTIFICATION_DELIVERY_ENABLED=true and AWS credentials are available.</p> : null}
     <div className="notification-config-grid">
       <div className="notification-config-fields">
         <label className="settings-toggle"><input checked={Boolean(settings?.preference?.enabled)} disabled={!canManage || busy} onChange={(event) => void update("enabled", event.target.checked)} type="checkbox" /><span><strong>Enable notifications</strong><small>Pause delivery without losing the confirmed email configuration.</small></span></label>
-        <label className="field"><span>Notification email</span><input disabled={!canManage || busy} onChange={(event) => setEmail(event.target.value)} placeholder="operator@example.com" type="email" value={email} /></label>
+        <label className="field"><span>Notification email</span><input autoComplete="email" disabled={!canManage || busy} name="notificationEmail" onChange={(event) => setEmail(event.target.value)} placeholder="operator@example.com" type="email" value={email} /></label>
         <div className="quick-actions">
           <button className="secondary-button" disabled={!canManage || busy || !email.includes("@")} onClick={() => void action(() => subscribeNotifications(projectId, email), subscription ? "Notification email updated." : "Confirmation requested.")} type="button">{subscription ? "Configure/change email" : "Configure email"}</button>
           {status === "pending_confirmation" || status === "error" ? <button className="subtle-button" disabled={!canManage || busy || !settings?.provider?.configured} onClick={() => void action(() => resendNotificationConfirmation(projectId), "A new confirmation request was created.")} type="button">Resend confirmation</button> : null}

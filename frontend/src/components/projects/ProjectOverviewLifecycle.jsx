@@ -201,7 +201,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       <StageRail phases={phases} />
       {(state === "FAILED" || latestOperationFailed) && latest?.diagnosis ? <p className="state warning"><strong>{latest.diagnosis.rootCauseCode}</strong> — {latest.diagnosis.recommendedAction}</p> : null}
       {error ? <ErrorState message={error} /> : null}
-      {acceptedOperation ? <p className="state success">Deployment request accepted {formatDate(acceptedOperation.requestedAt || acceptedOperation.createdAt)}. View Pipeline for progress.</p> : null}
+      {acceptedOperation ? <p aria-live="polite" className="state success" role="status">Deployment request accepted {formatDate(acceptedOperation.requestedAt || acceptedOperation.createdAt)}. View Pipeline for progress.</p> : null}
       <div aria-label="Canonical lifecycle actions" className="overview-actions" role="group">{actions()}</div>
       {state === "LIVE" && !latestOperationFailed && canManage && !currentState.stableRelease?.rollbackAvailable ? <p className="muted">No previous successful release is available.</p> : null}
     </Card>

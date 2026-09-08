@@ -28,4 +28,7 @@ assert.doesNotMatch(form, /placeholder="(?:DATABASE_URL|MONGODB_URI)"/);
 assert.doesNotMatch(panel, /DB_HOST=example|DB_NAME=mydb|MONGO(?:DB)?_URI=/);
 assert.match(form, /Database connection aliases may be supplied here when no conflicting managed database is attached/);
 assert.match(panel, /Database aliases are accepted unless they conflict with a managed database attached here/);
+assert.match(panel, /<Modal className="environment-modal" labelledBy="environment-variable-dialog-title"/);
+assert.match(panel, /id="environment-variable-dialog-title"/);
+assert.match(panel, /<Tabs activeId=\{tab\}/);
 console.log("Managed environment registry presentation and reserved-variable client guard passed");

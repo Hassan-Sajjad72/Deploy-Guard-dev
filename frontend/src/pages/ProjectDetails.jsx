@@ -49,7 +49,7 @@ export default function ProjectDetails() {
   const state = projectStatePresentation(currentState);
 
   return <div className="workspace-page project-overview-page" data-authoritative-state={projectStatePresentation(currentState).state}>
-    <PageHeader context={`${currentState.repository || project.repositoryFullName} · ${currentState.branch || project.targetBranch}`} eyebrow="Project overview" status={state.state} title={project.name} />
+    <PageHeader context={[project.environmentName ? `Environment ${project.environmentName}` : null, currentState.repository || project.repositoryFullName, currentState.branch || project.targetBranch, currentState.stableRelease?.commit ? `Release ${currentState.stableRelease.commit.slice(0, 12)}` : null].filter(Boolean).join(" · ")} eyebrow="Project overview" status={state.state} title={project.name} />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     <ProjectOverviewLifecycle canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} projectId={projectId} />
     <NotificationSettingsPanel canManage={Boolean(project.canManage)} projectId={projectId} />

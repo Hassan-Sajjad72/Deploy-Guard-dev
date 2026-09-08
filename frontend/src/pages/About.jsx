@@ -66,7 +66,7 @@ function FounderSocials({ founder }) {
 }
 
 function TeamAvatar({ accent, name, photo, variant }) {
-  if (photo) return <img alt={`${name}, DeployGuard co-founder`} className={`team-avatar team-avatar-photo portrait-${variant}`} src={photo} />;
+  if (photo) return <img alt={`${name}, DeployGuard co-founder`} className={`team-avatar team-avatar-photo portrait-${variant}`} decoding="async" height={variant === "hassan" ? 576 : 854} loading="lazy" src={photo} width="640" />;
 
   const common = <><circle className="team-avatar-backdrop" cx="90" cy="90" r="86" /><path className="team-avatar-shadow" d="M30 176c4-38 26-58 60-58s56 20 60 58" /></>;
 

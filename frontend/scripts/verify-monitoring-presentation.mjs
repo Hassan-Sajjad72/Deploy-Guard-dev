@@ -14,6 +14,7 @@ const resolver = read("../../backend/src/observability/live-runtime-resolver.ser
 const logs = read("../../backend/src/observability/cloudwatch-logs.service.ts");
 const dashboard = JSON.parse(read("../../monitoring/grafana/dashboards/deployguard-runtime.json"));
 
+assert.match(routes, /const ProjectMetrics = lazy\(\(\) => import\("\.\.\/pages\/ProjectMetrics\.jsx"\)\)/);
 assert.match(routes, /element=\{<ProjectMetrics \/>\} path="\/projects\/:projectId\/monitoring"/);
 assert.match(sidebar, /label: "Monitoring", path: "monitoring"/);
 assert.doesNotMatch(sidebar, /setInterval|getProjectCurrentState/, "navigation must not poll or hide a truthful unavailable state");
@@ -21,7 +22,7 @@ assert.match(page, /getProjectDetailedCurrentState/, "Monitoring and Infrastruct
 assert.doesNotMatch(page, /getProjectCurrentState/);
 assert.match(page, /projectStatePresentation/);
 assert.match(page, /subscribeProjectStateChanged/);
-assert.match(page, /authority\?\.runtime\?\.state === "present" && authority\?\.infrastructure\?\.exists/);
+assert.match(page, /state\?\.stateAuthority\?\.runtime\?\.state === "present" && state\?\.stateAuthority\?\.infrastructure\?\.exists/);
 assert.doesNotMatch(page, /<Navigate/, "Monitoring must present authoritative removal rather than hiding it through navigation");
 assert.doesNotMatch(page, /<dl[\s>]/, "Monitoring must not use a raw definition list.");
 assert.equal((page.match(/<MetricCard/g) || []).length, 4, "Monitoring prioritizes four current performance metrics.");
@@ -34,10 +35,16 @@ for (const metric of ["cpu", "memory", "httpLatency", "healthyHosts", "unhealthy
 assert.match(page, /points\.length > 0/);
 assert.match(page, /<polyline fill="none" points=\{coordinates\}/, "numeric samples use a time-series line");
 assert.match(page, /<text x="2" y="20">\{maximum\}\{unit\}<\/text>/, "time-series charts expose observed Y-axis bounds and units");
+assert.match(page, /<svg aria-hidden="true"/, "the visual chart is hidden from assistive technology when an equivalent data table is present");
+assert.match(page, /<table className="sr-only"><caption>\{title\} timestamp and value series<\/caption>/, "each visual chart exposes an accessible timestamp/value table");
+assert.match(page, /const stateRequestId = useRef\(0\)/);
+assert.match(page, /const metricsRequestId = useRef\(0\)/);
+assert.match(page, /if \(requestId !== metricsRequestId\.current\) return;/, "late metric responses cannot replace the latest service or range response");
+assert.match(page, /useEffect\(\(\) => \{ void loadState\(\{ showLoading: true \}\); \}, \[loadState\]\)/, "the bounded state request is independent from service and range selection");
 assert.doesNotMatch(page, /CpuMemoryChart|AlbLatencyCard|RuntimeMetricsChart|duration chart/i);
 assert.match(page, /LIVE CloudWatch log group/);
 assert.match(page, /aria-label="Runtime service"/, "multi-service Monitoring exposes an explicit runtime selector");
-assert.match(page, /getApplicationRuntimeMetrics\(projectId, \{ range, serviceId: effectiveServiceId \}\)/);
+assert.match(page, /getApplicationRuntimeMetrics\(projectId, \{ range, serviceId: selectedServiceId \}\)/);
 assert.match(page, /getApplicationLogStreamUrl\(projectId, serviceId\)/);
 assert.match(page, /<RuntimeLogViewer key=\{selectedService\?\.serviceId \|\| "default"\}/, "service selection remounts the log viewer without rendering prior-service events");
 assert.match(page, /setEvents\(\[\]\);[\s\S]*setConnection\(\{ state: "connecting"[\s\S]*new EventSource/, "a service change clears prior logs and connection identity before opening the next stream");

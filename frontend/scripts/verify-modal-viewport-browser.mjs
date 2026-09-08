@@ -21,13 +21,18 @@ let server;
 const harness = `
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { DetailsDrawer, Modal } from "@design-system";
+import { DetailsDrawer, Modal, useDialogFocus } from "@design-system";
 import "@styles";
 import "@enterprise";
 
 function Harness() {
   const [overlay, setOverlay] = useState(null);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationRef = useDialogFocus(() => setNavigationOpen(false), { active: navigationOpen });
   return <div className="workspace-page" id="workspace">
+    <button id="open-navigation" onClick={() => setNavigationOpen(true)} type="button">Open navigation</button>
+    <aside aria-modal={navigationOpen ? "true" : undefined} hidden={!navigationOpen} id="mobile-navigation" ref={navigationRef} role={navigationOpen ? "dialog" : undefined} tabIndex={navigationOpen ? -1 : undefined}><button id="navigation-first" type="button">First navigation item</button><button id="navigation-last" type="button">Last navigation item</button></aside>
+    <main id="obscured-content" inert={navigationOpen ? "" : undefined}><button id="obscured-action" type="button">Obscured action</button></main>
     <section id="transformed-surface" style={{ height: 420, marginLeft: 170, overflow: "hidden", width: 690 }}>
       <button id="open-destroy" onClick={() => setOverlay("destroy")} type="button">Open destroy</button>
       <button id="open-rollback" onClick={() => setOverlay("rollback")} type="button">Open rollback</button>
@@ -175,8 +180,22 @@ try {
   await open("#open-drawer", ".ds-drawer-backdrop");
   assert.equal(await evaluate("document.querySelector('.ds-drawer-backdrop').parentElement===document.body"), true, "Shared drawer remained trapped by the transformed page ancestor.");
   await closeWithEscape();
+
+  await open("#open-navigation", "#mobile-navigation:not([hidden])");
+  assert.equal(await evaluate("document.activeElement?.id"), "navigation-first", "mobile navigation did not receive initial focus");
+  assert.equal(await evaluate("document.querySelector('#obscured-content').inert"), true, "content behind mobile navigation is not inert");
+  await evaluate("document.querySelector('#obscured-action').focus()");
+  assert.equal(await evaluate("document.activeElement?.id"), "navigation-first", "focus escaped into obscured content");
+  await evaluate("document.querySelector('#navigation-last').focus()");
+  await command("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab" });
+  await command("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab" });
+  assert.equal(await evaluate("document.activeElement?.id"), "navigation-first", "mobile navigation focus trap did not wrap forward");
+  await command("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+  await command("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
+  await waitFor(() => evaluate("document.querySelector('#mobile-navigation').hidden"), "Escape did not close mobile navigation");
+  await waitFor(() => evaluate("document.activeElement?.id === 'open-navigation'"), "mobile navigation focus was not restored to its opener");
   socket.close();
-  console.log("Shared modal browser certification passed: body portal, viewport bounds, scrolling, Destroy, Rollback, drawer, focus trap, Escape, backdrop close, focus restoration, and body lock.");
+  console.log("Shared overlay browser certification passed: body portal, viewport bounds, scrolling, Destroy, Rollback, drawer, mobile navigation, inert content, focus trap, Escape, backdrop close, focus restoration, and body lock.");
 } finally {
   if (chrome && chrome.exitCode === null) {
     chrome.kill("SIGTERM");

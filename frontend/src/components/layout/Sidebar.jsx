@@ -2,6 +2,7 @@ import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth.js";
 import AppIcon from "../common/AppIcon.jsx";
 import BrandLogo from "../common/BrandLogo.jsx";
+import { useDialogFocus } from "../common/DesignSystem.jsx";
 
 const primary = [
   { icon: "dashboard", label: "Home", to: "/dashboard" },
@@ -26,14 +27,15 @@ export default function Sidebar({ isOpen = false, onClose, projectId: projectIdP
   const { projectId: routeProjectId } = useParams();
   const projectId = projectIdProp || routeProjectId || null;
   const navigate = useNavigate();
+  const navigationRef = useDialogFocus(onClose, { active: isOpen });
   async function handleLogout() { await logout().catch(() => undefined); onClose?.(); navigate("/", { replace: true }); }
   return <>
     <button aria-label="Close navigation" className={isOpen ? "mobile-navigation-backdrop is-open" : "mobile-navigation-backdrop"} onClick={onClose} type="button" />
-    <aside aria-label="Authenticated navigation" className={isOpen ? "sidebar glass-elevated is-mobile-open" : "sidebar glass-elevated"} id="authenticated-navigation">
+    <aside aria-label="Authenticated navigation" aria-modal={isOpen ? "true" : undefined} className={isOpen ? "sidebar glass-elevated is-mobile-open" : "sidebar glass-elevated"} id="authenticated-navigation" ref={navigationRef} role={isOpen ? "dialog" : undefined} tabIndex={isOpen ? -1 : undefined}>
       <div className="sidebar-brand-row"><BrandLogo /><button aria-label="Close navigation" className="mobile-navigation-close" onClick={onClose} type="button"><AppIcon name="close" size={19} /></button></div>
       <nav aria-label="Main navigation" className="sidebar-primary-nav">{primary.map((link) => <NavLink className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} key={link.to} onClick={onClose} to={link.to}><AppIcon name={link.icon} size={17} />{link.label}</NavLink>)}</nav>
       {projectId ? <div className="sidebar-section"><p className="sidebar-label">Selected project</p><nav aria-label="Project navigation"><ProjectLinks links={projectNavigation} onNavigate={onClose} projectId={projectId} /></nav></div> : null}
-      <div className="sidebar-footer"><div className="sidebar-account">{user?.avatarUrl ? <img alt="" className="user-avatar" src={user.avatarUrl} /> : <span className="user-avatar">{String(user?.name || user?.email || "U").charAt(0).toUpperCase()}</span>}<span><strong>{user?.githubLogin ? `@${user.githubLogin}` : user?.name || user?.email || "User"}</strong><small>GitHub account</small></span></div><button className="sidebar-logout-button" onClick={handleLogout} type="button"><AppIcon name="arrow" size={15} />Logout</button></div>
+      <div className="sidebar-footer"><div className="sidebar-account">{user?.avatarUrl ? <img alt="" className="user-avatar" height="29" src={user.avatarUrl} width="29" /> : <span className="user-avatar">{String(user?.name || user?.email || "U").charAt(0).toUpperCase()}</span>}<span><strong>{user?.githubLogin ? `@${user.githubLogin}` : user?.name || user?.email || "User"}</strong><small>GitHub account</small></span></div><button className="sidebar-logout-button" onClick={handleLogout} type="button"><AppIcon name="arrow" size={15} />Logout</button></div>
     </aside>
   </>;
 }

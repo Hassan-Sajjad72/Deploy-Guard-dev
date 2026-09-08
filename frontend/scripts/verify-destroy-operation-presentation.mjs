@@ -31,6 +31,7 @@ assert.ok(destroyed.every((phase) => phase.status === "passed"));
 const pipeline = readFileSync(join(import.meta.dirname, "../src/components/projects/PipelineExecution.jsx"), "utf8");
 const recovery = readFileSync(join(import.meta.dirname, "../src/components/projects/PipelineRecoveryPanel.jsx"), "utf8");
 const overview = readFileSync(join(import.meta.dirname, "../src/components/projects/ProjectOverviewLifecycle.jsx"), "utf8");
+const cleanup = readFileSync(join(import.meta.dirname, "../src/components/projects/DestroyInfrastructurePanel.jsx"), "utf8");
 assert.match(pipeline, /const stages = latest\?\.workflowStages \|\| \[\]/, "destroy stage evidence remains in the technical timeline");
 assert.match(pipeline, /details\.stageLabel/);
 assert.match(pipeline, /destroyVerificationStatus === "pending"/);
@@ -43,5 +44,8 @@ assert.match(overview, /deploymentPhasePresentation/);
 assert.equal(DESTROY_CONFIRMATION_PHRASE, "DESTROY");
 assert.match(overview, /DESTROY_CONFIRMATION_PHRASE/);
 assert.doesNotMatch(overview, /destroyPhrase !== "DESTROY"/);
+assert.match(cleanup, /<Modal className="destroy-modal" labelledBy=\{titleId\}/, "destructive confirmations must reuse the shared accessible modal");
+assert.match(cleanup, /const titleId = useId\(\)/);
+assert.match(cleanup, /if \(!busy\) onCancel\(\)/, "busy destructive operations must not be cancelled by Escape or backdrop interaction");
 
 console.log("Destroy UI presentation checks passed: canonical four-label rail, unchanged deploy rail, completed destroy rail, and shared action-aware presentation consumers.");
