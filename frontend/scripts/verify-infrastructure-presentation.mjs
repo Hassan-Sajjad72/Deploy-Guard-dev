@@ -6,8 +6,17 @@ const page = read("../src/pages/ProjectInfrastructure.jsx");
 const styles = read("../src/styles.css");
 const designSystem = read("../src/design-system.css");
 const routes = read("../src/routes/AppRoutes.jsx");
+const platformApi = read("../src/api/platformApi.js");
 
 assert.match(routes, /path="\/projects\/:projectId\/infrastructure"/);
+assert.match(platformApi, /api\/projects\/\$\{id\(projectId\)\}\/infrastructure\/exports`, \{ method: "POST" \}/, "Terraform export creation uses the project-scoped backend route.");
+assert.match(platformApi, /infrastructure\/exports\/\$\{id\(artifact\.id\)\}\/download/, "Terraform export download uses the returned artifact id.");
+assert.match(platformApi, /credentials: "include"/, "Terraform artifact downloads retain the authenticated session.");
+assert.match(page, /createTerraformExport, downloadTerraformExport/, "Infrastructure imports the existing Terraform export flow.");
+assert.match(page, /const artifact = await createTerraformExport\(projectId\);[\s\S]*await downloadTerraformExport\(projectId, artifact\);/, "Export creation must complete before the returned artifact is downloaded.");
+assert.match(page, />\{exporting \? "Preparing export…" : "Export Terraform"\}<\/button>/, "Infrastructure exposes a visible Export Terraform action with progress feedback.");
+assert.match(page, /disabled=\{exporting\}/, "Terraform export prevents duplicate requests while an artifact is being prepared.");
+assert.match(page, /actions=\{exportAction\}/, "The Terraform export action is presented in the infrastructure page header.");
 assert.doesNotMatch(page, /<dl[\s>]/, "Infrastructure must not use raw definition-list presentation.");
 for (const summary of ["Application", "Services", "Targets", "Region"]) assert.match(page, new RegExp(`label="${summary}"`));
 assert.equal((page.match(/<MetricCard/g) || []).length, 5, "Infrastructure has four runtime cards and one cost card.");
