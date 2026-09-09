@@ -71,6 +71,7 @@ import { BillingUsageEvent } from "./billing/billing-usage-event.entity";
 import { BillingCheckoutSession } from "./billing/billing-checkout-session.entity";
 import { BillingInvoice } from "./billing/billing-invoice.entity";
 import { BillingWebhookEvent } from "./billing/billing-webhook-event.entity";
+import { BillingPayment } from "./billing/billing-payment.entity";
 
 /** The supported local product: PostgreSQL + authenticated GitHub App + GitHub Actions. */
 @Module({
@@ -108,7 +109,7 @@ import { BillingWebhookEvent } from "./billing/billing-webhook-event.entity";
           AiAnalysisSession, AiAnalysisMessage, AiAnalysisResult,
           NotificationPreference, NotificationSubscription, NotificationDelivery,
           BillingAccount, BillingSubscription, BillingUsageCounter, BillingUsageEvent,
-          BillingCheckoutSession, BillingInvoice, BillingWebhookEvent,
+          BillingCheckoutSession, BillingInvoice, BillingPayment, BillingWebhookEvent,
         ],
         synchronize: false,
         logging: ["error", "warn"],

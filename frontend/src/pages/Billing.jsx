@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { getBillingSummary, setMockBillingPlan } from "../api/platformApi.js";
+import { createBillingCheckout, createBillingPortal, downloadBillingInvoice, getBillingInvoice, getBillingSummary } from "../api/platformApi.js";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import EmptyState from "../components/common/EmptyState.jsx";
@@ -7,31 +7,55 @@ import { Button, Card, PageHeader, StatusChip } from "../components/common/Desig
 import { useAuth } from "../hooks/useAuth.js";
 
 const title = (plan) => String(plan || "FREE").replace("_", " ");
-const date = (value) => value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value)) : "Not started";
+const dateTime = (value) => value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Not started";
+const money = (amount, currency = "USD") => `${(Number(amount || 0) / 100).toFixed(2)} ${String(currency).toUpperCase()}`;
 
 export default function Billing() {
   const { user } = useAuth();
   const [summary, setSummary] = useState(null);
+  const [invoice, setInvoice] = useState(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState("");
   const load = useCallback(async () => { try { setSummary(await getBillingSummary()); setError(""); } catch (caught) { setError(caught.message || "Subscription details are unavailable."); } }, []);
   useEffect(() => { void load(); }, [load]);
-  async function upgrade(plan) { setBusy(true); try { setSummary(await setMockBillingPlan(plan)); setError(""); } catch (caught) { setError(caught.message || "Mock upgrade failed."); } finally { setBusy(false); } }
+
+  async function upgrade(plan) {
+    setBusy(plan); setError("");
+    try { const checkout = await createBillingCheckout(plan); window.location.assign(checkout.checkoutUrl); }
+    catch (caught) { setError(caught.message || "Stripe Test Mode checkout could not be created."); setBusy(""); }
+  }
+  async function manageBilling() {
+    setBusy("portal"); setError("");
+    try { const portal = await createBillingPortal(); window.location.assign(portal.portalUrl); }
+    catch (caught) { setError(caught.message || "Stripe Customer Portal could not be opened."); setBusy(""); }
+  }
+  async function viewInvoice(id) { setBusy(id); try { setInvoice(await getBillingInvoice(id)); } catch (caught) { setError(caught.message || "Invoice is unavailable."); } finally { setBusy(""); } }
+  async function download(item) { setBusy(`pdf:${item.id}`); try { await downloadBillingInvoice(item); } catch (caught) { setError(caught.message || "Invoice download failed."); } finally { setBusy(""); } }
+
   if (!summary) return <div className="workspace-page">{error ? <ErrorState message={error} onRetry={load} /> : <LoadingState message="Loading subscription…" />}</div>;
   const usage = summary.workspaceUsage || {};
-  const limits = summary.entitlements || {};
-  const mock = summary.billing?.enabled === true && summary.billing?.mode === "mock";
+  const limits = usage.limits || {};
   const canUpgrade = ["admin", "developer"].includes(user?.role);
-  return <div className="workspace-page billing-page" data-billing-mode={mock ? "mock" : "disabled"}>
-    <PageHeader description="Current plan limits, LIVE capacity, trial status, and payment history." eyebrow="Workspace" title="Plan & Usage" />
+  const returned = new URLSearchParams(window.location.search).get("checkout") === "returned";
+  const overLimit = usage.overLimit?.currentProjects || usage.overLimit?.liveProjects;
+  return <div className="workspace-page billing-page" data-billing-mode={summary.billing?.mode || "disabled"}>
+    <PageHeader description="Authoritative subscription, LIVE capacity, Stripe test payments, and invoices." eyebrow="Workspace" title="Plan & Usage" />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
-    {!summary.enforcement?.enabled ? <Card><strong>Billing limits are disabled.</strong><p>DeployGuard preserves unrestricted project and deployment behavior.</p></Card> : null}
-    {mock ? <Card className="state info" role="status"><strong>Mock / FYP billing</strong><p>No real payment gateway or charge is used by these plan controls.</p></Card> : null}
-    <Card className="billing-plan-card"><div><p className="eyebrow">Current plan</p><h2>{title(summary.planName)}</h2><p>${summary.pricing?.monthlyUsd || 0} / month</p></div><StatusChip status={summary.status}>{summary.status}</StatusChip><div className="quick-actions">{mock && canUpgrade && summary.plan === "free" ? <Button disabled={busy} onClick={() => void upgrade("pro")}>Mock upgrade to PRO</Button> : null}{mock && canUpgrade && summary.plan === "pro" ? <Button disabled={busy} onClick={() => void upgrade("pro_plus")}>Mock upgrade to PRO PLUS</Button> : null}</div></Card>
-    <Card><div className="compact-section-heading"><div><p className="eyebrow">Capacity</p><h2>Authoritative usage</h2></div></div><div className="billing-usage-grid"><Usage label="Current projects" used={usage.currentProjects ?? 0} limit={summary.enforcement?.enabled ? limits.currentProjects : null} /><Usage label="LIVE projects" used={usage.liveProjects ?? 0} limit={summary.enforcement?.enabled ? limits.liveProjects : null} /></div></Card>
-    {summary.plan === "free" ? <Card><p className="eyebrow">Free LIVE trial</p><h2>{summary.trial?.expired ? "Expired" : summary.trial?.startedAt ? "Active" : "Available"}</h2><p>One successful LIVE deployment can run for 48 hours. Started: {date(summary.trial?.startedAt)} · Ends: {date(summary.trial?.endsAt)}</p></Card> : <Card><p className="eyebrow">Renewal</p><h2>{date(summary.billingPeriodEnd)}</h2><p>Mock billing period renewal date.</p></Card>}
-    <Card><p className="eyebrow">Invoice history</p><h2>Payments</h2>{summary.invoices?.length ? <div className="session-list">{summary.invoices.map((invoice) => <div className="subtle-button" key={invoice.id}><strong>{String(invoice.status).replaceAll("_", " ")}</strong><span>${(invoice.amountDue / 100).toFixed(2)} {String(invoice.currency).toUpperCase()}</span><small>{date(invoice.issuedAt)}</small></div>)}</div> : <EmptyState message="No mock invoices have been issued." />}</Card>
+    {!summary.billing?.enabled ? <Card><strong>Billing is disabled.</strong><p>DeployGuard preserves unrestricted project and deployment behavior.</p></Card> : null}
+    {summary.billing?.enabled && !summary.enforcement?.enabled ? <Card className="state info" role="status"><strong>FYP observation mode</strong><p>Usage and limits are visible, but quota and trial expiry do not block deployments.</p></Card> : null}
+    {summary.billing?.enabled ? <Card className="state info" role="status"><strong>Stripe Test Mode</strong><p>Checkout is test-only. A plan changes only after DeployGuard verifies Stripe’s signed webhook; no real charge is possible.</p></Card> : null}
+    {returned ? <Card className="state info" role="status"><strong>Payment verification pending</strong><p>Returning from checkout does not activate a plan. Refresh after the verified Stripe webhook arrives.</p><Button onClick={() => void load()}>Refresh status</Button></Card> : null}
+    {overLimit ? <Card className="state danger" role="alert"><strong>OVER_LIMIT</strong><p>Existing projects remain untouched. New quota-consuming transitions are {summary.enforcement?.enabled ? "blocked until usage is compliant" : "allowed while observation mode is active"}.</p></Card> : null}
+
+    <Card className="billing-plan-card"><div><p className="eyebrow">Current plan</p><h2>{title(summary.planName)}</h2><p>${summary.pricing?.monthlyUsd || 0} / month</p></div><div className="quick-actions"><StatusChip status={summary.status}>{summary.status}</StatusChip>{canUpgrade && summary.customerPortalAvailable ? <Button disabled={Boolean(busy)} onClick={() => void manageBilling()}>{busy === "portal" ? "Opening…" : "Manage Billing"}</Button> : null}</div></Card>
+    <Card><p className="eyebrow">Capacity</p><h2>Authoritative usage</h2><div className="billing-usage-grid"><Usage label="Current projects" used={usage.currentProjects ?? 0} limit={limits.currentProjects} over={usage.overLimit?.currentProjects} /><Usage label="LIVE projects" used={usage.liveProjects ?? 0} limit={limits.liveProjects} over={usage.overLimit?.liveProjects} /></div></Card>
+    {summary.plan === "free" ? <Card><p className="eyebrow">Free LIVE trial</p><h2>{summary.trial?.expired ? "Expired" : summary.trial?.startedAt ? "Active" : "Available"}</h2><p>Started: {dateTime(summary.trial?.startedAt)} · Ends: {dateTime(summary.trial?.endsAt)} · Remaining: {summary.trial?.remainingSeconds == null ? "48 hours after first LIVE deployment" : `${Math.ceil(summary.trial.remainingSeconds / 3600)} hours`}</p></Card> : <Card><p className="eyebrow">Billing period</p><h2>{dateTime(summary.billingPeriodEnd)}</h2><p>Current Stripe Test Mode subscription period.</p></Card>}
+
+    {canUpgrade && summary.billing?.enabled && !summary.providerSubscriptionId ? <Card><p className="eyebrow">Upgrade</p><h2>Stripe Test Mode plans</h2><div className="quick-actions">{summary.plan === "free" ? <Button disabled={Boolean(busy)} onClick={() => void upgrade("pro")}>{busy === "pro" ? "Opening…" : "Choose PRO · $399/month"}</Button> : null}{summary.plan !== "pro_plus" ? <Button disabled={Boolean(busy)} onClick={() => void upgrade("pro_plus")}>{busy === "pro_plus" ? "Opening…" : "Choose PRO PLUS · $799/month"}</Button> : null}</div></Card> : null}
+
+    <Card><p className="eyebrow">Invoice history</p><h2>Verified payments</h2>{summary.invoices?.length ? <div className="session-list">{summary.invoices.map((item) => <div className="subtle-button billing-invoice-row" key={item.id}><div><strong>{item.invoiceNumber}</strong><small>{title(item.plan)} · {dateTime(item.paidAt)}</small></div><span>{money(item.amountDue, item.currency)}</span><StatusChip status={item.status}>{item.status}</StatusChip><div className="quick-actions"><Button disabled={busy === item.id} onClick={() => void viewInvoice(item.id)}>View Invoice</Button><Button disabled={busy === `pdf:${item.id}`} onClick={() => void download(item)}>Download PDF</Button></div></div>)}</div> : <EmptyState message="No verified Stripe Test Mode invoices have been issued." />}</Card>
+    {invoice ? <Card><p className="eyebrow">Invoice detail</p><h2>{invoice.invoiceNumber}</h2><div className="billing-usage-grid"><Usage label="Plan" used={title(invoice.plan)} /><Usage label="Amount" used={money(invoice.amountDue, invoice.currency)} /><Usage label="Provider" used={`${title(invoice.provider)} ${title(invoice.mode)} Mode`} /><Usage label="Payment" used={invoice.status} /></div><p>Transaction: {invoice.providerTransactionId}</p><p>Period: {dateTime(invoice.billingPeriodStart)} to {dateTime(invoice.billingPeriodEnd)}</p></Card> : null}
   </div>;
 }
 
-function Usage({ label, used, limit }) { return <div><span>{label}</span><strong>{used}<small> / {limit ?? "Not enforced"}</small></strong></div>; }
+function Usage({ label, used, limit, over }) { return <div className={over ? "usage-over-limit" : ""}><span>{label}</span><strong>{used}{limit != null ? <small> / {limit}</small> : null}</strong>{over ? <small>OVER_LIMIT</small> : null}</div>; }

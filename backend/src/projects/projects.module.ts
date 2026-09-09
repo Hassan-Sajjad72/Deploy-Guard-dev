@@ -54,7 +54,7 @@ import { ProjectBuildTargetRevision } from "./project-build-target-revision.enti
 import { DeploymentRequirementResolverService } from "./deployment-requirement-resolver.service";
 import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
 import { BillingModule } from "../billing/billing.module";
-import { FreeTrialRuntimeEnforcerService } from "./free-trial-runtime-enforcer.service";
+import { FreeTrialReconciliationService } from "./free-trial-reconciliation.service";
 
 @Module({
   imports: [
@@ -96,7 +96,7 @@ import { FreeTrialRuntimeEnforcerService } from "./free-trial-runtime-enforcer.s
     ProductStartSchemaIntegrityService,
     LiveRuntimeIdentityRecoveryService,
     ManagedDatabaseReconciliationService,
-    FreeTrialRuntimeEnforcerService,
+    FreeTrialReconciliationService,
   ],
   exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService, LiveRuntimeIdentityRecoveryService],
 })

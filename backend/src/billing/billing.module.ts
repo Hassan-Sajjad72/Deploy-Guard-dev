@@ -12,13 +12,14 @@ import { BillingSubscription } from "./billing-subscription.entity";
 import { BillingUsageCounter } from "./billing-usage-counter.entity";
 import { BillingUsageEvent } from "./billing-usage-event.entity";
 import { BillingWebhookEvent } from "./billing-webhook-event.entity";
+import { BillingPayment } from "./billing-payment.entity";
 import { EntitlementService } from "./entitlement.service";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { ProjectUsageService } from "./project-usage.service";
 import { BillingController } from "./billing.controller";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Project, ProjectPipelineRun, BillingAccount, BillingSubscription, BillingUsageCounter, BillingUsageEvent, BillingCheckoutSession, BillingInvoice, BillingWebhookEvent]), AuditLogModule, forwardRef(() => NotificationsModule)],
+  imports: [TypeOrmModule.forFeature([Project, ProjectPipelineRun, BillingAccount, BillingSubscription, BillingUsageCounter, BillingUsageEvent, BillingCheckoutSession, BillingInvoice, BillingPayment, BillingWebhookEvent]), AuditLogModule, forwardRef(() => NotificationsModule)],
   providers: [BillingProviderService, ProjectUsageService, EntitlementService, BillingService],
   controllers: [BillingController],
   exports: [ProjectUsageService, EntitlementService, BillingService],

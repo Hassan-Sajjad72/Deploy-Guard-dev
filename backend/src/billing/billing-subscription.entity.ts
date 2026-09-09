@@ -5,6 +5,7 @@ export class BillingSubscription {
   @PrimaryGeneratedColumn("uuid") id: string;
   @Index({ unique: true }) @Column({ name: "user_id" }) userId: number;
   @Index({ unique: true }) @Column({ nullable: true, name: "provider_subscription_id" }) providerSubscriptionId: string | null;
+  @Column({ nullable: true, name: "provider_price_id" }) providerPriceId: string | null;
   @Column({ default: "free" }) plan: string;
   @Column({ default: "active" }) status: string;
   @Column({ default: "none" }) provider: string;
@@ -16,6 +17,7 @@ export class BillingSubscription {
   @Column({ nullable: true, name: "trial_project_id", type: "uuid" }) trialProjectId: string | null;
   @Column({ default: false, name: "cancel_at_period_end" }) cancelAtPeriodEnd: boolean;
   @Column({ nullable: true, name: "cancelled_at", type: "timestamptz" }) cancelledAt: Date | null;
+  @Column({ nullable: true, name: "ended_at", type: "timestamptz" }) endedAt: Date | null;
   @Column({ nullable: true, name: "provider_event_created_at", type: "timestamptz" }) providerEventCreatedAt: Date | null;
   @CreateDateColumn({ name: "created_at", type: "timestamptz" }) createdAt: Date;
   @UpdateDateColumn({ name: "updated_at", type: "timestamptz" }) updatedAt: Date;

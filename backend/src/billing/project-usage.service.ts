@@ -46,4 +46,20 @@ export class ProjectUsageService {
     const ids = (await projects.find({ select: { id: true }, where: { ownerUserId: userId } })).map((project) => project.id);
     return ids.length ? runs.count({ where: { projectId: In(ids), createdAt: MoreThanOrEqual(since) } }) : 0;
   }
+
+  async earliestLiveProject(userId: number, manager?: EntityManager) {
+    const projects = manager?.getRepository(Project) || this.projectRepo;
+    return projects.createQueryBuilder("project")
+      .select("project.id", "projectId")
+      .addSelect("COALESCE(generation.activatedAt, generation.createdAt)", "activatedAt")
+      .innerJoin(ProjectEnvironmentRoute, "route", "route.projectId = project.id AND route.liveGenerationId IS NOT NULL")
+      .innerJoin(ProjectDeploymentGeneration, "generation", "generation.id = route.liveGenerationId AND generation.status = :live", { live: DeploymentGenerationStatus.LIVE })
+      .where("project.ownerUserId = :userId", { userId })
+      .andWhere("project.status <> :archived", { archived: ProjectStatus.ARCHIVED })
+      .andWhere("project.archivedAt IS NULL")
+      .orderBy("COALESCE(generation.activatedAt, generation.createdAt)", "ASC")
+      .addOrderBy("project.id", "ASC")
+      .limit(1)
+      .getRawOne<{ projectId: string; activatedAt: Date | string }>();
+  }
 }

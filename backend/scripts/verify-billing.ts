@@ -21,25 +21,20 @@ function config(values: Record<string, string>) {
 
 async function verifyProviderGate() {
   const disabled = new BillingProviderService(config({
-    STRIPE_SECRET_KEY: "configured-but-disabled",
-    STRIPE_PRO_PRICE_ID: "price_configured",
-    STRIPE_WEBHOOK_SECRET: "configured",
+    BILLING_ENABLED: "false", BILLING_PROVIDER: "stripe", BILLING_MODE: "test",
+    STRIPE_SECRET_KEY: "sk_test_configured", STRIPE_PUBLISHABLE_KEY: "pk_test_configured",
+    STRIPE_PRO_PRICE_ID: "price_ConfiguredPro", STRIPE_PRO_PLUS_PRICE_ID: "price_ConfiguredPlus",
+    STRIPE_WEBHOOK_SECRET: "whsec_configured", FRONTEND_URL: "http://localhost:5173",
   }));
-  assert.deepEqual(disabled.status(), {
-    provider: "none",
-    mode: "disabled",
-    enabled: false,
-    configured: false,
-    missingConfiguration: [],
-    webhookConfigured: false,
-  });
-  await assert.rejects(() => disabled.createCheckout({} as never), /BILLING_PROVIDER_DISABLED/);
-  assert.throws(() => disabled.verifyWebhook(Buffer.from("{}"), "signature"), /BILLING_PROVIDER_DISABLED/);
+  assert.equal(disabled.status().enabled, false);
+  assert.equal(disabled.status().configured, false);
+  await assert.rejects(() => disabled.createCheckout("order", "pro", {} as never, "cus_test"), /BILLING_DISABLED/);
+  assert.throws(() => disabled.verifyWebhook(Buffer.from("{}"), "signature"), /BILLING_DISABLED/);
 
-  const incomplete = new BillingProviderService(config({ BILLING_PROVIDER_ENABLED: "true" }));
-  assert.equal(incomplete.status().mode, "not_configured");
-  assert.deepEqual(incomplete.status().missingConfiguration, ["STRIPE_SECRET_KEY", "STRIPE_PRO_PRICE_ID"]);
-  await assert.rejects(() => incomplete.createCheckout({} as never), /NOT_CONFIGURED/);
+  const incomplete = new BillingProviderService(config({ BILLING_ENABLED: "true", BILLING_PROVIDER: "stripe", BILLING_MODE: "test" }));
+  assert.equal(incomplete.status().mode, "test");
+  assert(incomplete.status().missingConfiguration.includes("STRIPE_PRO_PLUS_PRICE_ID"));
+  await assert.rejects(() => incomplete.createCheckout("order", "pro", {} as never, "cus_test"), /NOT_CONFIGURED/);
 }
 
 async function verifyMeteredBypass() {

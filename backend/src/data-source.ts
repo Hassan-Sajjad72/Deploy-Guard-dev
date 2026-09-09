@@ -48,6 +48,7 @@ import { BillingUsageEvent } from "./billing/billing-usage-event.entity";
 import { BillingCheckoutSession } from "./billing/billing-checkout-session.entity";
 import { BillingInvoice } from "./billing/billing-invoice.entity";
 import { BillingWebhookEvent } from "./billing/billing-webhook-event.entity";
+import { BillingPayment } from "./billing/billing-payment.entity";
 import { NotificationPreference } from "./notifications/notification-preference.entity";
 import { NotificationSubscription } from "./notifications/notification-subscription.entity";
 import { NotificationDelivery } from "./notifications/notification-delivery.entity";
@@ -179,6 +180,7 @@ export default new DataSource({
     BillingCheckoutSession,
     BillingInvoice,
     BillingWebhookEvent,
+    BillingPayment,
     NotificationPreference,
     NotificationSubscription,
     NotificationDelivery,

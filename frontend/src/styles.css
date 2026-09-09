@@ -391,6 +391,10 @@ code,pre{max-width:100%;overflow:auto;white-space:pre-wrap;word-break:break-word
 .billing-usage-grid>div{background:var(--surface-muted);border:1px solid var(--border);border-radius:var(--radius-sm);display:grid;gap:5px;padding:var(--space-3)}
 .billing-usage-grid span{color:var(--muted);font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
 .billing-usage-grid strong{font-size:1.25rem}.billing-usage-grid small{color:var(--muted);font-size:.78rem}
+.billing-usage-grid .usage-over-limit{border-color:var(--danger);box-shadow:inset 3px 0 0 var(--danger)}
+.billing-usage-grid .usage-over-limit>small{color:var(--danger);font-weight:800}
+.billing-invoice-row{align-items:center;display:grid;gap:var(--space-3);grid-template-columns:minmax(0,1fr) auto auto auto}
+.billing-invoice-row>div:first-child{display:grid;gap:4px}.billing-invoice-row small{color:var(--muted)}
 .pipeline-security-card details{margin-top:var(--space-4)}.pipeline-security-card ul{display:grid;gap:var(--space-2);padding-left:var(--space-5)}
-@media(max-width:800px){.billing-plan-card{grid-template-columns:1fr}.billing-usage-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:800px){.billing-plan-card{grid-template-columns:1fr}.billing-usage-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.billing-invoice-row{align-items:start;grid-template-columns:1fr}}
 @media(max-width:520px){.billing-usage-grid{grid-template-columns:1fr}}

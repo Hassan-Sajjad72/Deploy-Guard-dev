@@ -45,6 +45,8 @@
     "test:api-contract-equivalence": "node scripts/verify-api-contract-equivalence.mjs",
     "test:terraform-export": "ts-node scripts/verify-terraform-export.ts",
     "test:billing-subscriptions": "ts-node scripts/verify-billing-subscriptions.ts",
+    "test:stripe-billing": "ts-node scripts/verify-stripe-billing.ts",
+    "test:billing-migration": "ts-node scripts/verify-billing-migration.ts",
     "test:trivy-controls": "ts-node scripts/verify-trivy-controls.ts",
     "test:uuid-admission": "ts-node scripts/verify-uuid-admission-contract.ts",
     "test:configuration-admission": "ts-node scripts/verify-configuration-admission.ts && npm run test:dispatch-state-projection && npm run test:railpack-runtime-contract && npm run test:uuid-admission",
@@ -78,7 +80,7 @@
     "pg": "^8.11.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "stripe": "^16.12.0",
+    "stripe": "^22.6.1",
     "typeorm": "^0.3.17",
     "yaml": "^2.9.0"
   },
