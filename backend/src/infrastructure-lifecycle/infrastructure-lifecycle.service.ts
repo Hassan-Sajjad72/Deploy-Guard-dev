@@ -13,6 +13,7 @@ import { Project } from "../projects/project.entity";
 import { PIPELINE_IN_PROGRESS_STATUSES } from "../projects/pipeline/pipeline-status";
 import { StateLockService } from "../state-management/state-lock.service";
 import { TerraformStateService } from "../state-management/terraform-state.service";
+import { getStateManagementConfig } from "../state-management/state-management.config";
 import { ProjectPersistentStorage } from "../storage/project-persistent-storage.entity";
 import { ProjectDatabaseTier } from "../projects/project-database-tier.entity";
 import { User, UserRole } from "../users/user.entity";
@@ -81,10 +82,16 @@ export class InfrastructureLifecycleService {
       !enabled && !demoMode ? "Infrastructure destroy is disabled by server configuration." : null,
       backendError,
     ].filter((value): value is string => Boolean(value));
+    const stateConfig = getStateManagementConfig(this.config);
     return {
       project: { id: project.id, name: project.name },
       environment: { id: environment.id, name: environment.environmentName, status: environment.status, region: environment.awsRegion, pipelineRunId: environment.pipelineRunId, environmentType: environment.environmentType, ttlExpiresAt: environment.ttlExpiresAt, autoDestroyEnabled: environment.autoDestroyEnabled, cleanupStatus: environment.cleanupStatus },
-      backend: backend || { bucket: "deployguard-state-bucket", stateKey: `projects/${project.id}/terraform.tfstate`, lockfileKey: `projects/${project.id}/terraform.tfstate.tflock`, region: environment.awsRegion || "us-east-1" },
+      backend: backend || {
+        bucket: stateConfig.bucket || "unconfigured",
+        stateKey: this.terraformState.buildStateKey(project, environmentName),
+        lockfileKey: this.terraformState.buildLockfileKey(project, environmentName),
+        region: stateConfig.region || environment.awsRegion || "us-east-1",
+      },
       mode: enabled ? "live" : demoMode ? "demo" : "disabled",
       canRequest: (enabled || demoMode) && blockers.length === 0,
       blockers,
@@ -294,7 +301,7 @@ export class InfrastructureLifecycleService {
     const preserved = addresses.filter((address) => reusableSecrets.test(address) || (!deletePersistentDatabaseData && persistentDatabaseData.test(address)));
     return { targets: addresses.filter((address) => !preserved.includes(address)), preserved };
   }
-  assertSharedStateBucketNotTracked(rawState: string, bucket = "deployguard-state-bucket") {
+  assertSharedStateBucketNotTracked(rawState: string, bucket: string) {
     let parsed: { resources?: Array<{ type?: string; instances?: Array<{ attributes?: Record<string, unknown> }> }> };
     try { parsed = JSON.parse(rawState); } catch { throw new Error("Terraform state could not be validated safely."); }
     const tracksSharedBucket = (parsed.resources || []).some((resource) => resource.type === "aws_s3_bucket" && (resource.instances || []).some((instance) => {

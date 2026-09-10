@@ -40,7 +40,7 @@ assert.equal(costBypass.mockMode, true, "Cost-gate bypass must prevent Infracost
 
 const state = getStateManagementConfig(config);
 assert.equal(state.mockMode, false);
-assert.equal(state.bucket, "deployguard-state-bucket");
+assert.equal(state.bucket, values.DEPLOYGUARD_TERRAFORM_STATE_BUCKET);
 assert.equal(state.region, values.TERRAFORM_STATE_REGION || values.AWS_REGION);
 assert.equal(state.prefix, "projects");
 assert.equal(state.useLockfile, true);
@@ -60,6 +60,7 @@ async function verifyNestConfigLoading() {
     "AI_ASSISTANT_ENABLED",
     "GOOGLE_AI_API_KEY",
     "STATE_MOCK_MODE",
+    "DEPLOYGUARD_TERRAFORM_STATE_BUCKET",
     "TERRAFORM_STATE_BUCKET",
     "TERRAFORM_APPLY_REQUIRES_APPROVAL",
   ];

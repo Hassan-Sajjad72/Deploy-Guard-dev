@@ -76,7 +76,10 @@ export class TerraformStateService {
   buildStateKey(project: Project | { id: string }, environmentName = "dev", generationId?: string | null) {
     const stateConfig = getStateManagementConfig(this.config);
     const prefix = stateConfig.prefix.replace(/^\/+|\/+$/g, "");
-    const scope = generationId || "project";
+    // The reusable workflow is the runtime authority and persists its exact
+    // project/environment state at this key. Backend inspection, backup, and
+    // destroy checks must address that same immutable runtime state.
+    const scope = generationId || "runtime";
     return `${prefix}/${project.id}/${environmentName}/${scope}/terraform.tfstate`;
   }
 
@@ -107,7 +110,7 @@ export class TerraformStateService {
   }
 
   private assertRemoteStateConfig(stateConfig: ReturnType<typeof getStateManagementConfig>) {
-    if (!stateConfig.bucket) throw new Error("TERRAFORM_STATE_BUCKET is required for remote Terraform state.");
+    if (!stateConfig.bucket) throw new Error("DEPLOYGUARD_TERRAFORM_STATE_BUCKET is required for remote Terraform state.");
     if (!stateConfig.region) throw new Error("Terraform state region is not configured.");
   }
 
@@ -141,12 +144,9 @@ export class TerraformStateService {
   async validateDestroyBackend(project: Project | { id: string }, environmentName = "dev") {
     const stateConfig = getStateManagementConfig(this.config);
     const stateKey = this.buildStateKey(project, environmentName);
-    const expectedStateKey = `projects/${project.id}/${environmentName}/project/terraform.tfstate`;
+    const expectedStateKey = `projects/${project.id}/${environmentName}/runtime/terraform.tfstate`;
 
     if (stateConfig.mockMode) throw new Error("Live infrastructure destroy requires the S3 Terraform backend.");
-    if (stateConfig.bucket !== "deployguard-state-bucket") {
-      throw new Error("Infrastructure destroy is restricted to the configured DeployGuard state bucket.");
-    }
     if (stateKey !== expectedStateKey) {
       throw new Error(`Infrastructure destroy is restricted to project state key ${expectedStateKey}.`);
     }

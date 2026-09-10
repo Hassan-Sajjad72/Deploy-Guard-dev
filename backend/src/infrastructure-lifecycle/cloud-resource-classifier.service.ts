@@ -20,7 +20,6 @@ export type KnownProject = { id: string; name: string; infrastructureStatus?: st
 export class CloudResourceClassifierService {
   private readonly cleanupTypes = new Set(["ecr_repository", "secret", "log_group", "ecs_service", "ecs_task", "ecs_task_definition", "ecs_cluster", "terraform_lockfile"]);
   private readonly highCostTypes = new Set(["nat_gateway", "load_balancer", "elastic_ip", "ecs_service", "ecs_task", "efs"]);
-  private readonly protectedNames = new Set(["deployguard-state-bucket"]);
 
   classify(resource: DiscoveredCloudResource, projects: Map<string, KnownProject>) {
     const tagProjectId = this.uuid(resource.tags?.ProjectId) || this.uuid(resource.tags?.DeployGuardProjectId);
@@ -29,8 +28,7 @@ export class CloudResourceClassifierService {
     const managedTag = resource.tags?.ManagedBy === "DeployGuard";
     const exactPrefix = Boolean(nameProjectId);
     const project = projectId ? projects.get(projectId) : undefined;
-    const protectedResource = resource.awsService === "s3" && this.protectedNames.has(resource.name)
-      || ["terraform_state", "terraform_state_backup", "state_bucket"].includes(resource.resourceType)
+    const protectedResource = ["terraform_state", "terraform_state_backup", "state_bucket"].includes(resource.resourceType)
       || (resource.resourceType === "iam_role" && !projectId)
       || resource.metadata?.shared === true;
     const cleanupSupported = this.cleanupTypes.has(resource.resourceType);

@@ -325,7 +325,7 @@ jobs:
           jq --arg environment "$ENVIRONMENT_NAME" '. + {environment_name:$environment}' .deployguard/terraform/terraform.tfvars.json > .deployguard/terraform/terraform.tfvars.next.json
           mv .deployguard/terraform/terraform.tfvars.next.json .deployguard/terraform/terraform.tfvars.json
           terraform -chdir=.deployguard/terraform fmt -check || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
-          terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/runtime/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
+          terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/runtime/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" -backend-config="use_lockfile=true" || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
           terraform -chdir=.deployguard/terraform validate || { echo 'DG_FAILURE code=DG_TERRAFORM_VALIDATE_FAILED stage=terraform_validate' >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = destroy ]; then
             terraform -chdir=.deployguard/terraform destroy -input=false -auto-approve

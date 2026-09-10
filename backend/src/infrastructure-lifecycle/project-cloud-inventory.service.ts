@@ -8,6 +8,7 @@ import { ProjectPipelineRun } from "../projects/project-pipeline-run.entity";
 import { Project } from "../projects/project.entity";
 import { AwsCliService } from "../state-management/aws-cli.service";
 import { TerraformStateService } from "../state-management/terraform-state.service";
+import { getStateManagementConfig } from "../state-management/state-management.config";
 import { User } from "../users/user.entity";
 import { ProjectResourceRegistryService } from "../resource-registry/project-resource-registry.service";
 import { CloudInventoryScan } from "./cloud-inventory-scan.entity";
@@ -162,17 +163,15 @@ export class ProjectCloudInventoryService {
 
     const stateKey = this.terraformState.buildStateKey({ id: projectId }, environment?.environmentName || "dev");
     const lockfileKey = this.terraformState.buildLockfileKey({ id: projectId }, environment?.environmentName || "dev");
-    const bucket = this.config.get<string>("TERRAFORM_STATE_BUCKET", "deployguard-state-bucket");
-    if (bucket === "deployguard-state-bucket") {
+    const bucket = getStateManagementConfig(this.config).bucket;
+    if (bucket) {
       const stateHead = await this.tryJson(["s3api", "head-object", "--bucket", bucket, "--key", stateKey, "--output", "json"], warnings, "Terraform state object", true);
       if (Object.keys(stateHead).length) this.add(resources, { id: `s3://${bucket}/${stateKey}`, arn: null, name: stateKey, category: "terraform_state", source: "state_backend", projectScoped: true, protected: true, cleanupSupported: false, risk: "high", costRisk: "none", deleteStatus: "protected", reason: "Project state is retained for audit and recovery; the shared bucket is never deleted." });
       try {
         const lock = await this.terraformState.inspectNativeLockfile({ id: projectId }, environment?.environmentName || "dev");
         if (lock.exists) this.add(resources, { id: `s3://${bucket}/${lockfileKey}`, arn: null, name: lockfileKey, category: "terraform_lockfile", source: "state_backend", projectScoped: true, protected: !lock.stale, cleanupSupported: lock.stale, risk: "high", costRisk: "none", deleteStatus: lock.stale ? "found" : "protected", reason: lock.stale ? "Confirmed stale S3 native lockfile." : "Active lockfiles are protected.", metadata: { stale: lock.stale, lastModified: lock.lastModified } });
       } catch (error) { warnings.push(this.safeError("Terraform lockfile discovery", error)); }
-    } else {
-      warnings.push("Configured Terraform state bucket is not the protected DeployGuard state bucket; cleanup is disabled.");
-    }
+    } else warnings.push("DeployGuard Terraform state bucket is not configured; state discovery is unavailable.");
     const backupOperations = await this.destroyOperations.find({ where: { projectId }, order: { createdAt: "DESC" }, take: 100 });
     for (const operation of backupOperations) { if (!operation.stateBackupReference || operation.stateBackupReference.startsWith("demo:")) continue; this.add(resources, { id: `s3-version:${projectId}:${operation.stateBackupReference}`, arn: null, name: `${stateKey} version ${operation.stateBackupReference}`, category: "terraform_state_backup", source: "state_backend", projectScoped: true, protected: true, cleanupSupported: false, risk: "high", costRisk: "none", deleteStatus: "protected", reason: "Versioned Terraform state backup is retained for recovery and audit.", metadata: { stateKey, versionId: operation.stateBackupReference, destroyOperationId: operation.id } }); }
 
