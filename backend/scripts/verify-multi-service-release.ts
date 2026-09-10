@@ -108,6 +108,12 @@ assert.notEqual(missingPublicProbe.status, 0, "the terminal artifact producer mu
 const valid = service.validatedReleaseEvidence(operation, artifact);
 assert.equal(valid.services.length, 2);
 assert.deepEqual(valid.services.map((item: any) => item.serviceId), ids);
+const rollbackOperation: any = { ...operation, projectId, metadata: { deploymentAction: "rollback", immutableDispatchInputs: { services_base64: servicesBase64(runtime), trivy_enabled: "true", trivy_enforce: "false" } } };
+const rollbackArtifact = { ...artifact, action: "rollback" };
+assert.doesNotThrow(() => service.validatedReleaseEvidence(rollbackOperation, rollbackArtifact), "rollback reuses historically scanned immutable images without manufacturing a new operation-scoped Trivy scan");
+assert.throws(() => service.validatedReleaseEvidence(rollbackOperation, { ...rollbackArtifact, securityScan: { contractVersion: "deployguard.security-result/v1" } }), /unrequested Trivy scan/, "rollback rejects unexpected new scan evidence");
+const trivyDeployOperation: any = { ...operation, projectId, metadata: { deploymentAction: "deploy", immutableDispatchInputs: { services_base64: servicesBase64(runtime), trivy_enabled: "true", trivy_enforce: "false" } } };
+assert.throws(() => service.validatedReleaseEvidence(trivyDeployOperation, artifact), /valid Trivy evidence/, "new deployments still require operation-scoped Trivy evidence when enabled");
 for (const invalid of [
   { ...artifact, services: artifact.services.slice(0, 1) },
   { ...artifact, services: [artifact.services[0], artifact.services[0]] },

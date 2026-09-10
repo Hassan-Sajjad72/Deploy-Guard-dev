@@ -1506,7 +1506,12 @@ export class RailpackDeploymentService {
       return { releaseArtifact: artifact, destroyed: true, destroyVerification };
     }
     if (!artifact.terraform || typeof artifact.terraform !== "object" || !Array.isArray(artifact.services) || !artifact.services.length) throw new Error("The release result artifact does not prove the complete service runtime.");
-    const expectedTrivy = (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.trivy_enabled === "true";
+    // Rollback restores an already scanned immutable image and intentionally
+    // skips every build/scan step. The deployment-level Trivy flag remains in
+    // the sealed dispatch inputs, but only a new deploy may be required to
+    // produce operation-scoped scan evidence.
+    const expectedTrivy = action === "deploy"
+      && (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.trivy_enabled === "true";
     const expectedTrivyEnforce = (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.trivy_enforce === "true";
     const securityScan = artifact.securityScan as Record<string, unknown> | undefined;
     if (expectedTrivy && (!securityScan || securityScan.contractVersion !== "deployguard.security-result/v1" || securityScan.deploymentOperationId !== operation.id || securityScan.projectId !== operation.projectId || securityScan.commitSha !== operation.commitSha || !["passed", "advisory", "error"].includes(String(securityScan.status)) || (securityScan.status !== "error" && !/^[0-9a-f]{64}$/.test(String(securityScan.evidenceHash || ""))) || (expectedTrivyEnforce && securityScan.status !== "passed"))) throw new Error("The release result artifact does not contain valid Trivy evidence for the immutable operation.");
