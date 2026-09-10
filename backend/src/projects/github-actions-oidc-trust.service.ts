@@ -46,12 +46,21 @@ export function authorizeGithubRepositoryInTrust(policy: TrustPolicy, repository
 }
 
 export function githubTrustAuthorizesRepository(policy: TrustPolicy, repositoryFullName: string) {
-  const subject = `repo:${repositoryFullName}:*`;
-  return subjects(githubOidcStatement(policy)).some((candidate) => matches(candidate, subject));
+  return githubTrustAuthorizesSubject(policy, `repo:${repositoryFullName}:*`);
+}
+
+export function githubTrustAuthorizesSubject(policy: TrustPolicy, trustSubject: string) {
+  return subjects(githubOidcStatement(policy)).some((candidate) => matches(candidate, trustSubject));
 }
 
 export function githubTrustIncludesSubject(policy: TrustPolicy, trustSubject: string) {
   return subjects(githubOidcStatement(policy)).includes(trustSubject);
+}
+
+export function githubTrustUpdateRequired(policy: TrustPolicy, trustSubject: string, platformManaged: boolean) {
+  if (githubTrustAuthorizesSubject(policy, trustSubject)) return false;
+  if (!platformManaged) throw new Error("GitHub Actions IAM trust is externally managed");
+  return true;
 }
 
 @Injectable()
@@ -82,6 +91,8 @@ export class GithubActionsOidcTrustService {
     try {
       const role = (await client.send(new GetRoleCommand({ RoleName: roleName }))).Role;
       const policy = this.policy(role?.AssumeRolePolicyDocument);
+      const platformManaged = this.config.get<string>("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_MANAGEMENT", "external") === "platform";
+      if (!githubTrustUpdateRequired(policy, trustSubject, platformManaged)) return;
       if (!authorizeGithubRepositoryInTrust(policy, repositoryFullName, trustSubject)) return;
       await client.send(new UpdateAssumeRolePolicyCommand({
         RoleName: roleName,
