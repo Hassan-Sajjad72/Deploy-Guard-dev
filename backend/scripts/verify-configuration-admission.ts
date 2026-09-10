@@ -11,7 +11,7 @@ import { ProjectEnvironmentVariable } from "../src/projects/project-environment-
 import { ProjectDeployableService } from "../src/projects/project-deployable-service.entity";
 import { isSupportedManagedDatabaseEngine, managedDatabaseEngine } from "../src/projects/managed-database-engine";
 import { GithubActionsService } from "../src/projects/pipeline/github-actions.service";
-import { parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
+import { CONTROL_PLANE_EXECUTABLE_PATHS, parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
 import { RAILPACK_WORKFLOW_INPUTS } from "../src/projects/railpack-workflow-contract";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 
@@ -79,10 +79,7 @@ assert.equal(alreadyCurrent.calls.some((call) => call.init?.method === "PUT"), f
 const root = join(__dirname, "..", "..");
 const controlPlaneFiles: Record<string, string> = {
   ".github/workflows/deployguard-reusable.yml": readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8"),
-  "infrastructure/railpack-runtime/build-release-result.sh": readFileSync(join(root, "infrastructure/railpack-runtime/build-release-result.sh"), "utf8"),
-  "infrastructure/railpack-runtime/register-release-task-definitions.sh": readFileSync(join(root, "infrastructure/railpack-runtime/register-release-task-definitions.sh"), "utf8"),
-  "infrastructure/railpack-runtime/verify-runtime.sh": readFileSync(join(root, "infrastructure/railpack-runtime/verify-runtime.sh"), "utf8"),
-  "infrastructure/railpack-runtime/main.tf": readFileSync(join(root, "infrastructure/railpack-runtime/main.tf"), "utf8"),
+  ...Object.fromEntries(Object.values(CONTROL_PLANE_EXECUTABLE_PATHS).map((path) => [path, readFileSync(join(root, path), "utf8")])),
 };
 async function validateControlPlane(overrides: Partial<Record<keyof typeof controlPlaneFiles, string>> = {}) {
   const candidate = Object.create(GithubAppService.prototype) as any;
@@ -97,7 +94,7 @@ async function validateControlPlane(overrides: Partial<Record<keyof typeof contr
   return calls;
 }
 const validControlPlaneCalls = await validateControlPlane();
-assert.equal(validControlPlaneCalls.length, 5, "valid admission verifies the workflow, direct ECS release executable, terminal-evidence executables, and runtime infrastructure at the exact SHA");
+assert.equal(validControlPlaneCalls.length, 1 + Object.keys(CONTROL_PLANE_EXECUTABLE_PATHS).length, "valid admission verifies every pinned workflow executable at the exact SHA");
 await assert.rejects(
   () => validateControlPlane({ "infrastructure/railpack-runtime/build-release-result.sh": controlPlaneFiles["infrastructure/railpack-runtime/build-release-result.sh"].replace("awsRuntimeVerification:$awsRuntimeVerification", "runtimeVerification:$awsRuntimeVerification") }),
   (error: any) => error instanceof ControlPlaneCompatibilityError && error.diagnosticCode === CONTROL_PLANE_VERSION_MISMATCH,
