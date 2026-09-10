@@ -7,6 +7,7 @@ import { assertRailpackRuntimeConfiguration, RailpackRuntimeConfiguration } from
 
 const root = join(__dirname, "..", "..");
 const workflow = readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8");
+const fallbackBuilder = readFileSync(join(root, "infrastructure/docker-fallback/build-images.sh"), "utf8");
 const executableWorkflow = workflow.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
 const migration = readFileSync(join(root, "backend/src/migrations/1787356813000-ProjectDeployableServices.ts"), "utf8");
 const portMigration = readFileSync(join(root, "backend/src/migrations/1787356819000-DeployableServicePort.ts"), "utf8");
@@ -80,10 +81,11 @@ assert.match(source, /resolveServicePortsAtExactSha/);
 assert.match(source, /checkout\.sourceSha\.toLowerCase\(\) !== input\.sourceSha\.toLowerCase\(\)/);
 assert.match(workflow, /fetch-depth: 1/);
 assert.match(workflow, /buildTargetRevisionId/);
-assert.match(workflow, /execution_args\+=\(--build-cmd "\$build_command"\)[\s\S]*execution_args\+=\(--start-cmd "\$start_command"\)/);
-assert.match(workflow, /railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name "\$image" "\$build_root"/);
+assert.match(fallbackBuilder, /execution_args\+=\(--build-cmd "\$build_command"\)[\s\S]*execution_args\+=\(--start-cmd "\$start_command"\)/);
+assert.match(fallbackBuilder, /railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name "\$image" "\$build_root"/);
 assert.match(workflow, /DG_BUILD_TARGET_INVALID/);
 assert.doesNotMatch(executableWorkflow, /sparse-checkout|framework|package-manager|install-command|start-command/i);
+assert.doesNotMatch(fallbackBuilder, /sparse-checkout|framework|package-manager|install-command|start-command/i);
 assert.deepEqual(workspacePackage.workspaces, ["apps/*", "packages/*"]);
 assert.equal(workspacePackage.scripts.start, "npm --workspace @deployguard-fixture/web run start", "the shared-workspace fixture uses repository-owned targeting rather than DeployGuard-generated commands");
 console.log("DEPLOYABLE_SERVICES=PASS SERVICE_AUTHORITY=USER_SELECTED BUILD_SCOPE_AUTHORITY=EXACT_SHA_CANONICAL PORT_AUTHORITY=AUTOMATIC");

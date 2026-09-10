@@ -27,7 +27,7 @@ export type RailpackWorkflowInputs = Record<RailpackWorkflowInputName, string>;
 export const RAILPACK_CALLER_INPUT_NAMES = RAILPACK_WORKFLOW_INPUTS.map(({ name }) => name);
 export const RAILPACK_OPTIONAL_CALLER_INPUT_NAMES = [] as const;
 
-export type RailpackServiceRuntimeConfiguration = { serviceId: string; serviceName: string; serviceDirectory: string; servicePort: number; runtimeConfigRevisionId: string; buildTargetRevisionId?: string; buildTarget?: CanonicalBuildTarget; buildEnvironment: Record<string, string>; railpackBuildCapabilityFingerprint?: string; buildSecretReferences: Record<string, string>; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; urlScheme?: string | null; secretVersionId?: string | null }; rollbackImage?: string; rollbackTaskDefinitionArn?: string };
+export type RailpackServiceRuntimeConfiguration = { serviceId: string; serviceName: string; serviceDirectory: string; servicePort: number; runtimeConfigRevisionId: string; runtimeConfigFingerprint?: string; buildTargetRevisionId?: string; buildTarget?: CanonicalBuildTarget; buildEnvironment: Record<string, string>; railpackBuildCapabilityFingerprint?: string; buildSecretReferences: Record<string, string>; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; urlScheme?: string | null; secretVersionId?: string | null }; rollbackImage?: string; rollbackTaskDefinitionArn?: string };
 export type RailpackRuntimeConfiguration = { schemaVersion: 3; projectId: string; environmentName: string; operationId: string; sourceSha: string; services: RailpackServiceRuntimeConfiguration[]; projectDeletion?: { generationIds: string[] } };
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -58,6 +58,7 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     if (!Number.isInteger(service.servicePort) || service.servicePort < 1 || service.servicePort > 65535) throw new Error("Railpack service port is invalid.");
     if (normalizeServiceDirectory(service.serviceDirectory) !== service.serviceDirectory) throw new Error("Railpack service directory is not canonical.");
     if (service.buildTargetRevisionId && !UUID.test(service.buildTargetRevisionId)) throw new Error("Railpack build target is invalid.");
+    if (service.runtimeConfigFingerprint !== undefined && !/^[0-9a-f]{64}$/.test(service.runtimeConfigFingerprint)) throw new Error("Railpack runtime configuration fingerprint is invalid.");
     if (service.buildTarget) {
       const target = service.buildTarget;
       const execution = target.execution;

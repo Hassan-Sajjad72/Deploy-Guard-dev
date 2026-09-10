@@ -223,7 +223,11 @@ export class GithubAppService {
       const releaseOnlyTaskDefinitions = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.releaseOnlyTaskDefinitions);
       const runtimeVerifier = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.runtimeVerifier);
       const runtimeInfrastructure = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.runtimeInfrastructure);
-      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier, runtimeInfrastructure });
+      const fallbackBuilder = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.fallbackBuilder);
+      const fallbackContract = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.fallbackContract);
+      const fallbackTemplate = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.fallbackTemplate);
+      const fallbackManifest = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.fallbackManifest);
+      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier, runtimeInfrastructure, fallbackBuilder, fallbackContract, fallbackTemplate, fallbackManifest });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
       const message = error instanceof GithubActionsWorkflowContractError

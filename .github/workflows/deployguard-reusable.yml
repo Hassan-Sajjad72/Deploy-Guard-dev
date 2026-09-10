@@ -81,7 +81,7 @@ jobs:
             and (.services | type == "array" and length > 0 and length <= 20)
             and ([.services[].serviceId] | length == (unique | length))
             and ([.services[].serviceName | ascii_downcase] | length == (unique | length))
-            and ([.services[] | select((.serviceId | type) != "string" or (.serviceId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not) or (.runtimeConfigRevisionId | type) != "string" or (.runtimeConfigRevisionId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not))] | length == 0)
+            and ([.services[] | select((.serviceId | type) != "string" or (.serviceId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not) or (.runtimeConfigRevisionId | type) != "string" or (.runtimeConfigRevisionId | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$") | not) or ($action == "deploy" and ((.runtimeConfigFingerprint | type) != "string" or (.runtimeConfigFingerprint | test("^[0-9a-f]{64}$") | not))))] | length == 0)
             and ([.services[] | select((.servicePort | type) != "number" or (.servicePort | floor) != .servicePort or .servicePort < 1 or .servicePort > 65535)] | length == 0)
             and ([.services[] | select((.serviceName | type) != "string" or (.serviceName | length) == 0 or (.serviceName | length) > 80 or .serviceName != (.serviceName | gsub("^\\s+|\\s+$"; "")))] | length == 0)
             and ([.services[] | select((.serviceDirectory | type) != "string" or .serviceDirectory == "" or (.serviceDirectory | startswith("/")) or (.serviceDirectory | test("(^|/)\\.\\.(/|$)")))] | length == 0)
@@ -128,53 +128,24 @@ jobs:
           tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
           curl --fail --location --retry 3 --proto '=https' --tlsv1.2 'https://github.com/railwayapp/railpack/releases/download/v0.38.0/railpack-v0.38.0-x86_64-unknown-linux-musl.tar.gz' -o "$tmpdir/railpack.tgz"
           printf '%s  %s\n' '7c3f0e70ca8bf80bde87e8c30cb0171414c2b6bbd794d6f60a19cc3b71772950' "$tmpdir/railpack.tgz" | sha256sum --check --status
-          tar -xzf "$tmpdir/railpack.tgz" -C "$tmpdir"; install -m 0755 "$tmpdir/railpack" /usr/local/bin/railpack; railpack --version
+          tar -xzf "$tmpdir/railpack.tgz" -C "$tmpdir"; install -m 0755 "$tmpdir/railpack" /usr/local/bin/railpack
+          installed_version="$(railpack --version)"; grep -Eq '(^|[^0-9])0\.38\.0([^0-9]|$)' <<<"$installed_version" || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build message=version_mismatch' >&2; exit 1; }
+          mkdir -p .deployguard; jq -cn --arg version 0.38.0 --arg archiveSha256 7c3f0e70ca8bf80bde87e8c30cb0171414c2b6bbd794d6f60a19cc3b71772950 '{version:$version,archiveSha256:$archiveSha256,checksumVerified:true}' > .deployguard/railpack-install.json
+          printf '%s\n' "$installed_version"
+      - name: Checkout immutable DeployGuard builder contracts
+        if: success() && inputs.deployment_action == 'deploy'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: Hassan-Sajjad72/Deploy-Guard-dev
+          ref: "${{ inputs.control_plane_sha }}"
+          path: .deployguard/control-plane
+          fetch-depth: 1
       - name: Build immutable Railpack images
         if: success() && inputs.deployment_action == 'deploy'
         id: build
         shell: bash
         run: |
-          set -euo pipefail
-          account="$(aws sts get-caller-identity --query Account --output text)"; registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          docker version --format '{{.Server.Version}}' >/dev/null || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build' >&2; exit 1; }
-          docker run --rm --privileged --detach --name "$BUILDKIT_CONTAINER" "$BUILDKIT_IMAGE" >/dev/null || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build' >&2; exit 1; }
-          for attempt in {1..30}; do docker exec "$BUILDKIT_CONTAINER" buildctl debug workers >/dev/null 2>&1 && break; [ "$attempt" -lt 30 ] || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build' >&2; exit 1; }; sleep 1; done
-          printf '[]' > .deployguard/build-artifacts.json
-          while IFS= read -r service; do
-            service_id="$(jq -r '.serviceId' <<<"$service")"; service_name="$(jq -r '.serviceName' <<<"$service")"; directory="$(jq -r '.serviceDirectory' <<<"$service")"; build_root="$(jq -r '.buildTarget.buildRoot' <<<"$service")"; package_target="$(jq -r '.buildTarget.execution.packageTarget // empty' <<<"$service")"; build_command="$(jq -r '.buildTarget.execution.buildCommand // empty' <<<"$service")"; start_command="$(jq -r '.buildTarget.execution.startCommand // empty' <<<"$service")"
-            compact_project="${PROJECT_ID//-/}"; compact_operation="${OPERATION_ID//-/}"; compact_service="${service_id//-/}"
-            repository="deployguard-${compact_project:0:12}-${compact_service:0:8}"; tag="sha-${SOURCE_SHA:0:10}-${compact_operation:0:8}-${compact_service:0:8}"; image="${registry}/${repository}:${tag}"
-            echo "DG_SERVICE_STAGE serviceId=$service_id stage=railpack_build buildRoot=$build_root serviceDirectory=$directory packageTarget=$package_target"
-            sealed_capabilities="$(jq -S -c '.buildEnvironment | with_entries(. as $entry | select(["RAILPACK_BUILD_APT_PACKAGES","RAILPACK_DEPLOY_APT_PACKAGES","RAILPACK_PACKAGES","RAILPACK_PYTHON_VERSION","RAILPACK_NODE_VERSION"] | index($entry.key)))' <<<"$service")"
-            sealed_capability_fingerprint="$(jq -r '.railpackBuildCapabilityFingerprint // empty' <<<"$service")"
-            if [ -n "$sealed_capability_fingerprint" ]; then
-              calculated_capability_fingerprint="$(printf '%s' "$sealed_capabilities" | sha256sum | cut -d' ' -f1)"
-              [ "$calculated_capability_fingerprint" = "$sealed_capability_fingerprint" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_CAPABILITY_FORWARDING_FAILED stage=railpack_build message=sealed_capability_fingerprint_mismatch" >&2; exit 1; }
-            fi
-            build_env_args=(); build_env_names=()
-            while IFS= read -r entry; do
-              key="$(base64 --decode <<<"$entry" | jq -r '.key')"; value="$(base64 --decode <<<"$entry" | jq -r '.value')"
-              printf -v "$key" '%s' "$value"; export "${key?}"; build_env_names+=("$key"); build_env_args+=(--env "$key")
-            done < <(jq -r '.buildEnvironment | to_entries[] | @base64' <<<"$service")
-            while IFS= read -r entry; do
-              key="$(base64 --decode <<<"$entry" | jq -r '.key')"; reference="$(base64 --decode <<<"$entry" | jq -r '.value')"
-              secret_id="$(cut -d: -f1-7 <<<"$reference")"; version_id="${reference##*:}"
-              value="$(aws secretsmanager get-secret-value --secret-id "$secret_id" --version-id "$version_id" --query SecretString --output text | jq -er --arg key "$key" '.[$key] | select(type == "string")')"
-              printf -v "$key" '%s' "$value"; export "${key?}"; build_env_names+=("$key"); build_env_args+=(--env "$key")
-            done < <(jq -r '.buildSecretReferences | to_entries[] | @base64' <<<"$service")
-            while IFS= read -r entry; do
-              key="$(base64 --decode <<<"$entry" | jq -r '.key')"; value="$(base64 --decode <<<"$entry" | jq -r '.value')"
-              [ "${!key+x}" = x ] && [ "${!key}" = "$value" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_CAPABILITY_FORWARDING_FAILED stage=railpack_build message=sealed_capability_not_forwarded" >&2; exit 1; }
-            done < <(jq -r '.buildEnvironment | to_entries[] | . as $entry | select(["RAILPACK_BUILD_APT_PACKAGES","RAILPACK_DEPLOY_APT_PACKAGES","RAILPACK_PACKAGES","RAILPACK_PYTHON_VERSION","RAILPACK_NODE_VERSION"] | index($entry.key)) | @base64' <<<"$service")
-            execution_args=(); if [ -n "$build_command" ]; then execution_args+=(--build-cmd "$build_command"); [ -z "$start_command" ] || execution_args+=(--start-cmd "$start_command"); elif [ -n "$start_command" ]; then echo "DG_FAILURE serviceId=$service_id code=DG_WORKFLOW_CONTRACT_INVALID stage=build_target_execution" >&2; exit 1; fi
-            BUILDKIT_HOST="docker-container://${BUILDKIT_CONTAINER}" railpack build "${build_env_args[@]}" "${execution_args[@]}" --name "$image" "$build_root" || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_BUILD_FAILED stage=railpack_build" >&2; exit 1; }
-            for key in "${build_env_names[@]}"; do unset "$key"; done
-            runtime_config_revision_id="$(jq -r '.runtimeConfigRevisionId' <<<"$service")"; service_port="$(jq -r '.servicePort' <<<"$service")"
-            image_id="$(docker image inspect --format '{{.Id}}' "$image")"; [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "DG_FAILURE serviceId=$service_id code=DG_RAILPACK_BUILD_FAILED stage=railpack_build" >&2; exit 1; }
-            jq --arg id "$service_id" --arg name "$service_name" --arg directory "$directory" --arg buildRoot "$build_root" --argjson servicePort "$service_port" --arg runtimeConfigRevisionId "$runtime_config_revision_id" --arg image "$image" --arg imageId "$image_id" --arg repository "$repository" --arg registry "$registry" '. + [{serviceId:$id,serviceName:$name,serviceDirectory:$directory,buildRoot:$buildRoot,servicePort:$servicePort,runtimeConfigRevisionId:$runtimeConfigRevisionId,localImage:$image,localImageId:$imageId,repository:$repository,registry:$registry}]' .deployguard/build-artifacts.json > .deployguard/build-artifacts.next
-            mv .deployguard/build-artifacts.next .deployguard/build-artifacts.json
-          done < <(jq -c '.services[]' .deployguard/runtime.json)
-          echo 'built=true' >> "$GITHUB_OUTPUT"
+          bash .deployguard/control-plane/infrastructure/docker-fallback/build-images.sh .deployguard/control-plane/infrastructure/docker-fallback
       - name: Validate Application Runtime
         if: success() && inputs.deployment_action == 'deploy' && steps.build.outputs.built == 'true'
         shell: bash
@@ -326,8 +297,10 @@ jobs:
             jq -cn --arg status "$status" --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg commit "$SOURCE_SHA" --arg hash "$hash" --argjson enforce "$TRIVY_ENFORCE" --argjson counts "$counts" --argjson blocking "$blocking" --argjson evidence "$evidence" '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:$operation,projectId:$project,commitSha:$commit,scanner:"trivy",enforced:$enforce,counts:$counts,blockingFindingCount:$blocking,evidence:$evidence,evidenceHash:$hash,hashAlgorithm:"deployguard.security-evidence-sha256/v1",policy:{rule:"fixable Critical application dependencies"}}' > "$result"
           fi
           if [ "$TRIVY_ENFORCE" = true ] && { [ "$scan_error" = true ] || [ "$(jq -r '.status' "$result")" = blocked ]; }; then
-            jq -cn --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --slurpfile security "$result" '{contractVersion:"deployguard.release-failure/v1",action:$action,sourceSha:$sourceSha,operationId:$operationId,failedStage:"trivy_scan",securityScan:$security[0]}' > terraform/deployguard-failure-evidence.json
-            echo 'DG_FAILURE code=DG_TRIVY_POLICY_BLOCKED stage=trivy_scan' >&2
+            if [ "$scan_error" = true ]; then failure_code=DG_TRIVY_SCAN_FAILED; failure_summary="DeployGuard could not complete the required Trivy scan."; else failure_code=DG_TRIVY_POLICY_BLOCKED; failure_summary="Deployment blocked by Trivy security policy."; fi
+            failure_service_id="$(jq -r '.evidence[0].serviceId // empty' "$result")"
+            jq -cn --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg serviceId "$failure_service_id" --arg code "$failure_code" --arg summary "$failure_summary" --slurpfile security "$result" '{contractVersion:"deployguard.release-failure/v1",action:$action,sourceSha:$sourceSha,operationId:$operationId,failedStage:"trivy_scan",securityScan:$security[0],failureEvent:{contractVersion:"deployguard.failure-event/v1",operationId:$operationId,projectId:$projectId,sourceSha:$sourceSha,serviceId:(if $serviceId=="" then null else $serviceId end),code:$code,stage:"trivy_scan",summary:$summary,safeEvidence:($security[0]|{status,counts,blockingFindingCount,evidenceHash}|tojson)}}' > terraform/deployguard-failure-evidence.json
+            echo "DG_FAILURE${failure_service_id:+ serviceId=$failure_service_id} code=$failure_code stage=trivy_scan" >&2
             exit 1
           fi
       - name: Select immutable rollback service images
@@ -462,6 +435,15 @@ jobs:
           ' .deployguard/aws-runtime-verification.json >/dev/null
           mkdir -p terraform
           jq -n --arg contractVersion deployguard.release-failure/v1 --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --slurpfile verification .deployguard/aws-runtime-verification.json '{contractVersion:$contractVersion,action:$action,sourceSha:$sourceSha,operationId:$operationId,failedStage:"aws_runtime_verification",awsRuntimeVerification:$verification[0]}' > terraform/deployguard-failure-evidence.json
+          [ "$(wc -c < terraform/deployguard-failure-evidence.json)" -le 524288 ]
+      - name: Preserve authoritative deployment failure evidence
+        if: failure() && hashFiles('.deployguard/terminal-failure.json') != '' && hashFiles('terraform/deployguard-failure-evidence.json') == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e --arg operationId "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg sourceSha "$SOURCE_SHA" '.contractVersion=="deployguard.failure-event/v1" and .operationId==$operationId and .projectId==$projectId and .sourceSha==$sourceSha and (.code|test("^DG_[A-Z0-9_]+$")) and (.stage|test("^[a-z0-9_]+$")) and ((.serviceId==null) or (.serviceId|test("^[0-9a-fA-F-]{36}$"))) and (.safeEvidence|type=="string" and length<=12000)' .deployguard/terminal-failure.json >/dev/null
+          mkdir -p terraform
+          jq -n --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --slurpfile failure .deployguard/terminal-failure.json '{contractVersion:"deployguard.release-failure/v1",action:$action,sourceSha:$sourceSha,operationId:$operationId,failedStage:$failure[0].stage,failureEvent:$failure[0]}' > terraform/deployguard-failure-evidence.json
           [ "$(wc -c < terraform/deployguard-failure-evidence.json)" -le 524288 ]
       - name: Publish terminal verification failure evidence
         if: failure() && hashFiles('terraform/deployguard-failure-evidence.json') != ''

@@ -133,6 +133,7 @@ export type GithubActionsTerminalFailureEvidence = {
   rawEvidence: string;
   workflowStages: GithubActionsWorkflowStage[];
   securityScan?: Record<string, unknown> | null;
+  failureEvent?: Record<string, unknown> | null;
 };
 
 @Injectable()
@@ -419,12 +420,14 @@ export class GithubActionsService {
     let persistedFailure: string | null = null;
     let persistedMarkers: string[] = [];
     let securityScan: Record<string, unknown> | null = null;
+    let failureEvent: Record<string, unknown> | null = null;
     try {
       const raw = await this.getArtifactEntry(repository, workflowRunId, operationId, token, DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, 512 * 1024);
       if (raw) {
         const artifact = JSON.parse(raw) as Record<string, unknown>;
         const verification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
         const security = artifact.securityScan as Record<string, unknown> | null;
+        const structuredFailure = artifact.failureEvent as Record<string, unknown> | null;
         const services = Array.isArray(verification?.services) ? verification.services as Array<Record<string, unknown>> : [];
         if (artifact.contractVersion === "deployguard.release-failure/v1"
           && artifact.operationId === operationId
@@ -439,8 +442,25 @@ export class GithubActionsService {
           && security?.contractVersion === "deployguard.security-result/v1" && security.deploymentOperationId === operationId
           && ["blocked", "error"].includes(String(security.status))) {
           securityScan = security;
+          if (structuredFailure?.contractVersion === "deployguard.failure-event/v1" && structuredFailure.operationId === operationId
+            && ["DG_TRIVY_POLICY_BLOCKED", "DG_TRIVY_SCAN_FAILED"].includes(String(structuredFailure.code))
+            && structuredFailure.stage === "trivy_scan" && structuredFailure.sourceSha === artifact.sourceSha
+            && structuredFailure.projectId === security.projectId) failureEvent = structuredFailure;
           persistedFailure = JSON.stringify(artifact).slice(-8_000);
-          persistedMarkers = ["DG_FAILURE code=DG_TRIVY_POLICY_BLOCKED stage=trivy_scan"];
+          persistedMarkers = [`DG_FAILURE${failureEvent?.serviceId ? ` serviceId=${failureEvent.serviceId}` : ""} code=${String(failureEvent?.code || (security.status === "blocked" ? "DG_TRIVY_POLICY_BLOCKED" : "DG_TRIVY_SCAN_FAILED"))} stage=trivy_scan`];
+        } else if (artifact.contractVersion === "deployguard.release-failure/v1"
+          && artifact.operationId === operationId && artifact.action === action
+          && structuredFailure?.contractVersion === "deployguard.failure-event/v1"
+          && structuredFailure.operationId === operationId
+          && structuredFailure.sourceSha === artifact.sourceSha
+          && typeof structuredFailure.projectId === "string" && /^[0-9a-f-]{36}$/i.test(structuredFailure.projectId)
+          && typeof structuredFailure.code === "string" && /^DG_[A-Z0-9_]+$/.test(structuredFailure.code)
+          && typeof structuredFailure.stage === "string" && /^[a-z0-9_]+$/.test(structuredFailure.stage)
+          && (structuredFailure.serviceId == null || (typeof structuredFailure.serviceId === "string" && /^[0-9a-f-]{36}$/i.test(structuredFailure.serviceId)))
+          && typeof structuredFailure.safeEvidence === "string" && structuredFailure.safeEvidence.length <= 12_000) {
+          failureEvent = structuredFailure;
+          persistedFailure = JSON.stringify(artifact).slice(-8_000);
+          persistedMarkers = [`DG_FAILURE${structuredFailure.serviceId ? ` serviceId=${structuredFailure.serviceId}` : ""} code=${structuredFailure.code} stage=${structuredFailure.stage}`];
         }
       }
     } catch {
@@ -470,7 +490,7 @@ export class GithubActionsService {
       }
     }
     summary.push(...persistedMarkers);
-    return { failedStage, rawEvidence: summary.join("\n").slice(-16_000), workflowStages, securityScan };
+    return { failedStage: typeof failureEvent?.stage === "string" ? failureEvent.stage : failedStage, rawEvidence: summary.join("\n").slice(-16_000), workflowStages, securityScan, failureEvent };
   }
 
   async getResultArtifact(repository: string, workflowRunId: string, operationId: string, token: string) {

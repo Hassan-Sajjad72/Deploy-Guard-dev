@@ -16,6 +16,9 @@ const workflow = readFileSync(join(__dirname, "../../.github/workflows/deploygua
 assert.match(workflow, /inputs\.trivy_enabled == 'true'/);
 assert.match(workflow, /status:\"advisory\"|echo advisory/);
 assert.match(workflow, /DG_TRIVY_POLICY_BLOCKED/);
+assert.match(workflow, /DG_TRIVY_SCAN_FAILED/);
+assert.match(workflow, /Deployment blocked by Trivy security policy\./);
 assert.match(workflow, /deployguard\.security-result\/v1/);
 assert.match(workflow, /securityScan:\$security\[0\]/);
+assert.match(workflow, /failureEvent:\{contractVersion:"deployguard\.failure-event\/v1"/);
 console.log("Trivy control certification passed: disabled, advisory, enforced, immutable evidence, and workflow forwarding paths are present.");

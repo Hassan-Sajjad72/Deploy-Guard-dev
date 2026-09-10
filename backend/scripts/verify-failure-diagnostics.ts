@@ -213,6 +213,13 @@ const structuredCases: Array<[string, string, DeploymentFailureDiagnosticInput["
   ["DG_RAILPACK_CAPABILITY_INVALID", "railpack_capability_admission", "REPOSITORY_APPLICATION", null, "DG_RAILPACK_CAPABILITY_INVALID"],
   ["DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED", "railpack_capability_admission", "REPOSITORY_APPLICATION", null, "DG_RAILPACK_EXECUTION_OVERRIDE_REJECTED"],
   ["DG_RAILPACK_CAPABILITY_FORWARDING_FAILED", "railpack_build", "DEPLOYGUARD_PLATFORM", null, "DG_RAILPACK_CAPABILITY_FORWARDING_FAILED"],
+  ["DG_TRIVY_POLICY_BLOCKED", "trivy_scan", "REPOSITORY_APPLICATION", null, "DG_TRIVY_POLICY_BLOCKED"],
+  ["DG_TRIVY_SCAN_FAILED", "trivy_scan", "DEPLOYGUARD_PLATFORM", null, "DG_TRIVY_SCAN_FAILED"],
+  ["DG_RAILPACK_INTERNAL_FAILURE", "railpack_build", "EXTERNAL_PROVIDER", "railpack", "DG_RAILPACK_INTERNAL_FAILURE"],
+  ["DG_DOCKER_FALLBACK_UNSUPPORTED", "docker_fallback_selection", "DEPLOYGUARD_PLATFORM", null, "DG_DOCKER_FALLBACK_UNSUPPORTED"],
+  ["DG_DOCKER_FALLBACK_CONTRACT_INVALID", "docker_fallback_selection", "DEPLOYGUARD_PLATFORM", null, "DG_DOCKER_FALLBACK_CONTRACT_INVALID"],
+  ["DG_DOCKER_FALLBACK_TEMPLATE_INTEGRITY_FAILED", "docker_fallback_selection", "DEPLOYGUARD_PLATFORM", null, "DG_DOCKER_FALLBACK_TEMPLATE_INTEGRITY_FAILED"],
+  ["DG_DOCKER_FALLBACK_ALREADY_ATTEMPTED", "docker_fallback_selection", "DEPLOYGUARD_PLATFORM", null, "DG_DOCKER_FALLBACK_ALREADY_ATTEMPTED"],
   ["DG_GITHUB_PROVIDER_FAILED", "workflow_dispatch", "EXTERNAL_PROVIDER", "github", "DG_GITHUB_PROVIDER_OPERATION_FAILED"],
   ["DG_AWS_PROVIDER_FAILED", "aws_provider", "EXTERNAL_PROVIDER", "aws", "DG_AWS_PROVIDER_FAILED"],
   ["DG_TERRAFORM_VALIDATE_FAILED", "terraform_validate", "DEPLOYGUARD_PLATFORM", null, "DG_TERRAFORM_VALIDATE_FAILED"],
@@ -306,6 +313,10 @@ assert.equal(unknown.confidence, "UNVERIFIED");
 assert.ok(unknown.evidenceReferences[0].excerpt.length > 0);
 const unknownRuntime = diagnose("container stopped for an unknown reason", { failureStage: "application_runtime", terminalFailureCode: "DG_FAILURE_UNVERIFIED" });
 assert.equal(unknownRuntime.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED");
+const unknownFallback = diagnose("certified Docker build returned a non-zero result", { failureStage: "docker_fallback_build", terminalFailureCode: "DG_DOCKER_FALLBACK_BUILD_FAILED" });
+assert.equal(unknownFallback.rootCauseCode, "DG_DOCKER_FALLBACK_BUILD_FAILED");
+assert.equal(unknownFallback.failureOwner, "UNVERIFIED");
+assert.equal(unknownFallback.retryDecision, "INSUFFICIENT_EVIDENCE");
 
 const historicalMetadata: Record<string, unknown> = {
   executionEngine: "railpack",

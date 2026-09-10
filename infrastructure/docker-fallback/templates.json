@@ -1,0 +1,15 @@
+{
+  "contractVersion": "deployguard.docker-fallback/v1",
+  "templates": [
+    {
+      "id": "node22-npm-workspace",
+      "version": "1.0.0",
+      "path": "node22-npm-workspace.Dockerfile",
+      "sha256": "04872857e43a18e2e083a71f739e1cd5f9b7c2463cd50516832c05558686b4d6",
+      "contract": "JS_WORKSPACE_MEMBER",
+      "packageManager": "npm",
+      "runtimeVersion": "22.14.0",
+      "supportedCapabilities": ["RAILPACK_NODE_VERSION"]
+    }
+  ]
+}

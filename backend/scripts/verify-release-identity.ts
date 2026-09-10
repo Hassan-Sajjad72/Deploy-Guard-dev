@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { ConfigService } from "@nestjs/config";
 import { canonicalDeployguardReusableWorkflow, renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
-import { assertReusableWorkflowCompatibility, generatedCallerWithKeys, parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
+import { assertReusableWorkflowCompatibility, CONTROL_PLANE_EXECUTABLE_PATHS, generatedCallerWithKeys, parsePinnedReusableWorkflow } from "../src/projects/github-actions-workflow-contract";
 
 const repositoryRoot = join(__dirname, "..", "..");
 const localRuntimeEnvironment = join(__dirname, "../.env");
@@ -21,10 +21,7 @@ assert.match(renderDeployguardCallerWorkflow(release), new RegExp(`uses: ${relea
 assert.equal(configured, release, "active backend runtime configuration must use the exact immutable workflow reference under certification");
 const controlPlanePaths = [
   ".github/workflows/deployguard-reusable.yml",
-  "infrastructure/railpack-runtime/build-release-result.sh",
-  "infrastructure/railpack-runtime/register-release-task-definitions.sh",
-  "infrastructure/railpack-runtime/verify-runtime.sh",
-  "infrastructure/railpack-runtime/main.tf",
+  ...Object.values(CONTROL_PLANE_EXECUTABLE_PATHS),
 ] as const;
 const atConfiguredRelease = Object.fromEntries(controlPlanePaths.map((path) => {
   const result = spawnSync("git", ["show", `${canonicalSha}:${path}`], { cwd: repositoryRoot, encoding: "utf8" });
@@ -42,6 +39,10 @@ const certification = assertReusableWorkflowCompatibility(
     releaseOnlyTaskDefinitions: atConfiguredRelease["infrastructure/railpack-runtime/register-release-task-definitions.sh"],
     runtimeVerifier: atConfiguredRelease["infrastructure/railpack-runtime/verify-runtime.sh"],
     runtimeInfrastructure: atConfiguredRelease["infrastructure/railpack-runtime/main.tf"],
+    fallbackBuilder: atConfiguredRelease["infrastructure/docker-fallback/build-images.sh"],
+    fallbackContract: atConfiguredRelease["infrastructure/docker-fallback/fallback-contract.mjs"],
+    fallbackTemplate: atConfiguredRelease["infrastructure/docker-fallback/node22-npm-workspace.Dockerfile"],
+    fallbackManifest: atConfiguredRelease["infrastructure/docker-fallback/templates.json"],
   },
 );
 assert.equal(certification.sha, canonicalSha);
@@ -54,4 +55,4 @@ const admin = readFileSync(join(__dirname, "../src/admin/admin.controller.ts"), 
 assert.match(admin, /releaseIdentity: "exact_immutable"/);
 assert.match(admin, /remoteWorkflowCompatibility: "not_checked"/);
 assert.match(admin, /does not imply that GitHub has remotely[\s\S]*Dispatch performs that live check/);
-console.log(`RELEASE_IDENTITY=PASS CANONICAL_SHA=${canonicalSha} EXACT_EXECUTABLE_BYTES=5 ACTIVE_OLD_SHA=0 IMMUTABLE_PIN_REQUIRED=1`);
+console.log(`RELEASE_IDENTITY=PASS CANONICAL_SHA=${canonicalSha} EXACT_EXECUTABLE_BYTES=${controlPlanePaths.length} ACTIVE_OLD_SHA=0 IMMUTABLE_PIN_REQUIRED=1`);

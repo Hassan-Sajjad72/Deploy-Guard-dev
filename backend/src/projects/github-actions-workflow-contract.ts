@@ -11,13 +11,21 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   releaseOnlyTaskDefinitions: "infrastructure/railpack-runtime/register-release-task-definitions.sh",
   runtimeVerifier: "infrastructure/railpack-runtime/verify-runtime.sh",
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
+  fallbackBuilder: "infrastructure/docker-fallback/build-images.sh",
+  fallbackContract: "infrastructure/docker-fallback/fallback-contract.mjs",
+  fallbackTemplate: "infrastructure/docker-fallback/node22-npm-workspace.Dockerfile",
+  fallbackManifest: "infrastructure/docker-fallback/templates.json",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "64b7a37d1e902bf5dd5837f373218a42242140e63faba83cac7d0a9007694cea",
-  releaseResultProducer: "e8fbc1d858f5bd5742e20ae761f769f6e028e87723432d00a889c1b8274460ab",
+  workflow: "73fd6267f682554a31a3454558b90065c2d3a0e884c000a8528c3c2f2ea9f016",
+  releaseResultProducer: "b0a19dd5cba4144dc460a99981ada034fef12d2ac1c1a5a2b1bdbe3f415af7ea",
   releaseOnlyTaskDefinitions: "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
   runtimeVerifier: "adcd8c5f5b9eb535a53ee868d894caccc67b415f92d89eafb46b0a7d51843c90",
   runtimeInfrastructure: "a57d0142ff63eed47399aad6a3f6f8bf5dd4f8bd7ade731bac98c9c0d7cf955a",
+  fallbackBuilder: "b4974d375b0db2215552d1dc69b887da83a622b9ecc89610fd81e7c4d5f8497e",
+  fallbackContract: "d23b986804cfddc24a2b651535dde0dad2f2ef92d008045d2db13c462536aafd",
+  fallbackTemplate: "04872857e43a18e2e083a71f739e1cd5f9b7c2463cd50516832c05558686b4d6",
+  fallbackManifest: "3446d4cbd87b97041ae0ea6fd623a993f3eeb20ae3b8d503e22c6f6c83e89340",
 } as const;
 
 export type ReusableWorkflowExecutableContract = {
@@ -25,6 +33,10 @@ export type ReusableWorkflowExecutableContract = {
   releaseOnlyTaskDefinitions: string;
   runtimeVerifier: string;
   runtimeInfrastructure: string;
+  fallbackBuilder: string;
+  fallbackContract: string;
+  fallbackTemplate: string;
+  fallbackManifest: string;
 };
 
 export type PinnedReusableWorkflow = {
@@ -87,6 +99,13 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.releaseResultProducer.includes(".servicePort == $release.terraform.services[.serviceId].service_port")
     || !executable.releaseResultProducer.includes("DG_WORKFLOW_CONTRACT_INVALID stage=release_evidence_validation")) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the required terminal evidence producer.`);
+  }
+  if (!workflow.includes("Checkout immutable DeployGuard builder contracts") || !workflow.includes("infrastructure/docker-fallback/build-images.sh")
+    || !executable.fallbackBuilder.includes("DG_DOCKER_FALLBACK_BUILD_FAILED") || !executable.fallbackBuilder.includes("--secret \"id=deployguard_build_secrets")
+    || !executable.fallbackContract.includes("pinned_railpack_go_panic") || !executable.fallbackContract.includes("no_exact_certified_contract")
+    || !executable.fallbackTemplate.includes("USER node") || !executable.fallbackTemplate.includes("@sha256:")
+    || !executable.fallbackManifest.includes("deployguard.docker-fallback/v1")) {
+    throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement the certified fail-closed Docker fallback boundary.`);
   }
   if (!workflow.includes("register-release-task-definitions.sh")
     || !workflow.includes('if [ "$RELEASE_ONLY" = true ]; then')
@@ -154,6 +173,10 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     releaseOnlyTaskDefinitions: sha256(executable.releaseOnlyTaskDefinitions),
     runtimeVerifier: sha256(executable.runtimeVerifier),
     runtimeInfrastructure: sha256(executable.runtimeInfrastructure),
+    fallbackBuilder: sha256(executable.fallbackBuilder),
+    fallbackContract: sha256(executable.fallbackContract),
+    fallbackTemplate: sha256(executable.fallbackTemplate),
+    fallbackManifest: sha256(executable.fallbackManifest),
   };
   for (const [name, expected] of Object.entries(CONTROL_PLANE_EXECUTABLE_SHA256)) {
     if (executableHashes[name as keyof typeof executableHashes] !== expected) {

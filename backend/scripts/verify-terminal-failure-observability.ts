@@ -23,6 +23,16 @@ for (const [name, pattern] of routes) assert.match(source, pattern, `${name} mus
 
 const appModule = readFileSync(resolve(__dirname, "../src/app.module.ts"), "utf8");
 assert.doesNotMatch(appModule, /InfrastructureLifecycleModule/, "retired infrastructure mutation providers must remain outside the supported product graph");
+const githubActions = readFileSync(resolve(__dirname, "../src/projects/pipeline/github-actions.service.ts"), "utf8");
+const currentState = readFileSync(resolve(__dirname, "../src/projects/current-state/project-current-state.service.ts"), "utf8");
+const aiEvidence = readFileSync(resolve(__dirname, "../src/ai-troubleshooting/ai-evidence.service.ts"), "utf8");
+const catalog = readFileSync(resolve(__dirname, "../src/projects/failure-diagnostics/failure-contract.catalog.ts"), "utf8");
+assert.match(githubActions, /deployguard\.failure-event\/v1[\s\S]*persistedMarkers/, "structured workflow failure artifacts feed the central terminal intake");
+assert.match(githubActions, /structuredFailure\.sourceSha === artifact\.sourceSha/, "structured workflow failures remain bound to the immutable source identity");
+assert.match(githubActions, /structuredFailure\.projectId === security\.projectId/, "Trivy failures remain bound to the security artifact project identity");
+assert.match(currentState, /diagnosis:\s*currentDiagnosis/, "monitoring/current-state projection consumes the central persisted diagnosis");
+assert.match(aiEvidence, /deployguard_build_identity[\s\S]*buildIdentity[\s\S]*builderFailure/, "AI evidence receives bounded service build identity and builder metadata");
+assert.match(catalog, /DG_TRIVY_POLICY_BLOCKED[\s\S]*Deployment blocked by Trivy security policy\./, "Trivy policy block has one canonical user-facing diagnosis");
 
 console.log("TERMINAL_FAILURE_PATHS_INVENTORIED=5");
 console.log("UNROUTED_TERMINAL_FAILURE_PATHS=0");
