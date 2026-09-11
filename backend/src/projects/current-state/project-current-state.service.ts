@@ -48,6 +48,31 @@ type RuntimeObservation = {
   evidence: LiveAwsEvidence | null;
 };
 
+type AwsResourceTag = { Key?: string; Value?: string; key?: string; value?: string };
+
+function tagValues(input: AwsResourceTag[] | undefined) {
+  return Object.fromEntries((input || []).map((tag) => [tag.Key || tag.key || "", tag.Value || tag.value || ""]));
+}
+
+/**
+ * ECS services and target groups are shared topology across generations. Their
+ * DeployGuardOperationId records the operation that created that topology, so
+ * it cannot identify a later immutable application release. Current release
+ * identity is instead proven by the exact task definition, image digest, and
+ * runtime-config revision below.
+ */
+export function hasCanonicalRuntimeOwnership(input: AwsResourceTag[] | undefined, projectId: string, serviceId: string) {
+  const values = tagValues(input);
+  return values.ManagedBy === "DeployGuard"
+    && values.DeployGuardProjectId === projectId
+    && values.DeployGuardServiceId === serviceId;
+}
+
+export function hasCanonicalTaskDefinitionOwnership(input: AwsResourceTag[] | undefined, projectId: string, serviceId: string, runtimeConfigRevisionId: string) {
+  return hasCanonicalRuntimeOwnership(input, projectId, serviceId)
+    && tagValues(input).DeployGuardRuntimeConfigRevisionId === runtimeConfigRevisionId;
+}
+
 @Injectable()
 export class ProjectCurrentStateService {
   private runtimeObservationCache = new Map<string, { expiresAt: number; value: RuntimeObservation }>();
@@ -909,15 +934,6 @@ export class ProjectCurrentStateService {
       const ecs = new ECSClient({ region });
       const ecr = new ECRClient({ region });
       const elb = new ElasticLoadBalancingV2Client({ region });
-      const tags = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined) =>
-        Object.fromEntries((input || []).map((tag) => [tag.Key || tag.key || "", tag.Value || tag.value || ""]));
-      const ownsProjectRuntime = (input: Array<{ Key?: string; Value?: string; key?: string; value?: string }> | undefined, serviceId: string) => {
-        const values = tags(input);
-        return values.ManagedBy === "DeployGuard"
-          && values.DeployGuardProjectId === projectId
-          && values.DeployGuardOperationId === release.deployedByPipelineRunId
-          && values.DeployGuardServiceId === serviceId;
-      };
       const observations = [] as LiveAwsEvidence["services"];
       for (const item of services) {
         const serviceId = String(item.serviceId); const imageUri = String(item.imageUri); const imageDigest = String(item.imageDigest);
@@ -933,7 +949,10 @@ export class ProjectCurrentStateService {
         const [taskDefinitionResult, imageResult, serviceTags, targetGroupTags, targetHealth] = await Promise.all([
           ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: String(item.taskDefinitionArn), include: ["TAGS"] })), ecr.send(new DescribeImagesCommand({ repositoryName: repository, imageIds: [{ imageDigest }] })), ecs.send(new EcsListTagsForResourceCommand({ resourceArn: runtimeService.serviceArn! })), elb.send(new DescribeTagsCommand({ ResourceArns: [String(item.targetGroupArn)] })), elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: String(item.targetGroupArn) })),
         ]);
-        if (!ownsProjectRuntime(serviceTags.tags, serviceId) || !ownsProjectRuntime(taskDefinitionResult.tags, serviceId) || !ownsProjectRuntime(targetGroupTags.TagDescriptions?.[0]?.Tags, serviceId) || imageResult.imageDetails?.[0]?.imageDigest !== imageDigest) return null;
+        if (!hasCanonicalRuntimeOwnership(serviceTags.tags, projectId, serviceId)
+          || !hasCanonicalTaskDefinitionOwnership(taskDefinitionResult.tags, projectId, serviceId, String(item.runtimeConfigRevisionId))
+          || !hasCanonicalRuntimeOwnership(targetGroupTags.TagDescriptions?.[0]?.Tags, projectId, serviceId)
+          || imageResult.imageDetails?.[0]?.imageDigest !== imageDigest) return null;
         observations.push({ serviceId, serviceName: String(item.serviceName || runtimeService.serviceName), publicUrl: typeof item.publicUrl === "string" ? item.publicUrl : null, imageDigest, ecs: { service: runtimeService.serviceName, desiredCount: runtimeService.desiredCount || 0, runningCount: runtimeService.runningCount || 0, pendingCount: runtimeService.pendingCount || 0 }, alb: { targetHealth: (targetHealth.TargetHealthDescriptions || []).map((target) => target.TargetHealth?.State || "unknown") } });
       }
       ecs.destroy(); ecr.destroy(); elb.destroy();
