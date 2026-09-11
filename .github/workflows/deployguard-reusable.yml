@@ -377,6 +377,24 @@ jobs:
           elif [ "$RELEASE_ONLY" = true ]; then
             # Terraform remains the bootstrap/topology/destroy authority.  A
             # release-only redeploy updates only the active ECS task revision.
+            # It must still emit an immutable, redacted plan for Infracost;
+            # planning is read-only and Terraform apply remains forbidden here.
+            terraform -chdir=.deployguard/terraform plan -input=false -out=deployguard.tfplan || { echo 'DG_FAILURE code=DG_TERRAFORM_PLAN_FAILED stage=terraform_plan' >&2; exit 1; }
+            terraform -chdir=.deployguard/terraform show -json deployguard.tfplan \
+              | jq '
+                  def redact($value; $mask):
+                    if $mask == true then null
+                    elif (($mask | type) == "object" and ($value | type) == "object") then
+                      reduce ($value | keys_unsorted[]) as $key ({}; .[$key] = redact($value[$key]; ($mask[$key] // false)))
+                    elif (($mask | type) == "array" and ($value | type) == "array") then
+                      [range(0; $value | length) as $index | redact($value[$index]; ($mask[$index] // false))]
+                    else $value end;
+                  .resource_changes = ((.resource_changes // []) | map(
+                    .change.before = redact(.change.before; (.change.before_sensitive // false))
+                    | .change.after = redact(.change.after; (.change.after_sensitive // false))
+                    | del(.change.before_sensitive, .change.after_sensitive)
+                  ))
+                ' > .deployguard/terraform/deployguard-cost-plan.json
             terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value=.value.value)' > .deployguard/terraform-outputs.json
             bash .deployguard/terraform/register-release-task-definitions.sh .deployguard/terraform-outputs.json .deployguard/runtime.json .deployguard/service-artifacts.json "$DEPLOYMENT_ACTION" > .deployguard/terraform-outputs.release-only.json
             mv .deployguard/terraform-outputs.release-only.json .deployguard/terraform-outputs.json

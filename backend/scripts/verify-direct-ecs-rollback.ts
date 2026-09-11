@@ -24,7 +24,8 @@ const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "depl
 const directWorkflow = workflow.match(/elif \[ "\$RELEASE_ONLY" = true \]; then([\s\S]*?)\n          else/)?.[1] || "";
 assert.match(workflow, /release_only_requires_deploy_or_rollback/);
 assert.match(directWorkflow, /register-release-task-definitions\.sh[^\n]*"\$DEPLOYMENT_ACTION"/);
-assert.doesNotMatch(directWorkflow, /terraform -chdir=.*\b(plan|apply)\b/, "direct rollback must retain Terraform topology ownership");
+assert.match(directWorkflow, /terraform -chdir=\.deployguard\/terraform plan -input=false -out=deployguard\.tfplan[\s\S]*?terraform -chdir=\.deployguard\/terraform show -json deployguard\.tfplan/, "direct rollback must retain immutable cost evidence");
+assert.doesNotMatch(directWorkflow, /terraform -chdir=.*\bapply\b/, "direct rollback may plan for immutable cost evidence but must never apply Terraform");
 
 const runtime: RailpackRuntimeConfiguration = {
   schemaVersion: 3, projectId, operationId: "22222222-2222-4222-8222-222222222222", environmentName: "dev", sourceSha: "b".repeat(40), services: [{
