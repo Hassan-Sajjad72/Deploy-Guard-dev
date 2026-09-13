@@ -15,6 +15,7 @@ const filters = [
   ["DEPLOYING", "Deploying"],
   ["LIVE", "Live"],
   ["FAILED", "Failed"],
+  ["DESTROYED", "Destroyed"],
 ];
 
 export default function Projects() {
@@ -43,8 +44,7 @@ export default function Projects() {
 
   const projects = useMemo(
     () => summaries.filter(({ project, currentState }) => {
-      const state = projectStatePresentation(currentState).state;
-      const matchesState = state !== "DESTROYED" && (stateFilter === "ALL" || state === stateFilter);
+      const matchesState = stateFilter === "ALL" || projectStatePresentation(currentState).state === stateFilter;
       const haystack = `${project.name} ${currentState?.repository || project.repositoryFullName || ""} ${currentState?.branch || project.targetBranch || ""}`.toLowerCase();
       return matchesState && haystack.includes(search.trim().toLowerCase());
     }),

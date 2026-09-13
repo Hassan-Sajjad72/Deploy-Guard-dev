@@ -42,9 +42,8 @@ export function latestOverviewOperationType(currentState) {
 export function failureRecoveryCommand(operation, canRetry = false) {
   const diagnosis = operation?.diagnosis;
   const retryDecision = diagnosis?.retryDecision;
-  const operationType = operation?.operationType || operation?.deploymentAction || "deploy";
-  if (operationType === "destroy") return null;
   if (canRetry && (!diagnosis || retryDecision === "SAFE_NOW")) return "retry";
+  const operationType = operation?.operationType || operation?.deploymentAction || "deploy";
   const failureOwner = diagnosis?.failureOwner || operation?.failureOwner;
   return operationType === "deploy" && retryDecision === "SAFE_AFTER_FIX" && failureOwner === "REPOSITORY_APPLICATION"
     ? "deploy_fixed"
@@ -108,7 +107,9 @@ export function overviewLifecycleActions(currentState, canManage = false) {
         command: recoveryCommand,
         label: recoveryCommand === "deploy_fixed"
           ? "Deploy Fixed Commit"
-          : latestOverviewOperationType(currentState) === "rollback"
+          : latestOverviewOperationType(currentState) === "destroy"
+            ? "Retry Failed Destroy"
+            : latestOverviewOperationType(currentState) === "rollback"
               ? "Retry Failed Rollback"
               : "Retry Failed Deployment",
       }] : []),
@@ -121,6 +122,7 @@ export function overviewLifecycleActions(currentState, canManage = false) {
       ...(currentState?.stableRelease?.rollbackAvailable
         ? [{ kind: "command", command: "rollback", label: "Rollback application" }]
         : [{ kind: "disabled", command: "rollback", label: "Rollback application", reason: "No previous successful release is available." }]),
+      { kind: "command", command: "destroy", label: "Destroy Infrastructure" },
     ] : []),
   ];
   return [{ kind: "link", target: "pipeline", label: "View Pipeline" }];

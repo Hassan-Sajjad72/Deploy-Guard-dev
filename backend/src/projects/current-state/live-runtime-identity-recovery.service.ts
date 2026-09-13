@@ -35,10 +35,16 @@ export class LiveRuntimeIdentityRecoveryService {
     const services = revisions.slice().sort((left, right) => left.serviceId.localeCompare(right.serviceId)).map((revision) => {
       const identity = revision.runtimeIdentity || {};
       const text = (key: string) => typeof identity[key] === "string" ? identity[key] : undefined;
+      const servicePort = typeof identity.servicePort === "number" && Number.isInteger(identity.servicePort) && identity.servicePort > 0 && identity.servicePort <= 65535
+        ? identity.servicePort
+        : typeof identity.servicePort === "string" && /^\d+$/.test(identity.servicePort) && Number(identity.servicePort) > 0 && Number(identity.servicePort) <= 65535
+          ? Number(identity.servicePort)
+          : undefined;
       return {
         serviceId: revision.serviceId,
         serviceName: revision.serviceName,
         serviceDirectory: revision.serviceDirectory,
+        servicePort,
         sourceSha: revision.sourceSha,
         imageUri: revision.imageUri,
         imageDigest: revision.imageDigest,

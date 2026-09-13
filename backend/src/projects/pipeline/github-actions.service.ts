@@ -171,6 +171,7 @@ export class GithubActionsService {
     }
     await this.validateDispatchTarget(input.repositoryFullName, input.targetBranch, input.workflowRegistrationBranch, workflowFile, token, inputNames, operationId);
     let response: Response;
+    const dispatchedAt = new Date();
 
     try {
       response = await fetch(
@@ -186,7 +187,6 @@ export class GithubActionsService {
           body: JSON.stringify({
             ref: input.workflowRegistrationBranch,
             ...(input.inputs ? { inputs: dispatchInputs } : {}),
-            return_run_details: true,
           }),
         }
       );
@@ -209,6 +209,19 @@ export class GithubActionsService {
     const dispatchResult = await response.json().catch(() => null) as { workflow_run_id?: number | string; html_url?: string } | null;
     let workflowRunId = String(dispatchResult?.workflow_run_id || "").trim();
     let correctedStaleRunIdentity = false;
+    if (!/^\d+$/.test(workflowRunId) && operationId) {
+      for (let attempt = 0; attempt < 10 && !/^\d+$/.test(workflowRunId); attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
+        workflowRunId = String(await this.findWorkflowRunForOperation(
+          input.repositoryFullName,
+          input.workflowRegistrationBranch,
+          operationId,
+          dispatchedAt,
+          token,
+        ) || "");
+      }
+      correctedStaleRunIdentity = /^\d+$/.test(workflowRunId);
+    }
     if (!/^\d+$/.test(workflowRunId)) {
       const detail = "GitHub accepted the workflow request without returning an immutable workflow run identity.";
       throw new GithubActionsDispatchError(
@@ -220,7 +233,6 @@ export class GithubActionsService {
     }
     const excludedRunIds = new Set(input.excludedWorkflowRunIds || []);
     if (excludedRunIds.has(workflowRunId)) {
-      const dispatchedAt = new Date();
       let discoveredRunId: string | null = null;
       for (let attempt = 0; attempt < 10 && !discoveredRunId; attempt += 1) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));

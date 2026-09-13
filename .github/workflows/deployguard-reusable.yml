@@ -292,9 +292,10 @@ jobs:
             counts="$(jq -c '{critical:map(select(.severity=="CRITICAL"))|length,high:map(select(.severity=="HIGH"))|length,medium:map(select(.severity=="MEDIUM"))|length,low:map(select(.severity=="LOW"))|length,unknown:map(select(.severity=="UNKNOWN"))|length,total:length}' "$findings")"
             blocking="$(jq '[.[] | select(.severity=="CRITICAL" and .origin=="app_dependency" and (.fixedVersion//"")!="")] | length' "$findings")"
             status=passed; [ "$blocking" -eq 0 ] || status="$([ "$TRIVY_ENFORCE" = true ] && echo blocked || echo advisory)"
-            evidence="$(jq -c 'sort_by(.serviceId,.severity,.vulnerabilityId,.packageName)|.[0:500]' "$findings")"
-            hash="$(printf '%s' "$evidence" | sha256sum | cut -d' ' -f1)"
-            jq -cn --arg status "$status" --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg commit "$SOURCE_SHA" --arg hash "$hash" --argjson enforce "$TRIVY_ENFORCE" --argjson counts "$counts" --argjson blocking "$blocking" --argjson evidence "$evidence" '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:$operation,projectId:$project,commitSha:$commit,scanner:"trivy",enforced:$enforce,counts:$counts,blockingFindingCount:$blocking,evidence:$evidence,evidenceHash:$hash,hashAlgorithm:"deployguard.security-evidence-sha256/v1",policy:{rule:"fixable Critical application dependencies"}}' > "$result"
+            evidence_file=.deployguard/security/evidence.json
+            jq -cj 'sort_by(.serviceId,.severity,.vulnerabilityId,.packageName)|.[0:500]' "$findings" > "$evidence_file"
+            hash="$(sha256sum "$evidence_file" | cut -d' ' -f1)"
+            jq -cn --arg status "$status" --arg operation "$OPERATION_ID" --arg project "$PROJECT_ID" --arg commit "$SOURCE_SHA" --arg hash "$hash" --argjson enforce "$TRIVY_ENFORCE" --argjson counts "$counts" --argjson blocking "$blocking" --slurpfile evidence "$evidence_file" '{contractVersion:"deployguard.security-result/v1",status:$status,deploymentOperationId:$operation,projectId:$project,commitSha:$commit,scanner:"trivy",enforced:$enforce,counts:$counts,blockingFindingCount:$blocking,evidence:$evidence[0],evidenceHash:$hash,hashAlgorithm:"deployguard.security-evidence-sha256/v1",policy:{rule:"fixable Critical application dependencies"}}' > "$result"
           fi
           if [ "$TRIVY_ENFORCE" = true ] && { [ "$scan_error" = true ] || [ "$(jq -r '.status' "$result")" = blocked ]; }; then
             if [ "$scan_error" = true ]; then failure_code=DG_TRIVY_SCAN_FAILED; failure_summary="DeployGuard could not complete the required Trivy scan."; else failure_code=DG_TRIVY_POLICY_BLOCKED; failure_summary="Deployment blocked by Trivy security policy."; fi

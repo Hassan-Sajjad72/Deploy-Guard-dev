@@ -61,7 +61,10 @@ assert.match(page, /existingProjectSettingsId = project\.id/, "the service misma
 assert.match(page, /Service name or directory changes must be made under Settings → Services\./, "the blocker identifies the existing service editor and editable fields");
 assert.match(page, /to=\{`\/projects\/\$\{readiness\.existingProjectSettingsId\}\/settings`\}>Open Project Settings<\/Link>/, "the blocker links directly to the existing project's Settings page");
 assert.doesNotMatch(page, /updateProjectService/, "the deploy journey does not mutate existing service configuration");
-assert.match(page, /No managed database \/ use existing ENV/);
+assert.match(page, /<option value="none">Managed ENV Database<\/option>/);
+assert.match(page, /<option value="postgres">Managed Database — PostgreSQL<\/option>/);
+assert.match(page, /database\.provider === "managed" \? `Managed Database —/);
+assert.match(page, /: "Managed ENV Database"/);
 assert.match(page, /managedDatabaseAliases\(database\.engine\)/);
 assert.doesNotMatch(page, /managedDatabaseConflicts|Database configuration conflict|Remove .* from the selected service ENV/);
 assert.ok(page.indexOf("updateProjectDatabaseTier(project.id") < page.indexOf("bulkUpsertProjectServiceEnvVars(project.id"), "managed database ownership is persisted before the bulk ENV boundary");

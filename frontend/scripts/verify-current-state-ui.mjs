@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPresentation.js";
+import { deploymentPhasePresentation, deploymentProgressPercentage, failureTroubleshootingProjection } from "../src/utils/developerDeploymentPresentation.js";
 import { PROJECT_DELETION_NOTICE, redirectDeletedProject } from "../src/utils/projectStateSync.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -56,9 +56,33 @@ assert.match(execution, /retryGithubActionsDeployment\(projectId\)[\s\S]{0,240}a
 
 const active = deploymentPhasePresentation({ developerState: "deploying", progress: { phase: "deploy" } });
 assert.equal(active.filter(({ status }) => status === "running").length, 1);
+assert.deepEqual(active.map(({ status }) => status), ["passed", "passed", "passed", "running", "waiting", "waiting"], "active deployment phases are strictly sequential");
+assert.equal(deploymentProgressPercentage(active), 60, "the progress bar is derived from the same active stage as the rail");
+const outOfOrderEvidence = deploymentPhasePresentation({
+  developerState: "building",
+  progress: { phase: "build" },
+  latestAttempt: { workflowStages: [{ key: "publish_immutable_images_to_ecr", status: "passed" }] },
+});
+assert.deepEqual(outOfOrderEvidence.map(({ status }) => status), ["passed", "passed", "running", "waiting", "waiting", "waiting"], "later evidence advances one ordered stage without leaving an earlier phase pending");
+assert.equal(outOfOrderEvidence.filter(({ status }) => status === "running").length, 1, "only one lifecycle stage is active");
+assert.equal(deploymentProgressPercentage(outOfOrderEvidence), 40, "publish-stage rail and yellow progress share one projection");
 const terminal = deploymentPhasePresentation({ developerState: "live", latestAttempt: { outcome: "completed" } });
 assert.equal(terminal.some(({ status }) => status === "running"), false, "terminal operations never retain an active stage");
 const destroyed = deploymentPhasePresentation({ developerState: "destroyed", deploymentAction: "destroy", latestAttempt: { outcome: "completed" } });
 assert.deepEqual(destroyed.map(({ status }) => status), ["passed", "passed", "passed", "passed"]);
+
+const history = [
+  { id: "attempt-3", attempt: "3", status: "completed", aiAnalysisEligible: false, aiRuntimeAnalysisCandidate: true },
+  { id: "attempt-2", attempt: "2", status: "failed", aiAnalysisEligible: true },
+  { id: "attempt-1", attempt: "1", status: "dispatch_failed", aiAnalysisEligible: true },
+];
+const troubleshootingProjection = failureTroubleshootingProjection(history, [
+  { id: "session-3", pipelineRunId: "attempt-3" },
+  { id: "session-2", pipelineRunId: "attempt-2" },
+  { id: "session-1", pipelineRunId: "attempt-1" },
+]);
+assert.deepEqual(troubleshootingProjection.candidates.map(({ id }) => id), ["attempt-2", "attempt-1"], "successful Attempt 3 is excluded from failure troubleshooting candidates");
+assert.deepEqual(troubleshootingProjection.sessions.map(({ pipelineRunId }) => pipelineRunId), ["attempt-2", "attempt-1"], "troubleshooting history remains scoped to failed attempts and their evidence");
+assert.match(troubleshooting, /failureTroubleshootingProjection/);
 
 console.log("Canonical cross-page current-state and terminal lifecycle presentation verification passed.");

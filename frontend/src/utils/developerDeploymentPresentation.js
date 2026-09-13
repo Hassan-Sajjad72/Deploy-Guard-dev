@@ -37,7 +37,7 @@ export function deploymentPhasePresentation(currentState) {
   const currentKey = destroy && ["build", "deploy"].includes(reportedKey) ? "destroy"
     : destroy && currentState?.latestAttempt?.outcome === "completed" ? "finalize"
       : reportedKey;
-  const currentIndex = phases.findIndex((phase) => phase.key === currentKey);
+  let currentIndex = phases.findIndex((phase) => phase.key === currentKey);
   const completed = currentState?.developerState === "live"
     || currentState?.latestAttempt?.outcome === "completed";
   const failed = currentState?.developerState === "failed_application";
@@ -47,8 +47,8 @@ export function deploymentPhasePresentation(currentState) {
   const evidence = Array.isArray(currentState?.latestAttempt?.workflowStages) ? currentState.latestAttempt.workflowStages : [];
   const lifecycleKeys = {
     source: ["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack"],
-    build: ["build_immutable_railpack_image", "build_and_push_immutable_railpack_image", "validate_application_runtime"],
-    publish: ["publish_immutable_image_to_ecr"],
+    build: ["build_immutable_railpack_image", "build_immutable_railpack_images", "build_and_push_immutable_railpack_image", "validate_application_runtime"],
+    publish: ["publish_immutable_image_to_ecr", "publish_immutable_images_to_ecr", "install_trivy_scanner", "scan_exact_immutable_service_images"],
     deploy: ["install_terraform", "materialize_release_runtime"],
     verify: ["verify_alb_health_and_write_result"],
     finalize: ["publish_verified_release_result", "project_delete_cleanup"],
@@ -64,20 +64,57 @@ export function deploymentPhasePresentation(currentState) {
     return "waiting";
   }
 
-  return phases.map((phase, index) => {
-    let status = "waiting";
-    const proven = destroy ? null : evidenceStatus(phase.key);
-    if (currentState?.developerState === "destroyed") {
-      status = destroy ? "passed" : index < 2 ? "passed" : "waiting";
-    } else if (currentState?.developerState === "ready") {
-      status = "waiting";
-    } else if (completed) status = "passed";
-    else if (currentIndex >= 0 && index === currentIndex && failed) status = "failed";
-    else if (proven) status = proven;
-    else if (currentIndex >= 0 && index === currentIndex && attention) status = "attention";
-    else if (currentIndex >= 0 && index === currentIndex && active) status = "running";
-    return { ...phase, status };
-  });
+  if (completed || currentState?.developerState === "destroyed") {
+    return phases.map((phase) => ({ ...phase, status: "passed" }));
+  }
+  if (currentState?.developerState === "ready") {
+    return phases.map((phase) => ({ ...phase, status: "waiting" }));
+  }
+
+  if (!destroy) {
+    const evidenceStatuses = phases.map((phase) => evidenceStatus(phase.key));
+    const terminalEvidenceIndex = evidenceStatuses.findIndex((status) => status === "failed");
+    const runningEvidenceIndex = evidenceStatuses.findIndex((status) => status === "running");
+    if (failed && terminalEvidenceIndex >= 0) currentIndex = terminalEvidenceIndex;
+    else if (active && runningEvidenceIndex >= 0) currentIndex = runningEvidenceIndex;
+    else if (active) {
+      const furthestPassedIndex = evidenceStatuses.reduce((highest, status, index) => status === "passed" ? index : highest, -1);
+      currentIndex = Math.max(currentIndex, furthestPassedIndex);
+    }
+  }
+
+  return phases.map((phase, index) => ({
+    ...phase,
+    status: currentIndex < 0 || index > currentIndex
+      ? "waiting"
+      : index < currentIndex
+        ? "passed"
+        : failed
+          ? "failed"
+          : attention
+            ? "attention"
+            : active
+              ? "running"
+              : "waiting",
+  }));
+}
+
+export function deploymentProgressPercentage(phases) {
+  if (!Array.isArray(phases) || phases.length < 2) return 0;
+  if (phases.every((phase) => phase.status === "passed")) return 100;
+  const currentIndex = phases.findIndex((phase) => ["running", "failed", "attention"].includes(phase.status));
+  const lastPassedIndex = phases.reduce((highest, phase, index) => phase.status === "passed" ? index : highest, -1);
+  const index = currentIndex >= 0 ? currentIndex : lastPassedIndex;
+  return index < 0 ? 0 : Math.round((index / (phases.length - 1)) * 100);
+}
+
+export function failureTroubleshootingProjection(operations = [], sessions = []) {
+  const candidates = operations.filter((operation) => ["failed", "dispatch_failed"].includes(operation?.status) && operation?.aiAnalysisEligible === true);
+  const candidateIds = new Set(candidates.map((operation) => operation.id));
+  return {
+    candidates,
+    sessions: sessions.filter((session) => candidateIds.has(session?.pipelineRunId)),
+  };
 }
 
 export function deploymentActionPresentation(currentState, projectId) {

@@ -41,7 +41,7 @@ const destroy = {
   stateAuthority: { state: "DESTROYING", activeOperation: { type: "destroy" } },
 };
 assert.deepEqual(deploymentPhasePresentation(destroy).map(({ label, status }) => [label, status]), [
-  ["Prepare", "waiting"],
+  ["Prepare", "passed"],
   ["Destroy Infrastructure", "running"],
   ["Verify Deletion", "waiting"],
   ["Finalize Cleanup", "waiting"],

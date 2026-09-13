@@ -38,6 +38,7 @@ function revision(serviceId: string, name: string) {
     runtimeIdentity: {
       // Fresh service revisions contain service-local Terraform output; the
       // generation owns the project-level region and cluster identity.
+      servicePort: name === "API" ? 3000 : 8080,
       publicUrl: `https://${name.toLowerCase()}.example.test`,
       ecsServiceArn: arn(`service/project/${name.toLowerCase()}`), ecsServiceName: name.toLowerCase(), taskDefinitionArn: arn(`task-definition/${name.toLowerCase()}:1`),
       albArn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/${name.toLowerCase()}/1`, albName: name.toLowerCase(),
@@ -61,6 +62,7 @@ async function canonicalRevisionRecovery() {
   const identity: any = await recovery.recover(project);
   assert.deepEqual(identity.services.map((service: any) => service.serviceId), [a, b], "canonical revisions define deterministic service order");
   assert.equal(identity.services[1].targetGroupArn, revision(b, "API").runtimeIdentity.targetGroupArn);
+  assert.equal(identity.services[1].servicePort, 3000, "the immutable service port must survive canonical runtime recovery for Infrastructure presentation");
   assert.deepEqual({ region: identity.region, ecsClusterArn: identity.ecsClusterArn, ecsClusterName: identity.ecsClusterName }, sharedRuntime, "project-level region/cluster identity comes from the explicit LIVE generation, not a service revision");
   assert.doesNotMatch(JSON.stringify(identity.services), /wrong-region|wrong-cluster|"wrong"/, "generation projections cannot override canonical service-local identities");
   const permuted: any = await recoveryFor([revision(a, "Web"), revision(b, "API")]).recover(project);
