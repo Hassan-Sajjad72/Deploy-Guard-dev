@@ -576,7 +576,7 @@ async function verifyProviderContractAndConditionalDatabaseScope() {
   const databaseActions = new Set(database.flatMap((capability) => capability.actions));
   const privateDnsActions = ["route53:CreateHostedZone", "route53:GetHostedZone", "route53:ListHostedZonesByName", "route53:DeleteHostedZone", "ec2:DescribeRegions"];
   for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaceAttribute", "ec2:ModifyNetworkInterfaceAttribute", "ec2:DeleteNetworkInterface", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds", ...privateDnsActions]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
-  assert.equal(WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, "deployguard.railpack-runtime-aws/v11");
+  assert.equal(WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, "deployguard.railpack-runtime-aws/v12");
   const applicationSecrets = normal.find((capability) => capability.id === "application-secrets");
   assert.ok(applicationSecrets, "application ENV secrets require an explicit pre-dispatch capability");
   assert.ok(applicationSecrets.actions.includes("secretsmanager:GetSecretValue"), "build-scope secrets require immutable-version reads");
