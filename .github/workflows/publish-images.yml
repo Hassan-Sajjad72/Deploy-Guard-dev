@@ -1,0 +1,81 @@
+name: Publish team runtime images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  SOURCE_REPOSITORY: Hassan-Sajjad72/Deploy-Guard-dev
+  SOURCE_SHA: 12ed47797fe82bee1bdec449936e57d7c27758e4
+  RELEASE_TAG: test2-12ed477-runtime-1
+  BACKEND_IMAGE: ghcr.io/hassan-sajjad72/deployguard-team-runtime-backend
+  FRONTEND_IMAGE: ghcr.io/hassan-sajjad72/deployguard-team-runtime-frontend
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - name: Checkout external runtime definition
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: runtime
+
+      - name: Checkout frozen DeployGuard source read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+          path: source
+
+      - name: Verify frozen source identity
+        shell: bash
+        run: test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish backend image
+        if: matrix.component == 'backend'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: source
+          file: runtime/images/backend.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ env.RELEASE_TAG }}
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+
+      - name: Publish frontend image
+        if: matrix.component == 'frontend'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: source
+          file: source/frontend/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ env.RELEASE_TAG }}
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}

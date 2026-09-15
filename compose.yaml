@@ -1,0 +1,154 @@
+name: deployguard-team-runtime
+
+services:
+  postgres:
+    image: postgres:16.9-alpine3.21
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [deployguard]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  migrate:
+    image: ${DEPLOYGUARD_BACKEND_IMAGE:?Set DEPLOYGUARD_BACKEND_IMAGE in .env}
+    env_file: .env
+    environment: &backend_environment
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USERNAME: ${POSTGRES_USER}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_NAME: ${POSTGRES_DB}
+      DATABASE_SSL: "false"
+      TYPEORM_SYNCHRONIZE: "false"
+      FRONTEND_URL: http://localhost:${FRONTEND_HOST_PORT:-5173}
+      BACKEND_URL: http://localhost:${BACKEND_HOST_PORT:-5000}
+      GITHUB_CALLBACK_URL: http://localhost:${BACKEND_HOST_PORT:-5000}/api/auth/github/callback
+      PROMETHEUS_BASE_URL: http://prometheus:9090
+      GRAFANA_INTERNAL_URL: http://grafana:3000
+      GRAFANA_BASE_URL: http://localhost:${GRAFANA_HOST_PORT:-3001}/d/deployguard-runtime/deployguard-runtime
+      TERRAFORM_WORKING_BASE_DIR: /app/backend/.deployguard/terraform-workspaces
+      TERRAFORM_NETWORK_TEMPLATE_DIR: /app/backend/terraform/base-network
+      DOCKER_HOST: unix:///var/run/docker.sock
+    command: ["node", "node_modules/typeorm/cli.js", "migration:run", "-d", "dist/src/data-source.docker.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [deployguard]
+    restart: "no"
+
+  backend:
+    image: ${DEPLOYGUARD_BACKEND_IMAGE:?Set DEPLOYGUARD_BACKEND_IMAGE in .env}
+    # The backend invokes Docker for supported repository builds. Accessing
+    # Docker Desktop's socket as root avoids a host-specific docker-group GID.
+    user: "0:0"
+    env_file: .env
+    environment:
+      <<: *backend_environment
+    ports:
+      - "${BACKEND_HOST_PORT:-5000}:5000"
+    volumes:
+      - deployguard_workspaces:/app/backend/.deployguard
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [deployguard]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    image: ${DEPLOYGUARD_FRONTEND_IMAGE:?Set DEPLOYGUARD_FRONTEND_IMAGE in .env}
+    ports:
+      - "${FRONTEND_HOST_PORT:-5173}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [deployguard]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    env_file: .env
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        escaped=$$(printf '%s' "$$PROMETHEUS_SCRAPE_TOKEN" | sed 's/[\\&|]/\\&/g')
+        sed -e "s|__DEPLOYGUARD_SCRAPE_TOKEN__|$$escaped|g" /etc/prometheus/prometheus.yml.template > /tmp/prometheus.yml
+        exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=7d
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml.template:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [deployguard]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    env_file: .env
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${GRAFANA_HOST_PORT:-3001}:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks: [deployguard]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health | grep -q '\"database\": \"ok\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    restart: unless-stopped
+
+networks:
+  deployguard:
+    name: deployguard_team_runtime_network
+
+volumes:
+  postgres_data:
+    name: deployguard_team_runtime_postgres_data
+  deployguard_workspaces:
+    name: deployguard_team_runtime_workspaces
+  prometheus_data:
+    name: deployguard_team_runtime_prometheus_data
+  grafana_data:
+    name: deployguard_team_runtime_grafana_data

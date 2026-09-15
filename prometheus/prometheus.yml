@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: deployguard-backend
+    metrics_path: /api/monitoring/metrics
+    authorization:
+      type: Bearer
+      credentials: __DEPLOYGUARD_SCRAPE_TOKEN__
+    static_configs:
+      - targets: [backend:5000]
