@@ -19,8 +19,8 @@ const workflow = readFileSync(join(repositoryRoot, ".github", "workflows", "depl
 const terraform = readFileSync(join(repositoryRoot, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
 const directWorkflow = workflow.match(/elif \[ "\$RELEASE_ONLY" = true \]; then([\s\S]*?)\n          else/)?.[1] || "";
 assert.ok(directWorkflow, "the release-only branch must be independently extractable");
-assert.match(directWorkflow, /terraform -chdir=\.deployguard\/terraform output -json[\s\S]*?register-release-task-definitions\.sh[\s\S]*?verify-runtime\.sh[\s\S]*?build-release-result\.sh/);
-assert.doesNotMatch(directWorkflow, /terraform -chdir=.*\b(plan|apply)\b/, "release-only deployment must not re-run Terraform plan or apply");
+assert.match(directWorkflow, /terraform -chdir=\.deployguard\/terraform plan -input=false -out=deployguard\.tfplan[\s\S]*?terraform -chdir=\.deployguard\/terraform show -json deployguard\.tfplan[\s\S]*?terraform -chdir=\.deployguard\/terraform output -json[\s\S]*?register-release-task-definitions\.sh[\s\S]*?verify-runtime\.sh[\s\S]*?build-release-result\.sh/);
+assert.doesNotMatch(directWorkflow, /terraform -chdir=.*\bapply\b/, "release-only deployment may plan for immutable cost evidence but must never apply Terraform");
 assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?ignore_changes\s+=\s+\[desired_count, task_definition\]/, "Terraform must preserve direct ECS active task definitions while still owning the service resource");
 const runtime: RailpackRuntimeConfiguration = {
   schemaVersion: 3, projectId, operationId, environmentName: "dev", sourceSha: "b".repeat(40), services: [{

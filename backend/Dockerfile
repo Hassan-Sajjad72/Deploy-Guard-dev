@@ -20,7 +20,6 @@ COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /build/dist ./dist
-COPY backend/templates ./templates
 COPY backend/terraform ./terraform
 COPY .github/workflows/deployguard-reusable.yml /app/.github/workflows/deployguard-reusable.yml
 COPY infrastructure/railpack-runtime/main.tf /app/infrastructure/railpack-runtime/main.tf

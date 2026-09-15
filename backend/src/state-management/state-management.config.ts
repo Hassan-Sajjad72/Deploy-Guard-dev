@@ -18,6 +18,7 @@ export type StateManagementConfig = {
 export function getStateManagementConfig(config: ConfigService): StateManagementConfig {
   return {
     bucket:
+      config.get<string>("DEPLOYGUARD_TERRAFORM_STATE_BUCKET", "").trim() ||
       config.get<string>("TERRAFORM_STATE_BUCKET", "").trim() ||
       config.get<string>("DEPLOYGUARD_TF_STATE_BUCKET", "").trim(),
     prefix:

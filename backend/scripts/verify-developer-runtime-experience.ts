@@ -61,7 +61,8 @@ function repositoryContracts() {
   assert.match(workflow, /before_sensitive[\s\S]*after_sensitive/, "cost evidence must redact sensitive Terraform values");
   assert.match(workflow, /apply -input=false -auto-approve deployguard\.tfplan/, "runtime must apply the exact priced plan");
   assert.match(deployment, /reconcileCompletedRelease\(operation\)[\s\S]*reconcileCostEvidence\(operation\)/, "existing verified LIVE operations must backfill pricing without deployment");
-  assert.match(currentState, /source: CostEstimateSource\.INFRACOST/);
+  assert.match(currentState, /generationId: authoritativeGenerationId,[\s\S]*?pipelineRunId: authoritativeRelease\.deployedByPipelineRunId,[\s\S]*?source: CostEstimateSource\.INFRACOST/, "current Infrastructure pricing must resolve only the canonical LIVE generation and its exact release operation");
+  assert.match(currentState, /The current LIVE release has no persisted Infracost evidence\./, "missing current-generation evidence remains explicitly unavailable rather than falling back to a stale estimate");
   assert.match(currentState, /unavailableReason/);
 }
 

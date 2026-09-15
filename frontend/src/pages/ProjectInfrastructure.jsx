@@ -23,8 +23,8 @@ function shortened(value, max = 34) {
   return text.length > max ? `${text.slice(0, max - 10)}…${text.slice(-8)}` : text;
 }
 
-function healthStatus(value, available) {
-  return available ? "active" : value === "destroyed" ? "historical" : "unavailable";
+function healthStatus(value, available, updating = false) {
+  return available ? "active" : updating ? "pending" : value === "destroyed" ? "historical" : "unavailable";
 }
 
 function TerraformExportAction({ projectId }) {
@@ -49,28 +49,30 @@ function TerraformExportAction({ projectId }) {
 
 function ServiceFlow({ state, evidence }) {
   const live = state?.stateAuthority?.runtime?.state === "present";
+  const updating = Boolean(state?.stateAuthority?.activeOperation && state.stateAuthority.activeOperation.type !== "destroy");
   const ecsHealthy = Boolean(evidence?.ecs && evidence.ecs.runningCount >= evidence.ecs.desiredCount && evidence.ecs.pendingCount === 0);
-  const albHealthy = evidence?.alb?.targetHealth?.length > 0 && evidence.alb.targetHealth.every((item) => item === "healthy");
+  const activeTargets = (evidence?.alb?.targetHealth || []).filter((item) => item !== "draining");
+  const albHealthy = activeTargets.length > 0 && activeTargets.every((item) => item === "healthy");
   const nodes = [
     { name: "Source", detail: shortened(state?.stableRelease?.commit, 18), available: Boolean(state?.stableRelease?.commit) },
     { name: "Build", detail: live ? "Application image built" : "Unavailable", available: live },
-    { name: "ECR", detail: evidence?.ecr?.imageDigest ? "Immutable digest" : "Unavailable", available: Boolean(evidence?.ecr?.imageDigest) },
-    { name: "ECS", detail: evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable", available: ecsHealthy },
-    { name: "ALB", detail: albHealthy ? "Targets healthy" : "Unavailable", available: albHealthy },
+    { name: "ECR", detail: evidence?.ecr?.imageDigest ? "Immutable digest" : updating ? "Release updating" : "Unavailable", available: Boolean(evidence?.ecr?.imageDigest), updating },
+    { name: "ECS", detail: evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : updating ? "Release updating" : "Unavailable", available: ecsHealthy, updating },
+    { name: "ALB", detail: albHealthy ? "Targets healthy" : updating ? "Release updating" : "Unavailable", available: albHealthy, updating },
     { name: "Application", detail: live ? "LIVE" : "Unavailable", available: live && Boolean(evidence?.alb?.endpoint || state?.stableUrl) },
   ];
   return <Card className="infrastructure-topology-card">
     <div className="infrastructure-section-heading"><div><p className="eyebrow">Current AWS state</p><h2>Source to application</h2></div><span className="infrastructure-source">Generation {shortened(state?.generationState?.liveGenerationId, 20)}</span></div>
-    <ol aria-label="Infrastructure service flow" className="infrastructure-topology">{nodes.map((node) => <li data-status={healthStatus(evidence?.terraformState?.status, node.available)} key={node.name}><strong>{node.name}</strong><span>{node.detail}</span><StatusChip status={node.available ? "healthy" : "unavailable"}>{node.available ? "Healthy" : "Unavailable"}</StatusChip></li>)}</ol>
+    <ol aria-label="Infrastructure service flow" className="infrastructure-topology">{nodes.map((node) => <li data-status={healthStatus(evidence?.terraformState?.status, node.available, node.updating)} key={node.name}><strong>{node.name}</strong><span>{node.detail}</span><StatusChip status={node.available ? "healthy" : node.updating ? "running" : "unavailable"}>{node.available ? "Healthy" : node.updating ? "Updating" : "Unavailable"}</StatusChip></li>)}</ol>
     {evidence?.alb?.endpoint ? <p className="infrastructure-endpoint">Application endpoint: <a href={evidence.alb.endpoint} rel="noreferrer" target="_blank">Open verified application</a></p> : null}
   </Card>;
 }
 
-function ServiceRuntimeList({ evidence }) {
+function ServiceRuntimeList({ evidence, transitioning = false }) {
   const persisted = Array.isArray(evidence?.runtimeIdentity?.services) ? evidence.runtimeIdentity.services : [];
   const observed = new Map((evidence?.services || []).map((service) => [service.serviceId, service]));
   if (!persisted.length) return null;
-  return <Card><div className="infrastructure-section-heading"><div><p className="eyebrow">Services</p><h2>Running applications</h2></div></div><div className="infrastructure-support-grid service-runtime-grid">{persisted.map((service) => { const current = observed.get(service.serviceId); const targets = current?.alb?.targetHealth || []; const healthy = current?.ecs?.runningCount === current?.ecs?.desiredCount && targets.length > 0 && targets.every((state) => state === "healthy"); return <article key={service.serviceId}><div className="service-runtime-heading"><strong>{service.serviceName}</strong><StatusChip status={healthy ? "healthy" : current ? "unhealthy" : "unknown"}>{healthy ? "Healthy" : current ? "Unhealthy" : "Unknown"}</StatusChip></div><span>{service.serviceDirectory || "."}</span><p>Port {service.servicePort || "Unavailable"} · ECS {current ? `${current.ecs.runningCount}/${current.ecs.desiredCount}` : "Unavailable"}</p>{service.publicUrl ? <a href={service.publicUrl} rel="noreferrer" target="_blank">Open ↗</a> : null}</article>; })}</div></Card>;
+  return <Card><div className="infrastructure-section-heading"><div><p className="eyebrow">Services</p><h2>Running applications</h2></div></div><div className="infrastructure-support-grid service-runtime-grid">{persisted.map((service) => { const current = observed.get(service.serviceId); const targets = (current?.alb?.targetHealth || []).filter((state) => state !== "draining"); const healthy = current?.ecs?.runningCount === current?.ecs?.desiredCount && targets.length > 0 && targets.every((state) => state === "healthy"); const updating = transitioning && !current; return <article key={service.serviceId}><div className="service-runtime-heading"><strong>{service.serviceName}</strong><StatusChip status={healthy ? "healthy" : updating ? "running" : current ? "unhealthy" : "unknown"}>{healthy ? "Healthy" : updating ? "Updating" : current ? "Unhealthy" : "Unknown"}</StatusChip></div><span>{service.serviceDirectory || "."}</span><p>Port {service.servicePort || "Unavailable"} · ECS {current ? `${current.ecs.runningCount}/${current.ecs.desiredCount}` : updating ? "Release updating" : "Unavailable"}</p>{service.publicUrl ? <a href={service.publicUrl} rel="noreferrer" target="_blank">Open ↗</a> : null}</article>; })}</div></Card>;
 }
 
 function SupportingServices({ evidence }) {
@@ -135,10 +137,16 @@ export default function ProjectInfrastructure() {
   if (absent) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Runtime infrastructure" status="not_provisioned" /><Card><p className="eyebrow">Runtime infrastructure not provisioned</p><h2>Deployment stopped during {state?.progress?.phase === "build" ? "Build Application" : "source preparation"}.</h2><p>Runtime infrastructure was not provisioned. Open Pipeline for the bounded failure evidence.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open Pipeline</Link></Card></div>;
   if (provisioningFailed) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Runtime infrastructure" status="provisioning_failed" /><Card><p className="eyebrow">Provisioning failed</p><h2>Runtime provisioning did not complete.</h2><p>Some resources may exist. Open Pipeline for bounded Terraform evidence.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open Pipeline</Link></Card></div>;
   const runtimePresent = state?.stateAuthority?.runtime?.state === "present";
+  const releaseUpdating = Boolean(state?.stateAuthority?.activeOperation && state.stateAuthority.activeOperation.type !== "destroy");
   const runtimeTitle = runtimePresent ? (state?.stateAuthority?.state === "DESTROYING" ? "Runtime healthy · Destroy in progress" : failedDestroy ? "Runtime healthy · Latest Destroy failed" : "Runtime service architecture") : "Runtime infrastructure state";
   const observedServices = Array.isArray(evidence?.services) ? evidence.services : [];
   const runningServices = observedServices.filter((service) => service?.ecs?.runningCount === service?.ecs?.desiredCount).length;
-  const targetHealth = observedServices.flatMap((service) => service?.alb?.targetHealth || []);
-  const healthyTargets = targetHealth.filter((target) => target === "healthy").length;
-  return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title={runtimeTitle} status={infrastructure?.status || "unavailable"} description="Current AWS state for this release." />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}<section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="Application" value={runtimePresent ? (state?.stableUrl ? <a href={state.stableUrl} rel="noreferrer" target="_blank">Open application ↗</a> : "Healthy") : label(state?.stateAuthority?.runtime?.state)} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="Services" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="Targets" value={targetHealth.length ? `${healthyTargets}/${targetHealth.length} healthy` : evidence?.alb?.targetHealth?.length ? `${evidence.alb.targetHealth.filter((item) => item === "healthy").length}/${evidence.alb.targetHealth.length} healthy` : "Unavailable"} tone={(targetHealth.length && healthyTargets === targetHealth.length) || (evidence?.alb?.targetHealth?.length && evidence.alb.targetHealth.every((item) => item === "healthy")) ? "success" : "neutral"} /><MetricCard label="Region" value={evidence?.region || "Unavailable"} /></section><ServiceFlow evidence={evidence} state={state} /><ServiceRuntimeList evidence={evidence} /><SupportingServices evidence={evidence} /><Pricing cost={evidence?.cost} /><TechnicalDetails evidence={evidence} state={state} /></div>;
+  const targetHealth = observedServices.length
+    ? observedServices.flatMap((service) => service?.alb?.targetHealth || [])
+    : evidence?.alb?.targetHealth || [];
+  const activeTargetHealth = targetHealth.filter((target) => target !== "draining");
+  const drainingTargets = targetHealth.filter((target) => target === "draining").length;
+  const healthyTargets = activeTargetHealth.filter((target) => target === "healthy").length;
+  const targetsHealthy = activeTargetHealth.length > 0 && healthyTargets === activeTargetHealth.length;
+  return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title={releaseUpdating ? "Runtime release updating" : runtimeTitle} status={infrastructure?.status || "unavailable"} description={releaseUpdating ? "The previous LIVE release remains canonical while AWS activates the candidate release." : "Current AWS state for this release."} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}<section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="Application" value={runtimePresent ? (state?.stableUrl ? <a href={state.stableUrl} rel="noreferrer" target="_blank">Open application ↗</a> : "Healthy") : label(state?.stateAuthority?.runtime?.state)} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="Services" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : releaseUpdating ? "Release updating" : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="Targets" value={activeTargetHealth.length ? `${healthyTargets}/${activeTargetHealth.length} healthy${drainingTargets ? ` · ${drainingTargets} draining` : ""}` : releaseUpdating ? "Release updating" : "Unavailable"} tone={targetsHealthy ? "success" : "neutral"} /><MetricCard label="Region" value={evidence?.region || "Unavailable"} /></section><ServiceFlow evidence={evidence} state={state} /><ServiceRuntimeList evidence={evidence} transitioning={releaseUpdating} /><SupportingServices evidence={evidence} /><Pricing cost={evidence?.cost} /><TechnicalDetails evidence={evidence} state={state} /></div>;
 }

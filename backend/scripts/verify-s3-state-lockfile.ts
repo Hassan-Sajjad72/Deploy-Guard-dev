@@ -20,7 +20,7 @@ const service = (values: Record<string, string>) => new TerraformStateService(
 async function verify() {
   const workflow = readFileSync(resolve(__dirname, "../../.github/workflows/deployguard-reusable.yml"), "utf8");
   assert.match(workflow, /terraform_version: 1\.10\.5/);
-  assert.match(workflow, /-backend-config="key=projects\/\$PROJECT_ID\/\$ENVIRONMENT_NAME\/\$GENERATION_ID\/terraform\.tfstate"/);
+  assert.match(workflow, /-backend-config="key=projects\/\$PROJECT_ID\/\$ENVIRONMENT_NAME\/runtime\/terraform\.tfstate"/);
   assert.match(workflow, /-backend-config="use_lockfile=true"/);
   assert.doesNotMatch(workflow, /-lock=false/);
   const remote = service({
@@ -31,11 +31,38 @@ async function verify() {
     TERRAFORM_STATE_USE_LOCKFILE: "true",
   });
   const project = { id: "project-123" } as never;
-  assert.equal(remote.buildStateKey(project), "projects/project-123/dev/project/terraform.tfstate");
+  const canonical = service({
+    STATE_MOCK_MODE: "false",
+    DEPLOYGUARD_TERRAFORM_STATE_BUCKET: "deployguard-canonical-state",
+    TERRAFORM_STATE_BUCKET: "obsolete-state-bucket",
+    TERRAFORM_STATE_REGION: "us-east-1",
+  });
+  assert.match(canonical.generateTerraformBackendConfig(project), /bucket = "deployguard-canonical-state"/, "the deployment and backend state paths must use DEPLOYGUARD_TERRAFORM_STATE_BUCKET");
+  const canonicalDestroy = new TerraformStateService(
+    null as never,
+    config({
+      STATE_MOCK_MODE: "false",
+      DEPLOYGUARD_TERRAFORM_STATE_BUCKET: "deployguard-canonical-state",
+      TERRAFORM_STATE_REGION: "us-east-1",
+      TERRAFORM_STATE_PREFIX: "projects",
+      TERRAFORM_STATE_USE_LOCKFILE: "true",
+    }),
+    { run: async (args: string[]) => {
+      if (args.includes("get-bucket-versioning")) return { stdout: JSON.stringify({ Status: "Enabled" }), stderr: "" };
+      if (args.includes("head-object")) {
+        const key = args[args.indexOf("--key") + 1];
+        if (key.endsWith(".tflock")) throw new Error("An error occurred (404) when calling the HeadObject operation: Not Found");
+        return { stdout: JSON.stringify({ VersionId: "canonical-state-version" }), stderr: "" };
+      }
+      return { stdout: "{}", stderr: "" };
+    } } as never,
+  );
+  assert.equal((await canonicalDestroy.validateDestroyBackend(project)).bucket, "deployguard-canonical-state", "destroy admission must use the canonical configured bucket");
+  assert.equal(remote.buildStateKey(project), "projects/project-123/dev/runtime/terraform.tfstate");
   assert.equal(remote.buildStateKey(project, "dev", "11111111-1111-4111-8111-111111111111"), "projects/project-123/dev/11111111-1111-4111-8111-111111111111/terraform.tfstate");
   const backend = remote.generateTerraformBackendConfig(project);
   assert.match(backend, /bucket = "deployguard-state-bucket"/);
-  assert.match(backend, /key = "projects\/project-123\/dev\/project\/terraform\.tfstate"/);
+  assert.match(backend, /key = "projects\/project-123\/dev\/runtime\/terraform\.tfstate"/);
   assert.match(backend, /region = "us-east-1"/);
   assert.match(backend, /encrypt = true/);
   assert.match(backend, /use_lockfile = true/);
@@ -60,9 +87,9 @@ async function verify() {
   );
   const validated = await preflight.validateRemoteBackend(project);
   assert.equal(validated.mode, "s3");
-  assert.equal(validated.lockfileKey, "projects/project-123/dev/project/terraform.tfstate.tflock");
+  assert.equal(validated.lockfileKey, "projects/project-123/dev/runtime/terraform.tfstate.tflock");
   assert(calls.some((args) => args.includes("head-bucket")));
-  assert(calls.some((args) => args.includes("head-object") && args.includes("projects/project-123/dev/project/terraform.tfstate.tflock")));
+  assert(calls.some((args) => args.includes("head-object") && args.includes("projects/project-123/dev/runtime/terraform.tfstate.tflock")));
   assert(!calls.some((args) => args.some((value) => /dynamodb|put-bucket/i.test(value))));
 
   let savedState: Record<string, unknown> | null = null;
@@ -91,7 +118,7 @@ async function verify() {
   );
   const backup = await backupService.recordDestroyStateBackup({ project, environmentName: "dev", pipelineRunId: "run-1", operationId: "destroy-1" });
   assert.equal(backup.versionId, "state-version-42");
-  assert.equal(backup.stateKey, "projects/project-123/dev/project/terraform.tfstate");
+  assert.equal(backup.stateKey, "projects/project-123/dev/runtime/terraform.tfstate");
   assert.equal((savedState as Record<string, unknown>).currentVersionId, "state-version-42");
   assert.equal(((savedState as Record<string, unknown>).metadata as { destroyStateBackup: { operationId: string } }).destroyStateBackup.operationId, "destroy-1");
 
@@ -122,11 +149,11 @@ async function verify() {
   );
   await assert.rejects(
     () => stale.validateRemoteBackend(project),
-    /Terraform S3 lockfile exists and may be stale\. Lockfile: projects\/project-123\/dev\/project\/terraform\.tfstate\.tflock/
+    /Terraform S3 lockfile exists and may be stale\. Lockfile: projects\/project-123\/dev\/runtime\/terraform\.tfstate\.tflock/
   );
   const cleared = await stale.clearStaleNativeLockfile(project);
   assert.equal(cleared.cleared, true);
-  assert(staleCalls.some((args) => args.includes("delete-object") && args.includes("projects/project-123/dev/project/terraform.tfstate.tflock")));
+  assert(staleCalls.some((args) => args.includes("delete-object") && args.includes("projects/project-123/dev/runtime/terraform.tfstate.tflock")));
 
   const inaccessible = new TerraformStateService(
     null as never,

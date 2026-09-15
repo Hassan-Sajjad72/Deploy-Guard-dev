@@ -9,6 +9,7 @@ import { Project } from "../projects/project.entity";
 import { AwsCliService } from "../state-management/aws-cli.service";
 import { User } from "../users/user.entity";
 import { TerraformStateService } from "../state-management/terraform-state.service";
+import { getStateManagementConfig } from "../state-management/state-management.config";
 import { CentralCloudResource } from "./central-cloud-resource.entity";
 import { CloudResourceClassifierService, DiscoveredCloudResource, KnownProject } from "./cloud-resource-classifier.service";
 import { CentralCloudResourceQueryDto } from "./dto/central-cloud-cleanup.dto";
@@ -328,9 +329,9 @@ export class CentralCloudInventoryService {
   }
 
   private async discoverState(resources: Map<string, DiscoveredCloudResource>, warnings: string[]) {
-    const bucket = this.config.get<string>("TERRAFORM_STATE_BUCKET", "deployguard-state-bucket");
+    const bucket = getStateManagementConfig(this.config).bucket;
+    if (!bucket) { warnings.push("DeployGuard Terraform state bucket is not configured; state discovery is unavailable."); return; }
     this.add(resources, { resourceKey: `s3://${bucket}`, arn: `arn:aws:s3:::${bucket}`, name: bucket, resourceType: "state_bucket", awsService: "s3", region: this.region, source: "state_backend" });
-    if (bucket !== "deployguard-state-bucket") { warnings.push("Configured Terraform state bucket differs from deployguard-state-bucket; state cleanup is disabled."); return; }
     const payload = await this.tryJson(["s3api", "list-objects-v2", "--bucket", bucket, "--prefix", "projects/", "--output", "json"], warnings, "Terraform state object discovery");
     for (const object of payload.Contents || []) {
       const key = String(object.Key || "");

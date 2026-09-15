@@ -92,7 +92,7 @@ export class FailureDiagnosticService {
       return this.managedDatabaseDiagnosis(managedDatabase);
     }
     const authoritative = failureContractFor(terminalCode);
-    const evidenceClassifiable = !authoritative || ["DG_APPLICATION_RUNTIME_FAILED", "DG_APPLICATION_STARTUP_FAILED", "DG_RAILPACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED", "DG_FAILURE_UNVERIFIED"].includes(terminalCode);
+    const evidenceClassifiable = !authoritative || ["DG_APPLICATION_RUNTIME_FAILED", "DG_APPLICATION_STARTUP_FAILED", "DG_RAILPACK_BUILD_FAILED", "DG_DOCKER_FALLBACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED", "DG_FAILURE_UNVERIFIED"].includes(terminalCode);
     if (authoritative && !evidenceClassifiable) return { ...authoritative, confidence: "DETERMINISTIC" };
     const managedUrlEvidence = evidence.match(/DG_MANAGED_DATABASE_URL_EVIDENCE[^\n]*\bsealedScheme=([a-z][a-z0-9+._-]*)\s+suppliedScheme=([a-z][a-z0-9+._-]*)/i);
     if (managedUrlEvidence && managedUrlEvidence[1].toLowerCase() !== managedUrlEvidence[2].toLowerCase() && /ModuleNotFoundError/i.test(evidence) && /sqlalchemy\/dialects\/(?:postgresql|mysql)\//i.test(evidence)) {
@@ -171,6 +171,12 @@ export class FailureDiagnosticService {
       rootCauseCode: "DG_RAILPACK_BUILD_FAILED", affectedComponent: "Railpack application build", summary: "The Railpack application build failed.",
       technicalReason: "The structured boundary proves the build failed, but the available evidence does not prove whether its underlying cause belongs to the repository, platform, or provider.",
       recommendedAction: "Review the sanitized build evidence before choosing a recovery action.", remediationSteps: ["Review the bounded Railpack build evidence.", "Do not retry or change source until the underlying cause is identified."],
+      retryDecision: "INSUFFICIENT_EVIDENCE", confidence: "UNVERIFIED",
+    };
+    if (terminalCode === "DG_DOCKER_FALLBACK_BUILD_FAILED") return {
+      rootCauseCode: "DG_DOCKER_FALLBACK_BUILD_FAILED", affectedComponent: "Certified Docker fallback build", summary: "The certified Docker fallback build failed.",
+      technicalReason: "The fallback boundary failed, but the available evidence does not prove whether the underlying cause belongs to the repository, platform, or an external provider.",
+      recommendedAction: "Review the sanitized fallback evidence; do not attempt another fallback in this operation.", remediationSteps: ["Review the bounded fallback evidence.", "Do not run a second fallback template.", "Correct only a deterministically proven underlying cause."],
       retryDecision: "INSUFFICIENT_EVIDENCE", confidence: "UNVERIFIED",
     };
     return {

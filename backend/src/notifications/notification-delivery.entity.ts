@@ -15,7 +15,7 @@ export class NotificationDelivery {
   @Column({ name: "subject" }) subject: string;
   @Column({ type: "text" }) message: string;
   @Column({ nullable: true, name: "safe_metadata", type: "jsonb" }) safeMetadata: Record<string, unknown> | null;
-  @Column({ nullable: true, name: "sent_at", type: "timestamptz" }) sentAt: Date | null;
+  @Column({ nullable: true, name: "sent_at", type: "timestamptz" }) publishedAt: Date | null;
   @CreateDateColumn({ name: "created_at", type: "timestamptz" }) createdAt: Date;
   @UpdateDateColumn({ name: "updated_at", type: "timestamptz" }) updatedAt: Date;
 }

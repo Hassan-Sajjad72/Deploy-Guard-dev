@@ -182,7 +182,7 @@ async function frameworkDefaultEvidence(root: string) {
     } catch { /* Railpack owns package-manifest validation. */ }
   }
   const python = [await boundedRead(join(root, "requirements.txt")), await boundedRead(join(root, "pyproject.toml"))].filter((value): value is string => value !== null).join("\n");
-  for (const [framework, expression, defaultPort] of [["django", /(?:^|\n)\s*django(?:[=<>~!]|\s|$)/i, 8000], ["flask", /(?:^|\n)\s*flask(?:[=<>~!]|\s|$)/i, 5000], ["fastapi", /(?:^|\n)\s*fastapi(?:[=<>~!]|\s|$)/i, 8000]] as const) {
+  for (const [framework, expression, defaultPort] of [["django", /(?:^|\n)\s*["']?django(?:\[[^\]\r\n]+\])?(?:[=<>~!]|\s|$)/i, 8000], ["flask", /(?:^|\n)\s*["']?flask(?:\[[^\]\r\n]+\])?(?:[=<>~!]|\s|$)/i, 5000], ["fastapi", /(?:^|\n)\s*["']?fastapi(?:\[[^\]\r\n]+\])?(?:[=<>~!]|\s|$)/i, 8000]] as const) {
     if (expression.test(python)) found.push(evidence(5, `python:framework:${framework}`, String(defaultPort)));
   }
   const java = [await boundedRead(join(root, "pom.xml")), await boundedRead(join(root, "build.gradle")), await boundedRead(join(root, "build.gradle.kts"))].filter((value): value is string => value !== null).join("\n");

@@ -17,7 +17,12 @@ assert.match(page, /operation\.diagnosis\.recommendedAction/, "Troubleshooting p
 assert.match(page, /question\.label[\s\S]*setQuestionType\(question\.type\)/, "suggested questions retain their machine-readable question type");
 assert.match(api, /questionType \? \{ questionType \}/, "question type is sent separately from display text");
 assert.match(page, /aiRuntimeAnalysisCandidate === true/);
+assert.match(page, /failureTroubleshootingProjection\(history\.operations \|\| \[\], list\.items \|\| \[\]\)/, "failure candidates and sessions share one history projection");
+assert.match(page, /projectStatePresentation\(state\)\.state === "FAILED" \? candidates\[0\]\?\.id/, "historical failure is not selected by default after the authoritative project state recovers");
+assert.match(page, /status=\{currentProjectState\}/, "page-level status comes from canonical current project state, not the selected historical failure");
+assert.match(page, /<option value="">Select a failed attempt<\/option>/, "historical failure details require an explicit selection when the project is currently successful");
+assert.doesNotMatch(page, /!requestedOperation \? failureSessions\[0\]/, "the first historical analysis session is not opened implicitly");
 assert.match(page, /automaticAnalysisStarted\.current[\s\S]*query\.get\("analyze"\) !== "1"/, "automatic analysis is one-shot and only follows an explicit analyze link");
-assert.match(page, /startTroubleshooting\(projectId, operationId, selectedServiceId \|\| undefined\)/, "LIVE runtime evidence remains service scoped");
+assert.match(page, /startTroubleshooting\(projectId, operationId\)/, "failed-attempt analysis cannot inherit a service selector from the current LIVE release");
 assert.match(page, /result\?\.diagnosticDetails/);
 console.log("AI_TROUBLESHOOTING_UI=PASS DIAGNOSIS_FIRST=1 SUGGESTED_QUESTION_TYPES=1 RAW_EVIDENCE_COLLAPSED=1 AUTHORITY_LABEL=1 LIVE_SERVICE_SCOPE=1 EXPLICIT_AUTO_ANALYSIS=1");

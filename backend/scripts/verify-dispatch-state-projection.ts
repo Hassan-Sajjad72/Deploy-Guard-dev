@@ -56,13 +56,13 @@ function storedZipEntry(name: string, value: string) {
 
 async function verifyReleaseArtifactEvidenceReconciliation() {
   const serviceId = "77777777-7777-4777-8777-777777777777";
-  const contract = (operationId: string, sourceSha: string, action: "deploy" | "rollback" = "deploy", immutableImage?: string) => servicesBase64({ schemaVersion: 3, projectId: project.id, environmentName: "dev", operationId, sourceSha, services: [{ serviceId, runtimeConfigRevisionId: "77777777-7777-4777-8777-777777777777", serviceName: "Web", serviceDirectory: ".", servicePort: 8080, buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] }, ...(action === "rollback" && immutableImage ? { rollbackImage: immutableImage } : {}) }] });
+  const contract = (operationId: string, sourceSha: string, action: "deploy" | "rollback" = "deploy", immutableImage?: string) => servicesBase64({ schemaVersion: 3, projectId: project.id, environmentName: "dev", operationId, sourceSha, services: [{ serviceId, runtimeConfigRevisionId: "77777777-7777-4777-8777-777777777777", runtimeConfigFingerprint: "e".repeat(64), buildTargetRevisionId: serviceId, buildTarget: { resolverVersion: "deployguard.build-target/v2", sourceSha, serviceDirectory: ".", workspaceRoot: ".", buildRoot: ".", installRoot: ".", packageIdentity: "web", contract: "JS_STANDALONE", execution: { packageTarget: null, packageManager: "npm", buildCommand: null, startCommand: null }, dependencyPaths: [], strategy: "isolated", status: "resolved", evidence: {}, override: null, fingerprint: "d".repeat(64) }, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] }, ...(action === "rollback" && immutableImage ? { rollbackImage: immutableImage } : {}) }] });
   const imageUri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/repo";
   const imageDigest = `sha256:${"a".repeat(64)}`;
   const image = `${imageUri}@${imageDigest}`;
   const runtimeConfigRevisionId = serviceId;
   const runtime = { name: "Web", image, runtime_config_revision_id: runtimeConfigRevisionId, service_port: 8080, ecs_service_arn: "arn:aws:ecs:us-east-1:123456789012:service/dg/dg", ecs_service_name: "dg", task_definition_arn: "arn:aws:ecs:us-east-1:123456789012:task-definition/dg:1", alb_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/dg/a", alb_name: "dg", alb_target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/dg/a", alb_target_group_name: "dg", public_url: "http://example.test", cloudwatch_log_group_name: `/deployguard/${project.id}/services/${serviceId}`, application_container_name: "application", transport_probe_container_name: "deployguard-transport-probe", transport_probe_port: 65535, platform_health_check_path: "/_deployguard/transport-ready" };
-  const valid = { contractVersion: "deployguard.release-result/v5", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", services: [{ serviceId, runtimeConfigRevisionId, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, imageUri, imageDigest, image }], terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: { [serviceId]: runtime }, database: null }, awsRuntimeVerification: { contractVersion: "deployguard.aws-runtime-verification/v1", verified: true, verifiedAt: "2026-09-01T00:00:00Z", databaseVerified: false, services: [{ serviceId, verified: true, image, ecsServiceArn: runtime.ecs_service_arn, taskDefinitionArn: runtime.task_definition_arn, runningTaskArns: ["arn:aws:ecs:us-east-1:123456789012:task/dg/1"], ecsTasksRunning: 1, taskIpAddresses: ["10.0.0.10"], runtimePort: 8080, readinessMode: "platform_transport", applicationReachabilityPath: "alb_to_task_eni", transportProbePort: runtime.transport_probe_port, platformHealthCheckPath: runtime.platform_health_check_path, targetGroupArn: runtime.alb_target_group_arn, targetHealth: ["healthy"], targetRegistrations: [{ targetId: "10.0.0.10", port: 8080, state: "healthy" }], alb: { state: "active", dnsName: "example.test", scheme: "internet-facing", type: "application", ipAddressType: "ipv4", securityGroups: ["sg-alb"] }, listener: { listenerArn: "listener", port: 80, protocol: "HTTP", defaultTargetGroupArn: runtime.alb_target_group_arn }, publicProbe: { classification: "READY", hostname: "example.test", resolvedIpAddresses: ["203.0.113.10"], dnsAttempts: 1, dnsElapsedSeconds: 0, attemptCount: 1, elapsedSeconds: 0, curlExitCode: 0, httpStatus: "200", remoteIp: "203.0.113.10", connectTimeSeconds: "0.01", startTransferTimeSeconds: "0.02", totalTimeSeconds: "0.02" }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretValueFrom: {}, managedDatabase: { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null }, publicUrl: runtime.public_url, publicEndpointVerified: true, taskDefinition: true, secretsInjection: true, vpcConnectivity: true, publicReachability: true, checkedAt: "2026-09-01T00:00:00Z" }] } };
+  const valid = { contractVersion: "deployguard.release-result/v5", action: "deploy", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", services: [{ serviceId, runtimeConfigRevisionId, runtimeConfigFingerprint: "e".repeat(64), buildTargetRevisionId: serviceId, buildTargetFingerprint: "d".repeat(64), builder: "railpack", builderVersion: "0.38.0", sourceSha: "c".repeat(40), operationId: "66666666-6666-4666-8666-666666666666", localImageId: `sha256:${"7".repeat(64)}`, originalRailpackFailureCode: null, fallbackEligibility: "not_applicable", fallbackReason: null, fallbackTemplateId: null, fallbackTemplateVersion: null, fallbackTemplateDigest: null, serviceName: "Web", serviceDirectory: ".", servicePort: 8080, imageUri, imageDigest, image }], terraform: { aws_region: "us-east-1", ecs_cluster_arn: "arn:aws:ecs:us-east-1:123456789012:cluster/dg", ecs_cluster_name: "dg", services: { [serviceId]: runtime }, database: null }, awsRuntimeVerification: { contractVersion: "deployguard.aws-runtime-verification/v1", verified: true, verifiedAt: "2026-09-01T00:00:00Z", databaseVerified: false, services: [{ serviceId, verified: true, image, ecsServiceArn: runtime.ecs_service_arn, taskDefinitionArn: runtime.task_definition_arn, runningTaskArns: ["arn:aws:ecs:us-east-1:123456789012:task/dg/1"], ecsTasksRunning: 1, taskIpAddresses: ["10.0.0.10"], runtimePort: 8080, readinessMode: "platform_transport", applicationReachabilityPath: "alb_to_task_eni", transportProbePort: runtime.transport_probe_port, platformHealthCheckPath: runtime.platform_health_check_path, targetGroupArn: runtime.alb_target_group_arn, targetHealth: ["healthy"], targetRegistrations: [{ targetId: "10.0.0.10", port: 8080, state: "healthy" }], alb: { state: "active", dnsName: "example.test", scheme: "internet-facing", type: "application", ipAddressType: "ipv4", securityGroups: ["sg-alb"] }, listener: { listenerArn: "listener", port: 80, protocol: "HTTP", defaultTargetGroupArn: runtime.alb_target_group_arn }, publicProbe: { classification: "READY", hostname: "example.test", resolvedIpAddresses: ["203.0.113.10"], dnsAttempts: 1, dnsElapsedSeconds: 0, attemptCount: 1, elapsedSeconds: 0, curlExitCode: 0, httpStatus: "200", remoteIp: "203.0.113.10", connectTimeSeconds: "0.01", startTransferTimeSeconds: "0.02", totalTimeSeconds: "0.02" }, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretValueFrom: {}, managedDatabase: { attached: false, attachedServiceId: null, engine: null, aliases: [], credentialsSecretArn: null, secretVersionId: null }, publicUrl: runtime.public_url, publicEndpointVerified: true, taskDefinition: true, secretsInjection: true, vpcConnectivity: true, publicReachability: true, checkedAt: "2026-09-01T00:00:00Z" }] } };
   assert.equal(DEPLOYGUARD_RESULT_ARTIFACT_ENTRY, "deployguard-result.json");
   const archive = storedZipEntry("deployguard-result.json", JSON.stringify(valid));
   assert.equal(exactZipEntry(archive, DEPLOYGUARD_RESULT_ARTIFACT_ENTRY), JSON.stringify(valid));
@@ -155,6 +155,8 @@ async function verifyReleaseArtifactEvidenceReconciliation() {
   const redeployEvidence = structuredClone(valid);
   redeployEvidence.operationId = "88888888-8888-4888-8888-888888888888";
   redeployEvidence.sourceSha = "e".repeat(40);
+  redeployEvidence.services[0].operationId = redeployEvidence.operationId;
+  redeployEvidence.services[0].sourceSha = redeployEvidence.sourceSha;
   redeployEvidence.services[0].imageDigest = `sha256:${"b".repeat(64)}`;
   redeployEvidence.services[0].image = `${imageUri}@${redeployEvidence.services[0].imageDigest}`;
   redeployEvidence.terraform.services[serviceId].image = redeployEvidence.services[0].image;
@@ -905,6 +907,22 @@ async function verifyPersistedRuntimeFailureArtifactIsConsumed() {
   assert.equal(parsed.stage, "ecs_stability", "backend terminal reconciliation consumes the exact persisted verifier failure marker");
 }
 
+async function verifyPersistedBuilderFailureArtifactIsConsumed() {
+  const operationId = "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb";
+  const serviceId = "77777777-7777-4777-8777-777777777777";
+  const failureEvent = { contractVersion: "deployguard.failure-event/v1", operationId, projectId: project.id, sourceSha: "a".repeat(40), serviceId, code: "DG_DOCKER_FALLBACK_UNSUPPORTED", stage: "docker_fallback_selection", summary: "No exact certified fallback.", safeEvidence: "bounded evidence", buildIdentity: { buildTargetRevisionId: serviceId, buildTargetFingerprint: "d".repeat(64), runtimeConfigRevisionId: serviceId, runtimeConfigFingerprint: "e".repeat(64) }, builder: { primary: "railpack", originalRailpackFailureCode: "DG_RAILPACK_INTERNAL_FAILURE", fallbackEligibility: "ELIGIBLE", fallbackReason: "no_exact_certified_contract" } };
+  const actions = Object.create(GithubActionsService.prototype) as any;
+  actions.getWorkflowJobs = async () => ({ jobs: [{ id: 92, name: "deploy", status: "completed", conclusion: "failure", steps: [{ name: "Build immutable Railpack images", status: "completed", conclusion: "failure" }] }] });
+  actions.getWorkflowStages = async () => [];
+  actions.getJobLog = async () => "generic wrapper failure";
+  actions.getArtifactEntry = async () => JSON.stringify({ contractVersion: "deployguard.release-failure/v1", action: "deploy", sourceSha: failureEvent.sourceSha, operationId, failedStage: failureEvent.stage, failureEvent });
+  const evidence = await actions.getTerminalFailureEvidence("example/application", "123", operationId, "ignored", "deploy");
+  assert.equal(evidence?.failedStage, "docker_fallback_selection");
+  assert.deepEqual(evidence?.failureEvent, failureEvent);
+  assert.match(evidence?.rawEvidence || "", /DG_DOCKER_FALLBACK_UNSUPPORTED/);
+  assert.match(evidence?.rawEvidence || "", new RegExp(serviceId));
+}
+
 async function verifyActiveGithubStagesPersistWithoutPipeline() {
   const saved: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
@@ -1137,6 +1155,7 @@ void (async () => {
   const terminalFailure = await verifyTerminalGithubFailure();
   await verifyStructuredRuntimeFailureSurvivesTerminalReconciliation();
   await verifyPersistedRuntimeFailureArtifactIsConsumed();
+  await verifyPersistedBuilderFailureArtifactIsConsumed();
   await verifyActiveGithubStagesPersistWithoutPipeline();
   await verifyTerminalStageMetadataConvergenceAndBackfill();
   await verifyCurrentStateProjection(terminalFailure, true);
@@ -1151,6 +1170,7 @@ void (async () => {
   const phases = readFileSync(join(root, "frontend", "src", "utils", "developerDeploymentPresentation.js"), "utf8");
   const routes = readFileSync(join(root, "frontend", "src", "routes", "AppRoutes.jsx"), "utf8");
   const workflow = readFileSync(join(root, ".github", "workflows", "deployguard-reusable.yml"), "utf8");
+  const buildScript = readFileSync(join(root, "infrastructure", "docker-fallback", "build-images.sh"), "utf8");
   const overviewPage = readFileSync(join(root, "frontend", "src", "pages", "ProjectDetails.jsx"), "utf8");
   const pipelinePage = readFileSync(join(root, "frontend", "src", "pages", "ProjectPipeline.jsx"), "utf8");
   const infrastructurePage = readFileSync(join(root, "frontend", "src", "pages", "ProjectInfrastructure.jsx"), "utf8");
@@ -1170,8 +1190,8 @@ void (async () => {
   assert.match(workflow, /name: Install Terraform[\s\S]*?if: success\(\)/);
   assert.match(workflow, /name: Materialize release runtime[\s\S]*?steps\.image\.outputs\.published == 'true'/);
   assert.match(workflow, /name: Publish verified release result[\s\S]*?if: success\(\) && hashFiles/);
-  assert.match(workflow, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name/);
-  assert.match(workflow, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
+  assert.match(buildScript, /BUILDKIT_HOST="docker-container:\/\/\$\{BUILDKIT_CONTAINER\}" railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name/);
+  assert.match(buildScript, /docker exec "\$BUILDKIT_CONTAINER" buildctl debug workers/);
   assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
   assert.match(overviewPage, /getProjectCurrentState/);
   assert.match(pipelinePage, /getProjectCurrentState/);

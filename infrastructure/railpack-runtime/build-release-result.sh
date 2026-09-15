@@ -75,6 +75,23 @@ jq -e \
     and (.image == (.imageUri + "@" + .imageDigest))
     and (.image == $release.terraform.services[.serviceId].image)
     and (.runtimeConfigRevisionId == $release.terraform.services[.serviceId].runtime_config_revision_id)
+    and (if $action == "deploy" then
+      (.builder == "railpack" or .builder == "deployguard_docker_fallback")
+      and (.builderVersion | type == "string" and length > 0)
+      and (.sourceSha == $sourceSha) and (.operationId == $operationId)
+      and (.buildTargetRevisionId | type == "string")
+      and (.buildTargetFingerprint | test("^[0-9a-f]{64}$"))
+      and (.runtimeConfigFingerprint | test("^[0-9a-f]{64}$"))
+      and (.localImageId | test("^sha256:[0-9a-f]{64}$"))
+      and (if .builder == "railpack" then
+        .builderVersion == "0.38.0" and .originalRailpackFailureCode == null and .fallbackEligibility == "not_applicable"
+        and .fallbackReason == null and .fallbackTemplateId == null and .fallbackTemplateVersion == null and .fallbackTemplateDigest == null
+      else
+        .originalRailpackFailureCode == "DG_RAILPACK_INTERNAL_FAILURE" and .fallbackEligibility == "ELIGIBLE"
+        and (.fallbackReason | type == "string" and length > 0) and (.fallbackTemplateId | type == "string" and length > 0)
+        and (.fallbackTemplateVersion | type == "string" and length > 0) and (.fallbackTemplateDigest | test("^[0-9a-f]{64}$"))
+      end)
+    else true end)
     and (.servicePort == $release.terraform.services[.serviceId].service_port)
     and ($release.terraform.services[.serviceId].task_definition_arn | type == "string")
     and ($release.terraform.services[.serviceId].ecs_service_arn | type == "string")

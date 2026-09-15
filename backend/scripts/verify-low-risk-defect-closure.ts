@@ -7,6 +7,7 @@ import { ManagedDatabaseReconciliationAdmissionError } from "../src/projects/man
 import { DatabaseTierProvider, DatabaseTierStatus } from "../src/projects/project-database-tier.entity";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
+import { authorizeGithubRepositoryInTrust, githubTrustAuthorizesSubject, githubTrustUpdateRequired, TrustPolicy } from "../src/projects/github-actions-oidc-trust.service";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const project = { id: projectId, environmentName: "dev" } as any;
@@ -32,6 +33,21 @@ const report = (overrides: Record<string, unknown> = {}) => {
 };
 
 async function main() {
+  const wildcardTrust: TrustPolicy = { Version: "2012-10-17", Statement: [{
+    Effect: "Allow",
+    Principal: { Federated: "arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com" },
+    Action: "sts:AssumeRoleWithWebIdentity",
+    Condition: { StringEquals: { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" }, StringLike: { "token.actions.githubusercontent.com:sub": "repo:DeployGuard/*:*" } },
+  }] };
+  assert.equal(githubTrustAuthorizesSubject(wildcardTrust, "repo:DeployGuard/supported-app:*"), true, "an existing wildcard OIDC subject authorizes the repository without a trust-policy write");
+  assert.equal(githubTrustAuthorizesSubject(wildcardTrust, "repo:AnotherOwner/supported-app:*"), false, "OIDC wildcard authorization remains owner-scoped");
+  assert.equal(githubTrustUpdateRequired(wildcardTrust, "repo:DeployGuard/supported-app:*", false), false, "external role mode remains read-only when the effective trust already authorizes the repository");
+  assert.throws(() => githubTrustUpdateRequired(wildcardTrust, "repo:AnotherOwner/supported-app:*", false), /externally managed/, "external role mode fails closed instead of attempting an IAM trust mutation");
+  assert.equal(githubTrustUpdateRequired(wildcardTrust, "repo:AnotherOwner/supported-app:*", true), true, "platform role mode may update a missing repository trust");
+  const unchangedTrust = JSON.stringify(wildcardTrust);
+  assert.equal(authorizeGithubRepositoryInTrust(wildcardTrust, "DeployGuard/supported-app"), true, "the mutation renderer remains available when an exact subject must be added");
+  assert.notEqual(JSON.stringify(wildcardTrust), unchangedTrust);
+
   assert.deepEqual(activeTerraformDatabaseAddresses({ resources: [
     { type: "aws_efs_file_system", name: "database", instances: [{}] },
     { type: "aws_ecs_service", name: "application", instances: [{}] },

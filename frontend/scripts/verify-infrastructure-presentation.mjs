@@ -16,7 +16,7 @@ assert.match(page, /createTerraformExport, downloadTerraformExport/, "Infrastruc
 assert.match(page, /const artifact = await createTerraformExport\(projectId\);[\s\S]*await downloadTerraformExport\(projectId, artifact\);/, "Export creation must complete before the returned artifact is downloaded.");
 assert.match(page, />\{exporting \? "Preparing export…" : "Export Terraform"\}<\/button>/, "Infrastructure exposes a visible Export Terraform action with progress feedback.");
 assert.match(page, /disabled=\{exporting\}/, "Terraform export prevents duplicate requests while an artifact is being prepared.");
-assert.match(page, /actions=\{exportAction\}/, "The Terraform export action is presented in the infrastructure page header.");
+assert.match(page, /actions=\{exportAction\}/, "The Terraform export action remains in the Infrastructure header.");
 assert.doesNotMatch(page, /<dl[\s>]/, "Infrastructure must not use raw definition-list presentation.");
 for (const summary of ["Application", "Services", "Targets", "Region"]) assert.match(page, new RegExp(`label="${summary}"`));
 assert.equal((page.match(/<MetricCard/g) || []).length, 5, "Infrastructure has four runtime cards and one cost card.");
@@ -41,7 +41,10 @@ assert.ok(currentState.includes("endpoint: /^https?:\\/\\//i.test(stableUrl) ? s
 assert.match(currentState, /lastApplyAt: authoritativeLiveRelease \? liveReleaseObservedAt : null/, "a failed Destroy must not be presented as a newer Terraform apply");
 assert.match(page, /subscribeProjectStateChanged/);
 assert.match(page, /Destroy cleanup required/);
-assert.match(page, /Retry Failed Destroy/);
+assert.match(page, /Retry Failed Destroy/, "A failed Destroy can be retried only from Infrastructure.");
+assert.match(page, /View Destroy progress/, "An active Destroy links to its canonical Pipeline progress.");
+assert.match(page, /Release updating/, "An active non-Destroy lifecycle transition is represented as updating rather than absent.");
+assert.match(page, /filter\(\(target\) => target !== "draining"\)/, "Draining targets from the previous task set do not make the active release look absent.");
 assert.match(page, /evidence\?\.cloudWatch\?\.status/);
 for (const selector of ["infrastructure-summary-grid", "infrastructure-inventory-card", "infrastructure-topology", "infrastructure-finops-card", "infrastructure-support-grid"]) assert.match(styles, new RegExp(selector));
 assert.match(designSystem, /\.advanced-resource-details/);

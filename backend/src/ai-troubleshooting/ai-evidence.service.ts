@@ -11,6 +11,24 @@ import { User } from "../users/user.entity";
 import { AiEvidencePreprocessorService, RawEvidence } from "./ai-evidence-preprocessor.service";
 import { currentFailureDiagnostic } from "../projects/failure-diagnostics/failure-diagnostic.service";
 
+function immutableFailureBuildContext(run: ProjectPipelineRun) {
+  try {
+    const inputs = run.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined;
+    const encoded = inputs?.services_base64;
+    if (typeof encoded !== "string" || !run.failureServiceId) return null;
+    const runtime = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as { services?: Array<Record<string, unknown>> };
+    const service = runtime.services?.find((item) => item.serviceId === run.failureServiceId);
+    const target = service?.buildTarget as Record<string, unknown> | undefined;
+    if (!service || !target) return null;
+    return {
+      serviceId: service.serviceId, serviceName: service.serviceName, serviceDirectory: service.serviceDirectory,
+      buildTargetRevisionId: service.buildTargetRevisionId, buildTargetFingerprint: target.fingerprint,
+      buildTargetContract: target.contract, buildRoot: target.buildRoot, runtimeConfigRevisionId: service.runtimeConfigRevisionId,
+      runtimeConfigFingerprint: service.runtimeConfigFingerprint, railpackBuildCapabilityFingerprint: service.railpackBuildCapabilityFingerprint || null,
+    };
+  } catch { return null; }
+}
+
 @Injectable()
 export class AiEvidenceService {
   constructor(
@@ -28,11 +46,13 @@ export class AiEvidenceService {
     const stage = typeof run?.metadata?.failedStage === "string" ? run.metadata.failedStage : run?.currentStage;
     const rows: RawEvidence[] = [];
     const diagnosis = run ? currentFailureDiagnostic(run) : null;
+    const buildContext = run ? immutableFailureBuildContext(run) : null;
     let runtimeServiceId: string | null = null;
     const failedSource = /terraform/i.test(String(stage || "")) ? "terraform" : /railpack|build|application_runtime/i.test(String(stage || "")) ? "railpack_build" : "github_actions";
     if (typeof run?.metadata?.safeLog === "string" && run.metadata.safeLog.trim()) rows.push({ source: failedSource, stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.metadata.safeLog });
     if (run?.errorMessage) rows.push({ source: "github_actions_status", stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.errorMessage });
     if (diagnosis) rows.push({ source: "deployguard_diagnosis", stage, eventId: run?.id, timestamp: run?.failedAt, text: JSON.stringify(diagnosis) });
+    if (run && (buildContext || run.metadata?.builderFailure)) rows.push({ source: "deployguard_build_identity", stage, eventId: run.id, timestamp: run.failedAt || run.updatedAt, text: JSON.stringify({ buildIdentity: buildContext, builderFailure: run.metadata?.builderFailure || null }) });
     if (run?.metadata?.terraformPlanSummary) rows.push({ source: "terraform", stage, eventId: run.id, timestamp: run.updatedAt, text: `Terraform plan summary: ${JSON.stringify(run.metadata.terraformPlanSummary)}` });
     if (run) rows.push({ source: "deployguard_lifecycle", stage, eventId: run.id, timestamp: run.updatedAt, text: JSON.stringify({ operationId: run.id, generationId: run.generationId, commitSha: run.commitSha, deploymentAction: run.metadata?.deploymentAction, failedStage: run.metadata?.failedStage, status: run.status, failureOwner: run.failureOwner, externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId }) });
     if (run) {
@@ -88,6 +108,8 @@ export class AiEvidenceService {
         externalProvider: diagnosis?.externalProvider ?? run?.externalProvider ?? null,
         failureCode: diagnosis?.terminalFailureCode || run?.failureCode || null,
         failureServiceId: diagnosis?.serviceId || run?.failureServiceId || null,
+        buildIdentity: buildContext,
+        builderFailure: run?.metadata?.builderFailure || null,
         failureDiagnostic: diagnosis,
         rootCauseCode: diagnosis?.rootCauseCode || null,
         retryDecision: diagnosis?.retryDecision || null,

@@ -5,7 +5,7 @@ import { CloudWatchLogsService } from "../src/observability/cloudwatch-logs.serv
 import { AwsRuntimeUnavailableException, LiveRuntimeResolverService, RuntimeIdentityUnavailableException } from "../src/observability/live-runtime-resolver.service";
 import { ObservabilityService } from "../src/observability/observability.service";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
-import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
+import { hasCanonicalRuntimeOwnership, hasCanonicalTaskDefinitionOwnership, ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
 import { LiveRuntimeIdentityRecoveryService } from "../src/projects/current-state/live-runtime-identity-recovery.service";
 
 const project: any = { id: "11111111-1111-4111-8111-111111111111", environmentName: "dev", applicationEntryPointServiceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
@@ -16,6 +16,21 @@ const a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const arn = (suffix: string) => `arn:aws:ecs:us-east-1:123456789012:${suffix}`;
 
+function runtimeOwnershipUsesImmutableReleaseFacts() {
+  const topologyTags = [
+    { key: "ManagedBy", value: "DeployGuard" },
+    { key: "DeployGuardProjectId", value: project.id },
+    { key: "DeployGuardServiceId", value: b },
+    // This is deliberately the topology-creation operation, not the later
+    // release operation. Shared ECS/ALB resources keep this value.
+    { key: "DeployGuardOperationId", value: "old-topology-operation" },
+  ];
+  assert.equal(hasCanonicalRuntimeOwnership(topologyTags, project.id, b), true, "shared topology ownership must not reject a later immutable release because its creation operation is older");
+  assert.equal(hasCanonicalRuntimeOwnership(topologyTags, project.id, a), false, "a different DeployGuard service cannot satisfy canonical ownership");
+  assert.equal(hasCanonicalTaskDefinitionOwnership([...topologyTags, { key: "DeployGuardRuntimeConfigRevisionId", value: "runtime-revision" }], project.id, b, "runtime-revision"), true, "the active task definition must bind the exact sealed runtime-config revision");
+  assert.equal(hasCanonicalTaskDefinitionOwnership(topologyTags, project.id, b, "runtime-revision"), false, "topology tags alone cannot prove the active task definition belongs to the release");
+}
+
 function revision(serviceId: string, name: string) {
   return {
     projectId: project.id, generationId: generation.id, serviceId, serviceName: name, serviceDirectory: name.toLowerCase(), sourceSha: "a".repeat(40),
@@ -23,6 +38,7 @@ function revision(serviceId: string, name: string) {
     runtimeIdentity: {
       // Fresh service revisions contain service-local Terraform output; the
       // generation owns the project-level region and cluster identity.
+      servicePort: name === "API" ? 3000 : 8080,
       publicUrl: `https://${name.toLowerCase()}.example.test`,
       ecsServiceArn: arn(`service/project/${name.toLowerCase()}`), ecsServiceName: name.toLowerCase(), taskDefinitionArn: arn(`task-definition/${name.toLowerCase()}:1`),
       albArn: `arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/${name.toLowerCase()}/1`, albName: name.toLowerCase(),
@@ -46,6 +62,7 @@ async function canonicalRevisionRecovery() {
   const identity: any = await recovery.recover(project);
   assert.deepEqual(identity.services.map((service: any) => service.serviceId), [a, b], "canonical revisions define deterministic service order");
   assert.equal(identity.services[1].targetGroupArn, revision(b, "API").runtimeIdentity.targetGroupArn);
+  assert.equal(identity.services[1].servicePort, 3000, "the immutable service port must survive canonical runtime recovery for Infrastructure presentation");
   assert.deepEqual({ region: identity.region, ecsClusterArn: identity.ecsClusterArn, ecsClusterName: identity.ecsClusterName }, sharedRuntime, "project-level region/cluster identity comes from the explicit LIVE generation, not a service revision");
   assert.doesNotMatch(JSON.stringify(identity.services), /wrong-region|wrong-cluster|"wrong"/, "generation projections cannot override canonical service-local identities");
   const permuted: any = await recoveryFor([revision(a, "Web"), revision(b, "API")]).recover(project);
@@ -131,5 +148,6 @@ async function attributionAndHealth() {
 }
 
 void Promise.all([canonicalRevisionRecovery(), attributionAndHealth()]).then(() => {
+  runtimeOwnershipUsesImmutableReleaseFacts();
   console.log("LIVE_RUNTIME_CANONICAL_AUTHORITY=PASS");
 }).catch((error) => { console.error(error); process.exitCode = 1; });

@@ -24,6 +24,7 @@
     "test:professional-pipeline": "node scripts/verify-professional-pipeline.mjs",
     "test:infrastructure-presentation": "node scripts/verify-infrastructure-presentation.mjs",
     "test:monitoring-presentation": "node scripts/verify-monitoring-presentation.mjs",
+    "test:billing-and-trivy-ui": "node scripts/verify-billing-and-trivy-ui.mjs",
     "test:destroy-operation-presentation": "node scripts/verify-destroy-operation-presentation.mjs",
     "test:overview-lifecycle": "node scripts/verify-overview-lifecycle.mjs",
     "test:modal-viewport-browser": "node scripts/verify-modal-viewport-browser.mjs",

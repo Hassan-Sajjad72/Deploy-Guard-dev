@@ -32,12 +32,9 @@ export class GithubActionsCostEvidenceService {
     const candidateWorkflowRunId = String(operation.metadata?.candidateWorkflowRunId || operation.githubWorkflowRunId || "").trim();
     const deploymentAction = String(operation.metadata?.deploymentAction || "");
     if (!this.config.get<string>("INFRACOST_API_KEY", "").trim() || !candidateWorkflowRunId || !operation.generationId || !["deploy", "rollback"].includes(deploymentAction)) return null;
-    const releaseOnly = operation.metadata?.releaseStrategy === "direct_ecs"
-      || (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.release_only === "true";
-    // Direct ECS releases intentionally skip Terraform planning. There is no
-    // immutable plan artifact to price, so they must not enter the artifact
-    // retrieval/retry path that belongs to Terraform-backed releases.
-    if (releaseOnly) return null;
+    // Direct ECS releases produce an immutable, non-mutating Terraform plan
+    // specifically for cost evidence.  They therefore follow the same exact
+    // operation/generation artifact path as Terraform-materializing releases.
     const existing = await this.estimates.findOne({ where: { pipelineRunId: operation.id } });
     if (existing?.source === CostEstimateSource.INFRACOST && existing.status !== CostEstimateStatus.FAILED) return existing;
     if (existing?.status === CostEstimateStatus.FAILED && existing.metadata?.costPlanArtifactUnavailable === true) return existing;

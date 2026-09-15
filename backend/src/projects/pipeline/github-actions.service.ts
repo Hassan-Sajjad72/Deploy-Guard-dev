@@ -132,6 +132,8 @@ export type GithubActionsTerminalFailureEvidence = {
   failedStage: string;
   rawEvidence: string;
   workflowStages: GithubActionsWorkflowStage[];
+  securityScan?: Record<string, unknown> | null;
+  failureEvent?: Record<string, unknown> | null;
 };
 
 @Injectable()
@@ -169,6 +171,7 @@ export class GithubActionsService {
     }
     await this.validateDispatchTarget(input.repositoryFullName, input.targetBranch, input.workflowRegistrationBranch, workflowFile, token, inputNames, operationId);
     let response: Response;
+    const dispatchedAt = new Date();
 
     try {
       response = await fetch(
@@ -184,7 +187,6 @@ export class GithubActionsService {
           body: JSON.stringify({
             ref: input.workflowRegistrationBranch,
             ...(input.inputs ? { inputs: dispatchInputs } : {}),
-            return_run_details: true,
           }),
         }
       );
@@ -207,6 +209,19 @@ export class GithubActionsService {
     const dispatchResult = await response.json().catch(() => null) as { workflow_run_id?: number | string; html_url?: string } | null;
     let workflowRunId = String(dispatchResult?.workflow_run_id || "").trim();
     let correctedStaleRunIdentity = false;
+    if (!/^\d+$/.test(workflowRunId) && operationId) {
+      for (let attempt = 0; attempt < 10 && !/^\d+$/.test(workflowRunId); attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
+        workflowRunId = String(await this.findWorkflowRunForOperation(
+          input.repositoryFullName,
+          input.workflowRegistrationBranch,
+          operationId,
+          dispatchedAt,
+          token,
+        ) || "");
+      }
+      correctedStaleRunIdentity = /^\d+$/.test(workflowRunId);
+    }
     if (!/^\d+$/.test(workflowRunId)) {
       const detail = "GitHub accepted the workflow request without returning an immutable workflow run identity.";
       throw new GithubActionsDispatchError(
@@ -218,7 +233,6 @@ export class GithubActionsService {
     }
     const excludedRunIds = new Set(input.excludedWorkflowRunIds || []);
     if (excludedRunIds.has(workflowRunId)) {
-      const dispatchedAt = new Date();
       let discoveredRunId: string | null = null;
       for (let attempt = 0; attempt < 10 && !discoveredRunId; attempt += 1) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -417,11 +431,15 @@ export class GithubActionsService {
       || jobs.find((job) => String(job.status || "").toLowerCase() === "completed" && String(job.conclusion || "").toLowerCase() !== "success");
     let persistedFailure: string | null = null;
     let persistedMarkers: string[] = [];
+    let securityScan: Record<string, unknown> | null = null;
+    let failureEvent: Record<string, unknown> | null = null;
     try {
       const raw = await this.getArtifactEntry(repository, workflowRunId, operationId, token, DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY, 512 * 1024);
       if (raw) {
         const artifact = JSON.parse(raw) as Record<string, unknown>;
         const verification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
+        const security = artifact.securityScan as Record<string, unknown> | null;
+        const structuredFailure = artifact.failureEvent as Record<string, unknown> | null;
         const services = Array.isArray(verification?.services) ? verification.services as Array<Record<string, unknown>> : [];
         if (artifact.contractVersion === "deployguard.release-failure/v1"
           && artifact.operationId === operationId
@@ -431,6 +449,30 @@ export class GithubActionsService {
           && services.some((service) => service.verified === false && typeof service.failureMarker === "string" && service.failureMarker.startsWith("DG_FAILURE "))) {
           persistedFailure = JSON.stringify(artifact).slice(-8_000);
           persistedMarkers = services.flatMap((service) => service.verified === false && typeof service.failureMarker === "string" ? [service.failureMarker.slice(0, 500)] : []);
+        } else if (artifact.contractVersion === "deployguard.release-failure/v1"
+          && artifact.operationId === operationId && artifact.action === action && artifact.failedStage === "trivy_scan"
+          && security?.contractVersion === "deployguard.security-result/v1" && security.deploymentOperationId === operationId
+          && ["blocked", "error"].includes(String(security.status))) {
+          securityScan = security;
+          if (structuredFailure?.contractVersion === "deployguard.failure-event/v1" && structuredFailure.operationId === operationId
+            && ["DG_TRIVY_POLICY_BLOCKED", "DG_TRIVY_SCAN_FAILED"].includes(String(structuredFailure.code))
+            && structuredFailure.stage === "trivy_scan" && structuredFailure.sourceSha === artifact.sourceSha
+            && structuredFailure.projectId === security.projectId) failureEvent = structuredFailure;
+          persistedFailure = JSON.stringify(artifact).slice(-8_000);
+          persistedMarkers = [`DG_FAILURE${failureEvent?.serviceId ? ` serviceId=${failureEvent.serviceId}` : ""} code=${String(failureEvent?.code || (security.status === "blocked" ? "DG_TRIVY_POLICY_BLOCKED" : "DG_TRIVY_SCAN_FAILED"))} stage=trivy_scan`];
+        } else if (artifact.contractVersion === "deployguard.release-failure/v1"
+          && artifact.operationId === operationId && artifact.action === action
+          && structuredFailure?.contractVersion === "deployguard.failure-event/v1"
+          && structuredFailure.operationId === operationId
+          && structuredFailure.sourceSha === artifact.sourceSha
+          && typeof structuredFailure.projectId === "string" && /^[0-9a-f-]{36}$/i.test(structuredFailure.projectId)
+          && typeof structuredFailure.code === "string" && /^DG_[A-Z0-9_]+$/.test(structuredFailure.code)
+          && typeof structuredFailure.stage === "string" && /^[a-z0-9_]+$/.test(structuredFailure.stage)
+          && (structuredFailure.serviceId == null || (typeof structuredFailure.serviceId === "string" && /^[0-9a-f-]{36}$/i.test(structuredFailure.serviceId)))
+          && typeof structuredFailure.safeEvidence === "string" && structuredFailure.safeEvidence.length <= 12_000) {
+          failureEvent = structuredFailure;
+          persistedFailure = JSON.stringify(artifact).slice(-8_000);
+          persistedMarkers = [`DG_FAILURE${structuredFailure.serviceId ? ` serviceId=${structuredFailure.serviceId}` : ""} code=${structuredFailure.code} stage=${structuredFailure.stage}`];
         }
       }
     } catch {
@@ -460,7 +502,7 @@ export class GithubActionsService {
       }
     }
     summary.push(...persistedMarkers);
-    return { failedStage, rawEvidence: summary.join("\n").slice(-16_000), workflowStages };
+    return { failedStage: typeof failureEvent?.stage === "string" ? failureEvent.stage : failedStage, rawEvidence: summary.join("\n").slice(-16_000), workflowStages, securityScan, failureEvent };
   }
 
   async getResultArtifact(repository: string, workflowRunId: string, operationId: string, token: string) {

@@ -127,6 +127,8 @@ function repositoryPresentation() {
   const sidebar = read("frontend/src/components/layout/Sidebar.jsx");
   const dashboard = read("frontend/src/pages/Dashboard.jsx");
   const api = read("frontend/src/api/projectApi.js");
+  const platformApi = read("frontend/src/api/platformApi.js");
+  const billing = read("frontend/src/pages/Billing.jsx");
   const troubleshooting = read("frontend/src/pages/ProjectTroubleshooting.jsx");
   for (const label of ["Prepare Source", "Build Application", "Publish Image", "Deploy Runtime", "Verify Application", "Prepare Rollback", "Restore Release", "Update Runtime", "Finalize Rollback", "Destroy Infrastructure", "Verify Deletion", "Finalize Cleanup"]) assert.match(phases, new RegExp(label));
   assert.doesNotMatch(phases, /label: "Railpack/);
@@ -140,7 +142,13 @@ function repositoryPresentation() {
   assert.match(dashboard, /if \(!hasActiveOperation\) return undefined/);
   assert.match(api, /detailedCurrentStateRequests/);
   assert.match(troubleshooting, /operation\.failedStageLabel \|\| label\(operation\.failedStage\)/);
-  for (const retired of ["Billing.jsx", "ProjectCost.jsx", "ProjectObservability.jsx", "ProjectOrchestration.jsx", "ProjectRecovery.jsx", "ProjectRollback.jsx", "ProjectStateManagement.jsx"]) {
+  assert.match(routes, /<Route element=\{<Billing \/>\} path="\/billing" \/>/, "Billing remains an intentional protected product route");
+  assert.match(sidebar, /label: "Plan & Usage", to: "\/billing"/, "Billing remains discoverable from primary navigation");
+  assert.match(billing, /Stripe Test Mode/, "Billing remains visibly test-mode");
+  assert.match(billing, /createBillingCheckout/);
+  assert.match(billing, /createBillingPortal/, "Billing remains provider-backed");
+  assert.match(platformApi, /\/api\/billing\/summary[\s\S]*\/api\/billing\/checkout[\s\S]*\/api\/billing\/portal/, "Billing uses the current subscription API surface");
+  for (const retired of ["ProjectCost.jsx", "ProjectObservability.jsx", "ProjectOrchestration.jsx", "ProjectRecovery.jsx", "ProjectRollback.jsx", "ProjectStateManagement.jsx"]) {
     assert.equal(existsSync(join(root, "frontend", "src", "pages", retired)), false);
   }
 }

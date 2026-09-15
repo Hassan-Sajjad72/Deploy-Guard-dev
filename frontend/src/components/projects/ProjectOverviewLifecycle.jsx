@@ -16,7 +16,7 @@ import {
   rollbackGithubActionsDeployment,
   retryGithubActionsDeployment,
 } from "../../api/projectApi.js";
-import { deploymentPhasePresentation } from "../../utils/developerDeploymentPresentation.js";
+import { deploymentPhasePresentation, deploymentProgressPercentage } from "../../utils/developerDeploymentPresentation.js";
 import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
 import { DESTROY_CONFIRMATION_PHRASE } from "../../utils/deploymentConfirmation.js";
 
@@ -72,6 +72,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
     ...currentState,
     developerState: state === "FAILED" || latestOperationFailed ? "failed_application" : state.toLowerCase(),
   });
+  const progressPercentage = deploymentProgressPercentage(phases);
   const latest = currentState.latestAttempt;
   const failureOwnershipLabel = overviewFailureOwnershipLabel(currentState);
 
@@ -197,7 +198,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
         <div><p className="eyebrow">Current lifecycle</p><h2>{copy.title}</h2>{failureOwnershipLabel ? <StatusChip status="failed" tone="danger">{failureOwnershipLabel}</StatusChip> : null}<p>{copy.message}</p></div>
         <StatusChip status={state} tone={summaryTone(state)}>{state.replaceAll("_", " ")}</StatusChip>
       </div>
-      <div aria-label={`Deployment progress ${currentState.progress?.percentage || 0}%`} className="deployment-progress-track"><span style={{ width: `${Math.max(0, Math.min(100, Number(currentState.progress?.percentage || 0)))}%` }} /></div>
+      <div aria-label={`Deployment progress ${progressPercentage}%`} className="deployment-progress-track"><span style={{ width: `${progressPercentage}%` }} /></div>
       <StageRail phases={phases} />
       {(state === "FAILED" || latestOperationFailed) && latest?.diagnosis ? <p className="state warning"><strong>{latest.diagnosis.rootCauseCode}</strong> — {latest.diagnosis.recommendedAction}</p> : null}
       {error ? <ErrorState message={error} /> : null}

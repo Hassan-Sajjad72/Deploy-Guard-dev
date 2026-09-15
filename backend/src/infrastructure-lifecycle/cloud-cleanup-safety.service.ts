@@ -4,7 +4,7 @@ import { CentralCloudResource } from "./central-cloud-resource.entity";
 @Injectable()
 export class CloudCleanupSafetyService {
   assertCleanupAllowed(resource: CentralCloudResource, orphanOnly = false) {
-    if (resource.protected || resource.resourceName === "deployguard-state-bucket" || resource.resourceType === "terraform_state") {
+    if (resource.protected || resource.resourceType === "terraform_state") {
       throw new BadRequestException("Shared platform and Terraform state resources are protected.");
     }
     if (!resource.safeToCleanup || !resource.cleanupSupported) throw new BadRequestException("Resource is not eligible for automatic cleanup.");

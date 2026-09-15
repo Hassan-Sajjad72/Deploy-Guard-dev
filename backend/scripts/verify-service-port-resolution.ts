@@ -57,6 +57,9 @@ try {
   const framework = await directory("framework", { "requirements.txt": "Django==5.2.0\n" });
   assert.equal((await resolveServicePort(serviceId, framework)).servicePort, 8000);
 
+  const frameworkExtra = await directory("framework-extra", { "pyproject.toml": '[project]\ndependencies = [\n  "fastapi[standard]>=0.128.1",\n]\n' });
+  assert.equal((await resolveServicePort(serviceId, frameworkExtra)).servicePort, 8000, "PEP 508 framework extras retain canonical port detection");
+
   await directory("unresolved", { "README.md": "No authoritative application port." });
   await failure("unresolved", SERVICE_PORT_FAILURE.unresolved);
 

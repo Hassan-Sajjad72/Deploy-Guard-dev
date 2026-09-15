@@ -3,6 +3,8 @@ name: deploy-guard-dev
 services:
   postgres:
     image: postgres:16.9-alpine3.21
+    env_file:
+      - backend/.env
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-${DATABASE_NAME:-mini_paas}}
       POSTGRES_USER: ${POSTGRES_USER:-${DATABASE_USERNAME:-mini_paas_user}}
@@ -11,6 +13,8 @@ services:
       - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./database/10-restore-transfer.sh:/docker-entrypoint-initdb.d/10-restore-transfer.sh:ro
+      - ./transfer-data:/transfer:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -103,9 +107,7 @@ services:
         exec /bin/prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=7d
     environment:
       PROMETHEUS_SCRAPE_TOKEN: ${PROMETHEUS_SCRAPE_TOKEN:-deployguard-local-monitoring}
-      # product:start runs the API on the host against backend/.env's
-      # authoritative PostgreSQL endpoint; Compose supplies monitoring only.
-      PROMETHEUS_SCRAPE_TARGET: ${PROMETHEUS_SCRAPE_TARGET:-host.docker.internal:5000}
+      PROMETHEUS_SCRAPE_TARGET: ${PROMETHEUS_SCRAPE_TARGET:-backend:5000}
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
     extra_hosts:

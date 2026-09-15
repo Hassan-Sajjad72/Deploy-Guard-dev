@@ -47,6 +47,8 @@ import { ProjectBuildTargetRevision } from "./project-build-target-revision.enti
 import { CanonicalBuildTarget } from "./build-target";
 import { DeploymentRequirementAdmissionError, RequirementAdmission } from "./deployment-requirement-resolver.service";
 import { currentFailureDiagnostic, FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
+import { EntitlementService } from "../billing/entitlement.service";
+import { getTrivyConfig } from "./trivy.config";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -131,6 +133,7 @@ export class RailpackDeploymentService {
     private readonly managedDatabaseReconciliation: ManagedDatabaseReconciliationService,
     private readonly audit: AuditLogService,
     private readonly failureDiagnostics: FailureDiagnosticService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy", null, null, "DEPLOY"); }
@@ -431,6 +434,8 @@ export class RailpackDeploymentService {
         terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"),
         control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
         release_only: releaseOnly ? "true" : "false",
+        trivy_enabled: getTrivyConfig(this.config).enabled ? "true" : "false",
+        trivy_enforce: getTrivyConfig(this.config).enforce ? "true" : "false",
       };
       operation.imageTag = null;
       operation.currentStage = "workflow_dispatch";
@@ -562,6 +567,9 @@ export class RailpackDeploymentService {
         const runs = manager.getRepository(ProjectPipelineRun);
         const active = await runs.findOne({ where: { projectId: project.id, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
         if (active) return { active };
+        // Prototype-only certification fixtures predate the injected billing
+        // provider; production construction requires it through Nest.
+        if (action === "deploy" && this.entitlements) await this.entitlements.assertCanDeployProject(user.id, project.id, manager);
 
         if (action === "deploy" && deployAdmission?.resetDatabaseIdentity) {
           await this.reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission);
@@ -1049,6 +1057,8 @@ export class RailpackDeploymentService {
       dispatchFailure: dispatchFailed, aiAnalysisEligible: dispatchFailed || (operation.status === PipelineRunStatus.FAILED && Boolean(operation.githubWorkflowRunId) && typeof metadata.safeLog === "string" && metadata.safeLog.trim().length > 0),
       aiRuntimeAnalysisCandidate: operation.status === PipelineRunStatus.COMPLETED && Boolean(operation.generationId) && metadata.releaseEvidenceVerified === true,
       safeLog: typeof metadata.safeLog === "string" ? metadata.safeLog : null,
+      securityScan: metadata.releaseArtifact && typeof metadata.releaseArtifact === "object"
+        ? (metadata.releaseArtifact as Record<string, unknown>).securityScan || null : metadata.securityScan || null,
       workflowStages: Array.isArray(metadata.workflowStages) ? metadata.workflowStages
         .filter((stage) => stage && typeof stage === "object" && githubActionsWorkflowStageRelevant((stage as Record<string, unknown>).key, action))
         .map((stage) => {
@@ -1151,7 +1161,7 @@ export class RailpackDeploymentService {
       }));
       const buildTargetRevision = (service as ProjectDeployableService & { resolvedBuildTarget?: ProjectBuildTargetRevision }).resolvedBuildTarget;
       if (!buildTargetRevision) throw new ServiceUnavailableException(`Canonical build-target evidence is unavailable for ${service.name}.`);
-      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, servicePort, runtimeConfigRevisionId: revision.id, buildTargetRevisionId: buildTargetRevision.id, buildTarget: buildTargetRevision.target as unknown as CanonicalBuildTarget, buildEnvironment, ...(railpackBuildCapabilityFingerprint ? { railpackBuildCapabilityFingerprint } : {}), buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [], urlScheme } });
+      services.push({ serviceId: service.id, serviceName: service.name, serviceDirectory: service.serviceDirectory, servicePort, runtimeConfigRevisionId: revision.id, runtimeConfigFingerprint: revision.configurationFingerprint, buildTargetRevisionId: buildTargetRevision.id, buildTarget: buildTargetRevision.target as unknown as CanonicalBuildTarget, buildEnvironment, ...(railpackBuildCapabilityFingerprint ? { railpackBuildCapabilityFingerprint } : {}), buildSecretReferences, environment, secretReferences, databaseAttached, managedDatabase: { engine: databaseAttached ? engine : null, aliases: databaseAttached ? [...new Set(managedAliases)].sort() : [], urlScheme } });
     }
     return { schemaVersion: 3, projectId: project.id, environmentName, operationId, sourceSha, services: services.sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
   }
@@ -1347,6 +1357,8 @@ export class RailpackDeploymentService {
             evidenceSource: "github_actions", evidenceEventId: operation.githubWorkflowRunId,
             metadata: { workflowConclusion: conclusion, workflowUpdatedAt: new Date().toISOString(),
               ...(failureEvidence ? { workflowStages: terminalStages.length ? terminalStages : failureEvidence.workflowStages } : terminalStages.length ? { workflowStages: terminalStages } : {}),
+              ...(failureEvidence?.securityScan ? { securityScan: failureEvidence.securityScan } : {}),
+              ...(failureEvidence?.failureEvent ? { failureEvent: failureEvidence.failureEvent, builderFailure: failureEvidence.failureEvent.builder || null, buildIdentity: failureEvidence.failureEvent.buildIdentity || null } : {}),
               failureSource: "github_actions" },
           });
         }
@@ -1494,6 +1506,16 @@ export class RailpackDeploymentService {
       return { releaseArtifact: artifact, destroyed: true, destroyVerification };
     }
     if (!artifact.terraform || typeof artifact.terraform !== "object" || !Array.isArray(artifact.services) || !artifact.services.length) throw new Error("The release result artifact does not prove the complete service runtime.");
+    // Rollback restores an already scanned immutable image and intentionally
+    // skips every build/scan step. The deployment-level Trivy flag remains in
+    // the sealed dispatch inputs, but only a new deploy may be required to
+    // produce operation-scoped scan evidence.
+    const expectedTrivy = action === "deploy"
+      && (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.trivy_enabled === "true";
+    const expectedTrivyEnforce = (operation.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.trivy_enforce === "true";
+    const securityScan = artifact.securityScan as Record<string, unknown> | undefined;
+    if (expectedTrivy && (!securityScan || securityScan.contractVersion !== "deployguard.security-result/v1" || securityScan.deploymentOperationId !== operation.id || securityScan.projectId !== operation.projectId || securityScan.commitSha !== operation.commitSha || !["passed", "advisory", "error"].includes(String(securityScan.status)) || (securityScan.status !== "error" && !/^[0-9a-f]{64}$/.test(String(securityScan.evidenceHash || ""))) || (expectedTrivyEnforce && securityScan.status !== "passed"))) throw new Error("The release result artifact does not contain valid Trivy evidence for the immutable operation.");
+    if (!expectedTrivy && securityScan) throw new Error("The release result artifact contains an unrequested Trivy scan.");
     const awsRuntimeVerification = artifact.awsRuntimeVerification as Record<string, unknown> | null;
     if (!awsRuntimeVerification || awsRuntimeVerification.contractVersion !== "deployguard.aws-runtime-verification/v1" || awsRuntimeVerification.verified !== true || !Array.isArray(awsRuntimeVerification.services)) {
       throw new Error("The release result artifact does not contain verified AWS runtime evidence.");
@@ -1511,7 +1533,22 @@ export class RailpackDeploymentService {
       const imageUri = String(item.imageUri || ""); const imageDigest = String(item.imageDigest || ""); const image = String(item.image || "");
       const runtime = terraformServices[String(item.serviceId || "")];
       if (!expectedService || String(item.runtimeConfigRevisionId || "") !== expectedService.runtimeConfigRevisionId || String(item.serviceName || "") !== expectedService.serviceName || String(item.serviceDirectory || "") !== expectedService.serviceDirectory || Number(item.servicePort) !== expectedService.servicePort || image !== `${imageUri}@${imageDigest}` || !/^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\/[a-z0-9][a-z0-9._\/-]*$/i.test(imageUri) || !/^sha256:[0-9a-f]{64}$/.test(imageDigest) || !runtime || runtime.image !== image || runtime.runtime_config_revision_id !== expectedService.runtimeConfigRevisionId || Number(runtime.service_port) !== expectedService.servicePort || typeof runtime.public_url !== "string" || typeof runtime.task_definition_arn !== "string" || typeof runtime.ecs_service_arn !== "string" || runtime.transport_probe_container_name !== "deployguard-transport-probe" || !Number.isInteger(Number(runtime.transport_probe_port)) || runtime.platform_health_check_path !== DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH) throw new Error("Release service evidence does not match its immutable service contract and Terraform runtime.");
-      return { serviceId: expectedService.serviceId, serviceName: expectedService.serviceName, serviceDirectory: expectedService.serviceDirectory, servicePort: expectedService.servicePort, sourceSha, runtimeConfigRevisionId: expectedService.runtimeConfigRevisionId, buildTargetRevisionId: expectedService.buildTargetRevisionId || null, buildTarget: expectedService.buildTarget || null, imageUri, imageDigest, image, publicUrl: runtime.public_url, taskDefinitionArn: runtime.task_definition_arn, ecsServiceArn: runtime.ecs_service_arn, ecsServiceName: runtime.ecs_service_name, albArn: runtime.alb_arn, albName: runtime.alb_name, targetGroupArn: runtime.alb_target_group_arn, targetGroupName: runtime.alb_target_group_name, cloudWatchLogGroupName: runtime.cloudwatch_log_group_name, applicationContainerName: runtime.application_container_name, transportProbeContainerName: runtime.transport_probe_container_name, transportProbePort: Number(runtime.transport_probe_port), platformHealthCheckPath: runtime.platform_health_check_path };
+      if (action === "deploy") {
+        const builder = String(item.builder || ""); const fallback = builder === "deployguard_docker_fallback";
+        const validCommon = ["railpack", "deployguard_docker_fallback"].includes(builder)
+          && String(item.sourceSha || "") === sourceSha && String(item.operationId || "") === operation.id
+          && String(item.buildTargetRevisionId || "") === String(expectedService.buildTargetRevisionId || "")
+          && String(item.buildTargetFingerprint || "") === String(expectedService.buildTarget?.fingerprint || "")
+          && String(item.runtimeConfigFingerprint || "") === String(expectedService.runtimeConfigFingerprint || "")
+          && /^sha256:[0-9a-f]{64}$/.test(String(item.localImageId || ""));
+        const validBuilder = fallback
+          ? item.originalRailpackFailureCode === "DG_RAILPACK_INTERNAL_FAILURE" && item.fallbackEligibility === "ELIGIBLE" && typeof item.fallbackReason === "string"
+            && item.fallbackTemplateId === "node22-npm-workspace" && item.fallbackTemplateVersion === "1.0.0" && /^[0-9a-f]{64}$/.test(String(item.fallbackTemplateDigest || ""))
+          : item.builderVersion === "0.38.0" && item.originalRailpackFailureCode == null && item.fallbackEligibility === "not_applicable"
+            && item.fallbackReason == null && item.fallbackTemplateId == null && item.fallbackTemplateVersion == null && item.fallbackTemplateDigest == null;
+        if (!validCommon || !validBuilder) throw new Error("Release service builder provenance does not match its immutable build contract.");
+      }
+      return { serviceId: expectedService.serviceId, serviceName: expectedService.serviceName, serviceDirectory: expectedService.serviceDirectory, servicePort: expectedService.servicePort, sourceSha, runtimeConfigRevisionId: expectedService.runtimeConfigRevisionId, runtimeConfigFingerprint: expectedService.runtimeConfigFingerprint || null, buildTargetRevisionId: expectedService.buildTargetRevisionId || null, buildTarget: expectedService.buildTarget || null, builder: item.builder || null, builderVersion: item.builderVersion || null, originalRailpackFailureCode: item.originalRailpackFailureCode || null, fallbackEligibility: item.fallbackEligibility || null, fallbackReason: item.fallbackReason || null, fallbackTemplateId: item.fallbackTemplateId || null, fallbackTemplateVersion: item.fallbackTemplateVersion || null, fallbackTemplateDigest: item.fallbackTemplateDigest || null, localImageId: item.localImageId || null, imageUri, imageDigest, image, publicUrl: runtime.public_url, taskDefinitionArn: runtime.task_definition_arn, ecsServiceArn: runtime.ecs_service_arn, ecsServiceName: runtime.ecs_service_name, albArn: runtime.alb_arn, albName: runtime.alb_name, targetGroupArn: runtime.alb_target_group_arn, targetGroupName: runtime.alb_target_group_name, cloudWatchLogGroupName: runtime.cloudwatch_log_group_name, applicationContainerName: runtime.application_container_name, transportProbeContainerName: runtime.transport_probe_container_name, transportProbePort: Number(runtime.transport_probe_port), platformHealthCheckPath: runtime.platform_health_check_path };
     });
     if (intendedServices.length !== expected.services.length || new Set(intendedServices.map((service) => service.serviceId)).size !== expected.services.length) {
       throw new Error("Release result does not contain the complete immutable service set.");
@@ -1760,6 +1797,7 @@ export class RailpackDeploymentService {
       route.candidateGenerationId = null;
       route.metadata = { ...route.metadata, lastPromotionOperationId: current.id, runtimeIdentity };
       await routes.save(route);
+      if (this.entitlements) await this.entitlements.recordSuccessfulLiveDeployment(project.ownerUserId, project.id, generation.activatedAt || new Date(), manager);
 
       await materializeStableRelease(manager, {
         projectId: project.id,

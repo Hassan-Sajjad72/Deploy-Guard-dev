@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 const root = join(__dirname, "..", "..");
 const workflow = readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8");
+const fallbackBuilder = readFileSync(join(root, "infrastructure/docker-fallback/build-images.sh"), "utf8");
 const terraform = readFileSync(join(root, "infrastructure/railpack-runtime/main.tf"), "utf8");
 const outputs = readFileSync(join(root, "infrastructure/railpack-runtime/outputs.tf"), "utf8");
 const deployment = readFileSync(join(root, "backend/src/projects/railpack-deployment.service.ts"), "utf8");
@@ -26,7 +27,7 @@ assert.match(outputs, /service_port/);
 assert.match(outputs, /transport_probe_container_name/);
 assert.match(outputs, /platform_health_check_path/);
 assert.match(outputs, /cloud_map_service_id/);
-assert.match(workflow, /while IFS= read -r service; do[\s\S]*railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name "\$image" "\$build_root"/);
+assert.match(fallbackBuilder, /while IFS= read -r service; do[\s\S]*railpack build "\$\{build_env_args\[@\]\}" "\$\{execution_args\[@\]\}" --name "\$image" "\$build_root"/);
 assert.match(workflow, /while IFS= read -r artifact; do[\s\S]*service_port="\$\(jq -r '\.servicePort'[\s\S]*docker run --detach[\s\S]*--env PORT="\$service_port"[\s\S]*--env HOST=0\.0\.0\.0/);
 assert.match(workflow, /verify-runtime\.sh[\s\S]*aws-runtime-verification\.json/);
 const verifier = readFileSync(join(root, "infrastructure/railpack-runtime/verify-runtime.sh"), "utf8");
