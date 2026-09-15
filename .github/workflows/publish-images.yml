@@ -79,3 +79,17 @@ jobs:
           tags: |
             ${{ env.FRONTEND_IMAGE }}:${{ env.RELEASE_TAG }}
             ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+
+      - name: Make published package public
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ '${{ matrix.component }}' = backend ]; then package=deployguard-team-runtime-backend; else package=deployguard-team-runtime-frontend; fi
+          curl --fail-with-body --silent --show-error --request PATCH \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/user/packages/container/$package" \
+            --data '{"visibility":"public"}'
