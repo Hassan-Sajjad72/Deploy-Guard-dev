@@ -1,7 +1,12 @@
+import { setDefaultResultOrder } from "node:dns";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import helmet from "helmet";
 import { AppModule } from "./app.module";
+
+// The local production/demo host has no usable IPv6 route to AWS endpoints.
+// Apply this process-wide before any AWS SDK client is constructed.
+setDefaultResultOrder("ipv4first");
 
 /**
  * bootstrap()
