@@ -17,7 +17,7 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   fallbackManifest: "infrastructure/docker-fallback/templates.json",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "c5f83b330a4bfce5ac13439ad18acfbf9d8abde0de9e54f18ced9329726f4596",
+  workflow: "2cd5bb0678e52f904eac144f8f5dc0a34811dffea8c256210128b0846b5d3090",
   releaseResultProducer: "b0a19dd5cba4144dc460a99981ada034fef12d2ac1c1a5a2b1bdbe3f415af7ea",
   releaseOnlyTaskDefinitions: "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
   runtimeVerifier: "adcd8c5f5b9eb535a53ee868d894caccc67b415f92d89eafb46b0a7d51843c90",
