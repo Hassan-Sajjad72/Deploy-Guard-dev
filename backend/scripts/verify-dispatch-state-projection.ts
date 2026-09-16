@@ -555,7 +555,7 @@ async function verifyPerActionCapabilitySimulation() {
   const listBucket = calls.find((call) => call.ActionNames.includes("s3:ListBucket"));
   const objectAccess = calls.find((call) => call.ActionNames.includes("s3:GetObject"));
   assert.deepEqual(listBucket.ResourceArns, ["arn:aws:s3:::deployguard-state"]);
-  assert.deepEqual(objectAccess.ResourceArns, [`arn:aws:s3:::deployguard-state/projects/${project.id}/runtime/terraform.tfstate`, `arn:aws:s3:::deployguard-state/projects/${project.id}/runtime/terraform.tfstate.tflock`]);
+  assert.deepEqual(objectAccess.ResourceArns, [`arn:aws:s3:::deployguard-state/projects/${project.id}/dev/runtime/terraform.tfstate`, `arn:aws:s3:::deployguard-state/projects/${project.id}/dev/runtime/terraform.tfstate.tflock`]);
   calls.length = 0;
   await verifyEffectiveWorkflowCapabilities(allowed, "arn:aws:iam::000000000000:role/deployguard", scope, "deploy", [role]);
   assert.ok(calls.every((call) => call.ResourceArns.every((resource: string) => resource.includes(":role/dg-") || resource === "*")), "IAM simulation must not pass the managed policy ARN as a resource");
@@ -581,8 +581,8 @@ async function verifyProviderContractAndConditionalDatabaseScope() {
   assert.ok(database.some((capability) => capability.id === "database-secrets"));
   const databaseActions = new Set(database.flatMap((capability) => capability.actions));
   const privateDnsActions = ["route53:CreateHostedZone", "route53:GetHostedZone", "route53:ListHostedZonesByName", "route53:DeleteHostedZone", "ec2:DescribeRegions"];
-  for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds", ...privateDnsActions]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
-  assert.equal(WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, "deployguard.railpack-runtime-aws/v9");
+  for (const action of ["elasticfilesystem:DescribeLifecycleConfiguration", "ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaceAttribute", "ec2:ModifyNetworkInterfaceAttribute", "ec2:DeleteNetworkInterface", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds", ...privateDnsActions]) assert.ok(databaseActions.has(action), `managed database capability missing: ${action}`);
+  assert.equal(WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, "deployguard.railpack-runtime-aws/v10");
   const applicationSecrets = normal.find((capability) => capability.id === "application-secrets");
   assert.ok(applicationSecrets, "application ENV secrets require an explicit pre-dispatch capability");
   assert.ok(applicationSecrets.actions.includes("secretsmanager:GetSecretValue"), "build-scope secrets require immutable-version reads");

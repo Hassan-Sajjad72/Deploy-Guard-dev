@@ -359,11 +359,16 @@ jobs:
               repository="$(jq -r '.rollbackImage | split("@")[0] | split("/")[1:] | join("/")' <<<"$service")"
               compact_service="${service_id//-/}"
               [ "$repository" = "deployguard-${PROJECT_ID}" ] || [ "$repository" = "deployguard-${compact_project:0:12}-${compact_service:0:8}" ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=terraform_materialization' >&2; exit 1; }
-              if ! aws ecr delete-repository --repository-name "$repository" --force >/dev/null; then
+              if ! delete_error="$(aws ecr delete-repository --repository-name "$repository" --force 2>&1)"; then
+                if ! grep -q 'RepositoryNotFoundException' <<<"$delete_error"; then
+                  echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
+                  exit 1
+                fi
+              fi
+              if describe_error="$(aws ecr describe-repositories --repository-names "$repository" 2>&1)"; then
                 echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
                 exit 1
-              fi
-              if aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1; then
+              elif ! grep -q 'RepositoryNotFoundException' <<<"$describe_error"; then
                 echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
                 exit 1
               fi

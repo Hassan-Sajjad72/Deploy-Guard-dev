@@ -141,7 +141,12 @@ async function bindingEvidence(root: string) {
 }
 
 function commandPort(command: string, source: string) {
-  return matches(command, /(?:^|\s)(?:--port(?:=|\s+)|-p\s+)([^\s]+)/g, 3, source);
+  // A command that consumes DeployGuard's injected PORT is valid, but it does
+  // not itself declare a numeric port.  Ignore that dynamic evidence and let a
+  // later concrete/default source establish the canonical container port.
+  return [...command.matchAll(/(?:^|\s)(?:--port(?:=|\s+)|-p\s+)([^\s]+)/g)]
+    .filter((match) => !/^\$(?:PORT|\{PORT\})$/.test(match[1]))
+    .map((match) => evidence(3, source, match[1]));
 }
 
 async function startCommandEvidence(root: string) {
