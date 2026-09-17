@@ -8,13 +8,29 @@ COPY backend/nest-cli.json backend/tsconfig.json ./
 COPY backend/src ./src
 RUN npm run build
 
+FROM hashicorp/terraform:1.10.5 AS terraform
+
 FROM node:22.14.0-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app/backend
+ARG TARGETARCH
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends awscli ca-certificates curl git openssh-client \
+    && apt-get install -y --no-install-recommends awscli ca-certificates curl git gzip openssh-client tar unzip zip \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=terraform /bin/terraform /usr/local/bin/terraform
+
+# Infracost publishes native Linux archives for both Buildx target architectures.
+RUN case "$TARGETARCH" in \
+      amd64|arm64) infracost_arch="$TARGETARCH" ;; \
+      *) echo "Unsupported Infracost architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 \
+      "https://github.com/infracost/infracost/releases/download/v0.10.43/infracost-linux-${infracost_arch}.tar.gz" \
+      | tar -xz -C /usr/local/bin \
+    && mv "/usr/local/bin/infracost-linux-${infracost_arch}" /usr/local/bin/infracost \
+    && chmod 0755 /usr/local/bin/infracost
 
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
@@ -27,7 +43,13 @@ COPY infrastructure/railpack-runtime/variables.tf /app/infrastructure/railpack-r
 COPY infrastructure/railpack-runtime/outputs.tf /app/infrastructure/railpack-runtime/outputs.tf
 
 RUN mkdir -p /app/backend/.deployguard/terraform-workspaces \
-    && chown -R node:node /app
+    && chown -R node:node /app \
+    && terraform version \
+    && aws --version \
+    && git --version \
+    && ssh -V \
+    && curl --version \
+    && infracost --version
 
 USER node
 EXPOSE 5000

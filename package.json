@@ -8,8 +8,9 @@
   "scripts": {
     "certify:live-apps": "npm exec --prefix backend -- ts-node backend/scripts/certify-live-app-matrix.ts",
     "test:certify-live-apps": "npm exec --prefix backend -- ts-node backend/scripts/verify-live-app-matrix-runner.ts",
-    "product:start": "node scripts/local-product.mjs",
-    "product:verify": "node scripts/verify-local-product.mjs",
+    "product:start": "docker compose --env-file .env.container up --build --wait",
+    "container:certify": "sh scripts/certify-containers.sh",
+    "product:verify": "sh scripts/certify-containers.sh",
     "test:canonical-backend-environment": "node scripts/verify-canonical-backend-environment.mjs",
     "product:build": "npm --prefix backend run build && npm --prefix frontend run build",
     "install:all": "cd frontend && npm install && cd ../backend && npm install",

@@ -3,6 +3,7 @@
 .env
 .env.*
 !.env.example
+!.env.container.example
 **/node_modules
 **/dist
 **/.deployguard
@@ -13,5 +14,7 @@
 **/backend.hcl
 **/terraform.tfvars.json
 **/*.log
+transfer-data/*
+!transfer-data/.gitkeep
 .codex
 attachments

@@ -15,6 +15,7 @@
 
 # Safe example files ARE allowed
 !.env.example
+!.env.container.example
 !.env.sample
 !.env.template
 !**/.env.example
@@ -185,6 +186,8 @@ postgres-data/
 pgdata/
 
 *.dump
+transfer-data/*
+!transfer-data/.gitkeep
 
 
 # ============================================================

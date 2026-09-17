@@ -1,0 +1,3 @@
+database/*.sh text eol=lf
+monitoring/*.sh text eol=lf
+scripts/*.sh text eol=lf
