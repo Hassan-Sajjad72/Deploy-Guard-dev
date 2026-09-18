@@ -51,6 +51,9 @@ try {
   const startCommand = await directory("start-command", { "package.json": JSON.stringify({ scripts: { start: "node server.js --port 3100" } }) });
   assert.equal((await resolveServicePort(serviceId, startCommand)).servicePort, 3100);
 
+  const dynamicStartCommand = await directory("dynamic-start-command", { "Procfile": "web: uvicorn app.main:app --host 0.0.0.0 --port \${PORT}\n", "requirements.txt": "fastapi==0.135.1\n" });
+  assert.equal((await resolveServicePort(serviceId, dynamicStartCommand)).servicePort, 8000, "a valid dynamic PORT command falls through to FastAPI's canonical default");
+
   const environment = await directory("environment", { ".env.production": "PORT=4500\n" });
   assert.equal((await resolveServicePort(serviceId, environment)).servicePort, 4500);
 
@@ -101,7 +104,7 @@ try {
   assert.doesNotMatch(settings, /<span>Application port<\/span>|servicePort: Number/);
   assert.doesNotMatch(dto, /servicePort/);
 
-  console.log("SERVICE_PORT_RESOLUTION=PASS ROOT=1 MULTI_SERVICE=1 PRECEDENCE=1 FAIL_CLOSED=1 HOST_PORT_ISOLATION=1 ECS_AWVPC=1 USER_PORT_INPUT=0");
+  console.log("SERVICE_PORT_RESOLUTION=PASS ROOT=1 MULTI_SERVICE=1 PRECEDENCE=1 DYNAMIC_PORT=1 FAIL_CLOSED=1 HOST_PORT_ISOLATION=1 ECS_AWVPC=1 USER_PORT_INPUT=0");
 } finally {
   await rm(fixture, { recursive: true, force: true });
 }

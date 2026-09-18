@@ -7,6 +7,7 @@ import {
   PutRolePolicyCommand,
   SimulatePrincipalPolicyCommand,
 } from "@aws-sdk/client-iam";
+import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import {
   capabilitiesFor,
   WorkflowAwsCapability,
@@ -22,6 +23,23 @@ import {
 const POLICY_NAME = "DeployGuardWorkflowCapabilities";
 const RETIRED_POLICY_NAMES = ["DeployGuardDeploymentResources"] as const;
 type IamSender = { send(command: unknown, options?: { abortSignal?: AbortSignal }): Promise<any>; destroy?: () => void };
+
+export class AwsAccountConfigurationError extends ServiceUnavailableException {
+  constructor(detail: string) {
+    super({
+      code: "DG_AWS_ACCOUNT_CONFIGURATION_INVALID",
+      classification: "platform_configuration",
+      message: "DeployGuard AWS account configuration does not match its execution identity.",
+      detail,
+    });
+  }
+}
+
+export function assertAwsAccountConsistency(configuredAccountId: string, roleAccountId: string, callerAccountId?: string) {
+  if (!/^\d{12}$/.test(configuredAccountId)) throw new AwsAccountConfigurationError("AWS_ACCOUNT_ID must be a 12-digit AWS account ID.");
+  if (configuredAccountId !== roleAccountId) throw new AwsAccountConfigurationError("AWS_ACCOUNT_ID does not match DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN.");
+  if (callerAccountId && callerAccountId !== configuredAccountId) throw new AwsAccountConfigurationError("AWS_ACCOUNT_ID does not match the active backend AWS credential account.");
+}
 
 const decodedPolicy = (value?: string) => {
   if (!value) return null;
@@ -122,9 +140,9 @@ export async function reconcileWorkflowCapabilities(input: {
   }
 
   // Externally managed roles are read-only verified immediately. A
-  // platform-managed role is first converged to the canonical policy and then
-  // simulated once, avoiding a redundant full IAM simulation that can exhaust
-  // the bounded admission timeout while converging an older policy revision.
+  // platform-managed role is converged and read back from IAM instead. IAM
+  // simulation is rate-limited and must not block a role whose complete
+  // DeployGuard policy was just durably verified by IAM.
   let missing = input.platformManaged
     ? []
     : await verifyEffectiveWorkflowCapabilities(input.client, input.roleArn, input.scope, input.action, capabilities, input.abortSignal);
@@ -145,7 +163,7 @@ export async function reconcileWorkflowCapabilities(input: {
             }] : [];
           }),
         }
-      : workflowCapabilityPolicy(input.scope);
+      : workflowCapabilityPolicy({ ...input.scope, managedDatabaseEnabled: true });
     const encoded = JSON.stringify(desiredPolicy);
     if (Buffer.byteLength(encoded, "utf8") > 10_240) {
       throw new WorkflowAwsCapabilityError(["iam:PutRolePolicy"], "The canonical workflow capability policy exceeds the IAM inline-policy size limit.");
@@ -187,13 +205,6 @@ export async function reconcileWorkflowCapabilities(input: {
     }
   }
 
-  if (input.platformManaged) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
-      missing = await verifyEffectiveWorkflowCapabilities(input.client, input.roleArn, input.scope, input.action, capabilities, input.abortSignal);
-      if (!missing.length) break;
-    }
-  }
   if (missing.length) {
     throw new WorkflowAwsCapabilityError(missing, input.platformManaged
       ? "The managed execution-role policy was reconciled but effective IAM simulation still denies required operations."
@@ -216,10 +227,23 @@ export class GithubActionsAwsCapabilityService {
     const roleArn = this.config.get<string>("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN", "").trim();
     const match = /^arn:aws:iam::(\d{12}):role\/(.+)$/.exec(roleArn);
     if (!match) throw new WorkflowAwsCapabilityError(["execution-role"], "The configured GitHub Actions execution-role ARN is invalid.");
+    const configuredAccountId = this.config.get<string>("AWS_ACCOUNT_ID", "").trim();
+    assertAwsAccountConsistency(configuredAccountId, match[1]);
+    const region = this.config.get<string>("AWS_REGION", "us-east-1");
+    const identityClient = new STSClient({ region });
+    try {
+      const identity = await identityClient.send(new GetCallerIdentityCommand({}));
+      assertAwsAccountConsistency(configuredAccountId, match[1], identity.Account || "");
+    } catch (error) {
+      if (error instanceof AwsAccountConfigurationError) throw error;
+      throw new AwsAccountConfigurationError("DeployGuard could not verify the active backend AWS credential account.");
+    } finally {
+      identityClient.destroy();
+    }
     const scope: WorkflowAwsCapabilityScope = {
       ...input,
-      accountId: match[1],
-      region: this.config.get<string>("AWS_REGION", "us-east-1"),
+      accountId: configuredAccountId,
+      region,
       terraformStateBucket: this.config.get<string>("DEPLOYGUARD_TERRAFORM_STATE_BUCKET", ""),
       vpcId: this.config.get<string>("DEPLOYGUARD_VPC_ID", "").trim(),
     };

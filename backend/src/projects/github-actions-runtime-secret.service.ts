@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { Agent } from "https";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
@@ -10,6 +11,7 @@ import {
   SecretsManagerClient,
   UpdateSecretVersionStageCommand,
 } from "@aws-sdk/client-secrets-manager";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { isCanonicalEnvironmentName } from "./canonical-environment";
 
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -38,6 +40,16 @@ export type RuntimeSecretMaterialization = {
 export class RuntimeSecretMaterializationError extends Error {
   readonly diagnosticCode = "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED";
   constructor() { super("DeployGuard could not materialize the immutable project secret reference."); }
+}
+
+export function runtimeSecretRequestHandler() {
+  return new NodeHttpHandler({
+    // This host cannot route IPv6 to the AWS endpoint. Without an IPv4 agent,
+    // the SDK times out before Secrets Manager receives the request.
+    httpsAgent: new Agent({ family: 4 }),
+    connectionTimeout: 10_000,
+    socketTimeout: 30_000,
+  });
 }
 
 export interface RuntimeSecretMaterializationPort {
@@ -188,7 +200,10 @@ export class GithubActionsRuntimeSecretService {
   private readonly client: SecretsManagerClient;
 
   constructor(config: ConfigService) {
-    this.client = new SecretsManagerClient({ region: config.get<string>("AWS_REGION", "us-east-1") });
+    this.client = new SecretsManagerClient({
+      region: config.get<string>("AWS_REGION", "us-east-1"),
+      requestHandler: runtimeSecretRequestHandler(),
+    });
   }
 
   async materialize(input: {
