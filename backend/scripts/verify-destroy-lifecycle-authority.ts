@@ -100,17 +100,20 @@ async function verifyCanonicalProjection() {
 
 async function verifyDestroyFinalizationAndRetry() {
   const saved: any[] = [];
+  const ordering: string[] = [];
   const operation: any = { id: operationId, projectId, generationId, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: { executionEngine: "railpack", deploymentAction: "destroy" } };
   const service: any = Object.create(RailpackDeploymentService.prototype);
   service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; }, findOne: async () => operation };
   service.sanitizer = new LogSanitizerService();
+  service.notifications = { dispatch: async (input: any) => { ordering.push(input.stage); } };
   let finalizations = 0;
-  service.projectDeletion = { finalize: async (_project: any, candidate: any) => { finalizations += 1; assert.equal(candidate.metadata.destroyVerification.deploymentOperationId, operationId); } };
+  service.projectDeletion = { finalize: async (_project: any, candidate: any) => { ordering.push("project_cleanup"); finalizations += 1; assert.equal(candidate.metadata.destroyVerification.deploymentOperationId, operationId); } };
   await service.finalizeVerifiedRelease(project, operation, { releaseArtifact: { destroyed: true }, destroyVerification: destroyEvidence() }, "success");
   assert.equal(finalizations, 1, "successful Railpack Destroy enters exact-scope ProjectDeletionService finalization");
   assert.equal(operation.status, PipelineRunStatus.COMPLETED);
   assert.equal(operation.currentStage, "project_delete_cleanup");
   assert.equal(operation.metadata.destroyEvidenceValidated, true);
+  assert.deepEqual(ordering, ["destroy_completed", "project_cleanup"], "destroy completion is published after verified AWS destruction and before notification/project cleanup");
 
   service.projectDeletion = { finalize: async () => { throw new Error("control plane cleanup unavailable"); } };
   operation.status = PipelineRunStatus.RUNNING; operation.currentStage = "release_evidence_pending"; operation.metadata = { executionEngine: "railpack", deploymentAction: "destroy" };

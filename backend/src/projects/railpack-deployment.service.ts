@@ -49,6 +49,7 @@ import { DeploymentRequirementAdmissionError, RequirementAdmission } from "./dep
 import { currentFailureDiagnostic, FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
 import { EntitlementService } from "../billing/entitlement.service";
 import { getTrivyConfig } from "./trivy.config";
+import { NotificationDispatcherService } from "../notifications/notification-dispatcher.service";
 
 const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
 class TerminalReleaseEvidenceError extends Error {}
@@ -134,6 +135,7 @@ export class RailpackDeploymentService {
     private readonly audit: AuditLogService,
     private readonly failureDiagnostics: FailureDiagnosticService,
     private readonly entitlements: EntitlementService,
+    private readonly notifications?: NotificationDispatcherService,
   ) {}
 
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy", null, null, "DEPLOY"); }
@@ -447,6 +449,7 @@ export class RailpackDeploymentService {
         // immutable inputs. Reconciliation can recover the exact GitHub run.
         return { deployment: { state: "accepted", message: "Railpack deployment was accepted by GitHub Actions; local run identity persistence is pending reconciliation.", operation } };
       }
+      await this.dispatchLifecycleNotification(operation, "started", project);
     } catch (error) {
       const remoteDispatchPossible = Boolean(operation.githubWorkflowRunId)
         || (error instanceof GithubActionsDispatchError && error.dispatchMayHaveOccurred);
@@ -1024,7 +1027,44 @@ export class RailpackDeploymentService {
     });
     operation.metadata = metadata;
     await this.runs.save(operation);
+    await this.dispatchLifecycleNotification(operation, "failed");
     return operation;
+  }
+
+  private notificationAction(operation: ProjectPipelineRun) {
+    const action = String(operation.metadata?.deploymentAction || "deploy");
+    if (action === "deploy" && operation.metadata?.releaseStrategy === "direct_ecs") return "redeploy";
+    return action === "rollback" || action === "destroy" ? action : "deploy";
+  }
+
+  private async dispatchLifecycleNotification(operation: ProjectPipelineRun, status: "started" | "completed" | "failed", project?: Project) {
+    if (!this.notifications) return;
+    const action = this.notificationAction(operation);
+    if (status === "started" && operation.status !== PipelineRunStatus.RUNNING) return;
+    if (status === "failed" && operation.status !== PipelineRunStatus.FAILED) return;
+    if (status === "completed") {
+      if (operation.status !== PipelineRunStatus.COMPLETED) return;
+      if (action === "destroy" ? operation.metadata?.destroyEvidenceValidated !== true : operation.metadata?.releaseEvidenceVerified !== true) return;
+    }
+    const failedStage = status === "failed" ? String(operation.metadata?.failedStage || operation.currentStage || "release_failed") : null;
+    const message = status === "failed"
+      ? operation.errorMessage || `${action} failed.`
+      : status === "started"
+        ? `${action} started.`
+        : `${action} completed after DeployGuard verification.`;
+    await this.notifications.dispatch({
+      projectId: operation.projectId,
+      pipelineRunId: operation.id,
+      eventId: operation.id,
+      stage: `${action}_${status}`,
+      status,
+      message,
+      action,
+      environmentName: project ? canonicalEnvironmentName(project) : null,
+      generationId: operation.generationId,
+      commitSha: operation.commitSha,
+      failedStage,
+    }).catch(() => undefined);
   }
 
   private failureServiceName(metadata: Record<string, unknown>, serviceId: string | null) {
@@ -1287,6 +1327,7 @@ export class RailpackDeploymentService {
         operation.currentStage = "github_actions";
         operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatched", dispatchIdentityRecovered: true, dispatchPersistencePending: false, workflowRunUrl: `https://github.com/${project.repositoryFullName}/actions/runs/${recoveredRunId}` };
         await this.runs.save(operation);
+        await this.dispatchLifecycleNotification(operation, "started", project);
       }
       const workflow = await this.actions.getWorkflowRun(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
       const status = String(workflow.status || "");
@@ -1819,6 +1860,7 @@ export class RailpackDeploymentService {
       await operations.save(current);
       Object.assign(operation, current);
     });
+    await this.dispatchLifecycleNotification(operation, "completed", project);
     return operation;
   }
 
@@ -1846,6 +1888,7 @@ export class RailpackDeploymentService {
       destroyEvidenceValidated: true,
     };
     await this.runs.save(operation);
+    await this.dispatchLifecycleNotification(operation, "completed", project);
     try {
       await this.projectDeletion.finalize(project, operation);
     } catch (error) {

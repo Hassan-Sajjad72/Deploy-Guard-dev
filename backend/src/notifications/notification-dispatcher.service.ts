@@ -36,6 +36,7 @@ export class NotificationDispatcherService {
     if (/redeploy.*fail/.test(value)) return { type: "redeployment_failed", kind: "critical" };
     if (/redeploy.*(completed|succeed)/.test(value)) return { type: "redeployment_succeeded", kind: "success" };
     if (/redeploy.*(start|running)/.test(value)) return { type: "redeployment_started", kind: "stage" };
+    if (/deploy.*(start|running)/.test(value)) return { type: "deployment_started", kind: "stage" };
     if (/security.*(block|fail)|dockerfile_(?:security_)?check_(?:failed|blocked)/.test(value)) return { type: "security_policy_block", kind: "critical" };
     if (/cancel/.test(value)) return { type: "deployment_cancelled", kind: "stage" };
     if (/fail|blocked/.test(value)) return { type: "deployment_failed", kind: "critical" };
