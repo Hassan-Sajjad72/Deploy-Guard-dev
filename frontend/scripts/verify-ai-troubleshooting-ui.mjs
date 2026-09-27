@@ -8,8 +8,9 @@ for (const heading of ["Likely responsibility", "What happened", "What DeployGua
 assert.ok(page.indexOf("troubleshooting-diagnosis") < page.indexOf("Evidence viewer"), "diagnosis must render before raw evidence");
 assert.match(page, /<details key=\{source\}>/, "sanitized evidence remains accessible and collapsed by default");
 assert.match(page, /AI troubleshooting/);
-assert.match(page, /Evidence-based explanation/);
-assert.match(page, /Evidence-only explanation/);
+assert.match(page, /"Live AI"/);
+assert.match(page, /"Evidence Only"/);
+assert.match(page, /Evidence Only reason:/, "evidence-only results display the stored sanitized fallback reason");
 assert.match(page, /AI explanation only\. DeployGuard's persisted deterministic diagnosis above remains authoritative\./);
 assert.match(page, /operation\.diagnosis\?\.failureOwner \|\| operation\.failureOwner/, "canonical diagnosis owner takes presentation precedence with legacy fallback");
 assert.match(page, /operation\.diagnosis\?\.terminalFailureCode \|\| operation\.failureCode/, "pipeline terminal code remains distinct from root cause and keeps legacy fallback");

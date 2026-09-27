@@ -2,6 +2,22 @@ import { BadGatewayException, Injectable, ServiceUnavailableException } from "@n
 import { ConfigService } from "@nestjs/config";
 import { AiEvidencePreprocessorService } from "./ai-evidence-preprocessor.service";
 
+const analysisResponseSchema = {
+  type: "object",
+  required: ["summary", "rootCause", "rootCauseCode", "technicalDetails", "remediationSteps", "confidence", "limitations", "evidenceReferences", "likelyResponsibility", "affectedComponent", "completedStages", "recommendedAction", "retryRecommendation", "problemType"],
+  properties: {
+    summary: { type: "string" }, rootCause: { type: "string" }, rootCauseCode: { type: "string" }, technicalDetails: { type: "string" },
+    remediationSteps: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, limitations: { type: "string" },
+    evidenceReferences: { type: "array", items: { type: "object", required: ["source"], properties: { source: { type: "string" }, eventId: { type: ["string", "null"] }, stage: { type: ["string", "null"] } } } },
+    likelyResponsibility: { type: "string", enum: ["REPOSITORY_APPLICATION", "DEPLOYGUARD_PLATFORM", "EXTERNAL_PROVIDER", "INSUFFICIENT_EVIDENCE"] },
+    affectedComponent: { type: "string" },
+    completedStages: { type: "array", items: { type: "object", required: ["stage", "evidenceReference"], properties: { stage: { type: "string" }, evidenceReference: { type: "object", required: ["source"], properties: { source: { type: "string" }, eventId: { type: ["string", "null"] }, stage: { type: ["string", "null"] } } } } } },
+    recommendedAction: { type: "string" },
+    retryRecommendation: { type: "object", required: ["decision", "reason"], properties: { decision: { type: "string", enum: ["SAFE_NOW", "SAFE_AFTER_FIX", "NOT_SAFE_YET", "INSUFFICIENT_EVIDENCE"] }, reason: { type: "string" } } },
+    problemType: { type: "string", enum: ["FAILED_DEPLOYMENT", "LIVE_RUNTIME_ISSUE"] },
+  },
+};
+
 @Injectable()
 export class AiProviderAdapter {
   private availabilityCache: { expiresAt: number; value: ProviderAvailability } | null = null;
@@ -89,6 +105,7 @@ export class AiProviderAdapter {
               temperature: this.temperature(),
               maxOutputTokens: this.maxOutputTokens(),
               responseMimeType: "application/json",
+              responseSchema: analysisResponseSchema,
             },
           }),
         }

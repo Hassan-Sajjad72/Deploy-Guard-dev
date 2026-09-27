@@ -165,7 +165,7 @@ export class AiTroubleshootingService {
     };
     try { output = await this.provider.analyze(this.preprocessor.buildPrompt(context, collected.evidence, followUp || undefined, questionType), { evidence: collected.evidence, facts: context }); }
     catch (error) {
-      session.lastError = error instanceof Error ? this.sanitizer.sanitize(error.message).slice(0, 500) : "AI provider request failed.";
+      session.lastError = this.fallbackReason(error);
       output = {
         value: this.preprocessor.fallback(context, collected.evidence),
         mode: "evidence_only",
@@ -179,7 +179,7 @@ export class AiTroubleshootingService {
     const revision = await this.results.count({ where: { sessionId: session.id } }) + 1;
     const diagnosticDetails = { likelyResponsibility: value.likelyResponsibility, rootCauseCode: value.rootCauseCode || collected.context.rootCauseCode || null, affectedComponent: value.affectedComponent, completedStages: value.completedStages, recommendedAction: value.recommendedAction, retryRecommendation: value.retryRecommendation, problemType: value.problemType };
     const result = await this.results.save(this.results.create({ sessionId: session.id, summary: value.summary, rootCause: value.rootCause, technicalDetails: value.technicalDetails, remediationSteps: value.remediationSteps, evidenceReferences: value.evidenceReferences, limitations: value.limitations, confidence: value.confidence, resultMode: output.mode, diagnosticDetails, revision }));
-    await this.messages.save(this.messages.create({ sessionId: session.id, role: "assistant", content: this.answer(value, questionType), usageMetadata: { ...(output.usage || {}), ...(questionType ? { questionType } : {}) } }));
+    await this.messages.save(this.messages.create({ sessionId: session.id, role: "assistant", content: this.answer(value, questionType, context, collected.evidence), usageMetadata: { ...(output.usage || {}), ...(questionType ? { questionType } : {}) } }));
     session.status = "completed"; session.provider = output.provider; session.model = output.model; session.providerMode = output.mode; session.initialContext = { ...(session.initialContext || {}), diagnosticContext: context, evidenceSnapshot: collected }; if (output.mode === "live") session.lastError = null;
     await this.sessions.save(session);
     await this.trimMessages(session.id);
@@ -227,12 +227,38 @@ export class AiTroubleshootingService {
     };
   }
 
-  private answer(value: ReturnType<AiEvidencePreprocessorService["fallback"]>, questionType: TroubleshootingQuestionType | null) {
+  private answer(value: ReturnType<AiEvidencePreprocessorService["fallback"]>, questionType: TroubleshootingQuestionType | null, context: Record<string, unknown> = {}, evidence: Array<{ source: string; stage?: string | null; eventId?: string | null }> = []) {
+    if (questionType === "failure_summary") return `Failure summary: ${value.summary} Affected component: ${value.affectedComponent}.`;
+    if (questionType === "root_cause") return `Root cause (${value.rootCauseCode}): ${value.rootCause} ${value.technicalDetails}`;
     if (questionType === "responsibility") return `Likely responsibility: ${value.likelyResponsibility}. ${value.technicalDetails} Confidence: ${Math.round(value.confidence * 100)}%.`;
     if (questionType === "deployment_progress") return value.completedStages.length ? `Evidence-proven completed stages: ${value.completedStages.map((stage) => stage.stage).join(", ")}. Unresolved problem: ${value.rootCause}` : `No completed stage is proven by the supplied evidence. Unresolved problem: ${value.rootCause}`;
     if (questionType === "retry_safety") return `Retry recommendation: ${value.retryRecommendation.decision}. ${value.retryRecommendation.reason}`;
     if (questionType === "remediation") return `${value.recommendedAction} ${value.remediationSteps.join(" ")}`;
+    if (questionType === "infrastructure_change") return evidence.some((item) => item.source === "terraform")
+      ? `Infrastructure change assessment: Terraform evidence exists for this operation. ${value.technicalDetails}`
+      : `Infrastructure change assessment: No Terraform or lifecycle evidence proves an infrastructure change for this operation. ${value.limitations}`;
+    if (questionType === "previous_live_generation") return `Previous LIVE generation assessment: The supplied operation evidence does not prove that a previous generation is currently available in AWS. ${value.limitations}`;
+    if (questionType === "failed_service") {
+      const serviceId = typeof context.failureServiceId === "string" && context.failureServiceId ? context.failureServiceId : null;
+      if (serviceId) return `Failed service: ${serviceId}. ${value.affectedComponent}: ${value.rootCause}`;
+      const stage = String(context.failedStageLabel || context.failedStage || "the admission stage");
+      return `No runtime service failure is proven. The operation failed at ${stage} before evidence identified a failed runtime service. ${value.rootCause}`;
+    }
+    if (questionType === "supporting_evidence") {
+      const allowed = new Set(evidence.map((item) => `${item.source}|${item.eventId || ""}|${item.stage || ""}`));
+      const references = value.evidenceReferences.filter((item) => allowed.has(`${item.source}|${item.eventId || ""}|${item.stage || ""}`));
+      return references.length ? `Supporting evidence: ${references.map((item) => `${item.source}${item.stage ? ` (${item.stage})` : ""}`).join(", ")}. ${value.technicalDetails}` : `No validated supporting evidence reference was returned. ${value.limitations}`;
+    }
     return value.summary;
+  }
+
+  private fallbackReason(error: unknown) {
+    const message = error instanceof Error ? this.sanitizer.sanitize(error.message) : "";
+    if (error instanceof Error && (error.name === "AbortError" || /timed?\s*out|aborted/i.test(message))) return "Provider timeout.";
+    if (/Google Gemini provider returned \d{3}/i.test(message)) return "Provider HTTP failure.";
+    if (/invalid response|validation/i.test(message)) return "Invalid provider response.";
+    if (/disabled|not configured|unavailable/i.test(message)) return "AI provider unavailable.";
+    return "AI provider request failed.";
   }
 
   private async sessionFor(user: User, projectId: string, id: string, manage: boolean) {

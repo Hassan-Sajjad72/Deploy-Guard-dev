@@ -29,6 +29,22 @@ function immutableFailureBuildContext(run: ProjectPipelineRun) {
   } catch { return null; }
 }
 
+function correlatedArtifact(run: ProjectPipelineRun) {
+  const value = run.metadata?.releaseArtifact;
+  if (!value || typeof value !== "object") return null;
+  const artifact = value as Record<string, unknown>;
+  return artifact.operationId === run.id && artifact.sourceSha === run.commitSha ? artifact : null;
+}
+
+function correlatedSecurityScan(run: ProjectPipelineRun, artifact: Record<string, unknown> | null) {
+  const candidates = [artifact?.securityScan, run.metadata?.securityScan];
+  return candidates.find((value) => {
+    if (!value || typeof value !== "object") return false;
+    const scan = value as Record<string, unknown>;
+    return scan.deploymentOperationId === run.id && scan.commitSha === run.commitSha && scan.projectId === run.projectId;
+  }) as Record<string, unknown> | undefined || null;
+}
+
 @Injectable()
 export class AiEvidenceService {
   constructor(
@@ -47,13 +63,18 @@ export class AiEvidenceService {
     const rows: RawEvidence[] = [];
     const diagnosis = run ? currentFailureDiagnostic(run) : null;
     const buildContext = run ? immutableFailureBuildContext(run) : null;
+    const artifact = run ? correlatedArtifact(run) : null;
     let runtimeServiceId: string | null = null;
     const failedSource = /terraform/i.test(String(stage || "")) ? "terraform" : /railpack|build|application_runtime/i.test(String(stage || "")) ? "railpack_build" : "github_actions";
     if (typeof run?.metadata?.safeLog === "string" && run.metadata.safeLog.trim()) rows.push({ source: failedSource, stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.metadata.safeLog });
     if (run?.errorMessage) rows.push({ source: "github_actions_status", stage, eventId: run.githubWorkflowRunId, timestamp: run.failedAt, text: run.errorMessage });
     if (diagnosis) rows.push({ source: "deployguard_diagnosis", stage, eventId: run?.id, timestamp: run?.failedAt, text: JSON.stringify(diagnosis) });
-    if (run && (buildContext || run.metadata?.builderFailure)) rows.push({ source: "deployguard_build_identity", stage, eventId: run.id, timestamp: run.failedAt || run.updatedAt, text: JSON.stringify({ buildIdentity: buildContext, builderFailure: run.metadata?.builderFailure || null }) });
+    if (run && (buildContext || run.metadata?.buildIdentity || run.metadata?.builderFailure)) rows.push({ source: "deployguard_build_identity", stage, eventId: run.id, timestamp: run.failedAt || run.updatedAt, text: JSON.stringify({ operationId: run.id, commitSha: run.commitSha, serviceId: run.failureServiceId, immutableBuildIdentity: buildContext, persistedBuildIdentity: run.metadata?.buildIdentity || null, builderFailure: run.metadata?.builderFailure || null }) });
     if (run?.metadata?.terraformPlanSummary) rows.push({ source: "terraform", stage, eventId: run.id, timestamp: run.updatedAt, text: `Terraform plan summary: ${JSON.stringify(run.metadata.terraformPlanSummary)}` });
+    if (run?.metadata?.terraformDiagnostics) rows.push({ source: "terraform", stage, eventId: run.id, timestamp: run.updatedAt, text: `Terraform diagnostics: ${JSON.stringify(run.metadata.terraformDiagnostics)}` });
+    if (run && artifact?.terraform) rows.push({ source: "terraform", stage: "terraform", eventId: run.id, timestamp: run.completedAt || run.updatedAt, text: `Verified Terraform result: ${JSON.stringify(artifact.terraform)}` });
+    const securityScan = run ? correlatedSecurityScan(run, artifact) : null;
+    if (run && securityScan) rows.push({ source: "security_scan", stage: "trivy_scan", eventId: run.id, timestamp: run.failedAt || run.completedAt || run.updatedAt, text: JSON.stringify(securityScan) });
     if (run) rows.push({ source: "deployguard_lifecycle", stage, eventId: run.id, timestamp: run.updatedAt, text: JSON.stringify({ operationId: run.id, generationId: run.generationId, commitSha: run.commitSha, deploymentAction: run.metadata?.deploymentAction, failedStage: run.metadata?.failedStage, status: run.status, failureOwner: run.failureOwner, externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId }) });
     if (run) {
       const [events, runtimeEvents] = await Promise.all([
@@ -72,12 +93,8 @@ export class AiEvidenceService {
         const item = workflowStage as Record<string, unknown>;
         rows.push({ source: "github_actions_stage", stage: String(item.key || "workflow_stage"), eventId: `${run.githubWorkflowRunId || run.id}:stage:${index}`, timestamp: String(item.completedAt || item.startedAt || run.updatedAt), text: `[${String(item.status || "unknown")}] ${String(item.label || item.key || "Workflow stage")}${item.failureReason ? `: ${String(item.failureReason)}` : ""}` });
       }
-      const releaseArtifact = run.metadata?.releaseArtifact;
-      if (releaseArtifact && typeof releaseArtifact === "object") {
-        const artifact = releaseArtifact as Record<string, unknown>;
-        if (artifact.operationId === run.id && artifact.sourceSha === run.commitSha && artifact.awsRuntimeVerification) {
-          rows.push({ source: "aws_runtime_verification", stage: "aws_runtime_verification", eventId: run.id, timestamp: run.completedAt || run.updatedAt, text: JSON.stringify(artifact.awsRuntimeVerification) });
-        }
+      if (artifact?.awsRuntimeVerification) {
+        rows.push({ source: "aws_runtime_verification", stage: "aws_runtime_verification", eventId: run.id, timestamp: run.completedAt || run.updatedAt, text: JSON.stringify(artifact.awsRuntimeVerification) });
       }
       if (run.status === PipelineRunStatus.COMPLETED && run.generationId && run.metadata?.releaseEvidenceVerified === true && user) {
         try {
