@@ -1,13 +1,15 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ConfigService } from "@nestjs/config";
+import { GetRoleCommand, IAMClient, UpdateAssumeRolePolicyCommand } from "@aws-sdk/client-iam";
 import { classifyManagedDatabase, ManagedDatabaseReconciliationState as State } from "../src/projects/managed-database-reconciliation";
 import { activeTerraformDatabaseAddresses, ManagedDatabaseReconciliationService } from "../src/projects/managed-database-reconciliation.service";
 import { ManagedDatabaseReconciliationAdmissionError } from "../src/projects/managed-database-reconciliation.error";
 import { DatabaseTierProvider, DatabaseTierStatus } from "../src/projects/project-database-tier.entity";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
-import { authorizeGithubRepositoryInTrust, githubTrustAuthorizesSubject, githubTrustUpdateRequired, TrustPolicy } from "../src/projects/github-actions-oidc-trust.service";
+import { authorizeGithubRepositoryInTrust, GithubActionsOidcTrustService, githubTrustAuthorizesSubject, githubTrustIncludesSubject, githubTrustUpdateRequired, TrustPolicy } from "../src/projects/github-actions-oidc-trust.service";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const project = { id: projectId, environmentName: "dev" } as any;
@@ -33,6 +35,15 @@ const report = (overrides: Record<string, unknown> = {}) => {
 };
 
 async function main() {
+  const immutableSubject = "repo:DeployGuard@100/supported-app@200:*";
+  const legacySubject = "repo:DeployGuard/supported-app:*";
+  const requiredSubjects = [immutableSubject, legacySubject];
+  const trust = (trustedSubjects: string[]): TrustPolicy => ({ Version: "2012-10-17", Statement: [{
+    Effect: "Allow",
+    Principal: { Federated: "arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com" },
+    Action: "sts:AssumeRoleWithWebIdentity",
+    Condition: { StringEquals: { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" }, StringLike: { "token.actions.githubusercontent.com:sub": trustedSubjects } },
+  }] });
   const wildcardTrust: TrustPolicy = { Version: "2012-10-17", Statement: [{
     Effect: "Allow",
     Principal: { Federated: "arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com" },
@@ -41,12 +52,61 @@ async function main() {
   }] };
   assert.equal(githubTrustAuthorizesSubject(wildcardTrust, "repo:DeployGuard/supported-app:*"), true, "an existing wildcard OIDC subject authorizes the repository without a trust-policy write");
   assert.equal(githubTrustAuthorizesSubject(wildcardTrust, "repo:AnotherOwner/supported-app:*"), false, "OIDC wildcard authorization remains owner-scoped");
-  assert.equal(githubTrustUpdateRequired(wildcardTrust, "repo:DeployGuard/supported-app:*", false), false, "external role mode remains read-only when the effective trust already authorizes the repository");
-  assert.throws(() => githubTrustUpdateRequired(wildcardTrust, "repo:AnotherOwner/supported-app:*", false), /externally managed/, "external role mode fails closed instead of attempting an IAM trust mutation");
-  assert.equal(githubTrustUpdateRequired(wildcardTrust, "repo:AnotherOwner/supported-app:*", true), true, "platform role mode may update a missing repository trust");
-  const unchangedTrust = JSON.stringify(wildcardTrust);
-  assert.equal(authorizeGithubRepositoryInTrust(wildcardTrust, "DeployGuard/supported-app"), true, "the mutation renderer remains available when an exact subject must be added");
-  assert.notEqual(JSON.stringify(wildcardTrust), unchangedTrust);
+  assert.throws(() => githubTrustUpdateRequired(wildcardTrust, requiredSubjects, false), /externally managed/, "effective wildcard trust cannot replace the two required exact subjects");
+  assert.equal(githubTrustUpdateRequired(wildcardTrust, requiredSubjects, true), true, "platform role mode reconciles missing exact repository subjects");
+
+  const legacyMissing = trust([immutableSubject]);
+  assert.equal(authorizeGithubRepositoryInTrust(legacyMissing, requiredSubjects), true);
+  assert.equal(githubTrustIncludesSubject(legacyMissing, immutableSubject), true, "immutable subject is preserved");
+  assert.equal(githubTrustIncludesSubject(legacyMissing, legacySubject), true, "missing legacy subject is added");
+  const immutableMissing = trust([legacySubject]);
+  assert.equal(authorizeGithubRepositoryInTrust(immutableMissing, requiredSubjects), true);
+  assert.equal(githubTrustIncludesSubject(immutableMissing, legacySubject), true, "legacy subject is preserved");
+  assert.equal(githubTrustIncludesSubject(immutableMissing, immutableSubject), true, "missing immutable subject is added");
+  const neither = trust(["repo:AnotherOwner/another-repository:*"]);
+  assert.equal(authorizeGithubRepositoryInTrust(neither, requiredSubjects), true);
+  assert.equal(githubTrustIncludesSubject(neither, immutableSubject), true);
+  assert.equal(githubTrustIncludesSubject(neither, legacySubject), true);
+  assert.equal(githubTrustIncludesSubject(neither, "repo:AnotherOwner/another-repository:*"), true, "unrelated repository trust is preserved");
+  assert.equal((neither.Statement as any[])[0].Principal.Federated, "arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com", "GitHub OIDC provider principal is unchanged");
+  assert.equal((neither.Statement as any[])[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"], "sts.amazonaws.com", "STS audience validation is unchanged");
+  const both = trust(requiredSubjects);
+  const unchangedTrust = JSON.stringify(both);
+  assert.equal(authorizeGithubRepositoryInTrust(both, requiredSubjects), false, "both existing exact subjects require no mutation");
+  assert.equal(JSON.stringify(both), unchangedTrust, "no-op reconciliation preserves the policy byte-for-byte");
+
+  const originalSend = IAMClient.prototype.send; const originalDestroy = IAMClient.prototype.destroy;
+  async function exerciseService(initial: TrustPolicy, options: { failUpdate?: boolean; staleVerification?: boolean } = {}) {
+    let current = structuredClone(initial); let updates = 0; let gets = 0;
+    (IAMClient.prototype as any).send = async (command: unknown) => {
+      if (command instanceof GetRoleCommand) {
+        gets += 1;
+        const returned = options.staleVerification && gets > 1 ? initial : current;
+        return { Role: { AssumeRolePolicyDocument: encodeURIComponent(JSON.stringify(returned)) } };
+      }
+      if (command instanceof UpdateAssumeRolePolicyCommand) {
+        updates += 1;
+        if (options.failUpdate) throw new Error("IAM update failed");
+        current = JSON.parse(String(command.input.PolicyDocument));
+        return {};
+      }
+      throw new Error("Unexpected IAM command");
+    };
+    (IAMClient.prototype as any).destroy = () => undefined;
+    const service = new GithubActionsOidcTrustService(new ConfigService({ DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN: "arn:aws:iam::111111111111:role/deployguard", DEPLOYGUARD_GITHUB_ACTIONS_ROLE_MANAGEMENT: "platform", AWS_REGION: "us-east-1" }));
+    try { await service.ensureRepositoryAuthorized("DeployGuard/supported-app", requiredSubjects); return { current, updates, gets }; }
+    finally { (IAMClient.prototype as any).send = originalSend; (IAMClient.prototype as any).destroy = originalDestroy; }
+  }
+  const noUpdate = await exerciseService(trust(requiredSubjects));
+  assert.equal(noUpdate.updates, 0, "both exact subjects avoid an IAM update");
+  const reconciled = await exerciseService(trust([immutableSubject, "repo:AnotherOwner/another-repository:*"]));
+  assert.equal(reconciled.updates, 1); assert.equal(reconciled.gets, 2, "updated trust is re-read for verification");
+  assert.equal(githubTrustIncludesSubject(reconciled.current, legacySubject), true);
+  assert.equal(githubTrustIncludesSubject(reconciled.current, "repo:AnotherOwner/another-repository:*"), true);
+  await assert.rejects(() => exerciseService(trust([immutableSubject]), { failUpdate: true }), /could not authorize this repository/i, "IAM update failure fails closed");
+  await assert.rejects(() => exerciseService(trust([immutableSubject]), { staleVerification: true }), /could not authorize this repository/i, "post-update verification failure fails closed");
+  const invalidService = new GithubActionsOidcTrustService(new ConfigService({ DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN: "arn:aws:iam::111111111111:role/deployguard", DEPLOYGUARD_GITHUB_ACTIONS_ROLE_MANAGEMENT: "platform" }));
+  await assert.rejects(() => invalidService.ensureRepositoryAuthorized("DeployGuard/supported-app", [immutableSubject, "repo:*/*:*"]), /could not authorize this repository/i, "broad repository wildcards are rejected before IAM access");
 
   assert.deepEqual(activeTerraformDatabaseAddresses({ resources: [
     { type: "aws_efs_file_system", name: "database", instances: [{}] },

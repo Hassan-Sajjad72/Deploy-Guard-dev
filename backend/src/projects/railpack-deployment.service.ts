@@ -408,7 +408,8 @@ export class RailpackDeploymentService {
       const caller = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.githubInstallationId);
       operation.currentStage = "oidc_authorization";
       await this.runs.save(operation);
-      await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId));
+      const oidcTrustSubjects = await this.githubApp.oidcTrustSubjects(user.id, project.repositoryFullName, project.githubInstallationId);
+      await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, oidcTrustSubjects);
       const immutableTarget = action === "destroy" && destroyRelease ? await this.destroyTarget(destroyRelease) : rollbackTarget;
       const managedDatabaseEnabled = action === "deploy"
         ? Boolean(configuration.managedDatabase)

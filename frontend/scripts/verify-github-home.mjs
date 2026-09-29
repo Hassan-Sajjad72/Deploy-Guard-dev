@@ -50,7 +50,7 @@ assert.match(githubConnecting, /: "\/deploy"/);
 assert.match(projects, /Search projects, repositories, or branches/);
 assert.match(projects, /stateFilter === "ALL" \|\| projectStatePresentation/);
 assert.match(projects, /\["DESTROYED", "Destroyed"\]/);
-assert.match(projects, /project-card-grid/);
+assert.match(projects, /project-inventory-list/);
 assert.match(projects, /Latest deployment/);
 assert.match(projects, /<span>Services<\/span>/);
 assert.match(projects, /Last activity/);

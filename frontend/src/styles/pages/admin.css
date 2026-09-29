@@ -1,0 +1,187 @@
+/*
+ * Admin — "Operations console". A dense, authoritative workspace on the
+ * shared light ground; signal blue marks selection only. No imagery: the page
+ * is carried by a compact command header, a night figure band (the console's
+ * instrument strip), a service status board, tight tables and a forensic
+ * audit stream whose left rail encodes the result.
+ * Scoped to .dg-admin (console shell) and .dg-admin-login (operator gate).
+ */
+
+.dg-admin, .dg-admin-login {
+  --ad-bg: var(--dg-canvas);
+  --ad-surface: var(--dg-surface);
+  --ad-surface-2: var(--dg-surface-2);
+  --ad-line: var(--dg-line);
+  --ad-line-soft: var(--dg-surface-3);
+  --ad-ink: var(--dg-ink);
+  --ad-ink-2: var(--dg-ink-2);
+  --ad-muted: var(--dg-muted);
+  --ad-signal: var(--dg-signal);
+  --ad-signal-ink: var(--dg-signal-ink);
+  color: var(--ad-ink);
+}
+
+/* ---------- Shell ---------- */
+.dg-admin.admin-shell { background: transparent; background-attachment: fixed; min-height: 100vh; padding: 0; }
+.dg-admin.admin-shell::before, .dg-admin.admin-shell::after { display: none; }
+.dg-admin .admin-shell-header {
+  -webkit-backdrop-filter: blur(12px); align-items: center; backdrop-filter: blur(12px); background: rgba(232, 234, 237, .86); border: 0; border-bottom: 1px solid var(--ad-line); border-radius: 0;
+  box-shadow: none; display: flex; justify-content: space-between; margin: 0; max-width: none; min-height: 52px; padding: 8px clamp(16px, 3vw, 28px); position: sticky; top: 0; width: 100%; z-index: 20;
+}
+.dg-admin .admin-shell-header .brand-identity-copy strong { color: var(--ad-ink); font-size: .95rem; }
+.dg-admin .admin-shell-header .brand-identity-copy small { color: var(--ad-muted); font-family: var(--dg-mono); letter-spacing: .06em; }
+.dg-admin .admin-shell-header .subtle-button { background: transparent; border: 1px solid var(--ad-line); border-radius: 6px; color: var(--ad-ink-2); font-size: .8rem; min-height: 32px; padding: 5px 12px; }
+.dg-admin .admin-shell-header .subtle-button:hover { background: var(--dg-danger-soft); border-color: var(--dg-danger-line); color: var(--dg-danger); }
+.dg-admin .app-main { margin: 0 auto; max-width: 1440px; padding: 24px clamp(16px, 3vw, 28px) 56px; }
+.dg-admin .admin-console { gap: 18px; grid-template-columns: minmax(0, 1fr); }
+
+/* ---------- Command header: compact, typographic ---------- */
+.dg-admin .ds-page-header { align-items: end; background: none; border: 0; border-bottom: 1px solid var(--ad-line); border-radius: 0; gap: 4px 24px; margin: 0; padding: 4px 0 18px; position: relative; }
+.dg-admin .ds-page-header::after { background: var(--dg-lime); bottom: -1px; content: ""; height: 1px; left: 0; position: absolute; width: 120px; }
+.dg-admin .ds-page-header .eyebrow { color: var(--ad-muted); font-size: .66rem; letter-spacing: .06em; }
+.dg-admin .ds-page-header h1 { color: var(--ad-ink); font-size: clamp(1.8rem, 2.6vw, 2.3rem); font-weight: 600; letter-spacing: -.04em; margin: 6px 0 4px; }
+.dg-admin .ds-page-header p { color: var(--ad-ink-2); font-size: .88rem; margin: 0; }
+.dg-admin .ds-page-header .page-context { color: var(--ad-muted); font-family: var(--dg-mono); font-size: .74rem; margin-top: 6px; }
+
+/* ---------- Tabs ---------- */
+/* The legacy active-tab fill is an !important in an earlier layer; answer it through its tokens. */
+.dg-admin .ds-tabs { --dg-primary-soft: transparent; --dg-primary-line: transparent; --dg-primary-ink: var(--dg-ink); background: transparent; border: 0; border-bottom: 1px solid var(--ad-line); border-radius: 0; box-shadow: none; display: flex; gap: 2px; overflow-x: auto; padding: 0; }
+.dg-admin .ds-tabs button { background: transparent !important; border: 0 !important; border-bottom: 2px solid transparent !important; border-radius: 0; box-shadow: none !important; color: var(--ad-muted); font-size: .86rem; font-weight: 560; margin-bottom: -1px; min-height: 42px; padding: 8px 14px; white-space: nowrap; }
+.dg-admin .ds-tabs button:hover { color: var(--ad-ink); }
+.dg-admin .ds-tabs button[aria-selected="true"], .dg-admin .ds-tabs button.is-active { border-bottom-color: var(--ad-signal) !important; color: var(--ad-ink) !important; }
+.dg-admin .ds-tabs button .app-icon { color: currentColor; }
+.dg-admin .ds-tabs button[aria-selected="true"] .app-icon { color: var(--ad-signal-ink); }
+
+/* ---------- Sections ---------- */
+.dg-admin .admin-section { background: none !important; border: 0; border-radius: 0; box-shadow: none; display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); min-width: 0; padding: 4px 0 0; }
+.dg-admin .admin-section::before, .dg-admin .admin-section::after { display: none; }
+.dg-admin .admin-section-heading .eyebrow { color: var(--ad-muted); font-size: .64rem; letter-spacing: .06em; }
+.dg-admin .admin-section-heading h2 { color: var(--ad-ink); font-size: 1.05rem; font-weight: 600; margin: 4px 0 4px; }
+.dg-admin .admin-section-heading p:last-child { color: var(--ad-muted); font-size: .84rem; line-height: 1.5; margin: 0; }
+
+/* ---------- Figure band ---------- */
+.dg-admin .admin-summary-grid { background: linear-gradient(120deg, var(--dg-night-3), var(--dg-night) 60%); border: 1px solid var(--dg-night); box-shadow: 0 24px 48px -30px rgba(3, 6, 14, .7); border-radius: 12px; display: grid; gap: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
+.dg-admin .admin-summary-grid .metric-card { background: transparent; border: 0; border-radius: 0; box-shadow: none; gap: 4px; padding: 16px 20px 18px; }
+.dg-admin .admin-summary-grid .metric-card + .metric-card { border-left: 1px solid var(--dg-night-line); }
+.dg-admin .admin-summary-grid .metric-label { color: var(--dg-night-muted); font-size: .64rem; letter-spacing: .06em; }
+.dg-admin .admin-summary-grid .metric-card strong { color: #fff; font-family: var(--dg-mono); font-size: 2.3rem; font-variant-numeric: tabular-nums; font-weight: 500; letter-spacing: -.05em; line-height: 1.05; }
+.dg-admin .admin-summary-grid .metric-card.tone-danger strong { color: #fda4a4; }
+.dg-admin .admin-summary-grid .metric-card p { color: var(--dg-night-muted); font-size: .78rem; margin: 0; }
+
+/* ---------- Service status board ---------- */
+.dg-admin .admin-service-grid { background: var(--ad-line); border: 1px solid var(--ad-line); border-radius: 12px; display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin: 0; overflow: hidden; }
+.dg-admin .admin-service-card { align-items: center; background: var(--ad-surface); border: 0; border-radius: 0; box-shadow: none; display: grid; gap: 3px 10px; grid-template-columns: 8px minmax(0, 1fr) auto; padding: 12px 14px; position: relative; }
+.dg-admin .admin-service-card::before { background: var(--dg-faint); border-radius: 50%; content: ""; display: block; grid-column: 1; grid-row: 1; height: 8px; width: 8px; }
+.dg-admin .admin-service-card::after { display: none; }
+.dg-admin .admin-service-card:has(.tone-success)::before { background: var(--dg-success-dot); box-shadow: 0 0 0 3px var(--dg-success-soft); }
+.dg-admin .admin-service-card:has(.tone-warning)::before { background: var(--dg-warning-dot); box-shadow: 0 0 0 3px var(--dg-warning-soft); }
+.dg-admin .admin-service-card:has(.tone-danger)::before { background: var(--dg-danger-dot); box-shadow: 0 0 0 3px var(--dg-danger-soft); }
+.dg-admin .admin-service-card:has(.tone-info)::before { background: var(--dg-info-dot); }
+.dg-admin .admin-service-card > span:first-child { color: var(--ad-ink); font-family: var(--dg-font); font-size: .86rem; font-weight: 600; grid-column: 2; grid-row: 1; letter-spacing: -.005em; text-transform: none; }
+.dg-admin .admin-service-card > .ds-status-chip { grid-column: 3; grid-row: 1 / span 2; justify-self: end; }
+.dg-admin .admin-service-card > small { color: var(--ad-muted); font-size: .74rem; grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- Operation distribution ---------- */
+.dg-admin .ds-chart-card { background: var(--ad-surface); border: 1px solid var(--ad-line); border-radius: 12px; box-shadow: none; padding: 16px 20px; }
+.dg-admin .ds-chart-card h2, .dg-admin .ds-chart-card h3 { color: var(--ad-ink); font-size: .95rem; }
+.dg-admin .ds-chart-card p { color: var(--ad-muted); font-size: .8rem; }
+.dg-admin .admin-operation-chart li span, .dg-admin .admin-operation-chart li strong { color: var(--ad-ink-2); font-family: var(--dg-mono); font-size: .8rem; }
+.dg-admin .admin-operation-chart i { background: var(--ad-signal); border-radius: 2px; box-shadow: none; }
+.dg-admin .admin-operation-chart i.is-failed { background: var(--dg-danger-dot); }
+
+/* ---------- Tables ---------- */
+.dg-admin :is(.ds-data-table-wrap, .admin-table-wrap) { background: var(--ad-surface); border: 1px solid var(--ad-line); border-radius: 12px; box-shadow: none; }
+.dg-admin :is(.ds-data-table-wrap, .admin-table-wrap) caption { color: var(--ad-muted); font-size: .74rem; padding: 10px 14px; text-align: left; }
+.dg-admin table th { background: var(--ad-surface-2); border-bottom: 1px solid var(--ad-line); color: var(--ad-muted); font-family: var(--dg-mono); font-size: .62rem; font-weight: 500; letter-spacing: .06em; padding: 9px 14px; }
+.dg-admin table td { background: transparent; border-bottom: 1px solid var(--ad-line-soft); color: var(--ad-ink); font-size: .84rem; line-height: 1.4; padding: 9px 14px; vertical-align: middle; }
+.dg-admin table tbody tr:hover td { background: rgba(148, 163, 184, .05); }
+.dg-admin table tr:last-child td { border-bottom: 0; }
+.dg-admin table td :is(small, .muted) { color: var(--ad-muted); font-size: .76rem; }
+.dg-admin table td a { color: var(--ad-signal-ink); }
+.dg-admin table td a:hover { text-decoration: underline; }
+.dg-admin table td select { background: var(--ad-surface); border: 1px solid var(--ad-line); border-radius: 6px; box-shadow: none; color: var(--ad-ink); font-size: .8rem; min-height: 30px; padding: 3px 28px 3px 8px; width: auto; }
+.dg-admin table td :is(button, .secondary-button, .subtle-button, .ds-button) { background: transparent !important; border: 1px solid var(--ad-line) !important; border-radius: 6px; box-shadow: none !important; color: var(--ad-ink-2); font-size: .76rem; font-weight: 560; min-height: 28px; padding: 3px 10px; }
+.dg-admin table td :is(button, .secondary-button, .subtle-button, .ds-button):hover:not(:disabled) { border-color: var(--ad-signal) !important; color: var(--ad-ink); }
+.admin-cell-detail { color: var(--dg-muted); display: block; font-size: .76rem; }
+
+/* ---------- Filters ---------- */
+.dg-admin .admin-audit-filters { align-items: end; background: var(--ad-surface); border: 1px solid var(--ad-line); border-radius: 12px; box-shadow: none; display: grid; gap: 10px 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; padding: 14px; }
+.dg-admin .admin-audit-filters .field > span { color: var(--ad-muted); font-family: var(--dg-mono); font-size: .62rem; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; }
+.dg-admin .admin-project-filters { background: var(--ad-surface); border: 1px solid var(--ad-line); border-radius: 12px; display: inline-flex; flex-wrap: wrap; gap: 2px; justify-self: start; margin: 0; padding: 3px; }
+.dg-admin .admin-project-filters :is(.button, .secondary-button) { background: transparent; border: 0; border-radius: 7px; box-shadow: none; color: var(--ad-muted); font-size: .8rem; min-height: 30px; padding: 4px 12px; transform: none; }
+.dg-admin .admin-project-filters .button { background: var(--ad-signal); color: #fff; }
+.dg-admin .admin-project-filters .secondary-button:hover { color: var(--ad-ink); }
+.dg-admin :is(.admin-audit-filters, .admin-console) :is(input, select), .dg-admin .field :is(input, select) { background: var(--ad-surface) !important; border: 1px solid var(--ad-line) !important; border-radius: 6px; box-shadow: none !important; color: var(--ad-ink); font-size: .84rem; font-weight: 400; min-height: 34px; padding: 6px 10px; }
+.dg-admin .field select { padding-right: 30px; }
+.dg-admin :is(input, select):focus { border-color: var(--ad-signal) !important; box-shadow: 0 0 0 3px rgba(76, 141, 255, .24) !important; outline: 0; }
+.dg-admin input::placeholder { color: var(--dg-faint); opacity: 1; }
+.dg-admin .admin-audit-filters :is(button, .secondary-button) { align-self: end; background: transparent !important; border: 1px solid var(--ad-line) !important; border-radius: 6px; box-shadow: none !important; color: var(--ad-ink-2); min-height: 34px; padding: 6px 14px; width: auto; }
+.dg-admin .admin-audit-filters :is(button, .secondary-button):hover { border-color: var(--ad-signal) !important; color: var(--ad-ink); }
+.dg-admin .pagination { align-items: center; display: flex; gap: 8px; }
+.dg-admin .pagination :is(.button, .secondary-button) { background: transparent; border: 1px solid var(--ad-line); border-radius: 6px; box-shadow: none; color: var(--ad-ink-2); font-size: .8rem; min-height: 30px; padding: 4px 12px; }
+.dg-admin .pagination .muted { color: var(--ad-muted); font-family: var(--dg-mono); font-size: .76rem; }
+.dg-admin .pagination select { background: var(--ad-surface); border: 1px solid var(--ad-line); color: var(--ad-ink); min-height: 30px; }
+
+/* ---------- Forensic audit stream ---------- */
+.audit-table tbody tr { box-shadow: inset 2px 0 0 var(--dg-line-strong); }
+.audit-table tbody tr[data-status="success"] { box-shadow: inset 2px 0 0 var(--dg-success-dot); }
+.audit-table tbody tr:is([data-status="failed"], [data-status="error"]) { box-shadow: inset 2px 0 0 var(--dg-danger-dot); }
+.audit-table tbody tr:is([data-status="warning"], [data-status="blocked"], [data-status="pending"]) { box-shadow: inset 2px 0 0 var(--dg-warning-dot); }
+.audit-table td:first-child { color: var(--dg-ink-2); font-family: var(--dg-mono); font-size: .76rem !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.audit-table .audit-action { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.audit-table .audit-action strong { font-family: var(--dg-mono); font-size: .8rem; font-weight: 500; letter-spacing: 0; }
+.audit-table .audit-action .ds-button { flex: 0 0 auto; }
+.audit-table td[data-label="Resource"] .admin-cell-detail { font-family: var(--dg-mono); font-size: .72rem; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-table td[data-label="Source"] { color: var(--dg-muted); font-size: .76rem; }
+.dg-admin .audit-table td { padding-bottom: 8px; padding-top: 8px; }
+/* Legacy sets min-width on .audit-table, which DataTable puts on the wrapper; the minimum belongs to the table. */
+.audit-table.ds-data-table-wrap { min-width: 0; }
+.audit-table.ds-data-table-wrap > table { min-width: 960px; }
+
+/* ---------- Operator gate ---------- */
+.dg-admin-login.auth-page { align-items: center; background: transparent; display: flex; justify-content: center; min-height: 100vh; padding: 24px; position: relative; }
+.dg-admin-login.auth-page::before { background-image: none; background-size: 32px 32px; content: ""; display: block; inset: 0; -webkit-mask-image: radial-gradient(60% 60% at 50% 40%, #000, transparent); mask-image: radial-gradient(60% 60% at 50% 40%, #000, transparent); pointer-events: none; position: absolute; }
+.dg-admin-login.auth-page::after { display: none; }
+.dg-admin-login .auth-card { -webkit-backdrop-filter: var(--ds-glass-filter); backdrop-filter: var(--ds-glass-filter); background: var(--ds-glass) !important; border: 1px solid var(--ds-glass-border) !important; border-radius: 32px !important; box-shadow: var(--ds-glass-highlight), var(--ds-shadow-glass) !important; max-width: 420px; overflow: hidden; padding: 0 0 28px !important; position: relative; width: 100%; }
+.dg-admin-login .auth-card::before, .dg-admin-login .auth-card::after { display: none; }
+.dg-admin-login .auth-card > .auth-brand { background: rgba(255, 255, 255, .04); border-bottom: 1px solid var(--ad-line); display: flex; margin: 0 0 24px; padding: 16px 28px; position: relative; }
+.dg-admin-login .auth-card > .auth-brand::after { background: var(--dg-lime); bottom: -1px; content: ""; height: 1px; left: 28px; position: absolute; width: 64px; }
+.dg-admin-login .auth-card > :not(.auth-brand) { margin-left: 28px; margin-right: 28px; }
+.dg-admin-login .brand-identity-copy strong { color: #fff !important; }
+.dg-admin-login .brand-identity-copy small { color: var(--ad-muted) !important; font-family: var(--dg-mono); letter-spacing: .06em; }
+.dg-admin-login .eyebrow { color: var(--ad-muted); }
+.dg-admin-login h1 { color: var(--ad-ink); font-size: 1.7rem; font-weight: 600; letter-spacing: -.04em; margin: 8px 0 6px; }
+.dg-admin-login .muted { color: var(--ad-ink-2); font-size: .86rem; line-height: 1.55; }
+.dg-admin-login form { display: grid; gap: 14px; margin-top: 18px; }
+.dg-admin-login .field > span { color: var(--ad-muted); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; }
+.dg-admin-login .field input { background: var(--ds-field) !important; border: 1px solid var(--ad-line) !important; border-radius: 12px; box-shadow: none !important; color: var(--ad-ink); }
+.dg-admin-login .field input:focus { border-color: var(--ad-signal) !important; box-shadow: 0 0 0 3px rgba(76, 141, 255, .24) !important; outline: 0; }
+:root:root .dg-admin-login .button { background: var(--mf-accent-fill) !important; border: 0 !important; border-radius: 999px; box-shadow: none !important; color: var(--mf-on-accent) !important; min-height: 42px; width: 100%; }
+:root:root .dg-admin-login .button:hover:not(:disabled) { background: var(--dg-primary-hover) !important; }
+.dg-admin-login .form-error { color: var(--dg-danger); }
+
+@media (max-width: 900px) {
+  .dg-admin .admin-audit-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .dg-admin .admin-summary-grid { grid-template-columns: 1fr; }
+  .dg-admin .admin-summary-grid .metric-card + .metric-card { border-left: 0; border-top: 1px solid var(--ad-line); }
+  .dg-admin table tr { background: var(--ad-surface) !important; border: 1px solid var(--ad-line) !important; box-shadow: none !important; }
+  .dg-admin table td .ds-status-chip { justify-self: start; width: auto; }
+  .dg-admin table td::before { color: var(--ad-muted); }
+  .audit-table .audit-action { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .audit-table.ds-data-table-wrap > table { min-width: 0; }
+}
+@media (max-width: 520px) {
+  .dg-admin .admin-audit-filters { grid-template-columns: 1fr; }
+}
+
+/* =====================================================================
+ * Aurora direction — Admin console: restrained slate blue with teal.
+ * An operator surface: quiet environment, dense ink tables, colour only for
+ * status and the active section.
+ * ===================================================================== */
+:root:root .dg-admin-login .auth-card { border-radius: var(--au-r-xl); }
+.dg-admin-login h1 { color: #fff; letter-spacing: -.04em; }
+.dg-admin-login .eyebrow { color: #8ff0d8; font-family: var(--dg-mono); letter-spacing: .12em; }
+:root:root .dg-admin .admin-shell-header { -webkit-backdrop-filter: var(--au-glass-filter); backdrop-filter: var(--au-glass-filter); background: linear-gradient(180deg, rgba(255, 255, 255, .06), transparent 30%), rgba(11, 16, 33, .66); border-color: rgba(255, 255, 255, .1); box-shadow: var(--au-edge), var(--au-depth-2); }

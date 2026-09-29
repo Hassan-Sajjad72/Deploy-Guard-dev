@@ -41,3 +41,15 @@ function fallbackState(developerState) {
   if (["preparing", "queued", "building", "deploying", "verifying"].includes(developerState)) return "DEPLOYING";
   return "BLOCKED";
 }
+
+/*
+ * Chip tone for an authoritative project state. A destroyed project has no
+ * runtime, so it reads as neutral rather than as a successful operation.
+ */
+export function projectStateTone(state) {
+  if (state === "LIVE") return "success";
+  if (state === "DEPLOYING" || state === "DESTROYING") return "info";
+  if (state === "FAILED") return "danger";
+  if (state === "BLOCKED") return "warning";
+  return "neutral";
+}

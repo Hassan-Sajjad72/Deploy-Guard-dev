@@ -4,6 +4,7 @@ import { EXTERNAL_PROVIDERS, ExternalProvider, FAILURE_OWNERS, failureContractFo
 export { EXTERNAL_PROVIDERS, ExternalProvider, FAILURE_OWNERS, FailureOwner };
 
 export type StructuredFailure = { failureOwner: FailureOwner; externalProvider: ExternalProvider | null; failureCode: string; failureServiceId: string | null };
+const GITHUB_OIDC_STS_DENIAL = /Not authorized to perform sts:AssumeRoleWithWebIdentity/i;
 
 export function terminalStructuredFailureMarker(safeEvidence: string) {
   const markers = [...safeEvidence.matchAll(/DG_FAILURE\s+([^\r\n]{1,500})/gi)];
@@ -22,6 +23,7 @@ export function classifyStructuredFailure(stage: string, safeEvidence: string): 
   // never emitted. Only an explicit machine-readable marker is authority;
   // when more than one is present, the final emitted marker is the terminal
   // boundary reached by the failed step.
+  if (GITHUB_OIDC_STS_DENIAL.test(safeEvidence)) return classifyFailureCode("DG_GITHUB_OIDC_TRUST_FAILED", stage, safeEvidence);
   const marker = terminalStructuredFailureMarker(safeEvidence);
   const serviceId = marker.serviceId;
   const code = marker.code || "DG_FAILURE_UNVERIFIED";
@@ -30,6 +32,7 @@ export function classifyStructuredFailure(stage: string, safeEvidence: string): 
 
 /** Resolves a persisted authoritative terminal code without mutating its audit snapshot. */
 export function classifyFailureCode(code: string, stage: string, safeEvidence: string, serviceId: string | null = null): StructuredFailure {
+  if (GITHUB_OIDC_STS_DENIAL.test(safeEvidence)) return { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", failureCode: "DG_GITHUB_OIDC_TRUST_FAILED", failureServiceId: serviceId };
   if (code === "DG_ECS_STABILITY_FAILED") return { ...classifyEcsDiagnosticsOwnership(ecsDiagnosticsFromEvidence(safeEvidence)), failureCode: code, failureServiceId: serviceId };
   const contract = failureContractFor(code);
   if (contract) return { failureOwner: contract.owner, externalProvider: contract.provider, failureCode: code, failureServiceId: serviceId };

@@ -313,6 +313,20 @@ assert.equal(unknown.confidence, "UNVERIFIED");
 assert.ok(unknown.evidenceReferences[0].excerpt.length > 0);
 const unknownRuntime = diagnose("container stopped for an unknown reason", { failureStage: "application_runtime", terminalFailureCode: "DG_FAILURE_UNVERIFIED" });
 assert.equal(unknownRuntime.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED");
+const oidcDenialEvidence = "Error: Not authorized to perform sts:AssumeRoleWithWebIdentity";
+const oidcAuthority = classifyStructuredFailure("configure_aws_credentials_through_oidc", oidcDenialEvidence);
+const oidcDenial = service.diagnose({
+  operationId: "22222222-2222-4222-8222-222222222222", deploymentAction: "deploy", sourceSha: "a".repeat(40),
+  failureStage: "configure_aws_credentials_through_oidc", terminalFailureCode: oidcAuthority.failureCode,
+  failureOwner: oidcAuthority.failureOwner, externalProvider: oidcAuthority.externalProvider, serviceId: null,
+  errorMessage: oidcDenialEvidence, safeEvidence: oidcDenialEvidence, evidenceSource: "github_actions", evidenceEventId: "987654321", failedAt: now,
+});
+assert.equal(oidcDenial.terminalFailureCode, "DG_GITHUB_OIDC_TRUST_FAILED");
+assert.equal(oidcDenial.rootCauseCode, "DG_GITHUB_OIDC_TRUST_FAILED");
+assert.equal(oidcDenial.failureOwner, "EXTERNAL_PROVIDER");
+assert.equal(oidcDenial.externalProvider, "aws");
+assert.equal(oidcDenial.confidence, "DETERMINISTIC");
+assert.notEqual(oidcDenial.rootCauseCode, "DG_FAILURE_CAUSE_UNVERIFIED");
 const unknownFallback = diagnose("certified Docker build returned a non-zero result", { failureStage: "docker_fallback_build", terminalFailureCode: "DG_DOCKER_FALLBACK_BUILD_FAILED" });
 assert.equal(unknownFallback.rootCauseCode, "DG_DOCKER_FALLBACK_BUILD_FAILED");
 assert.equal(unknownFallback.failureOwner, "UNVERIFIED");

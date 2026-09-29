@@ -5,6 +5,7 @@ import AppIcon from "../components/common/AppIcon.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { useAuth } from "../hooks/useAuth.js";
+import "../styles/pages/gate.css";
 
 const RETURN_KEY = "deployguard_oauth_return_to";
 
@@ -59,19 +60,24 @@ export default function GithubConnecting() {
   }, [isAuthenticated, isComplete, isLoading, location.state, navigate, oauthError, refreshUser]);
 
   if (oauthError || callbackFailed) {
-    return <main className="oauth-connecting-page"><section className="oauth-connecting-card"><ErrorState message="GitHub authentication could not be completed. Your account was not changed." /><Link className="button" to="/">Return to home</Link></section></main>;
+    return <main className="oauth-connecting-page dg-gate"><section className="oauth-connecting-card"><ErrorState message="GitHub authentication could not be completed. Your account was not changed." /><Link className="button" to="/">Return to home</Link></section></main>;
   }
 
-  if (isComplete) return <main className="oauth-connecting-page"><section className="oauth-connecting-card"><LoadingState message="Opening your DeployGuard workspace…" /></section></main>;
+  if (isComplete) return <main className="oauth-connecting-page dg-gate"><section className="oauth-connecting-card"><LoadingState message="Opening your DeployGuard workspace…" /></section></main>;
 
   return (
-    <main className="oauth-connecting-page">
+    <main className="oauth-connecting-page dg-gate">
       <div aria-hidden="true" className="landing-ambient"><span /><span /><span /></div>
       <section className="oauth-connecting-card" aria-live="polite">
         <span className="oauth-spinner"><AppIcon name="github" size={24} /></span>
         <p className="eyebrow">Secure authentication</p>
         <h1>Connecting to GitHub…</h1>
         <p>You’ll continue on GitHub and return to your deployment dashboard after authentication.</p>
+        <ol aria-label="Authorization progress" className="dg-gate-flow">
+          <li className="is-done"><span aria-hidden="true" />DeployGuard</li>
+          <li className="is-active"><span aria-hidden="true" />GitHub</li>
+          <li><span aria-hidden="true" />Your workspace</li>
+        </ol>
         <Link className="ghost-nav-link" to="/">Cancel and return home</Link>
       </section>
     </main>

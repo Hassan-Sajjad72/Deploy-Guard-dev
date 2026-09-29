@@ -8,6 +8,7 @@ import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import Pagination from "../components/common/Pagination.jsx";
 import { BentoGrid, MetricCard, PageHeader } from "../components/common/Premium.jsx";
+import "../styles/pages/audit.css";
 
 const defaultFilters = {
   category: "",
@@ -88,7 +89,7 @@ export default function AuditLogs() {
   }
 
   return (
-    <div className="grid">
+    <div className="grid dg-audit">
       <PageHeader eyebrow="Application activity" title="Activity Log" description="Review who changed what, which project or run was affected, and whether the operation succeeded." context="Sensitive metadata is redacted before it is displayed" />
 
       <BentoGrid>

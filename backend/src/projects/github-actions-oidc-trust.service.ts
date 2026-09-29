@@ -32,15 +32,16 @@ const matches = (pattern: string, subject: string) => {
   return new RegExp(`^${escaped}$`).test(subject);
 };
 
-export function authorizeGithubRepositoryInTrust(policy: TrustPolicy, repositoryFullName: string, trustSubject = `repo:${repositoryFullName}:*`) {
+export function authorizeGithubRepositoryInTrust(policy: TrustPolicy, trustSubjects: string[]) {
   const statement = githubOidcStatement(policy);
-  if (subjects(statement).includes(trustSubject)) return false;
+  const missing = [...new Set(trustSubjects)].filter((trustSubject) => !subjects(statement).includes(trustSubject));
+  if (!missing.length) return false;
   statement.Condition ||= {};
   statement.Condition.StringLike ||= {};
   const equals = statement.Condition.StringEquals || {};
   const existing = values(statement.Condition.StringLike["token.actions.githubusercontent.com:sub"])
     .concat(values(equals["token.actions.githubusercontent.com:sub"]));
-  statement.Condition.StringLike["token.actions.githubusercontent.com:sub"] = [...new Set([...existing, trustSubject])];
+  statement.Condition.StringLike["token.actions.githubusercontent.com:sub"] = [...new Set([...existing, ...missing])];
   if (equals["token.actions.githubusercontent.com:sub"] !== undefined) delete equals["token.actions.githubusercontent.com:sub"];
   return true;
 }
@@ -57,8 +58,8 @@ export function githubTrustIncludesSubject(policy: TrustPolicy, trustSubject: st
   return subjects(githubOidcStatement(policy)).includes(trustSubject);
 }
 
-export function githubTrustUpdateRequired(policy: TrustPolicy, trustSubject: string, platformManaged: boolean) {
-  if (githubTrustAuthorizesSubject(policy, trustSubject)) return false;
+export function githubTrustUpdateRequired(policy: TrustPolicy, trustSubjects: string[], platformManaged: boolean) {
+  if (trustSubjects.every((trustSubject) => githubTrustIncludesSubject(policy, trustSubject))) return false;
   if (!platformManaged) throw new Error("GitHub Actions IAM trust is externally managed");
   return true;
 }
@@ -69,21 +70,29 @@ export class GithubActionsOidcTrustService {
 
   constructor(private readonly config: ConfigService) {}
 
-  async ensureRepositoryAuthorized(repositoryFullName: string, trustSubject = `repo:${repositoryFullName}:*`) {
+  async ensureRepositoryAuthorized(repositoryFullName: string, trustSubjects: string[]) {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repositoryFullName)) {
       throw this.platformConfigurationError();
     }
     const active = this.inFlight.get(repositoryFullName);
     if (active) return active;
-    if (!/^repo:[A-Za-z0-9_.-]+(?:@\d+)?\/(?:\*|[A-Za-z0-9_.-]+(?:@\d+)?):\*$/.test(trustSubject)) throw this.platformConfigurationError();
-    const task = this.ensure(repositoryFullName, trustSubject);
+    const uniqueSubjects = [...new Set(trustSubjects)];
+    const [owner, repository] = repositoryFullName.split("/");
+    const legacy = `repo:${owner}/${repository}:*`.toLowerCase();
+    const valid = uniqueSubjects.length === 2 && uniqueSubjects.every((subject) => {
+      if (!/^repo:[A-Za-z0-9_.-]+(?:@\d+)?\/[A-Za-z0-9_.-]+(?:@\d+)?:\*$/.test(subject)) return false;
+      return subject.replace(/@\d+/g, "").toLowerCase() === legacy;
+    }) && uniqueSubjects.some((subject) => /@\d+\//.test(subject) && /@\d+:\*$/.test(subject))
+      && uniqueSubjects.some((subject) => !/@\d+/.test(subject));
+    if (!valid) throw this.platformConfigurationError();
+    const task = this.ensure(uniqueSubjects);
     this.inFlight.set(repositoryFullName, task);
     try { await task; } finally {
       if (this.inFlight.get(repositoryFullName) === task) this.inFlight.delete(repositoryFullName);
     }
   }
 
-  private async ensure(repositoryFullName: string, trustSubject: string) {
+  private async ensure(trustSubjects: string[]) {
     const roleArn = this.config.get<string>("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN", "").trim();
     const roleName = roleArn.split("/").pop();
     if (!/^arn:aws:iam::\d{12}:role\/.+/.test(roleArn) || !roleName) throw this.platformConfigurationError();
@@ -92,15 +101,15 @@ export class GithubActionsOidcTrustService {
       const role = (await client.send(new GetRoleCommand({ RoleName: roleName }))).Role;
       const policy = this.policy(role?.AssumeRolePolicyDocument);
       const platformManaged = this.config.get<string>("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_MANAGEMENT", "external") === "platform";
-      if (!githubTrustUpdateRequired(policy, trustSubject, platformManaged)) return;
-      if (!authorizeGithubRepositoryInTrust(policy, repositoryFullName, trustSubject)) return;
+      if (!githubTrustUpdateRequired(policy, trustSubjects, platformManaged)) return;
+      if (!authorizeGithubRepositoryInTrust(policy, trustSubjects)) return;
       await client.send(new UpdateAssumeRolePolicyCommand({
         RoleName: roleName,
         PolicyDocument: JSON.stringify(policy),
       }));
 
       const verified = this.policy((await client.send(new GetRoleCommand({ RoleName: roleName }))).Role?.AssumeRolePolicyDocument);
-      if (!githubTrustIncludesSubject(verified, trustSubject)) throw new Error("OIDC trust verification failed");
+      if (!trustSubjects.every((trustSubject) => githubTrustIncludesSubject(verified, trustSubject))) throw new Error("OIDC trust verification failed");
     } catch {
       throw this.platformConfigurationError();
     } finally {

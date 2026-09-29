@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { getWorkspaceSummary } from "../api/projectApi.js";
 import AppIcon from "../components/common/AppIcon.jsx";
-import { Card, StatusChip } from "../components/common/DesignSystem.jsx";
+import { StatusChip } from "../components/common/DesignSystem.jsx";
 import EmptyState from "../components/common/EmptyState.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { useAuth } from "../hooks/useAuth.js";
 import { formatRelativeTime } from "../utils/time.js";
-import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+import { projectStatePresentation, projectStateTone } from "../utils/projectStatePresentation.js";
+import "../styles/pages/projects.css";
 
 const filters = [
   ["ALL", "All"],
@@ -51,29 +52,44 @@ export default function Projects() {
     [search, stateFilter, summaries]
   );
 
-  return <div className="workspace-page simple-projects-page">
-    <header className="workspace-heading">
-      <div><p className="eyebrow">Workspace</p><h1>Projects</h1><p>Projects deployed or managed through DeployGuard.</p></div>
-      {role !== "readonly" ? <Link className="button" to="/deploy"><AppIcon name="plus" size={16} />Deploy new project</Link> : null}
+  const counts = useMemo(() => summaries.reduce((totals, { currentState }) => {
+    const state = projectStatePresentation(currentState).state;
+    return { ...totals, [state]: (totals[state] || 0) + 1 };
+  }, { ALL: summaries.length }), [summaries]);
+
+  const spectrum = ["LIVE", "DEPLOYING", "DESTROYING", "READY", "BLOCKED", "FAILED", "DESTROYED"].filter((state) => counts[state]);
+  return <div className="workspace-page simple-projects-page dg-projects">
+    <header className="dg-projects-head">
+      <div className="dg-projects-title"><p className="dg-projects-kicker">Workspace · Registry</p><h1>Projects</h1><p>Projects deployed or managed through DeployGuard.</p></div>
+      {!loading && summaries.length ? <div aria-hidden="true" className="dg-projects-tally"><strong>{String(summaries.length).padStart(2, "0")}</strong><span>projects<br />registered</span></div> : null}
+      {role !== "readonly" ? <Link className="button dg-projects-primary" to="/deploy"><AppIcon name="plus" size={16} />Deploy new project</Link> : null}
+      {!loading && summaries.length ? <div aria-label="Projects by state" className="dg-projects-spectrum" role="img">{spectrum.map((state) => <span className={`is-${state.toLowerCase()}`} key={state} style={{ flexGrow: counts[state] }} title={`${state.toLowerCase()}: ${counts[state]}`}><i />{state.charAt(0) + state.slice(1).toLowerCase()} <b>{counts[state]}</b></span>)}</div> : null}
     </header>
     {location.state?.notice ? <p className="state success" role="status">{location.state.notice}</p> : null}
     {error ? <ErrorState message={error} /> : null}
     {loading ? <LoadingState message="Loading projects…" /> : null}
     {!loading && !error && !summaries.length ? <EmptyState action={role !== "readonly" ? <Link className="button" to="/deploy">Deploy a repository</Link> : null} message="Create a project to start managing a repository." title="No projects yet" /> : null}
-    {!loading && !error && summaries.length ? <section className="projects-card-section" aria-label="Project inventory">
-      <label className="project-search"><span className="sr-only">Search projects</span><AppIcon name="search" size={16} /><input onChange={(event) => setSearch(event.target.value)} placeholder="Search projects, repositories, or branches" type="search" value={search} /></label>
-      <div className="project-card-filters" aria-label="Project state filters">
-        {filters.map(([value, label]) => <button aria-pressed={stateFilter === value} className={stateFilter === value ? "button" : "secondary-button"} key={value} onClick={() => setStateFilter(value)} type="button">{label}</button>)}
+    {!loading && !error && summaries.length ? <section className="dg-projects-inventory" aria-label="Project inventory">
+      <div className="dg-projects-toolbar">
+        <label className="dg-projects-search"><span className="sr-only">Search projects</span><AppIcon name="search" size={16} /><input onChange={(event) => setSearch(event.target.value)} placeholder="Search projects, repositories, or branches" type="search" value={search} /></label>
+        <div className="dg-projects-filters" aria-label="Project state filters">
+          {filters.map(([value, label]) => <button aria-pressed={stateFilter === value} className={stateFilter === value ? "is-active" : ""} key={value} onClick={() => setStateFilter(value)} type="button">{label}<span>{counts[value] || 0}</span></button>)}
+        </div>
       </div>
-      {!projects.length ? <EmptyState message="No deployment attempts match this state." title="No matching projects" /> : <div className="project-card-grid">
+      {!projects.length ? <EmptyState message="No deployment attempts match this state." title="No matching projects" /> : <div className="project-inventory-list" role="list">
+        <div aria-hidden="true" className="dg-projects-columns"><span>Project</span><span>Status</span><span>Services</span><span>Latest deployment</span><span>Last activity</span><span /></div>
         {projects.map(({ project, currentState }) => {
           const presentation = projectStatePresentation(currentState);
           const activity = project.activity?.lastMeaningfulActivityAt || currentState?.latestAttempt?.occurredAt || project.createdAt;
-          return <Card className="project-summary-card" data-authoritative-state={presentation.state} key={project.id}>
-            <div className="project-card-heading"><div className="project-list-identity"><span className="project-glyph"><AppIcon name="box" size={17} /></span><div><Link title={project.name} to={`/projects/${project.id}`}><h2>{project.name}</h2></Link><p title={currentState?.repository || project.repositoryFullName}>{currentState?.repository || project.repositoryFullName}</p><small>{currentState?.branch || project.targetBranch || "Branch unavailable"}</small></div></div><StatusChip status={presentation.state} /></div>
-            <div className="project-card-facts"><article><span>Services</span><strong>{project.services?.length ?? "—"}</strong></article><article><span>Latest deployment</span><strong>{currentState?.latestAttempt ? `Attempt ${currentState.latestAttempt.attempt || "—"}` : "Not started"}</strong></article><article><span>Last activity</span><strong title={activity || "Unavailable"}>{formatRelativeTime(activity)}</strong></article></div>
-            <Link aria-label={`Open ${project.name}`} className="secondary-button project-card-action" to={`/projects/${project.id}`}>Open project <AppIcon name="arrow" size={16} /></Link>
-          </Card>;
+          const repository = currentState?.repository || project.repositoryFullName;
+          return <article className="dg-projects-row" data-authoritative-state={presentation.state} key={project.id} role="listitem">
+            <div className="dg-projects-identity"><span aria-hidden="true" className="dg-projects-glyph">{String(project.name || "?").charAt(0).toUpperCase()}</span><div><Link title={project.name} to={`/projects/${project.id}`}><h2>{project.name}</h2></Link><p><span className="dg-projects-repo" title={repository}><AppIcon name="github" size={13} />{repository}</span><span className="dg-projects-branch"><AppIcon name="branch" size={13} />{currentState?.branch || project.targetBranch || "Branch unavailable"}</span></p></div></div>
+            <div className="dg-projects-cell dg-projects-status"><StatusChip status={presentation.state} tone={projectStateTone(presentation.state)} /></div>
+            <div className="dg-projects-cell"><span className="dg-projects-label">Services</span><strong>{project.services?.length ?? "—"}</strong></div>
+            <div className="dg-projects-cell"><span className="dg-projects-label">Latest deployment</span><strong>{currentState?.latestAttempt ? `Attempt ${currentState.latestAttempt.attempt || "—"}` : "Not started"}</strong></div>
+            <div className="dg-projects-cell"><span className="dg-projects-label">Last activity</span><strong title={activity || "Unavailable"}>{formatRelativeTime(activity)}</strong></div>
+            <Link aria-label={`Open ${project.name}`} className="dg-projects-open" to={`/projects/${project.id}`}>Open <AppIcon name="arrow" size={15} /></Link>
+          </article>;
         })}
       </div>}
     </section> : null}

@@ -19,6 +19,7 @@ import {
 import { deploymentPhasePresentation, deploymentProgressPercentage } from "../../utils/developerDeploymentPresentation.js";
 import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
 import { DESTROY_CONFIRMATION_PHRASE } from "../../utils/deploymentConfirmation.js";
+import { productText } from "../../utils/productTerms.js";
 
 function formatDate(value) {
   return value
@@ -200,7 +201,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       </div>
       <div aria-label={`Deployment progress ${progressPercentage}%`} className="deployment-progress-track"><span style={{ width: `${progressPercentage}%` }} /></div>
       <StageRail phases={phases} />
-      {(state === "FAILED" || latestOperationFailed) && latest?.diagnosis ? <p className="state warning"><strong>{latest.diagnosis.rootCauseCode}</strong> — {latest.diagnosis.recommendedAction}</p> : null}
+      {(state === "FAILED" || latestOperationFailed) && latest?.diagnosis ? <p className="state warning"><strong>{latest.diagnosis.rootCauseCode}</strong> — {productText(latest.diagnosis.recommendedAction)}</p> : null}
       {error ? <ErrorState message={error} /> : null}
       {acceptedOperation ? <p aria-live="polite" className="state success" role="status">Deployment request accepted {formatDate(acceptedOperation.requestedAt || acceptedOperation.createdAt)}. View Pipeline for progress.</p> : null}
       <div aria-label="Canonical lifecycle actions" className="overview-actions" role="group">{actions()}</div>

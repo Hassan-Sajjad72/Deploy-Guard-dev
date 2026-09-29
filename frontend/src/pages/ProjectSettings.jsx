@@ -8,6 +8,7 @@ import { Tabs } from "../components/common/DesignSystem.jsx";
 import EnvironmentVariablesPanel from "../components/projects/EnvironmentVariablesPanel.jsx";
 import NotificationSettingsPanel from "../components/projects/NotificationSettingsPanel.jsx";
 import { redirectDeletedProject } from "../utils/projectStateSync.js";
+import "../styles/pages/settings.css";
 
 const settingsSections = [
   { id: "general", label: "General" },
@@ -93,9 +94,11 @@ export default function ProjectSettings() {
   if (!project) return <div className="workspace-page"><ErrorState message={error || "Project settings are unavailable."} onRetry={load} /><Link className="secondary-button" to="/projects">Back to Projects</Link></div>;
 
   const selectedService = services.find((service) => service.id === selectedServiceId) || services[0];
-  return <div className="workspace-page project-settings-page">
+  return <div className="workspace-page project-settings-page dg-settings">
     <PageHeader eyebrow="Project" title="Settings" description="Configure this project by category." context={[project.name, project.environmentName ? `Environment ${project.environmentName}` : null, project.repositoryFullName, project.targetBranch, selectedService?.name ? `Service ${selectedService.name}` : null].filter(Boolean).join(" · ")} />
-    <Tabs activeId={activeSection} idPrefix="project-settings" items={settingsSections} label="Project settings" onChange={setActiveSection} />
+    <div className="dg-set-layout">
+    <aside className="dg-set-nav"><Tabs activeId={activeSection} idPrefix="project-settings" items={settingsSections} label="Project settings" onChange={setActiveSection} /></aside>
+    <div className="dg-set-content">
     {error ? <ErrorState message={error} /> : null}{success ? <div aria-live="polite" className="state success" role="status">{success}</div> : null}
 
     {activeSection === "general" ? <form aria-labelledby="project-settings-tab-general" className="panel-flat operational-surface settings-simple-form settings-section-panel" id="project-settings-panel-general" onSubmit={saveDetails} role="tabpanel" tabIndex={0}><div><p className="eyebrow">General</p><h2>Project details</h2></div><label className="field"><span>Name</span><input disabled={!project.canManage || busy} name="name" onChange={change} required value={form.name} /></label><label className="field"><span>Description</span><input disabled={!project.canManage || busy} name="description" onChange={change} value={form.description} /></label><label className="field"><span>Visibility</span><select disabled={!project.canManage || busy} name="visibility" onChange={change} value={form.visibility}><option value="private">Private</option><option value="workspace">Workspace</option></select></label>{project.canManage ? <button className="button" disabled={busy} type="submit">Save changes</button> : null}</form> : null}
@@ -111,5 +114,7 @@ export default function ProjectSettings() {
     {activeSection === "notifications" ? <section aria-labelledby="project-settings-tab-notifications" id="project-settings-panel-notifications" role="tabpanel" tabIndex={0}><NotificationSettingsPanel canManage={Boolean(project.canManage)} projectId={projectId} /></section> : null}
 
     {activeSection === "danger" ? <section aria-labelledby="project-settings-tab-danger" className="panel-flat operational-surface danger-zone settings-section-panel" id="project-settings-panel-danger" role="tabpanel" tabIndex={0}><div><p className="eyebrow">Danger zone</p><h2>Archive project</h2><p>Remove it from active workspace lists while retaining deployment history.</p></div>{project.canManage ? <button className="danger-text-button" disabled={busy} onClick={archive} type="button">Archive project</button> : null}</section> : null}
+    </div>
+    </div>
   </div>;
 }
