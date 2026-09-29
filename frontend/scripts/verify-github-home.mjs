@@ -14,10 +14,12 @@ for (const route of ["/login", "/signup"]) assert.match(routes, new RegExp(`<Rou
 assert.match(routes, /<Route element=\{<Dashboard \/>\} path="\/dashboard"/);
 assert.match(sidebar, /label: "Home", to: "\/dashboard"/);
 assert.match(dashboard, /getWorkspaceSummary/);
-for (const section of ["Needs attention", "Active deployments", "Recent activity", "Recently used projects"]) assert.match(dashboard, new RegExp(section));
+for (const section of ["Needs attention", "Active deployments", "Recently used projects"]) assert.match(dashboard, new RegExp(section));
 assert.match(dashboard, /<h1>Home<\/h1>/);
-assert.match(dashboard, /No deployment attempts yet/);
-assert.match(dashboard, /<span>Live<\/span>/);
+assert.match(dashboard, /No deployments currently running\./);
+assert.match(dashboard, /className="dg-home-summary"/);
+for (const label of ["Projects", "Live", "Deploying", "Needs attention"]) assert.match(dashboard, new RegExp(`<dt>${label}<\\/dt>`));
+assert.doesNotMatch(dashboard, /FleetGauge|dg-home-fleet|dg-home-gauge|dg-home-kpis/);
 assert.doesNotMatch(dashboard, /view\.stable\.length|continue-deployment-card|Live projects/);
 assert.match(dashboard, /view\.active\.length/);
 assert.doesNotMatch(dashboard, /<h1>Deployments<\/h1>|Worked on|releaseSummary/);
@@ -57,5 +59,7 @@ assert.match(projects, /Last activity/);
 assert.doesNotMatch(projects, /project-trust-table/);
 assert.match(projects, /to="\/deploy"/);
 assert.match(projects, /to=\{`\/projects\/\$\{project\.id\}`\}/);
+assert.match(projects, /className="dg-projects-summary"/);
+assert.doesNotMatch(projects, /dg-projects-tally|dg-projects-spectrum|Branch unavailable/);
 
 console.log("GitHub-first Home verification passed.");

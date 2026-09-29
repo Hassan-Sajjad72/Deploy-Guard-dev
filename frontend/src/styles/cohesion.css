@@ -598,6 +598,24 @@ textarea {
 .dg-admin .admin-project-filters .button { background: rgba(249, 115, 22, .14); color: #fb923c; }
 .dg-admin :is(input, select):focus { border-color: #f97316 !important; box-shadow: 0 0 0 3px rgba(249, 115, 22, .16) !important; }
 
+.dg-admin .admin-attention,
+.dg-admin .admin-service-groups { border: 1px solid var(--dg-line); }
+.dg-admin .admin-attention { border-color: rgba(239, 68, 68, .28); margin-top: 16px; padding: 16px; }
+.dg-admin :is(.admin-attention, .admin-service-groups) h3 { color: var(--dg-ink); font-size: .78rem; letter-spacing: .06em; margin: 0; text-transform: uppercase; }
+.dg-admin .admin-attention ul,
+.dg-admin .admin-service-groups ul { list-style: none; margin: 10px 0 0; padding: 0; }
+.dg-admin .admin-attention li,
+.dg-admin .admin-service-groups li { align-items: center; border-top: 1px solid var(--dg-line); display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto auto; padding: 11px 0; }
+.dg-admin .admin-attention li:first-child,
+.dg-admin .admin-service-groups li:first-child { border-top: 0; }
+.dg-admin .admin-service-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 16px; }
+.dg-admin .admin-service-groups > section { padding: 16px; }
+.dg-admin .admin-service-groups > section:nth-child(odd) { border-right: 1px solid var(--dg-line); }
+.dg-admin .admin-service-groups > section:nth-child(n + 3) { border-top: 1px solid var(--dg-line); }
+.dg-admin .admin-service-groups details { color: var(--dg-muted); font-size: .76rem; }
+.dg-admin .admin-service-groups summary { cursor: pointer; }
+.dg-admin .admin-service-groups details p { margin: 8px 0 0; max-width: 34ch; }
+
 @media (max-width: 1080px) {
   :root:root .dg-hero { grid-template-columns: 1fr; }
   .dg-hero-copy { max-width: 720px; }
@@ -616,4 +634,39 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .dg-np-route::after { display: none; }
+}
+
+/* Information architecture pass: one summary, then the work itself. */
+.dg-home-hero { grid-template-columns: minmax(0, 1fr) auto; padding-bottom: 18px; }
+.dg-home-summary { align-self: end; border: 1px solid var(--dg-line); display: grid; grid-template-columns: repeat(4, minmax(92px, 1fr)); margin: 0; max-width: 530px; }
+.dg-home-summary > div { border-left: 1px solid var(--dg-line); padding: 12px 15px; }
+.dg-home-summary > div:first-child { border-left: 0; }
+.dg-home-summary dt { color: var(--dg-muted); font-size: .68rem; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.dg-home-summary dd { color: var(--dg-ink); font-size: 1.45rem; font-variant-numeric: tabular-nums; font-weight: 620; margin: 4px 0 0; }
+.dg-home-panel > header > div > p { color: var(--dg-muted); font-size: .84rem; margin: 5px 0 0; }
+.dg-home-panel h2, .dg-home-recent h2 { margin: 0; }
+.dg-home-count.is-danger { box-shadow: none; }
+.dg-home-count.is-active { background: rgba(59, 130, 246, .12); box-shadow: none; color: #93c5fd; }
+
+.dg-projects-head { align-items: end; grid-template-columns: minmax(0, 1fr) auto; }
+.dg-projects-summary { color: var(--dg-muted) !important; font-family: var(--dg-mono); font-size: .78rem !important; letter-spacing: .01em; margin-top: 14px !important; }
+:root:root .dg-projects-inventory { border-radius: 10px; }
+
+:root:root .dg-np-head { display: block; padding-bottom: 4px; }
+.dg-np-head h1 { max-width: none; }
+.dg-np-rail-note { color: var(--dg-muted); font-size: .8rem; line-height: 1.45; }
+
+.dg-ov-head { gap: 22px; }
+.dg-ov-domain { max-width: 340px; }
+.dg-ov-meta { min-height: 0; }
+
+@media (max-width: 760px) {
+  .dg-home-hero { grid-template-columns: 1fr; }
+  .dg-home-summary { max-width: none; width: 100%; }
+  .dg-home-summary > div { padding: 10px; }
+  .dg-home-summary dd { font-size: 1.18rem; }
+  .dg-projects-head { grid-template-columns: 1fr; }
+  .dg-admin .admin-service-groups { grid-template-columns: 1fr; }
+  .dg-admin .admin-service-groups > section { border-right: 0; border-top: 1px solid var(--dg-line); }
+  .dg-admin .admin-service-groups > section:first-child { border-top: 0; }
 }

@@ -63,8 +63,8 @@ assert.match(page, /to=\{`\/projects\/\$\{readiness\.existingProjectSettingsId\}
 assert.doesNotMatch(page, /updateProjectService/, "the deploy journey does not mutate existing service configuration");
 assert.match(page, /<option value="none">Managed ENV Database<\/option>/);
 assert.match(page, /<option value="postgres">Managed Database — PostgreSQL<\/option>/);
-assert.match(page, /database\.provider === "managed" \? `Managed Database —/);
-assert.match(page, /: "Managed ENV Database"/);
+assert.match(page, /database\.provider === "managed" \? <div><dt>Database<\/dt>/);
+assert.doesNotMatch(page, /Launch sequence|Amazon ECR|Terraform|ECS runtime/);
 assert.match(page, /managedDatabaseAliases\(database\.engine\)/);
 assert.doesNotMatch(page, /managedDatabaseConflicts|Database configuration conflict|Remove .* from the selected service ENV/);
 assert.ok(page.indexOf("updateProjectDatabaseTier(project.id") < page.indexOf("bulkUpsertProjectServiceEnvVars(project.id"), "managed database ownership is persisted before the bulk ENV boundary");

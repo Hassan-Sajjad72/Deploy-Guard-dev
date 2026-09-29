@@ -4,7 +4,7 @@ import { getAdminAuditLogs, getAdminOverview, getAdminProjects, getUsers, update
 import AuditLogFilters from "../components/audit/AuditLogFilters.jsx";
 import AuditLogsTable from "../components/audit/AuditLogsTable.jsx";
 import UserTable from "../components/admin/UserTable.jsx";
-import { Banner, Button, Card, ChartCard, DataTable, EmptyState, MetricCard, PageHeader, StatusChip, Tabs } from "../components/common/DesignSystem.jsx";
+import { Banner, Button, DataTable, EmptyState, MetricCard, PageHeader, StatusChip, Tabs } from "../components/common/DesignSystem.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import Pagination from "../components/common/Pagination.jsx";
 import { classifyAdminFailure, loadIndependentAdminSources } from "../utils/adminDataPresentation.js";
@@ -18,6 +18,12 @@ const tabs = [
 ];
 const defaultAuditFilters = { search: "", actorUserId: "", action: "", projectId: "", status: "", severity: "", from: "", to: "", page: 1, limit: 20 };
 const serviceLabels = { backend: "Backend", database: "PostgreSQL", githubOAuth: "GitHub OAuth", githubApp: "GitHub App", githubActions: "GitHub Actions", awsOidc: "AWS OIDC", terraformState: "Terraform State Storage", prometheus: "Prometheus", grafana: "Grafana" };
+const serviceGroups = [
+  ["Core", ["backend", "database"]],
+  ["GitHub", ["githubOAuth", "githubApp", "githubActions"]],
+  ["Cloud execution", ["awsOidc", "terraformState"]],
+  ["Observability", ["prometheus", "grafana"]],
+];
 
 function label(value) {
   return value ? String(value).replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Unavailable";
@@ -50,19 +56,6 @@ function AdminSectionFailure({ failure, onRetry, title }) {
     {metadata ? <small className="admin-error-metadata">{metadata}</small> : null}
     {failure.retryable && onRetry ? <Button onClick={onRetry} tone="secondary" type="button">Retry</Button> : null}
   </Banner>;
-}
-
-function AdminOperationChart({ counts }) {
-  const active = Number(counts?.activeOperations || 0);
-  const failed = Number(counts?.failedOperations || 0);
-  const total = active + failed;
-  if (!total) return null;
-  return <ChartCard description="Counts are calculated from persisted GitHub Actions operation records." hasData title="Operation state distribution">
-    <ol aria-label="Operation state distribution" className="admin-operation-chart">
-      <li><span>Active</span><strong>{active}</strong><i style={{ width: `${Math.round((active / total) * 100)}%` }} /></li>
-      <li><span>Failed</span><strong>{failed}</strong><i className="is-failed" style={{ width: `${Math.round((failed / total) * 100)}%` }} /></li>
-    </ol>
-  </ChartCard>;
 }
 
 export default function AdminUsers() {
@@ -128,20 +121,22 @@ export default function AdminUsers() {
   const pageContext = overview?.generatedAt
     ? `Source: live API · Last updated: ${date(overview.generatedAt)}`
     : overview ? "Source: live API · Refresh time not provided" : "Platform data unavailable";
+  const attentionServices = overview ? Object.entries(overview.services).filter(([, service]) => ["degraded", "unavailable"].includes(service.status)) : [];
   return <div className="admin-console grid" data-admin-console="canonical">
     <PageHeader context={pageContext} description="Platform status, user access, project operation evidence, and sanitized audit records." eyebrow="Platform administration" title="Admin" />
     {success ? <Banner title="Access updated" tone="success">{success}</Banner> : null}
     {loading ? <LoadingState message="Loading administration console…" /> : null}
     {!loading ? <>
       <Tabs activeId={activeTab} idPrefix="admin" items={tabs} label="Admin sections" onChange={setActiveTab} />
-      {activeTab === "overview" ? <section aria-labelledby="admin-tab-overview" className="admin-section" data-admin-section="overview" id="admin-panel-overview" role="tabpanel" tabIndex={0}><div className="admin-section-heading"><div><p className="eyebrow">Platform status</p><h2>Service readiness</h2><p>Each status comes from the live platform overview endpoint. Disabled providers remain explicit.</p></div></div>
-        {sourceErrors.overview ? <AdminSectionFailure failure={sourceErrors.overview} onRetry={load} title="Platform status unavailable" /> : overview ? <><section className="admin-summary-grid"><MetricCard detail="Non-archived projects in PostgreSQL" label="Projects" value={overview.counts.projects} /><MetricCard detail={`${overview.counts.destroyingOperations} currently destroying`} label="Active operations" value={overview.counts.activeOperations} /><MetricCard detail="Persisted GitHub Actions operation records" label="Failed operations" tone={overview.counts.failedOperations ? "danger" : "neutral"} value={overview.counts.failedOperations} /></section>
-        <section aria-label="Platform service status" className="admin-service-grid">{Object.entries(overview.services).map(([name, service]) => <Card className="admin-service-card" key={name}><span>{serviceLabels[name] || label(name)}</span><StatusChip status={service.status}>{label(service.status)}</StatusChip><small>Source: {serviceSource(service.source)}</small></Card>)}</section><AdminOperationChart counts={overview.counts} /></> : <EmptyState message="No platform status has been received." title="Platform data unavailable" />}
+      {activeTab === "overview" ? <section aria-labelledby="admin-tab-overview" className="admin-section" data-admin-section="overview" id="admin-panel-overview" role="tabpanel" tabIndex={0}><div className="admin-section-heading"><div><h2>Platform overview</h2><p>Configured services are shown as configured; that is not the same as a verified live health check.</p></div></div>
+        {sourceErrors.overview ? <AdminSectionFailure failure={sourceErrors.overview} onRetry={load} title="Platform status unavailable" /> : overview ? <><section aria-label="Platform summary" className="admin-summary-grid"><MetricCard label="Projects" value={overview.counts.projects} /><MetricCard label="Active operations" value={overview.counts.activeOperations} /><MetricCard label="Failed operations" tone={overview.counts.failedOperations ? "danger" : "neutral"} value={overview.counts.failedOperations} /><MetricCard label="Users" value={users.length} /></section>
+        {attentionServices.length ? <section aria-label="Platform needs attention" className="admin-attention"><h3>Needs attention</h3><ul>{attentionServices.map(([name, service]) => <li key={name}><span>{serviceLabels[name] || label(name)}</span><StatusChip status={service.status}>{label(service.status)}</StatusChip></li>)}</ul></section> : null}
+        <section aria-label="Platform service status" className="admin-service-groups">{serviceGroups.map(([group, names]) => <section key={group}><h3>{group}</h3><ul>{names.map((name) => { const service = overview.services[name]; return service ? <li key={name}><span>{serviceLabels[name] || label(name)}</span><StatusChip status={service.status}>{label(service.status)}</StatusChip><details><summary>Evidence</summary><p>{service.status === "configured" ? "Configured from runtime settings; live operation is verified during deployment." : `Reported by ${serviceSource(service.source)}.`}</p></details></li> : null; })}</ul></section>)}</section></> : <EmptyState message="No platform status has been received." title="Platform data unavailable" />}
       </section> : null}
       {activeTab === "users" ? <section aria-labelledby="admin-tab-users" className="admin-section" data-admin-section="users" id="admin-panel-users" role="tabpanel" tabIndex={0}><div className="admin-section-heading"><div><p className="eyebrow">Users &amp; roles</p><h2>Account access</h2><p>GitHub-authenticated accounts only. Role and access changes are retained in the audit trail.</p></div></div>{sourceErrors.users ? <AdminSectionFailure failure={sourceErrors.users} onRetry={load} title="User access information unavailable" /> : users.length ? <UserTable onAccessChange={(id, enabled) => mutate(id, () => updateUserAccess(id, enabled), enabled ? "User access enabled." : "User access disabled.")} onRoleChange={(id, role) => mutate(id, () => updateUserRole(id, role), "User role updated.")} updatingUserId={updatingUserId} users={users} /> : <EmptyState message="No users found." title="No user records" />}</section> : null}
       {activeTab === "projects" ? <section aria-labelledby="admin-tab-projects" className="admin-section" data-admin-project-state-source="current-state" data-admin-section="projects" id="admin-panel-projects" role="tabpanel" tabIndex={0}><div className="admin-section-heading"><div><p className="eyebrow">Projects &amp; operations</p><h2>Authoritative project states</h2><p>Read-only operational evidence. Project lifecycle actions remain on each owner's Overview and Pipeline.</p></div></div>
         {sourceErrors.projects ? <AdminSectionFailure failure={sourceErrors.projects} onRetry={load} title="Project operation evidence unavailable" /> : <><div aria-label="Project state filter" className="admin-project-filters">{["ALL", "LIVE", "DEPLOYING", "FAILED", "DESTROYED"].map((filter) => <button aria-pressed={projectFilter === filter} className={projectFilter === filter ? "button" : "secondary-button"} key={filter} onClick={() => setProjectFilter(filter)} type="button">{filter === "ALL" ? "All" : label(filter)}</button>)}</div>
-        {filteredProjects.length ? <DataTable caption="Canonical project states and their latest recorded operation" className="admin-responsive-table admin-project-table" label="Projects and operations table"><thead><tr><th>Owner</th><th>Repository</th><th>State</th><th>Latest operation</th><th>Updated</th></tr></thead><tbody>{filteredProjects.map(({ project, currentState }) => { const state = projectStatePresentation(currentState); const owner = ownerById.get(String(project.ownerUserId)); const operation = currentState?.latestAttempt?.operationId || currentState?.stateAuthority?.latestCompletedOperation?.id; const updated = currentState?.stateAuthority?.reconciliation?.lastReconciledAt || currentState?.latestAttempt?.occurredAt; return <tr data-authoritative-state={state.state} key={project.id}><td data-label="Owner"><strong>{owner?.name || `Account #${project.ownerUserId}`}</strong><span className="admin-cell-detail">{owner?.githubLogin ? `@${owner.githubLogin}` : owner?.email || "Account record"}</span></td><td data-label="Repository"><Link title={project.repositoryFullName || "Repository unavailable"} to={`/projects/${project.id}`}>{project.repositoryFullName || "Repository unavailable"}</Link><span className="admin-cell-detail">{project.targetBranch || "Branch unavailable"}</span></td><td data-label="State"><StatusChip status={state.state} tone={projectStateTone(state.state)}>{label(state.state)}</StatusChip></td><td data-label="Latest operation" title={operation || "No deployment operation"}>{short(operation)}</td><td data-label="Updated">{date(updated)}</td></tr>; })}</tbody></DataTable> : <EmptyState message="No projects match this state filter." title="No matching projects" />}</>}
+        {filteredProjects.length ? <DataTable caption="Canonical project states and their latest recorded operation" className="admin-responsive-table admin-project-table" label="Projects and operations table"><thead><tr><th>Project</th><th>Owner</th><th>State</th><th>Latest operation</th><th>Updated</th><th /></tr></thead><tbody>{filteredProjects.map(({ project, currentState }) => { const state = projectStatePresentation(currentState); const owner = ownerById.get(String(project.ownerUserId)); const operation = currentState?.latestAttempt?.operationId || currentState?.stateAuthority?.latestCompletedOperation?.id; const updated = currentState?.stateAuthority?.reconciliation?.lastReconciledAt || currentState?.latestAttempt?.occurredAt; return <tr data-authoritative-state={state.state} key={project.id}><td data-label="Project"><strong>{project.name}</strong>{project.repositoryFullName ? <span className="admin-cell-detail">{project.repositoryFullName}</span> : null}</td><td data-label="Owner"><strong>{owner?.name || `Account #${project.ownerUserId}`}</strong><span className="admin-cell-detail">{owner?.githubLogin ? `@${owner.githubLogin}` : owner?.email || "Account record"}</span></td><td data-label="State"><StatusChip status={state.state} tone={projectStateTone(state.state)}>{label(state.state)}</StatusChip></td><td data-label="Latest operation" title={operation || "No deployment operation"}>{short(operation)}</td><td data-label="Updated">{date(updated)}</td><td><Link className="secondary-button" to={`/projects/${project.id}`}>Open</Link></td></tr>; })}</tbody></DataTable> : <EmptyState message="No projects match this state filter." title="No matching projects" />}</>}
       </section> : null}
       {activeTab === "audit" ? <section aria-labelledby="admin-tab-audit" className="admin-section" data-admin-section="audit" id="admin-panel-audit" role="tabpanel" tabIndex={0}><div className="admin-section-heading"><div><p className="eyebrow">Audit logs</p><h2>Sanitized administrative and product activity</h2><p>Search persisted records by actor, action, project, result, severity, or date. Selecting a record opens sanitized details.</p></div></div>
         {sourceErrors.audit ? <AdminSectionFailure failure={sourceErrors.audit} onRetry={loadAudit} title="Audit activity unavailable" /> : <><AuditLogFilters filters={auditFilters} onChange={setAuditFilters} onReset={() => setAuditFilters(defaultAuditFilters)} />

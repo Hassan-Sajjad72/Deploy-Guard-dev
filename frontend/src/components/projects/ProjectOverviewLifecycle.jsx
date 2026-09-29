@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   Button,
   Card,
-  MetricCard,
   Modal,
   StageRail,
   StatusChip,
@@ -29,14 +28,6 @@ function formatDate(value) {
 
 function shortCommit(value) {
   return value ? String(value).slice(0, 12) : "Unavailable";
-}
-
-function duration(startedAt, completedAt) {
-  if (!startedAt || !completedAt) return "Unavailable";
-  const milliseconds = Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
-  if (milliseconds < 1_000) return "Under 1 second";
-  const seconds = Math.round(milliseconds / 1_000);
-  return seconds < 60 ? `${seconds} seconds` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function summaryTone(status) {
@@ -207,12 +198,6 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       <div aria-label="Canonical lifecycle actions" className="overview-actions" role="group">{actions()}</div>
       {state === "LIVE" && !latestOperationFailed && canManage && !currentState.stableRelease?.rollbackAvailable ? <p className="muted">No previous successful release is available.</p> : null}
     </Card>
-
-    <section aria-label="Deployment summary" className="overview-summary-grid">
-      <MetricCard detail={copy.message} label="Current state" tone={summaryTone(state)} value={state.replaceAll("_", " ")} />
-      <MetricCard label="Latest operation" tone={latest?.status === "failed_application" ? "danger" : "neutral"} value={latest ? `Attempt ${latest.attempt || "—"}` : "No deployment yet"} />
-      <MetricCard label="Last deployment duration" value={duration(latest?.startedAt, latest?.completedAt)} />
-    </section>
 
     {destroyOpen ? <Modal labelledBy="overview-destroy-title" onClose={() => { if (!busy) { setDestroyOpen(false); setDestroyPhrase(""); } }}>
       <p className="eyebrow">Permanent project deletion</p><h2 id="overview-destroy-title">Delete this project and its owned resources?</h2>

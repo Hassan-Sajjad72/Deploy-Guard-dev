@@ -148,16 +148,11 @@ assert.match(lifecycle, /rollbackGithubActionsDeployment/);
 assert.match(lifecycle, /No previous successful release is available/);
 assert.match(lifecycle, /rollbackError/);
 assert.match(lifecycle, /Repository code will not be rebuilt/);
-assert.match(lifecycle, /<MetricCard/g);
-assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 3, "Overview has exactly three summary cards");
-assert.match(lifecycle, /<MetricCard detail=\{copy\.message\} label="Current state"/, "Current State retains its verified-release message");
-assert.match(lifecycle, /<MetricCard label="Latest operation"[^>]*value=\{latest \? `Attempt \$\{latest\.attempt \|\| "—"\}`/, "Latest Operation contains the attempt only");
-assert.match(lifecycle, /<MetricCard label="Last deployment duration" value=\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/, "Last Deployment Duration contains no secondary timestamp detail");
+assert.doesNotMatch(lifecycle, /<MetricCard|overview-summary-grid/, "Overview keeps lifecycle status in one canonical card instead of duplicating summary metrics");
 assert.doesNotMatch(lifecycle, /label="Application health"/, "Overview does not present runtime health");
 assert.doesNotMatch(lifecycle, /applicationHealth|health\.observedAt|health\.source/, "Overview does not consume detailed runtime health data");
 assert.doesNotMatch(lifecycle, /detail=\{`Commit \$\{shortCommit\(latest/, "Overview does not show a commit beneath Latest Operation");
 assert.doesNotMatch(lifecycle, /\$\{formatDate\(latest\.startedAt\)\} to \$\{formatDate\(latest\.completedAt\)\}/, "Overview does not show a verbose deployment timestamp range");
-assert.match(styles, /\.overview-summary-grid\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/, "Overview summary layout has exactly three desktop cards");
 assert.match(styles, /\.overview-lifecycle-card \.ds-stage-rail\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/, "six deployment phases remain on the primary overview rail row");
 assert.doesNotMatch(overview, /CanonicalDeploymentView|getProjectDetailedCurrentState/);
 assert.match(overview, /subscribeProjectStateChanged/);
@@ -166,7 +161,6 @@ for (const state of ["ready", "deploying", "failed", "live", "destroying", "dest
   assert.match(styles, new RegExp(`overview-state-${state}`), `responsive lifecycle styling covers ${state}`);
 }
 assert.doesNotMatch(styles, /overview-state-(?:deploying|destroying)[^}]*var\(--(?:cyan|amber)\)/);
-assert.match(styles, /@media\s*\(max-width:\s*560px\)[\s\S]*overview-summary-grid/);
 assert.match(styles, /\.ds-modal-backdrop\{[^}]*align-items:flex-start[^}]*overflow-y:auto[^}]*overscroll-behavior:contain/, "shared modal backdrop permits bounded viewport scrolling");
 assert.match(styles, /\.ds-modal\{[^}]*max-height:calc\(100dvh[^}]*overflow-y:auto[^}]*overscroll-behavior:contain/, "shared modal content scrolls within the dynamic viewport");
 assert.match(styles, /@media\(max-width:560px\),\(max-height:640px\)\{\.ds-modal-backdrop\{--modal-viewport-gutter:var\(--space-3\)/, "short and narrow viewports retain a reachable dialog gutter");

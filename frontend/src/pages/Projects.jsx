@@ -57,13 +57,12 @@ export default function Projects() {
     return { ...totals, [state]: (totals[state] || 0) + 1 };
   }, { ALL: summaries.length }), [summaries]);
 
-  const spectrum = ["LIVE", "DEPLOYING", "DESTROYING", "READY", "BLOCKED", "FAILED", "DESTROYED"].filter((state) => counts[state]);
+  const liveCount = counts.LIVE || 0;
+  const attentionCount = (counts.FAILED || 0) + (counts.BLOCKED || 0);
   return <div className="workspace-page simple-projects-page dg-projects">
     <header className="dg-projects-head">
-      <div className="dg-projects-title"><p className="dg-projects-kicker">Workspace · Registry</p><h1>Projects</h1><p>Projects deployed or managed through DeployGuard.</p></div>
-      {!loading && summaries.length ? <div aria-hidden="true" className="dg-projects-tally"><strong>{String(summaries.length).padStart(2, "0")}</strong><span>projects<br />registered</span></div> : null}
+      <div className="dg-projects-title"><h1>Projects</h1><p>Projects deployed or managed through DeployGuard.</p>{!loading && summaries.length ? <p className="dg-projects-summary">{summaries.length} projects · {liveCount} live · {attentionCount} need attention</p> : null}</div>
       {role !== "readonly" ? <Link className="button dg-projects-primary" to="/deploy"><AppIcon name="plus" size={16} />Deploy new project</Link> : null}
-      {!loading && summaries.length ? <div aria-label="Projects by state" className="dg-projects-spectrum" role="img">{spectrum.map((state) => <span className={`is-${state.toLowerCase()}`} key={state} style={{ flexGrow: counts[state] }} title={`${state.toLowerCase()}: ${counts[state]}`}><i />{state.charAt(0) + state.slice(1).toLowerCase()} <b>{counts[state]}</b></span>)}</div> : null}
     </header>
     {location.state?.notice ? <p className="state success" role="status">{location.state.notice}</p> : null}
     {error ? <ErrorState message={error} /> : null}
@@ -83,11 +82,11 @@ export default function Projects() {
           const activity = project.activity?.lastMeaningfulActivityAt || currentState?.latestAttempt?.occurredAt || project.createdAt;
           const repository = currentState?.repository || project.repositoryFullName;
           return <article className="dg-projects-row" data-authoritative-state={presentation.state} key={project.id} role="listitem">
-            <div className="dg-projects-identity"><span aria-hidden="true" className="dg-projects-glyph">{String(project.name || "?").charAt(0).toUpperCase()}</span><div><Link title={project.name} to={`/projects/${project.id}`}><h2>{project.name}</h2></Link><p><span className="dg-projects-repo" title={repository}><AppIcon name="github" size={13} />{repository}</span><span className="dg-projects-branch"><AppIcon name="branch" size={13} />{currentState?.branch || project.targetBranch || "Branch unavailable"}</span></p></div></div>
+            <div className="dg-projects-identity"><span aria-hidden="true" className="dg-projects-glyph">{String(project.name || "?").charAt(0).toUpperCase()}</span><div><Link title={project.name} to={`/projects/${project.id}`}><h2>{project.name}</h2></Link><p><span className="dg-projects-repo" title={repository}><AppIcon name="github" size={13} />{repository}</span>{currentState?.branch || project.targetBranch ? <span className="dg-projects-branch"><AppIcon name="branch" size={13} />{currentState?.branch || project.targetBranch}</span> : null}</p></div></div>
             <div className="dg-projects-cell dg-projects-status"><StatusChip status={presentation.state} tone={projectStateTone(presentation.state)} /></div>
             <div className="dg-projects-cell"><span className="dg-projects-label">Services</span><strong>{project.services?.length ?? "—"}</strong></div>
-            <div className="dg-projects-cell"><span className="dg-projects-label">Latest deployment</span><strong>{currentState?.latestAttempt ? `Attempt ${currentState.latestAttempt.attempt || "—"}` : "Not started"}</strong></div>
-            <div className="dg-projects-cell"><span className="dg-projects-label">Last activity</span><strong title={activity || "Unavailable"}>{formatRelativeTime(activity)}</strong></div>
+            <div className="dg-projects-cell"><span className="dg-projects-label">Latest deployment</span><strong>{currentState?.latestAttempt ? `Attempt ${currentState.latestAttempt.attempt || "—"}` : "—"}</strong></div>
+            <div className="dg-projects-cell"><span className="dg-projects-label">Last activity</span><strong title={activity || undefined}>{activity ? formatRelativeTime(activity) : "—"}</strong></div>
             <Link aria-label={`Open ${project.name}`} className="dg-projects-open" to={`/projects/${project.id}`}>Open <AppIcon name="arrow" size={15} /></Link>
           </article>;
         })}

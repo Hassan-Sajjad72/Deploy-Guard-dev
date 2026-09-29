@@ -59,31 +59,29 @@ export default function ProjectDetails() {
     <header className="dg-ov-head">
       <div className="dg-ov-identity">
         <div className="dg-ov-title">
-          <p className="dg-ov-kicker">Release control{project.environmentName ? <span className="dg-ov-env">{project.environmentName}</span> : null}</p>
           <div className="dg-ov-title-row"><h1>{project.name}</h1><StatusChip status={state.state} tone={projectStateTone(state.state)} /></div>
           <p className="dg-ov-source">
             {repository ? <span><AppIcon name="github" size={14} />{repository}</span> : null}
             {branch ? <span className="is-mono"><AppIcon name="branch" size={14} />{branch}</span> : null}
           </p>
         </div>
-        <div className={currentState.stableUrl ? "dg-ov-domain is-live" : "dg-ov-domain"}>
+        {currentState.stableUrl ? <div className="dg-ov-domain is-live">
           <span aria-hidden="true" className="dg-ov-window"><span className="dg-ov-window-bar"><i /><i /><i /><b>{currentState.stableUrl ? currentState.stableUrl.replace(/^https?:\/\//, "") : "no release"}</b></span><span className="dg-ov-window-body"><em /><u /><u /><u /><s /><s /><s /></span></span>
-          <span className="dg-ov-domain-label">Live URL</span>
-          {currentState.stableUrl ? <a href={currentState.stableUrl} rel="noreferrer" target="_blank"><span aria-hidden="true" className="dg-ov-domain-dot" />{currentState.stableUrl.replace(/^https?:\/\//, "")}<span aria-hidden="true"> ↗</span></a> : <strong>Not available</strong>}
-        </div>
+          <span className="dg-ov-domain-label">Open application</span>
+          <a href={currentState.stableUrl} rel="noreferrer" target="_blank"><span aria-hidden="true" className="dg-ov-domain-dot" />{currentState.stableUrl.replace(/^https?:\/\//, "")}<span aria-hidden="true"> ↗</span></a>
+        </div> : null}
       </div>
       <dl className="dg-ov-meta" aria-label="Release metadata">
         {project.environmentName ? <div><dt>Environment</dt><dd>{project.environmentName}</dd></div> : null}
-        <div><dt>Release</dt><dd className="is-mono">{releaseCommit || "No verified release"}</dd></div>
+        {releaseCommit ? <div><dt>Release</dt><dd className="is-mono">{releaseCommit}</dd></div> : null}
         {currentState.stableRelease?.verifiedAt ? <div><dt>Verified</dt><dd title={currentState.stableRelease.verifiedAt}>{formatRelativeTime(currentState.stableRelease.verifiedAt)}</dd></div> : null}
-        {currentState.latestAttempt?.workflowRunId ? <div><dt>Workflow run</dt><dd className="is-mono">#{currentState.latestAttempt.workflowRunId}</dd></div> : null}
-        <div><dt>Services</dt><dd>{services.length || "—"}</dd></div>
+        {services.length ? <div><dt>Services</dt><dd>{services.length}</dd></div> : null}
       </dl>
     </header>
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     <ProjectOverviewLifecycle canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} projectId={projectId} />
     {services.length ? <section aria-labelledby="overview-services" className="dg-ov-services">
-      <header><div><p className="dg-ov-kicker">Runtime</p><h2 id="overview-services">Configured services</h2></div><span>{services.length} service{services.length === 1 ? "" : "s"}</span></header>
+      <header><div><h2 id="overview-services">Configured services</h2></div><span>{services.length} service{services.length === 1 ? "" : "s"}</span></header>
       <div className="dg-ov-roster" role="list">
         <div aria-hidden="true" className="dg-ov-roster-head"><span>Service</span><span>Directory</span><span>Open Application</span></div>
         {services.map((service) => <div className="dg-ov-roster-row" key={service.id} role="listitem">
