@@ -43,10 +43,12 @@ for (const token of ["--dg-page", "--dg-canvas", "--dg-surface", "--dg-ink", "--
   assert.match(system, new RegExp(token));
 }
 assert.match(system, /\.dg-dark,\s*\[data-ground="night"\]\s*\{/);
-assert.match(system, /--dg-canvas: #071a33/);
-assert.match(system, /\.dg-dark \{ background-color: #071a33; color: var\(--dg-ink\); \}/);
+assert.match(system, /--dg-canvas: var\(--technical-canvas\)/);
+assert.match(system, /\.dg-dark \{ background-color: var\(--technical-canvas\); color: var\(--dg-ink\); \}/);
 assert.match(system, /\.dg-console, \.monitoring-log-viewer, pre\.dg-console/);
-assert.match(system, /body::before, body::after \{ content: none; display: none; \}/, "global ambient decoration is not layered behind dense application surfaces");
+assert.match(system, /body::before\s*\{[\s\S]*radial-gradient/);
+assert.match(system, /body::after\s*\{[\s\S]*linear-gradient/);
+assert.doesNotMatch(system, /body::before\s*\{[^}]*animation:/, "ambient light is static rather than a continuous animated backdrop");
 assert.match(system, /\.app-shell\s*\{[^}]*grid-template-columns: var\(--sidebar-width\)/);
 assert.match(system, /\.sidebar\s*\{[^}]*border-radius: var\(--dg-radius-lg\)/);
 assert.match(system, /@media \(max-width: 820px\)[\s\S]*\.sidebar\.is-mobile-open/);
@@ -56,10 +58,10 @@ assert.match(system, /:focus-visible/);
 assert.match(motion, /prefers-reduced-motion/);
 assert.match(motion, /\.page-transition/);
 for (const color of ["#f97316", "#ec4899", "#a855f7", "#8b5cf6", "#ff00ff"]) assert.doesNotMatch(allActiveStyles, new RegExp(color, "i"));
-assert.match(pageStyles.infrastructure, /\.itw-body\s*\{[\s\S]*#071a33/);
-assert.match(pageStyles.pipeline, /\.pg-columns\.dg-dark[\s\S]*#071a33/);
-assert.match(pageStyles.monitoring, /\.monitoring-log-viewer\s*\{[\s\S]*background: #071a33/);
-assert.match(pageStyles.landing, /\.dg-hero-visual\s*\{[^}]*background: #071a33/);
+assert.match(pageStyles.infrastructure, /\.itw-body\s*\{[\s\S]*var\(--technical-canvas\)/);
+assert.match(pageStyles.pipeline, /\.pg-columns\.dg-dark[\s\S]*var\(--technical-canvas\)/);
+assert.match(pageStyles.monitoring, /\.monitoring-log-viewer\s*\{[\s\S]*background: var\(--technical-canvas\)/);
+assert.match(pageStyles.landing, /\.dg-hero-visual\s*\{[^}]*background: var\(--technical-canvas\)/);
 
 for (const component of ["Button", "Card", "MetricCard", "StatusChip", "PageHeader", "Modal", "Banner", "EmptyState", "Skeleton", "DataTable", "CopyValue", "ChartCard", "StageRail", "Tabs", "DetailsDrawer"]) {
   assert.match(primitives, new RegExp(`export function ${component}`));
@@ -111,7 +113,8 @@ assert.match(pageStyles.admin, /dg-admin/);
 assert.match(pageStyles.audit, /dg-audit/);
 
 // Public pages, copy, founders, and conceptual architecture remain intact.
-assert.match(landing, /The future doesn’t wait for infrastructure\. Neither do we\./);
+assert.match(landing, /From repository to a verified cloud deployment\./);
+assert.doesNotMatch(landing, /ECR|ECS Fargate|\bALB\b/);
 for (const name of ["Hassan Sajjad", "Faria Fatima", "Tania Khawar"]) assert.match(about, new RegExp(name));
 for (const title of ["Co-Founder & CEO", "DevOps Engineer", "Backend & Systems Engineer", "Backend & AI Engineer"]) assert.match(about, new RegExp(title));
 for (const profile of ["https://github.com/Hassan-Sajjad72", "https://hassan-sajjad72.github.io/", "https://www.linkedin.com/in/hassan-sajjad-2751202b9", "https://github.com/232378taniakhawar", "https://www.linkedin.com/in/tania-khawar-8a0965372"]) {
@@ -138,7 +141,10 @@ assert.match(publicFooter, /aria-label="Footer navigation"/);
 assert.match(publicFooter, /DeployGuard © 2026/);
 for (const credit of ["Asim Ali Fayyaz", "Yaseen Mushtaq", "Intelligement", "https:\/\/www.intelligement.com"]) assert.match(about, new RegExp(credit));
 assert.match(publicAdminLink, /className="landing-admin-link"/);
-for (const stage of ["Repository", "Build image", "Publish", "Provision", "Run & verify", "Verified live application"]) assert.match(architecture, new RegExp(stage));
+for (const stage of ["Source", "Build", "Publish", "Provision", "Verify", "Promotion gate"]) assert.match(architecture, new RegExp(stage));
+assert.match(architecture, /Illustrative topology · not a live project view/);
+assert.match(architecture, /Illustrative workflow · not a live project pipeline/);
+assert.doesNotMatch(architecture, /us-east-1|10\.0\.0\.0\/16|targets healthy|CloudWatch|Terraform|Infracost|ECS Fargate|Application Load Balancer/);
 assert.match(architecture, /Conceptual marketing illustration[\s\S]*not the live topology/);
 assert.match(pageStyles.landing, /\.dg-arch-diagram/);
 assert.match(pageStyles.landing, /\.dg-arch-links \.is-runtime/);

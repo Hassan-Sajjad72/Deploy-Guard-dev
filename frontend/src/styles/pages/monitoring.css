@@ -3,7 +3,7 @@
 .dg-monitor .ds-page-header { align-items: center; }
 .dg-monitor .ds-page-header h1 { font-size: clamp(1.9rem, 3vw, 2.5rem); }
 .dg-monitor .ds-page-header .ds-page-header-context { color: var(--dg-muted); font-size: .78rem; }
-.dg-mon-toolbar { align-items: center; background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 12px 20px; justify-content: space-between; padding: 11px 14px; }
+.dg-mon-toolbar { align-items: center; -webkit-backdrop-filter: var(--glass-blur-chrome); backdrop-filter: var(--glass-blur-chrome); background: var(--glass-fill-interactive); border: 1px solid var(--glass-edge); border-radius: 12px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .68); display: flex; flex-wrap: wrap; gap: 12px 20px; justify-content: space-between; padding: 11px 14px; }
 .monitoring-service-selector { align-items: center; color: var(--dg-muted); display: flex; font-size: .75rem; gap: 9px; min-width: min(100%, 280px); }
 .monitoring-service-selector select { flex: 1; min-width: 0; }
 .monitoring-range-controls { display: inline-flex; flex-wrap: wrap; gap: 4px; }
@@ -23,13 +23,13 @@
 .dg-monitor .ds-chart-card > header h3 { color: var(--dg-ink); font-size: .9rem; }
 .dg-monitor .ds-chart-card > header p { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .68rem; }
 .monitoring-line-chart { min-width: 0; padding-top: 9px; }
-.monitoring-sample-chart { display: block; height: clamp(155px, 20vw, 210px); overflow: visible; width: 100%; }
+.monitoring-sample-chart { display: block; height: clamp(205px, 23vw, 272px); overflow: visible; width: 100%; }
 .monitoring-sample-chart text { fill: var(--dg-muted); font-family: var(--dg-mono); font-size: 10px; }
 .monitoring-sample-chart line { stroke: var(--dg-line); stroke-dasharray: 3 4; stroke-width: 1; }
-.monitoring-sample-chart polyline { stroke: var(--dg-primary-strong); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.4; }
+.monitoring-sample-chart polyline { animation: dg-chart-reveal 620ms var(--ease-out) both; stroke: var(--dg-primary-strong); stroke-dasharray: 1; stroke-dashoffset: 1; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.4; }
 .monitoring-sample-chart circle { fill: var(--dg-primary-strong); stroke: #fff; stroke-width: 1.5; }
-.monitoring-sample-chart .monitoring-fill-top { stop-color: rgba(47, 111, 237, .21); }
-.monitoring-sample-chart .monitoring-fill-bottom { stop-color: rgba(47, 111, 237, .01); }
+.monitoring-sample-chart .monitoring-fill-top { stop-color: rgba(57, 131, 231, .22); }
+.monitoring-sample-chart .monitoring-fill-bottom { stop-color: rgba(49, 183, 207, .015); }
 .monitoring-line-chart.metric-unhealthyHosts .monitoring-sample-chart polyline, .monitoring-line-chart.metric-unhealthyHosts .monitoring-sample-chart circle { stroke: var(--dg-danger); fill: var(--dg-danger); }
 .monitoring-chart-axis { color: var(--dg-muted); display: flex; font-family: var(--dg-mono); font-size: .59rem; gap: 10px; justify-content: space-between; padding-left: 8%; }
 .dg-monitor .ds-empty-state { background: var(--dg-surface); border: 1px dashed var(--dg-line-strong); border-radius: 12px; color: var(--dg-ink); box-shadow: none; }
@@ -58,10 +58,10 @@
 .monitoring-log-search { display: block; margin-bottom: 8px; max-width: 380px; }
 .monitoring-log-search input { background: var(--dg-surface-2); font-size: .78rem; min-height: 34px; }
 .monitoring-log-viewer {
-  background: #071a33;
-  border: 1px solid #24466d;
+  background: var(--technical-canvas);
+  border: 1px solid var(--technical-line);
   border-radius: 9px;
-  color: #e7f0fd;
+  color: var(--technical-ink);
   display: grid;
   font-family: var(--dg-mono);
   font-size: .72rem;
@@ -73,14 +73,20 @@
   padding: 7px 0;
 }
 .monitoring-log-line { align-items: baseline; border-bottom: 1px solid rgba(157, 187, 225, .1); display: grid; gap: 9px; grid-template-columns: 92px minmax(86px, 135px) minmax(0, 1fr); min-width: 0; padding: 5px 10px; }
-.monitoring-log-line time { color: #91a9c7; font-size: .64rem; white-space: nowrap; }
-.monitoring-log-line > span { color: #a9c8ef; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.monitoring-log-line code { background: transparent; color: #eef5ff; font-family: inherit; font-size: inherit; overflow-wrap: anywhere; white-space: pre-wrap; }
-.monitoring-log-empty { color: #b6c6dc; margin: auto; padding: 20px; text-align: center; }
+.monitoring-log-line.no-source { grid-template-columns: 92px minmax(0, 1fr); }
+.monitoring-log-line.no-time.has-source { grid-template-columns: minmax(86px, 135px) minmax(0, 1fr); }
+.monitoring-log-line.no-time.no-source { grid-template-columns: minmax(0, 1fr); }
+.monitoring-log-line time { color: var(--technical-muted-soft); font-size: .64rem; white-space: nowrap; }
+.monitoring-log-line > span { color: var(--technical-accent-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.monitoring-log-line code { background: transparent; color: var(--technical-ink); font-family: inherit; font-size: inherit; overflow-wrap: anywhere; white-space: pre-wrap; }
+.monitoring-log-empty { color: var(--technical-ink-secondary); margin: auto; padding: 20px; text-align: center; }
 
 @media (max-width: 900px) {
   .dg-mon-bottom { grid-template-columns: 1fr; }
   .monitoring-chart-grid { grid-template-columns: 1fr; }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dg-mon-toolbar { background: #f4f7fc; box-shadow: var(--dg-shadow-sm); }
 }
 @media (max-width: 600px) {
   .dg-mon-toolbar { align-items: stretch; }
@@ -95,5 +101,10 @@
   .monitoring-log-line time { grid-column: 1; }
   .monitoring-log-line > span { grid-column: 2; }
   .monitoring-log-line code { grid-column: 1 / -1; }
+  .monitoring-log-line.no-source { grid-template-columns: 1fr; }
+  .monitoring-log-line.no-source > time, .monitoring-log-line.no-source > code { grid-column: 1; }
+  .monitoring-log-line.no-time.has-source { grid-template-columns: minmax(86px, 135px) minmax(0, 1fr); }
+  .monitoring-log-line.no-time.has-source > span { grid-column: 1; }
+  .monitoring-log-line.no-time.has-source > code { grid-column: 2; grid-row: 1; }
   .monitoring-health-grid { grid-template-columns: 1fr; }
 }

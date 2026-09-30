@@ -15,7 +15,7 @@ export function statusTone(status) {
   const value = String(status || "").toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
   if (["failed", "failure", "failed_application", "error", "rejected", "cost_rejected", "blocked", "blocked_by_cost_limit", "unhealthy", "corrupt", "orphaned", "state_recovery_required", "state_lock_failed", "storage_failed", "backup_failed", "ecs_service_unhealthy", "ecs_deployment_failed", "rollback_failed"].includes(value)) return "danger";
   if (["warning", "degraded", "pending", "queued", "waiting", "stale", "historical", "configuration_required", "platform_attention", "unavailable", "paused", "cancelled", "requires_approval", "approval_required", "disabled", "disabled_by_config", "safe_mode", "interrupted", "waiting_for_cost_approval", "waiting_for_state_lock"].includes(value)) return "warning";
-  if (["success", "paid", "passed", "complete", "completed", "live", "deployed", "healthy", "approved", "connected", "matched", "ready", "destroyed", "ready_to_start_pipeline", "no_approval_required", "skipped"].includes(value)) return "success";
+  if (["success", "paid", "passed", "complete", "completed", "live", "deployed", "healthy", "approved", "connected", "matched", "ready"].includes(value)) return "success";
   if (["running", "started", "preparing", "building", "planning", "provisioning", "deploying", "verifying", "destroying", "active", "ready_for_detection", "ready_for_preflight", "cost_analysis_running", "state_lock_acquiring", "storage_provisioning", "backup_configuring", "ecs_deployment_queued", "ecs_task_definition_registering", "ecs_service_updating", "ecs_waiting_for_stability", "rollback_started"].includes(value)) return "info";
   return "neutral";
 }

@@ -43,7 +43,7 @@
 .dg-bill-plan-price strong { color: var(--dg-ink); font-size: 1.55rem; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
 .dg-bill-plan > button { align-self: end; justify-self: start; max-width: 100%; white-space: normal; }
 .dg-bill-ribbon { background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 999px; color: var(--dg-primary-strong); font-size: .65rem; font-weight: 600; justify-self: start; padding: 4px 8px; }
-.dg-bill-current { align-self: end; color: var(--dg-success); font-size: .75rem; font-weight: 600; }
+.dg-bill-current { align-self: end; color: var(--dg-primary-strong); font-size: .75rem; font-weight: 600; }
 .dg-bill-unavailable { align-self: end; color: var(--dg-muted); font-size: .71rem; }
 .dg-bill-invoices, .dg-bill-invoice-detail { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; box-shadow: none; min-width: 0; padding: 19px; }
 .dg-bill-invoices > h2, .dg-bill-invoice-detail > h2 { color: var(--dg-ink); font-size: 1rem; margin: 5px 0 14px; }

@@ -28,7 +28,9 @@ assert.match(routes, /<Route element=\{<Navigate replace to="\/deploy" \/>\} pat
 assert.match(landing, /data-home-deploy="oauth"/);
 assert.match(landing, /data-home-deploy="authenticated"/);
 assert.match(landing, />Continue with GitHub<\/Link>/);
-assert.match(landing, /Connect your repo\. DeployGuard takes it from code to secure, running cloud infrastructure\./);
+assert.match(landing, /From repository to a verified cloud deployment\./);
+assert.match(landing, /builds your application, provisions its runtime, and keeps release evidence visible/);
+assert.doesNotMatch(landing, /ECR|ECS Fargate|\bALB\b/);
 assert.equal((landing.match(/data-home-deploy=/g) || []).length, 2, "The two auth branches must define one primary CTA each, never render together.");
 assert.match(landing, /<details className="landing-account-menu">/);
 assert.match(landing, /<Link to="\/dashboard">Dashboard<\/Link>/);

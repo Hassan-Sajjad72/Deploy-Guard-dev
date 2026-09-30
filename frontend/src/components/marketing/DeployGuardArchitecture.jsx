@@ -13,26 +13,23 @@ const glyphs = {
   dns: "activity",
   logs: "logs",
   state: "state",
-  storage: "storage",
   cost: "cost",
   user: "user",
 };
 
-function Node({ x, y, w = 150, h = 50, icon, label, detail, tone = "default", aws = false, dashed = false, healthy = false }) {
+function Node({ x, y, w = 150, h = 50, icon, label, detail, tone = "default", aws = false }) {
   const left = x - w / 2;
   const top = y - h / 2;
-  return <g className={`dg-arch-node is-${tone}${dashed ? " is-dashed" : ""}`}>
+  return <g className={`dg-arch-node is-${tone}`}>
     <rect className="dg-arch-node-box" height={h} rx="10" width={w} x={left} y={top} />
     {aws ? <rect className="dg-arch-node-aws" height="3" rx="1.5" width="26" x={left + 12} y={top} /> : null}
     <g transform={`translate(${left + 12} ${y - 9})`}><AppIcon className="dg-arch-glyph" name={glyphs[icon]} size={18} /></g>
     <text className="dg-arch-label" x={left + 38} y={detail ? y - 2 : y + 5}>{label}</text>
     {detail ? <text className="dg-arch-detail" x={left + 38} y={y + 13}>{detail}</text> : null}
-    {healthy ? <circle className="dg-arch-health" cx={left + w - 12} cy={top + 12} r="3.5" /> : null}
   </g>;
 }
 
-// Major boundaries (cloud, VPC, operations) carry their label as a tag on the top edge;
-// availability zones keep an inline label.
+// Major cloud, runtime, and supporting boundaries carry a label on the top edge.
 function Boundary({ x, y, w, h, label, tone }) {
   const tagged = tone !== "az";
   return <g className={`dg-arch-boundary is-${tone}`}>
@@ -50,57 +47,37 @@ export default function DeployGuardArchitecture() {
   return <div className="dg-arch" id="architecture">
     <svg aria-labelledby="dg-arch-title dg-arch-desc" className="dg-arch-diagram" role="img" viewBox="0 0 880 740">
       <title id="dg-arch-title">DeployGuard cloud architecture</title>
-      <desc id="dg-arch-desc">A GitHub repository flows through DeployGuard and GitHub Actions, which builds the application image and publishes it to Amazon ECR. Terraform provisions the runtime. Users reach an Application Load Balancer in public subnets, which routes to ECS Fargate tasks in private subnets across two availability zones inside a VPC. CloudWatch, Terraform state and Infracost cost visibility support the runtime.</desc>
+      <desc id="dg-arch-desc">An illustrative deployment flow from source through build, image publication, and a cloud runtime. The example shows a load balancer routing to a container service, with separate supporting capabilities for application telemetry, infrastructure state, and cost visibility. This is not a live project topology.</desc>
       <defs>
         <marker id="dg-arch-arrow" markerHeight="7" markerWidth="7" orient="auto-start-reverse" refX="5" refY="3.5"><path d="M0 0 7 3.5 0 7Z" /></marker>
       </defs>
 
-      <Boundary h={590} label="AWS Cloud · us-east-1" tone="cloud" w={840} x={20} y={140} />
-      <Boundary h={452} label="VPC · 10.0.0.0/16" tone="vpc" w={622} x={40} y={268} />
-      <Boundary h={392} label="Availability Zone A" tone="az" w={292} x={54} y={310} />
-      <Boundary h={392} label="Availability Zone B" tone="az" w={292} x={356} y={310} />
-      <Boundary h={452} label="Operations" tone="ops" w={180} x={670} y={268} />
-
-      <g className="dg-arch-subnets">
-        <rect className="is-public" height="84" rx="10" width="268" x={66} y={338} /><text x={78} y={355}>Public subnet</text>
-        <rect className="is-public" height="84" rx="10" width="268" x={368} y={338} /><text x={380} y={355}>Public subnet</text>
-        <rect className="is-private" height="120" rx="10" width="268" x={66} y={432} /><text x={78} y={449}>Private subnet · app</text>
-        <rect className="is-private" height="120" rx="10" width="268" x={368} y={432} /><text x={380} y={449}>Private subnet · app</text>
-        <rect className="is-data" height="120" rx="10" width="268" x={66} y={562} /><text x={78} y={579}>Private subnet · data</text>
-        <rect className="is-data" height="120" rx="10" width="268" x={368} y={562} /><text x={380} y={579}>Private subnet · data</text>
-      </g>
+      <Boundary h={590} label="Cloud environment" tone="cloud" w={840} x={20} y={140} />
+      <Boundary h={452} label="Application network" tone="vpc" w={622} x={40} y={268} />
+      <Boundary h={452} label="Support services" tone="ops" w={180} x={670} y={268} />
 
       <g className="dg-arch-links">
         <path className="is-control" d="M155 70H174" markerEnd="url(#dg-arch-arrow)" />
         <path className="is-control" d="M350 70H363" markerEnd="url(#dg-arch-arrow)" />
         <path className="is-control" d="M440 95V156H200V178" markerEnd="url(#dg-arch-arrow)" />
-        <path className="is-control" d="M304 119H330V262" markerEnd="url(#dg-arch-arrow)" />
-        <path className="is-support" d="M125 228V292H60V502H116" markerEnd="url(#dg-arch-arrow)" />
         <path className="is-runtime" d="M760 95V250H350V360" markerEnd="url(#dg-arch-arrow)" />
-        <path className="is-runtime" d="M260 410V476" markerEnd="url(#dg-arch-arrow)" />
-        <path className="is-runtime" d="M440 410V476" markerEnd="url(#dg-arch-arrow)" />
-        <path className="is-support" d="M200 528V606" markerEnd="url(#dg-arch-arrow)" />
-        <path className="is-support" d="M500 528V606" markerEnd="url(#dg-arch-arrow)" />
-        <path className="is-support" d="M586 502H684" markerEnd="url(#dg-arch-arrow)" />
+        <path className="is-runtime" d="M350 408V476" markerEnd="url(#dg-arch-arrow)" />
+        <path className="is-support" d="M450 502H684" markerEnd="url(#dg-arch-arrow)" />
       </g>
 
       <Node detail="Selected commit" icon="github" label="GitHub" tone="source" x={90} y={70} w={130} />
       <Node detail="Policy · orchestration" h={60} icon="shield" label="DeployGuard" tone="brand" x={262} y={70} w={176} />
-      <Node detail="Application build" icon="actions" label="GitHub Actions" tone="source" x={440} y={70} w={150} />
-      <g className="dg-arch-pill"><rect height="22" rx="11" width="84" x={220} y={108} /><text x={262} y={123}>Terraform</text></g>
+      <Node detail="Application build" icon="actions" label="Build runner" tone="source" x={440} y={70} w={150} />
+      <g className="dg-arch-pill"><rect height="22" rx="11" width="140" x={192} y={108} /><text x={262} y={123}>Infrastructure plan</text></g>
       <Node detail="Public internet" icon="user" label="Users" tone="edge" x={760} y={70} w={140} h={46} />
 
-      <Node aws detail="Immutable digest" icon="ecr" label="Amazon ECR" x={200} y={203} w={170} />
+      <Node aws detail="Versioned image" icon="ecr" label="Image registry" x={200} y={203} w={170} />
 
-      <Node aws detail="Internet-facing · targets healthy" healthy icon="alb" label="Application Load Balancer" x={350} y={384} w={360} h={48} />
-      <Node aws detail="ECS service · task" healthy icon="ecs" label="Fargate" x={200} y={502} w={168} />
-      <Node aws detail="ECS service · task" healthy icon="ecs" label="Fargate" x={500} y={502} w={168} />
-      <Node dashed detail="When configured" icon="state" label="Managed database" x={200} y={632} w={180} />
-      <Node aws detail="Persistent storage" icon="storage" label="EFS volume" x={500} y={632} w={168} />
-
-      <Node aws detail="S3 state · lock" icon="state" label="Terraform state" x={760} y={372} w={152} />
-      <Node aws detail="Logs · metrics" icon="logs" label="CloudWatch" x={760} y={502} w={152} />
-      <Node detail="Infracost estimate" icon="cost" label="Cost visibility" tone="cost" x={760} y={632} w={152} />
+      <Node aws detail="Example application route" icon="alb" label="Load balancer" x={350} y={384} w={300} h={48} />
+      <Node aws detail="Application workload" icon="ecs" label="Container service" x={350} y={502} w={200} />
+      <Node aws detail="State management" icon="state" label="Infrastructure state" x={760} y={372} w={164} />
+      <Node aws detail="Logs · telemetry" icon="logs" label="Application signals" x={760} y={502} w={164} />
+      <Node detail="Estimated spend" icon="cost" label="Cost visibility" tone="cost" x={760} y={632} w={164} />
 
       <Step n="1" x={169} y={52} />
       <Step n="2" x={440} y={30} />
@@ -110,20 +87,21 @@ export default function DeployGuardArchitecture() {
     </svg>
 
     <ol aria-label="DeployGuard architecture summary" className="dg-arch-compact">
-      <li><span>Control path</span><strong>GitHub → DeployGuard → GitHub Actions → Amazon ECR</strong></li>
-      <li><span>Runtime path</span><strong>Users → Application Load Balancer → ECS Fargate in private subnets</strong></li>
-      <li><span>Inside the VPC</span><strong>Public subnets · private app subnets · optional managed database</strong></li>
-      <li><span>Supporting</span><strong>CloudWatch · Terraform state · Infracost cost visibility</strong></li>
+      <li><span>Control path</span><strong>Source → DeployGuard → build → image registry</strong></li>
+      <li><span>Runtime path</span><strong>Users → load balancer → container service</strong></li>
+      <li><span>Network</span><strong>Example public entry and isolated application network</strong></li>
+      <li><span>Supporting</span><strong>Application telemetry · infrastructure state · cost visibility</strong></li>
     </ol>
+    <p className="dg-arch-note">Illustrative topology · not a live project view</p>
   </div>;
 }
 
 const stages = [
-  { label: "Repository", detail: "GitHub source and exact commit" },
-  { label: "Build image", detail: "GitHub Actions · OCI image" },
-  { label: "Publish", detail: "ECR immutable digest" },
-  { label: "Provision", detail: "Terraform · VPC, ALB, ECS" },
-  { label: "Run & verify", detail: "ALB routing · ECS health" },
+  { label: "Source", detail: "Select a repository revision" },
+  { label: "Build", detail: "Prepare the application image" },
+  { label: "Publish", detail: "Store a versioned image" },
+  { label: "Provision", detail: "Create the cloud runtime" },
+  { label: "Verify", detail: "Review routing and runtime evidence" },
 ];
 
 export function DeliveryPath() {
@@ -131,7 +109,8 @@ export function DeliveryPath() {
     <div className="dg-delivery-intro">
       <p className="dg-kicker">How DeployGuard works</p>
       <h2 id="delivery-path-title">From repository to running infrastructure.</h2>
-      <p>DeployGuard builds the selected source, publishes an immutable image, and operates it on AWS.</p>
+      <p>DeployGuard prepares an application image, creates its runtime, and checks the result before promotion.</p>
+      <p className="dg-delivery-note">Illustrative workflow · not a live project pipeline.</p>
     </div>
     <ol className="dg-delivery-steps">
       {stages.map((stage, index) => <li key={stage.label}>
@@ -140,6 +119,6 @@ export function DeliveryPath() {
         <small>{stage.detail}</small>
       </li>)}
     </ol>
-    <p className="dg-delivery-outcome"><span aria-hidden="true"><AppIcon name="check" size={14} /></span><strong>Verified live application</strong> Immutable image, runtime identity, routing, and health evidence must agree before promotion.</p>
+    <p className="dg-delivery-outcome"><span aria-hidden="true"><AppIcon name="shield" size={14} /></span><strong>Promotion gate</strong> The deployed release and available runtime evidence must agree before promotion.</p>
   </section>;
 }

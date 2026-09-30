@@ -77,5 +77,5 @@ assert.match(currentState, /const awsRuntimeMonitoringEnabled = getObservability
 assert.match(currentState, /monitoring: authoritativeLiveRelease[\s\S]*!awsRuntimeMonitoringEnabled/);
 for (const selector of ["monitoring-summary-strip", "monitoring-health-grid", "monitoring-chart-grid", "monitoring-sample-chart"]) assert.match(pageStyles, new RegExp(selector));
 assert.match(pageStyles, /@media \(max-width: 600px\)[\s\S]*monitoring-summary-strip/);
-assert.match(pageStyles, /\.monitoring-log-viewer\s*\{[\s\S]*background: #071a33/, "dense log evidence remains on an opaque technical surface");
+assert.match(pageStyles, /\.monitoring-log-viewer\s*\{[\s\S]*background: var\(--technical-canvas\)/, "dense log evidence remains on the canonical opaque technical surface");
 console.log("Runtime Monitoring presentation verification passed.");

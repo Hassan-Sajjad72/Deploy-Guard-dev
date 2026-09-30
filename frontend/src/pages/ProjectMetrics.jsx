@@ -24,11 +24,12 @@ const metricDefinitions = [
 ];
 
 function label(value) {
-  return value ? String(value).replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Unavailable";
+  return value ? String(value).replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Not recorded";
 }
 
 function date(value) {
-  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Unavailable";
+  const timestamp = value ? Date.parse(value) : NaN;
+  return Number.isFinite(timestamp) ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(timestamp)) : null;
 }
 
 // CloudWatch returns averaged floats; present them at a precision an operator can read.
@@ -53,7 +54,9 @@ function MetricChart({ metric, metricKey, title, unit }) {
   const span = Math.max(1, maximum - minimum);
   const coordinates = points.map((point, index) => `${48 + (index / Math.max(1, points.length - 1)) * 528},${16 + ((maximum - Number(point.value)) / span) * 136}`).join(" ");
   const latest = points.at(-1);
-  return <ChartCard description={latest ? `Latest ${formatMetric(latest.value, unit)} · ${date(latest.timestamp)}` : undefined} hasData={points.length > 0} title={title}>
+  const latestTimestamp = date(latest?.timestamp);
+  const latestDescription = latest ? `Latest ${formatMetric(latest.value, unit)}${latestTimestamp ? ` · ${latestTimestamp}` : ""}` : undefined;
+  return <ChartCard description={latestDescription} hasData={points.length > 0} title={title}>
     <div className={`monitoring-line-chart metric-${metricKey}`}><svg aria-hidden="true" className="monitoring-sample-chart" preserveAspectRatio="none" viewBox="0 0 600 180"><text x="2" y="20">{formatMetric(maximum, unit)}</text><text x="2" y="156">{formatMetric(minimum, unit)}</text><line x1="48" x2="576" y1="16" y2="16" /><line x1="48" x2="576" y1="84" y2="84" /><line x1="48" x2="576" y1="152" y2="152" /><defs><linearGradient id={`monitoring-fill-${metricKey}`} x1="0" x2="0" y1="0" y2="1"><stop className="monitoring-fill-top" offset="0%" /><stop className="monitoring-fill-bottom" offset="100%" /></linearGradient></defs>{points.length ? <polygon className="monitoring-area" fill={`url(#monitoring-fill-${metricKey})`} points={`48,152 ${coordinates} ${48 + (points.length > 1 ? 528 : 0)},152`} /> : null}<polyline fill="none" points={coordinates} pathLength="1" vectorEffect="non-scaling-stroke" />{points.map((point, index) => { const [cx, cy] = coordinates.split(" ")[index].split(","); return <circle cx={cx} cy={cy} key={`${point.timestamp}-${index}`} r="3"><title>{date(point.timestamp)}: {formatMetric(point.value, unit)}</title></circle>; })}</svg><div className="monitoring-chart-axis"><span>{points[0] ? date(points[0].timestamp) : ""}</span><span>{latest ? date(latest.timestamp) : ""}</span></div><table className="sr-only"><caption>{title} timestamp and value series</caption><thead><tr><th>Timestamp</th><th>Value{unit ? ` (${unit})` : ""}</th></tr></thead><tbody>{points.map((point, index) => <tr key={`accessible-${point.timestamp}-${index}`}><td>{date(point.timestamp)}</td><td>{formatMetric(point.value, unit)}</td></tr>)}</tbody></table></div>
   </ChartCard>;
 }
@@ -115,7 +118,16 @@ function RuntimeLogViewer({ projectId, serviceId, live }) {
     <p className="monitoring-log-connection">{connection.message}</p>
     <label className="monitoring-log-search"><span className="sr-only">Filter logs</span><input autoComplete="off" name="logFilter" onChange={(event) => setFilter(event.target.value)} placeholder="Filter logs…" type="search" value={filter} /></label>
     <div aria-label="Live application logs" aria-live="polite" className="monitoring-log-viewer" role="log">
-      {visibleEvents.length ? visibleEvents.map((entry, index) => <div className="monitoring-log-line" key={entry.id || `${entry.timestamp}-${index}`}><time>{new Date(entry.timestamp).toLocaleTimeString()}</time><span title={entry.source}>{entry.source || "ecs/app"}</span><code>{entry.message}</code></div>) : <p className="monitoring-log-empty">{events.length ? "No log entries match this filter." : "No application log events are available yet."}</p>}
+      {visibleEvents.length ? visibleEvents.map((entry, index) => {
+        const timestamp = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
+        const hasTimestamp = Number.isFinite(timestamp);
+        const hasSource = Boolean(entry.source);
+        return <div className={`monitoring-log-line${hasTimestamp ? " has-time" : " no-time"}${hasSource ? " has-source" : " no-source"}`} key={entry.id || `${entry.timestamp}-${index}`}>
+          {hasTimestamp ? <time>{new Date(timestamp).toLocaleTimeString()}</time> : null}
+          {hasSource ? <span title={entry.source}>{entry.source}</span> : null}
+          <code>{entry.message}</code>
+        </div>;
+      }) : <p className="monitoring-log-empty">{events.length ? "No log entries match this filter." : "No application log events are available yet."}</p>}
     </div>
   </Card>;
 }
@@ -179,6 +191,7 @@ export default function ProjectMetrics() {
   const selectedService = services.find((service) => service.serviceId === selectedServiceId) || services[0] || null;
   const runtimeCharts = metricDefinitions.filter(({ key }) => (runtime?.[key]?.points || []).length > 0);
   const lastScrape = runtimeLastScrape(runtime);
+  const hasFreshness = Boolean(evidence?.freshness && String(evidence.freshness).toLowerCase() !== "unavailable");
 
   if (loading) return <LoadingState message="Loading deployment health…" />;
   if (error && !state) return <ErrorState message={error} onRetry={() => loadState({ showLoading: true })} />;
@@ -201,28 +214,28 @@ export default function ProjectMetrics() {
       <section aria-label="Metrics time range" className="monitoring-range-controls">{["1h", "6h", "24h"].map((item) => <button aria-pressed={range === item} className={range === item ? "button" : "secondary-button"} key={item} onClick={() => setRange(item)} type="button">{item}</button>)}</section>
       <span className="dg-mon-refresh">Auto-refreshes every 30 seconds</span>
     </div>
-    {destroyOperation ? <Card><strong>{destroyOperation === "running" ? "Destroy is in progress." : "The latest Destroy failed."}</strong><p>The authoritative runtime is still present, so its ECS, ALB, logs, and metrics remain available.</p></Card> : null}
+    {destroyOperation ? <Card><strong>{destroyOperation === "running" ? "Destroy is in progress." : "The latest Destroy failed."}</strong><p>The authoritative runtime is still present, so its container service, traffic routing, application logs, and telemetry remain available.</p></Card> : null}
     <div className="dg-mon-board">
     <dl aria-label="Runtime performance summary" className="monitoring-summary-strip">
       {latestMetric(runtime, "cpu", "%") ? <div><dt>CPU</dt><dd>{latestMetric(runtime, "cpu", "%")}</dd></div> : null}
       {latestMetric(runtime, "memory", "%") ? <div><dt>Memory</dt><dd>{latestMetric(runtime, "memory", "%")}</dd></div> : null}
       {latestMetric(runtime, "httpLatency", "s") ? <div><dt>Response time</dt><dd>{latestMetric(runtime, "httpLatency", "s")}</dd></div> : null}
-      {albHealth.length ? <div><dt>Health</dt><dd>{albHealth.every((item) => item === "healthy") ? "Available" : `${albHealth.filter((item) => item === "healthy").length}/${albHealth.length} healthy`}</dd></div> : null}
+      {albHealth.length ? <div><dt>Health</dt><dd>{albHealth.every((item) => item === "healthy") ? "Healthy" : `${albHealth.filter((item) => item === "healthy").length}/${albHealth.length} healthy`}</dd></div> : null}
     </dl>
     <>
-      {metricsState === "disabled_by_configuration" ? <EmptyState icon="activity" message={runtime?.message || "CloudWatch metrics are disabled by configuration."} title="Metrics disabled" /> : null}
-      {metricsState === "temporarily_unavailable" ? <EmptyState icon="activity" message={runtime?.message || "CloudWatch metrics are temporarily unavailable."} title="Metrics temporarily unavailable" /> : null}
+      {metricsState === "disabled_by_configuration" ? <EmptyState icon="activity" message={runtime?.message || "Runtime metrics are disabled by configuration."} title="Metrics disabled" /> : null}
+      {metricsState === "temporarily_unavailable" ? <EmptyState icon="activity" message={runtime?.message || "Runtime metrics are temporarily unavailable."} title="Metrics temporarily unavailable" /> : null}
       {runtimeAvailable && runtimeCharts.length ? <section aria-label="Runtime metric charts" className="monitoring-chart-grid">{runtimeCharts.map(({ key, title, unit }) => <MetricChart key={key} metric={runtime[key]} metricKey={key} title={title} unit={unit} />)}</section> : null}
-      {metricsState === "no_samples_yet" || (runtimeAvailable && !runtimeCharts.length) ? <EmptyState icon="activity" message="CloudWatch is available, but this range has no timestamped samples yet." title="No samples yet" /> : null}
+      {metricsState === "no_samples_yet" || (runtimeAvailable && !runtimeCharts.length) ? <EmptyState icon="activity" message="Telemetry is available, but this range has no timestamped samples yet." title="No samples yet" /> : null}
     </>
     </div>
     <div className="dg-mon-bottom">
-    <section className="monitoring-health-card"><details className="monitoring-health-details"><summary><span><strong>Monitoring details</strong></span><StatusChip status={evidence?.freshness}>{label(evidence?.freshness)}</StatusChip></summary>
+    <section className="monitoring-health-card"><details className="monitoring-health-details"><summary><span><strong>Monitoring details</strong></span>{hasFreshness ? <StatusChip status={evidence.freshness}>{label(evidence.freshness)}</StatusChip> : null}</summary>
       <div className="monitoring-health-grid">
         {runtime?.source ? <article><span>Telemetry source</span><strong>{runtime.source === "aws_cloudwatch" ? "Cloud monitoring" : label(runtime.source)}</strong></article> : null}
         {lastScrape ? <article><span>Last scrape</span><strong>{date(lastScrape)}</strong></article> : null}
         {evidence?.lastUpdatedAt ? <article><span>Observation time</span><strong>{date(evidence.lastUpdatedAt)}</strong></article> : null}
-        {evidence?.freshness ? <article><span>Evidence freshness</span><strong>{label(evidence.freshness)}</strong></article> : null}
+        {hasFreshness ? <article><span>Evidence freshness</span><strong>{label(evidence.freshness)}</strong></article> : null}
         {ecs ? <article><span>Service tasks</span><strong>{`${ecs.runningCount} running / ${ecs.desiredCount} desired${ecs.pendingCount ? ` / ${ecs.pendingCount} pending` : ""}`}</strong></article> : null}
         {grafanaConfigured ? <article><span>Dashboard</span><strong><a href={grafanaUrl} rel="noreferrer" target="_blank">Open Grafana</a></strong></article> : null}
       </div>

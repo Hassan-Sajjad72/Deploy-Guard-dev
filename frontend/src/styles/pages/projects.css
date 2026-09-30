@@ -5,8 +5,8 @@
 .dg-projects-title > p { color: var(--dg-ink-2); font-size: .9rem; }
 .dg-projects-title .dg-projects-summary { color: var(--dg-muted); font-size: .8rem; margin-top: 7px; }
 .dg-projects-primary { flex: 0 0 auto; }
-.dg-projects-inventory { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius-lg); min-width: 0; overflow: hidden; }
-.dg-projects-toolbar { align-items: center; border-bottom: 1px solid var(--dg-line); display: flex; flex-wrap: wrap; gap: 14px 20px; justify-content: space-between; padding: 14px 18px; }
+.dg-projects-inventory { background: var(--data-surface); border: 1px solid var(--data-line); border-radius: var(--dg-radius-lg); min-width: 0; overflow: hidden; }
+.dg-projects-toolbar { align-items: center; -webkit-backdrop-filter: var(--glass-blur-chrome); backdrop-filter: var(--glass-blur-chrome); background: var(--glass-fill-interactive); border-bottom: 1px solid var(--glass-edge-subtle); display: flex; flex-wrap: wrap; gap: 14px 20px; justify-content: space-between; padding: 14px 18px; }
 .dg-projects-search { align-items: center; background: var(--dg-surface-2); border: 1px solid var(--dg-line); border-radius: 9px; color: var(--dg-muted); display: flex; gap: 9px; max-width: 420px; min-height: 40px; padding: 0 11px; width: 100%; }
 .dg-projects-search:focus-within { background: #fff; border-color: var(--dg-primary); box-shadow: 0 0 0 3px rgba(47, 111, 237, .13); }
 .dg-projects-search .app-icon { flex: 0 0 auto; }
@@ -45,6 +45,9 @@
 .dg-projects-open { align-items: center; border: 1px solid var(--dg-line); border-radius: 8px; color: var(--dg-primary-strong); display: inline-flex; font-size: .79rem; font-weight: 560; gap: 2px; justify-content: center; min-height: 34px; padding: 6px 8px; white-space: nowrap; }
 .dg-projects-open:hover { background: var(--dg-primary-soft); border-color: var(--dg-primary-line); color: var(--dg-primary-strong); }
 
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dg-projects-toolbar { background: #f5f8fd; }
+}
 @media (max-width: 1100px) {
   .dg-projects-toolbar { align-items: stretch; }
   .dg-projects-search { max-width: none; }

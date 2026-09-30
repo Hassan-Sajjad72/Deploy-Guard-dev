@@ -14,7 +14,7 @@
 .dg-ov-domain-label { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .045em; text-transform: uppercase; }
 .dg-ov-domain a { align-items: center; color: var(--dg-primary-strong); display: flex; font-family: var(--dg-mono); font-size: .85rem; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
 .dg-ov-domain a:hover { color: var(--dg-primary-hover); text-decoration: underline; }
-.dg-ov-domain-dot { background: var(--dg-success-dot); border-radius: 50%; flex: 0 0 auto; height: 7px; width: 7px; }
+.dg-ov-domain-dot { background: var(--dg-primary); border-radius: 50%; flex: 0 0 auto; height: 7px; width: 7px; }
 .dg-ov-meta { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; display: flex; flex-wrap: wrap; margin: 0; padding: 0 14px; }
 .dg-ov-meta > div { display: grid; gap: 4px; min-width: 120px; padding: 12px 18px; position: relative; }
 .dg-ov-meta > div + div::before { background: var(--dg-line); bottom: 12px; content: ""; left: 0; position: absolute; top: 12px; width: 1px; }
@@ -32,7 +32,7 @@
 .dg-overview .overview-lifecycle-heading > .status-badge { margin-top: 2px; }
 .dg-overview .overview-state-ready { border-top: 2px solid var(--dg-primary); }
 .dg-overview .overview-lifecycle-card[data-canonical-state="LIVE"], .dg-overview .overview-state-live { border-top: 2px solid var(--dg-success-dot); }
-.dg-overview .overview-state-destroyed { border-top: 2px solid var(--dg-success-dot); }
+.dg-overview .overview-state-destroyed { border-top: 2px solid var(--dg-line-strong); }
 .dg-overview .overview-state-failed, .dg-overview .overview-state-blocked { border-top: 2px solid var(--dg-danger-dot); }
 .dg-overview .overview-state-deploying, .dg-overview .overview-state-destroying { border-top: 2px solid var(--dg-primary); }
 .dg-overview .deployment-progress-track { background: var(--dg-surface-3); height: 3px; overflow: hidden; }
@@ -53,13 +53,13 @@
 .dg-overview .overview-action-disabled { max-width: 100%; }
 
 /* Configured service roster: one row per actual service, not a second data panel. */
-.dg-ov-services { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius-lg); padding: 20px 22px 22px; }
+.dg-ov-services { background: transparent; border: 0; border-top: 1px solid var(--dg-line); border-radius: 0; padding: 18px 0 0; }
 .dg-ov-services > header { align-items: center; display: flex; gap: 14px; justify-content: space-between; margin-bottom: 13px; }
 .dg-ov-services h2 { font-size: 1.05rem; margin: 0; }
 .dg-ov-services > header > span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .72rem; }
-.dg-ov-roster { border-top: 1px solid var(--dg-line); min-width: 0; }
+.dg-ov-roster { background: var(--data-surface); border: 1px solid var(--data-line); border-radius: 12px; min-width: 0; overflow: hidden; }
 .dg-ov-roster-head, .dg-ov-roster-row { align-items: center; display: grid; gap: 14px; grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr) minmax(160px, .8fr); padding: 0 12px; }
-.dg-ov-roster-head { background: #f7f9fc; border-bottom: 1px solid var(--dg-line); color: var(--dg-muted); font-family: var(--dg-mono); font-size: .62rem; letter-spacing: .035em; min-height: 35px; text-transform: uppercase; }
+.dg-ov-roster-head { background: var(--data-surface-muted); border-bottom: 1px solid var(--data-line); color: var(--dg-muted); font-family: var(--dg-mono); font-size: .62rem; letter-spacing: .035em; min-height: 35px; text-transform: uppercase; }
 .dg-ov-roster-row { min-height: 56px; }
 .dg-ov-roster-row + .dg-ov-roster-row { border-top: 1px solid var(--dg-line); }
 .dg-ov-roster-row:hover { background: #fbfcfe; }
@@ -95,6 +95,6 @@
   .dg-overview .overview-actions .overview-action-destroy { margin-left: 0; }
   .dg-overview .overview-actions > * { flex: 1 1 auto; }
   .dg-overview .overview-lifecycle-card > .ds-stage-rail { padding-inline: 18px; }
-  .dg-ov-services { padding: 16px 14px; }
+  .dg-ov-services { padding: 16px 0 0; }
   .dg-ov-entry { white-space: normal; }
 }

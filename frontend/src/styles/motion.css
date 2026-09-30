@@ -6,6 +6,7 @@
   from { opacity: .86; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@keyframes dg-chart-reveal { to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }

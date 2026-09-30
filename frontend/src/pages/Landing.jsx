@@ -46,9 +46,9 @@ export default function Landing() {
           <div aria-hidden="true" className="dg-hero-glow" />
           <div className="dg-hero-visual dg-dark"><DeployGuardArchitecture /></div>
           <div className="dg-hero-copy">
-            <p className="dg-kicker">DeployGuard · AWS delivery platform</p>
-            <h1 id="landing-title">The future doesn’t wait for infrastructure. Neither do we.</h1>
-            <p className="landing-lead">Connect your repo. DeployGuard takes it from code to secure, running cloud infrastructure.</p>
+            <p className="dg-kicker">DeployGuard · Cloud deployments from GitHub</p>
+            <h1 id="landing-title">From repository to a verified cloud deployment.</h1>
+            <p className="landing-lead">DeployGuard builds your application, provisions its runtime, and keeps release evidence visible—without making you manage the deployment stack.</p>
             <div className="dg-hero-actions">
               {isAuthenticated ? (
                 <Link className="dg-cta" data-home-deploy="authenticated" to="/deploy">Deploy <AppIcon name="arrow" size={18} /></Link>
@@ -58,8 +58,8 @@ export default function Landing() {
               <a className="dg-cta-secondary" href="#delivery-path">How it works</a>
             </div>
             <dl className="dg-hero-facts">
-              <div><dt>Build</dt><dd>Application build · immutable ECR image</dd></div>
-              <div><dt>Runtime</dt><dd>ECS Fargate behind an ALB</dd></div>
+              <div><dt>Build</dt><dd>Versioned application image</dd></div>
+              <div><dt>Runtime</dt><dd>Container service behind a load balancer</dd></div>
               <div><dt>Evidence</dt><dd>Health, routing and cost</dd></div>
             </dl>
           </div>

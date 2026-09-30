@@ -20,7 +20,7 @@ assert.match(admin, /<Tabs/);
 for (const section of ["overview", "users", "projects", "audit"]) assert.match(admin, new RegExp(`data-admin-section="${section}"`));
 for (const label of ["GitHub OAuth", "GitHub App", "GitHub Actions", "AWS OIDC", "Terraform State Storage", "Prometheus", "Grafana"]) assert.match(admin, new RegExp(label));
 assert.match(admin, /Configured services are shown as configured; that is not the same as a verified live health check\./);
-for (const group of ["Core", "GitHub", "Execution", "Observability"]) assert.match(admin, new RegExp(`\\["${group}"`));
+for (const group of ["Core", "GitHub", "Cloud execution", "Observability"]) assert.match(admin, new RegExp(`\\["${group}"`));
 assert.match(admin, /Needs attention/);
 assert.doesNotMatch(admin, /Operation state distribution/);
 assert.match(admin, /data-admin-project-state-source="current-state"/);
