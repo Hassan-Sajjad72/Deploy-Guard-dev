@@ -13,19 +13,19 @@
 .dg-audit .admin-audit-filters { background: transparent; border: 0; padding: 0; }
 .dg-audit .ds-data-table-wrap { border-radius: 11px; }
 .dg-audit .audit-table { min-width: 890px; }
-.dg-audit .audit-table td { font-size: .74rem; }
-.dg-audit .audit-table td strong { color: var(--dg-ink); font-size: .77rem; }
+.dg-audit .audit-table td { font-size: .875rem; }
+.dg-audit .audit-table td strong { color: var(--dg-ink); font-size: .875rem; }
 .dg-audit .audit-table .audit-action { align-items: center; display: flex; gap: 12px; justify-content: space-between; min-width: 190px; }
 .dg-audit .audit-action > div { display: grid; gap: 3px; }
 .dg-audit .audit-action .button { min-height: 30px; padding: 4px 8px; }
-.dg-audit .admin-cell-detail { color: var(--dg-muted); display: block; font-size: .67rem; margin-top: 3px; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-audit .admin-cell-detail { color: var(--dg-muted); display: block; font-size: .875rem; margin-top: 3px; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dg-audit .audit-details-grid { display: grid; gap: 0 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dg-audit .audit-details-grid > article { border-bottom: 1px solid var(--dg-line); display: grid; gap: 5px; min-width: 0; padding: 10px 0; }
-.dg-audit .audit-details-grid > article > span:first-child { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .6rem; text-transform: uppercase; }
-.dg-audit .audit-details-grid > article > strong { color: var(--dg-ink-2); font-size: .77rem; overflow-wrap: anywhere; }
+.dg-audit .audit-details-grid > article > span:first-child { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; text-transform: uppercase; }
+.dg-audit .audit-details-grid > article > strong { color: var(--dg-ink-2); font-size: .875rem; overflow-wrap: anywhere; }
 .dg-audit .audit-details-evidence { border-top: 1px solid var(--dg-line); margin-top: 15px; padding-top: 13px; }
-.dg-audit .audit-details-evidence > .eyebrow { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .63rem; }
-.dg-audit .audit-details-evidence pre { background: #071a33; border: 1px solid #24466d; border-radius: 8px; color: #e7f0fd; font-family: var(--dg-mono); font-size: .69rem; line-height: 1.55; max-height: 360px; overflow: auto; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dg-audit .audit-details-evidence > .eyebrow { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; }
+.dg-audit .audit-details-evidence pre { background: #071a33; border: 1px solid #24466d; border-radius: 8px; color: #e7f0fd; font-family: var(--dg-mono); font-size: .875rem; line-height: 1.55; max-height: 360px; overflow: auto; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dg-audit .pagination { border-top: 1px solid var(--dg-line); padding-top: 13px; }
 .dg-audit .ds-empty-state { background: var(--dg-surface); border: 1px dashed var(--dg-line-strong); box-shadow: none; }
 

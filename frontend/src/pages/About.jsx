@@ -90,6 +90,7 @@ function TeamAvatar({ accent, name, photo, variant }) {
 
 export default function About() {
   return <div className="dg-about">
+    <div className="about-frame">
     <header className="dg-about-nav">
       <Link aria-label="DeployGuard home" to="/"><BrandLogo /></Link>
       <nav aria-label="Public navigation"><Link aria-current="page" className="landing-about-link" to="/about">About us</Link><PublicAdminLink /></nav>
@@ -126,5 +127,6 @@ export default function About() {
     </main>
 
     <PublicFooter />
+    </div>
   </div>;
 }

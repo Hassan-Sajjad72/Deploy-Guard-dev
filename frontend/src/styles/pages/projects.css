@@ -8,15 +8,15 @@
 .dg-projects-inventory { background: var(--data-surface); border: 1px solid var(--data-line); border-radius: var(--dg-radius-lg); min-width: 0; overflow: hidden; }
 .dg-projects-toolbar { align-items: center; -webkit-backdrop-filter: var(--glass-blur-chrome); backdrop-filter: var(--glass-blur-chrome); background: var(--glass-fill-interactive); border-bottom: 1px solid var(--glass-edge-subtle); display: flex; flex-wrap: wrap; gap: 14px 20px; justify-content: space-between; padding: 14px 18px; }
 .dg-projects-search { align-items: center; background: var(--dg-surface-2); border: 1px solid var(--dg-line); border-radius: 9px; color: var(--dg-muted); display: flex; gap: 9px; max-width: 420px; min-height: 40px; padding: 0 11px; width: 100%; }
-.dg-projects-search:focus-within { background: #fff; border-color: var(--dg-primary); box-shadow: 0 0 0 3px rgba(47, 111, 237, .13); }
+.dg-projects-search:focus-within { background: var(--dg-raised); border-color: var(--dg-primary); box-shadow: 0 0 0 3px rgba(47, 111, 237, .13); }
 .dg-projects-search .app-icon { flex: 0 0 auto; }
 .dg-projects-search input { background: transparent; border: 0; box-shadow: none; min-height: 38px; padding: 6px 0; }
 .dg-projects-search input:focus { box-shadow: none; }
 .dg-projects-filters { align-items: center; display: flex; flex-wrap: wrap; gap: 4px; }
-.dg-projects-filters button { align-items: center; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--dg-muted); display: inline-flex; font-size: .78rem; gap: 7px; min-height: 34px; padding: 6px 9px; white-space: nowrap; }
+.dg-projects-filters button { align-items: center; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--dg-muted); display: inline-flex; font-size: .875rem; gap: 7px; min-height: 34px; padding: 6px 9px; white-space: nowrap; }
 .dg-projects-filters button:hover { background: var(--dg-surface-2); color: var(--dg-ink); }
 .dg-projects-filters button.is-active { background: var(--dg-primary-soft); border-color: var(--dg-primary-line); color: var(--dg-primary-strong); font-weight: 600; }
-.dg-projects-filters button span { color: inherit; font-family: var(--dg-mono); font-size: .69rem; opacity: .8; }
+.dg-projects-filters button span { color: inherit; font-family: var(--dg-mono); font-size: .875rem; opacity: .8; }
 .project-inventory-list { min-width: 0; }
 .dg-projects-columns, .dg-projects-row {
   align-items: center;
@@ -26,27 +26,27 @@
   min-width: 920px;
   padding-inline: 20px;
 }
-.dg-projects-columns { background: #f7f9fc; border-bottom: 1px solid var(--dg-line); color: var(--dg-muted); font-family: var(--dg-mono); font-size: .63rem; letter-spacing: .04em; min-height: 39px; text-transform: uppercase; }
+.dg-projects-columns { background: var(--data-surface-muted); border-bottom: 1px solid var(--dg-line); color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; letter-spacing: .04em; min-height: 39px; text-transform: uppercase; }
 .dg-projects-row { border-bottom: 1px solid var(--dg-line); min-height: 84px; }
 .dg-projects-row:last-child { border-bottom: 0; }
-.dg-projects-row:hover { background: #fbfcfe; }
+.dg-projects-row:hover { background: var(--dg-surface-3); }
 .dg-projects-identity { align-items: center; display: flex; gap: 12px; min-width: 0; }
 .dg-projects-identity > div { min-width: 0; }
 .dg-projects-glyph { align-items: center; background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 10px; color: var(--dg-primary-strong); display: inline-flex; flex: 0 0 auto; font-size: .83rem; font-weight: 650; height: 38px; justify-content: center; width: 38px; }
 .dg-projects-identity h2 { color: var(--dg-ink); font-size: .92rem; font-weight: 590; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dg-projects-identity a:hover h2 { color: var(--dg-primary-strong); }
-.dg-projects-identity p { align-items: center; color: var(--dg-muted); display: flex; flex-wrap: wrap; font-size: .74rem; gap: 3px 12px; margin-top: 5px; min-width: 0; }
+.dg-projects-identity p { align-items: center; color: var(--dg-muted); display: flex; flex-wrap: wrap; font-size: .875rem; gap: 3px 12px; margin-top: 5px; min-width: 0; }
 .dg-projects-repo, .dg-projects-branch { align-items: center; display: inline-flex; gap: 5px; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dg-projects-repo .app-icon, .dg-projects-branch .app-icon { flex: 0 0 auto; }
 .dg-projects-cell { color: var(--dg-ink); display: grid; gap: 4px; min-width: 0; }
 .dg-projects-cell > strong { font-size: .84rem; font-variant-numeric: tabular-nums; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dg-projects-label { color: var(--dg-muted); display: none; font-family: var(--dg-mono); font-size: .61rem; letter-spacing: .035em; text-transform: uppercase; }
+.dg-projects-label { color: var(--dg-muted); display: none; font-family: var(--dg-mono); font-size: .875rem; letter-spacing: .035em; text-transform: uppercase; }
 .dg-projects-status .status-badge { justify-self: start; }
-.dg-projects-open { align-items: center; border: 1px solid var(--dg-line); border-radius: 8px; color: var(--dg-primary-strong); display: inline-flex; font-size: .79rem; font-weight: 560; gap: 2px; justify-content: center; min-height: 34px; padding: 6px 8px; white-space: nowrap; }
+.dg-projects-open { align-items: center; border: 1px solid var(--dg-line); border-radius: 8px; color: var(--dg-primary-strong); display: inline-flex; font-size: .875rem; font-weight: 560; gap: 2px; justify-content: center; min-height: 34px; padding: 6px 8px; white-space: nowrap; }
 .dg-projects-open:hover { background: var(--dg-primary-soft); border-color: var(--dg-primary-line); color: var(--dg-primary-strong); }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dg-projects-toolbar { background: #f5f8fd; }
+  .dg-projects-toolbar { background: rgba(155, 174, 193, .94); }
 }
 @media (max-width: 1100px) {
   .dg-projects-toolbar { align-items: stretch; }
@@ -71,7 +71,7 @@
   .dg-projects-primary { width: 100%; }
   .dg-projects-toolbar { padding: 12px; }
   .dg-projects-filters { gap: 3px; }
-  .dg-projects-filters button { font-size: .72rem; padding-inline: 7px; }
+  .dg-projects-filters button { font-size: .875rem; padding-inline: 7px; }
   .dg-projects-row { grid-template-columns: minmax(0, 1fr) auto; }
   .dg-projects-identity { align-items: flex-start; }
   .dg-projects-identity p { display: grid; }

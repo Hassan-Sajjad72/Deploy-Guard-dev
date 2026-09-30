@@ -18,6 +18,7 @@ export default function Landing() {
 
   return (
     <div className="landing-page dg-landing">
+      <div className="landing-frame">
       <header className="dg-landing-nav">
         <Link aria-label="DeployGuard home" className="brand landing-brand" to="/">
           <BrandLogo />
@@ -67,6 +68,7 @@ export default function Landing() {
         <DeliveryPath />
       </main>
       <PublicFooter />
+      </div>
     </div>
   );
 }

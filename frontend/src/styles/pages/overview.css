@@ -7,20 +7,20 @@
 .dg-ov-source { align-items: center; color: var(--dg-ink-2); display: flex; flex-wrap: wrap; font-size: .87rem; gap: 7px 18px; margin: 0; }
 .dg-ov-source span { align-items: center; display: inline-flex; gap: 7px; min-width: 0; overflow-wrap: anywhere; }
 .dg-ov-source .app-icon { color: var(--dg-muted); flex: 0 0 auto; }
-.dg-ov-source .is-mono { font-family: var(--dg-mono); font-size: .78rem; }
+.dg-ov-source .is-mono { font-family: var(--dg-mono); font-size: .875rem; }
 .dg-ov-domain { align-content: center; background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; display: grid; gap: 6px; min-width: 0; padding: 16px 18px; }
 /* The old decorative browser mock looked like a project screenshot; keep only the verified URL. */
 .dg-ov-window { display: none !important; }
-.dg-ov-domain-label { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .045em; text-transform: uppercase; }
+.dg-ov-domain-label { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; letter-spacing: .045em; text-transform: uppercase; }
 .dg-ov-domain a { align-items: center; color: var(--dg-primary-strong); display: flex; font-family: var(--dg-mono); font-size: .85rem; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
 .dg-ov-domain a:hover { color: var(--dg-primary-hover); text-decoration: underline; }
 .dg-ov-domain-dot { background: var(--dg-primary); border-radius: 50%; flex: 0 0 auto; height: 7px; width: 7px; }
 .dg-ov-meta { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; display: flex; flex-wrap: wrap; margin: 0; padding: 0 14px; }
 .dg-ov-meta > div { display: grid; gap: 4px; min-width: 120px; padding: 12px 18px; position: relative; }
 .dg-ov-meta > div + div::before { background: var(--dg-line); bottom: 12px; content: ""; left: 0; position: absolute; top: 12px; width: 1px; }
-.dg-ov-meta dt { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .62rem; letter-spacing: .04em; text-transform: uppercase; }
+.dg-ov-meta dt { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; letter-spacing: .04em; text-transform: uppercase; }
 .dg-ov-meta dd { color: var(--dg-ink); font-size: .82rem; font-weight: 560; margin: 0; overflow-wrap: anywhere; }
-.dg-ov-meta dd.is-mono { font-family: var(--dg-mono); font-size: .78rem; font-weight: 450; }
+.dg-ov-meta dd.is-mono { font-family: var(--dg-mono); font-size: .875rem; font-weight: 450; }
 
 /* Live lifecycle controls belong on Overview; raw job stages remain on Pipeline. */
 .dg-overview .project-overview-lifecycle { display: block; min-width: 0; }
@@ -56,18 +56,18 @@
 .dg-ov-services { background: transparent; border: 0; border-top: 1px solid var(--dg-line); border-radius: 0; padding: 18px 0 0; }
 .dg-ov-services > header { align-items: center; display: flex; gap: 14px; justify-content: space-between; margin-bottom: 13px; }
 .dg-ov-services h2 { font-size: 1.05rem; margin: 0; }
-.dg-ov-services > header > span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .72rem; }
+.dg-ov-services > header > span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; }
 .dg-ov-roster { background: var(--data-surface); border: 1px solid var(--data-line); border-radius: 12px; min-width: 0; overflow: hidden; }
 .dg-ov-roster-head, .dg-ov-roster-row { align-items: center; display: grid; gap: 14px; grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr) minmax(160px, .8fr); padding: 0 12px; }
-.dg-ov-roster-head { background: var(--data-surface-muted); border-bottom: 1px solid var(--data-line); color: var(--dg-muted); font-family: var(--dg-mono); font-size: .62rem; letter-spacing: .035em; min-height: 35px; text-transform: uppercase; }
+.dg-ov-roster-head { background: var(--data-surface-muted); border-bottom: 1px solid var(--data-line); color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; letter-spacing: .035em; min-height: 35px; text-transform: uppercase; }
 .dg-ov-roster-row { min-height: 56px; }
 .dg-ov-roster-row + .dg-ov-roster-row { border-top: 1px solid var(--dg-line); }
-.dg-ov-roster-row:hover { background: #fbfcfe; }
+.dg-ov-roster-row:hover { background: var(--dg-surface-3); }
 .dg-ov-service-name { align-items: center; display: flex; gap: 10px; min-width: 0; }
 .dg-ov-service-name strong { color: var(--dg-ink); font-size: .85rem; font-weight: 570; overflow: hidden; text-overflow: ellipsis; }
 .dg-ov-service-mark { align-items: center; background: var(--dg-surface-3); border-radius: 8px; color: var(--dg-ink-2); display: inline-flex; flex: 0 0 auto; height: 30px; justify-content: center; width: 30px; }
-.dg-ov-service-dir { color: var(--dg-ink-2); font-family: var(--dg-mono); font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dg-ov-entry { align-items: center; background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 999px; color: var(--dg-primary-strong); display: inline-flex; font-size: .7rem; font-weight: 560; gap: 6px; padding: 4px 9px; white-space: nowrap; }
+.dg-ov-service-dir { color: var(--dg-ink-2); font-family: var(--dg-mono); font-size: .875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-ov-entry { align-items: center; background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 999px; color: var(--dg-primary-strong); display: inline-flex; font-size: .875rem; font-weight: 560; gap: 6px; padding: 4px 9px; white-space: nowrap; }
 .dg-ov-entry::before { background: var(--dg-primary); border-radius: 50%; content: ""; height: 6px; width: 6px; }
 .dg-ov-internal { color: var(--dg-faint); }
 

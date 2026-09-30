@@ -18,12 +18,14 @@ export default function AppLayout() {
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
-      <Sidebar isOpen={navigationOpen} onClose={() => setNavigationOpen(false)} projectId={selectedProjectId} />
-      <div className="main-area" inert={navigationOpen ? "" : undefined}>
-        <Navbar navigationOpen={navigationOpen} onOpenNavigation={() => setNavigationOpen(true)} />
-        <main className="content page-transition" id="main-content" tabIndex={-1}>
-          <Outlet />
-        </main>
+      <div className="app-frame">
+        <Sidebar isOpen={navigationOpen} onClose={() => setNavigationOpen(false)} projectId={selectedProjectId} />
+        <div className="main-area" inert={navigationOpen ? "" : undefined}>
+          <Navbar navigationOpen={navigationOpen} onOpenNavigation={() => setNavigationOpen(true)} />
+          <main className="content page-transition" id="main-content" tabIndex={-1}>
+            <Outlet />
+          </main>
+        </div>
       </div>
     </div>
   );

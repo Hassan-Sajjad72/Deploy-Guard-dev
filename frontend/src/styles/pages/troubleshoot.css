@@ -8,58 +8,58 @@
 .dg-ts-side { position: sticky; top: 95px; }
 .dg-ts-side > .ds-card { display: grid; gap: 14px; }
 .dg-ts-side h2 { color: var(--dg-ink); font-size: .98rem; }
-.dg-ts-side > .ds-card > div:first-child p:not(.eyebrow) { color: var(--dg-muted); font-size: .76rem; line-height: 1.5; margin-top: 5px; }
+.dg-ts-side > .ds-card > div:first-child p:not(.eyebrow) { color: var(--dg-muted); font-size: .875rem; line-height: 1.5; margin-top: 5px; }
 .dg-ts-side .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .dg-ts-side .quick-actions > * { flex: 1 1 auto; }
-.dg-ts-side .muted { color: var(--dg-muted); font-size: .75rem; line-height: 1.5; }
+.dg-ts-side .muted { color: var(--dg-muted); font-size: .875rem; line-height: 1.5; }
 .dg-ts-issue, .troubleshooting-diagnosis, .dg-ts-main > .ds-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; min-width: 0; padding: clamp(16px, 2.5vw, 22px); }
 .dg-ts-issue { border-top: 2px solid var(--dg-danger-dot); display: grid; gap: 13px; }
 .dg-ts-issue .compact-section-heading, .troubleshooting-diagnosis .compact-section-heading { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 0; }
 .dg-ts-issue .compact-section-heading h2 { color: var(--dg-ink); font-size: 1.04rem; }
 .troubleshooting-operation-grid { display: grid; gap: 0 16px; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
 .troubleshooting-operation-grid article { border-top: 1px solid var(--dg-line); display: grid; gap: 4px; min-width: 0; padding: 9px 8px 9px 0; }
-.troubleshooting-operation-grid article span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .6rem; letter-spacing: .035em; text-transform: uppercase; }
-.troubleshooting-operation-grid article strong { color: var(--dg-ink-2); font-size: .78rem; font-weight: 550; overflow-wrap: anywhere; }
+.troubleshooting-operation-grid article span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; letter-spacing: .035em; text-transform: uppercase; }
+.troubleshooting-operation-grid article strong { color: var(--dg-ink-2); font-size: .875rem; font-weight: 550; overflow-wrap: anywhere; }
 .troubleshooting-failure-summary { color: var(--dg-ink-2); font-size: .83rem; line-height: 1.55; }
-.dg-ts-issue > .state.warning { background: var(--dg-warning-soft); border-left: 3px solid var(--dg-warning-dot); border-radius: 0 8px 8px 0; color: var(--dg-ink-2); font-size: .79rem; padding: 10px 12px; }
+.dg-ts-issue > .state.warning { background: var(--dg-warning-soft); border-left: 3px solid var(--dg-warning-dot); border-radius: 0 8px 8px 0; color: var(--dg-ink-2); font-size: .875rem; padding: 10px 12px; }
 .troubleshooting-advanced { border-top: 1px solid var(--dg-line); padding-top: 10px; }
-.troubleshooting-advanced > summary { color: var(--dg-primary-strong); cursor: pointer; font-size: .77rem; font-weight: 560; }
-.troubleshooting-advanced > p { color: var(--dg-ink-2); font-size: .76rem; margin-top: 8px; }
+.troubleshooting-advanced > summary { color: var(--dg-primary-strong); cursor: pointer; font-size: .875rem; font-weight: 560; }
+.troubleshooting-advanced > p { color: var(--dg-ink-2); font-size: .875rem; margin-top: 8px; }
 .troubleshooting-advanced > p strong { color: var(--dg-ink); }
 .troubleshooting-diagnosis { display: grid; gap: 15px; }
 .troubleshooting-diagnosis .compact-section-heading h2 { color: var(--dg-ink); font-size: 1.08rem; }
 .troubleshooting-diagnosis .compact-section-heading p { color: var(--dg-ink-2); font-size: .84rem; line-height: 1.5; margin-top: 5px; }
 .troubleshooting-diagnosis > section { border-top: 1px solid var(--dg-line); display: grid; gap: 8px; padding-top: 13px; }
 .troubleshooting-diagnosis > section h3 { color: var(--dg-ink); font-size: .84rem; }
-.troubleshooting-diagnosis > section p { color: var(--dg-ink-2); font-size: .79rem; line-height: 1.55; }
-.troubleshooting-diagnosis .remediation-list { color: var(--dg-ink-2); display: grid; font-size: .78rem; gap: 7px; line-height: 1.5; margin: 0; padding-left: 20px; }
+.troubleshooting-diagnosis > section p { color: var(--dg-ink-2); font-size: .875rem; line-height: 1.55; }
+.troubleshooting-diagnosis .remediation-list { color: var(--dg-ink-2); display: grid; font-size: .875rem; gap: 7px; line-height: 1.5; margin: 0; padding-left: 20px; }
 .troubleshooting-diagnosis .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .troubleshooting-diagnosis .quick-actions button { text-align: left; white-space: normal; }
 .troubleshooting-evidence-groups { border-top: 1px solid var(--dg-line); display: grid; margin-top: 14px; }
 .troubleshooting-evidence-groups > details { border-bottom: 1px solid var(--dg-line); }
 .troubleshooting-evidence-groups > details > summary { align-items: center; color: var(--dg-ink); cursor: pointer; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; list-style: none; min-height: 43px; padding: 9px 3px; }
 .troubleshooting-evidence-groups > details > summary::-webkit-details-marker { display: none; }
-.troubleshooting-evidence-groups > details > summary span { background: var(--dg-surface-3); border-radius: 999px; color: var(--dg-muted); font-family: var(--dg-mono); font-size: .61rem; padding: 3px 7px; }
+.troubleshooting-evidence-groups > details > summary span { background: var(--dg-surface-3); border-radius: 999px; color: var(--dg-muted); font-family: var(--dg-mono); font-size: .875rem; padding: 3px 7px; }
 .troubleshooting-evidence-groups > details ol { display: grid; gap: 9px; list-style: none; margin: 0; padding: 0 0 12px; }
 .troubleshooting-evidence-groups > details li { min-width: 0; }
-.troubleshooting-evidence-groups > details li > div { align-items: baseline; color: var(--dg-muted); display: flex; flex-wrap: wrap; font-family: var(--dg-mono); font-size: .62rem; gap: 7px 12px; justify-content: space-between; padding: 7px 0; }
+.troubleshooting-evidence-groups > details li > div { align-items: baseline; color: var(--dg-muted); display: flex; flex-wrap: wrap; font-family: var(--dg-mono); font-size: .875rem; gap: 7px 12px; justify-content: space-between; padding: 7px 0; }
 .troubleshooting-evidence-groups > details li > div strong { color: var(--dg-ink-2); font-weight: 550; }
-.troubleshooting-evidence-groups > details pre { background: #071a33; border: 1px solid #24466d; border-radius: 8px; color: #e7f0fd; font-family: var(--dg-mono); font-size: .68rem; line-height: 1.55; margin: 0; max-height: 340px; overflow: auto; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.troubleshooting-evidence-groups > details pre { background: #071a33; border: 1px solid #24466d; border-radius: 8px; color: #e7f0fd; font-family: var(--dg-mono); font-size: .875rem; line-height: 1.55; margin: 0; max-height: 340px; overflow: auto; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .troubleshooting-chat { display: grid; gap: 14px; }
 .troubleshooting-chat h2 { color: var(--dg-ink); font-size: .98rem; }
-.troubleshooting-chat > div:first-child p:not(.eyebrow) { color: var(--dg-muted); font-size: .77rem; line-height: 1.5; margin-top: 5px; }
+.troubleshooting-chat > div:first-child p:not(.eyebrow) { color: var(--dg-muted); font-size: .875rem; line-height: 1.5; margin-top: 5px; }
 .troubleshooting-chat-history { border: 1px solid var(--dg-line); border-radius: 10px; display: grid; gap: 0; max-height: 430px; overflow: auto; padding: 5px 12px; }
 .troubleshooting-chat-history article { border-bottom: 1px solid var(--dg-line); display: grid; gap: 5px; padding: 11px 0; }
 .troubleshooting-chat-history article:last-child { border-bottom: 0; }
-.troubleshooting-chat-history article > strong { color: var(--dg-primary-strong); font-family: var(--dg-mono); font-size: .65rem; text-transform: uppercase; }
+.troubleshooting-chat-history article > strong { color: var(--dg-primary-strong); font-family: var(--dg-mono); font-size: .875rem; text-transform: uppercase; }
 .troubleshooting-chat-history article[data-role="assistant"] > strong { color: var(--dg-ink); }
-.troubleshooting-chat-history article > p { color: var(--dg-ink-2); font-size: .79rem; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
-.troubleshooting-chat-history > .muted { color: var(--dg-muted); font-size: .76rem; padding: 10px 0; }
+.troubleshooting-chat-history article > p { color: var(--dg-ink-2); font-size: .875rem; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.troubleshooting-chat-history > .muted { color: var(--dg-muted); font-size: .875rem; padding: 10px 0; }
 .troubleshooting-followup { align-items: end; display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto; }
 .troubleshooting-followup textarea { min-height: 88px; }
 .troubleshooting-followup button { margin-bottom: 1px; }
 .session-list { display: grid; gap: 6px; }
-.session-list button { font-size: .7rem; justify-content: flex-start; overflow-wrap: anywhere; text-align: left; white-space: normal; }
+.session-list button { font-size: .875rem; justify-content: flex-start; overflow-wrap: anywhere; text-align: left; white-space: normal; }
 .troubleshooting-empty-page .ds-empty-state { background: var(--dg-surface); border: 1px dashed var(--dg-line-strong); box-shadow: none; }
 
 @media (max-width: 950px) {

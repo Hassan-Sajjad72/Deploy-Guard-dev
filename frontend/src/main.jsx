@@ -1,4 +1,3 @@
-import "./styles/system.css";
 import "./styles/pages/about.css";
 import "./styles/pages/admin.css";
 import "./styles/pages/audit.css";
@@ -16,6 +15,7 @@ import "./styles/pages/projects.css";
 import "./styles/pages/settings.css";
 import "./styles/pages/troubleshoot.css";
 import "./styles/motion.css";
+import "./styles/system.css";
 
 import React from "react";
 import ReactDOM from "react-dom/client";
