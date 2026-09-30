@@ -185,3 +185,22 @@
 .dg-admin-login h1 { color: #fff; letter-spacing: -.04em; }
 .dg-admin-login .eyebrow { color: #8ff0d8; font-family: var(--dg-mono); letter-spacing: .12em; }
 :root:root .dg-admin .admin-shell-header { -webkit-backdrop-filter: var(--au-glass-filter); backdrop-filter: var(--au-glass-filter); background: linear-gradient(180deg, rgba(255, 255, 255, .06), transparent 30%), rgba(11, 16, 33, .66); border-color: rgba(255, 255, 255, .1); box-shadow: var(--au-edge), var(--au-depth-2); }
+
+/* Group service evidence by responsibility without adding dashboard cards. */
+.dg-admin .admin-attention, .dg-admin .admin-service-groups { border: 1px solid var(--dg-line); }
+.dg-admin .admin-attention { border-color: var(--dg-danger-line); margin-top: 16px; padding: 16px; }
+.dg-admin :is(.admin-attention, .admin-service-groups) h3 { color: var(--dg-ink); font-size: .78rem; letter-spacing: .06em; margin: 0; text-transform: uppercase; }
+.dg-admin :is(.admin-attention, .admin-service-groups) ul { list-style: none; margin: 10px 0 0; padding: 0; }
+.dg-admin :is(.admin-attention, .admin-service-groups) li { align-items: center; border-top: 1px solid var(--dg-line); display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto auto; padding: 11px 0; }
+.dg-admin :is(.admin-attention, .admin-service-groups) li:first-child { border-top: 0; }
+.dg-admin .admin-service-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 16px; }
+.dg-admin .admin-service-groups > section { padding: 16px; }
+.dg-admin .admin-service-groups > section:nth-child(odd) { border-right: 1px solid var(--dg-line); }
+.dg-admin .admin-service-groups > section:nth-child(n + 3) { border-top: 1px solid var(--dg-line); }
+.dg-admin .admin-service-groups details { color: var(--dg-muted); font-size: .76rem; }
+.dg-admin .admin-service-groups summary { cursor: pointer; }
+@media (max-width: 760px) {
+  .dg-admin .admin-service-groups { grid-template-columns: 1fr; }
+  .dg-admin .admin-service-groups > section { border-right: 0; border-top: 1px solid var(--dg-line); }
+  .dg-admin .admin-service-groups > section:first-child { border-top: 0; }
+}

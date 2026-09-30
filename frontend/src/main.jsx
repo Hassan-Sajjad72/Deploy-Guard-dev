@@ -6,10 +6,7 @@ import "./styles/legacy.css";
 import "./styles/system.css";
 import "./styles/aurora.css";
 import "./styles/aurora-motion.css";
-/*
- * Keep route styles in the entry bundle so the cohesion contract below is
- * always the final cascade layer, including after lazy routes are loaded.
- */
+/* Keep route styles in the entry bundle so lazy routes share one cascade. */
 import "./styles/pages/about.css";
 import "./styles/pages/admin.css";
 import "./styles/pages/audit.css";
@@ -30,7 +27,6 @@ import "./styles/cohesion.css";
 import { installActionFeedback } from "./utils/actionFeedback.js";
 import { installSurfaceLight } from "./utils/surfaceLight.js";
 
-document.documentElement.dataset.theme = "dark";
 installActionFeedback();
 installSurfaceLight();
 

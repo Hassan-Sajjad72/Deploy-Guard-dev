@@ -186,3 +186,7 @@
   .dg-overview .overview-summary-grid .metric-card + .metric-card { border-left: 0; border-top: 1px dashed var(--dg-line-strong); }
 }
 @media (prefers-reduced-motion: reduce) { .dg-overview .ds-stage-rail .is-running::before, .dg-ov-domain-dot { animation: none; } }
+
+.dg-ov-head { gap: 22px; }
+.dg-ov-domain { max-width: 340px; }
+.dg-ov-meta { min-height: 0; }

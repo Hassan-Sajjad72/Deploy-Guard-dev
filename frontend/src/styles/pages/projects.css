@@ -9,6 +9,12 @@
   --pj-live: var(--au-ok); --pj-deploy: var(--au-run); --pj-fail: var(--au-bad); --pj-block: var(--au-warn); --pj-idle: #6a7696;
   gap: 24px; margin: 0 auto; max-width: 1280px;
 }
+
+/* Inventory follows a concise page-level summary. */
+.dg-projects-head { align-items: end; grid-template-columns: minmax(0, 1fr) auto; }
+.dg-projects-summary { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .78rem; letter-spacing: .01em; margin-top: 14px; }
+.dg-projects-inventory { border-radius: var(--dg-radius); }
+@media (max-width: 760px) { .dg-projects-head { grid-template-columns: 1fr; } }
 .dg-projects-kicker { color: color-mix(in srgb, var(--au-cyan) 55%, white); font-family: var(--dg-mono); font-size: .68rem; letter-spacing: .14em; margin: 0; text-transform: uppercase; }
 
 /* ---------- Header: title · tally · action / spectrum ---------- */

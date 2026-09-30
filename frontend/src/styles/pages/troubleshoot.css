@@ -193,3 +193,13 @@
 .dg-trouble .troubleshooting-chat-history article { border-radius: var(--au-r-sm); }
 .dg-trouble .troubleshooting-chat-history article[data-role="user"] { background: rgba(160, 178, 232, .08); }
 .dg-trouble .troubleshooting-provider-meta { color: var(--au-muted); font-family: var(--dg-mono); font-size: .74rem; }
+
+/* Primary diagnosis stays light; raw evidence is the technical island. */
+.dg-trouble { color: var(--dg-ink); }
+:root:root .dg-trouble .ds-card { background: var(--dg-surface); border-color: var(--dg-line); color: var(--dg-ink); }
+:root:root .dg-trouble .dg-ts-issue { background: var(--dg-danger-soft); border-color: var(--dg-danger-line); border-left-width: 1px; }
+:root:root .dg-trouble .troubleshooting-diagnosis { background: var(--dg-surface); border: 1px solid var(--dg-line-strong); box-shadow: var(--dg-shadow-md); }
+.dg-trouble .troubleshooting-advanced { border-top: 1px solid var(--dg-line); color: var(--dg-muted); margin-top: 16px; padding-top: 14px; }
+.dg-trouble .troubleshooting-advanced summary { color: var(--dg-ink-2); cursor: pointer; font-weight: 600; }
+:root:root .dg-trouble .troubleshooting-evidence-groups details,
+:root:root .dg-trouble :is(pre, .troubleshooting-evidence-groups pre) { background: var(--dg-night); border-color: var(--dg-night-line); color: var(--dg-night-ink); }

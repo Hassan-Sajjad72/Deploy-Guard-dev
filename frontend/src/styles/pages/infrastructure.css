@@ -475,3 +475,19 @@
 .dg-infra .infrastructure-source { background: rgba(45, 212, 168, .1); border-color: rgba(45, 212, 168, .3); color: var(--pg-strong); }
 :root:root .dg-infra .infrastructure-inventory-card { background: var(--au-ink-surface) !important; border: 1px solid var(--au-ink-line); }
 @media (prefers-reduced-motion: reduce) { .itw-body::after { display: none; } }
+
+/* Light operating shell; architecture remains the intentional technical island. */
+.dg-infra-light { background: transparent; color: var(--dg-ink); padding: clamp(20px, 3vw, 44px); }
+.dg-infra-light .infra-topology-map { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.dg-infra-light .itw-bar { background: transparent; border: 0; padding: 0 0 16px; }
+.dg-infra-light .itw-bar h2 { color: var(--dg-ink); font-size: clamp(1.5rem, 2.5vw, 2.15rem); }
+.dg-infra-light .itw-bar p { color: var(--dg-muted); margin: 6px 0 0; }
+.dg-infra-light .itw-chip { background: var(--dg-surface); border-color: var(--dg-line); color: var(--dg-ink-2); }
+:root:root .dg-infra-light .itw-body { background: linear-gradient(145deg, #07162d, #0c2545); border: 0; border-radius: 16px; box-shadow: 0 22px 48px -34px rgba(7, 22, 45, .75); }
+.dg-infra-light .itw-node, .dg-infra-light .itw-node.is-hub { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); background: rgba(255, 255, 255, .1); border-color: rgba(214, 231, 249, .24); }
+.dg-infra-light .itw-inspector { -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); background: rgba(4, 18, 37, .78); }
+:root:root .dg-infra-light .infrastructure-summary-grid { background: var(--dg-surface); border-color: var(--dg-line); box-shadow: var(--dg-shadow); }
+:root:root .dg-infra-light .infrastructure-summary-grid .metric-card { color: var(--dg-ink); }
+:root:root .dg-infra-light .infrastructure-summary-grid .metric-card strong { color: var(--dg-ink); }
+:root:root .dg-infra-light .infra-columns :is(.ds-card, .infrastructure-finops-card),
+:root:root .dg-infra-light .infrastructure-inventory-card { background: var(--dg-surface); border-color: var(--dg-line); box-shadow: var(--dg-shadow); }

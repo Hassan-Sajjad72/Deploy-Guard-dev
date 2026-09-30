@@ -7,6 +7,7 @@ const page = read("../src/pages/ProjectMetrics.jsx");
 const sidebar = read("../src/components/layout/Sidebar.jsx");
 const styles = read("../src/styles.css");
 const designSystem = read("../src/design-system.css");
+const monitoringStyles = read("../src/styles/pages/monitoring.css");
 const routes = read("../src/routes/AppRoutes.jsx");
 const currentState = read("../../backend/src/projects/current-state/project-current-state.service.ts");
 const api = read("../src/api/projectApi.js");
@@ -75,7 +76,6 @@ assert.notEqual(grafanaA, grafanaB, "switching service changes the Grafana deep-
 assert.doesNotMatch(page, /<span>LIVE generation<\/span>/, "generation identity belongs in technical Infrastructure details");
 assert.match(currentState, /const awsRuntimeMonitoringEnabled = getObservabilityConfig\(this\.config\)\.awsRuntimeMonitoringEnabled/);
 assert.match(currentState, /monitoring: authoritativeLiveRelease[\s\S]*!awsRuntimeMonitoringEnabled/);
-const cohesion = read("../src/styles/cohesion.css");
-for (const selector of ["monitoring-summary-strip", "monitoring-health-grid", "monitoring-chart-grid", "monitoring-sample-chart"]) assert.ok(styles.includes(selector) || designSystem.includes(selector) || cohesion.includes(selector));
-assert.match(cohesion, /@media \(max-width: 760px\)[\s\S]*monitoring-summary-strip/);
+for (const selector of ["monitoring-summary-strip", "monitoring-health-grid", "monitoring-chart-grid", "monitoring-sample-chart"]) assert.ok(styles.includes(selector) || designSystem.includes(selector) || monitoringStyles.includes(selector));
+assert.match(monitoringStyles, /@media \(max-width: 760px\)[\s\S]*monitoring-summary-strip/);
 console.log("Runtime Monitoring presentation verification passed.");

@@ -158,7 +158,7 @@
 
 .dg-hero-visual { perspective: 1600px; }
 .dg-hero-visual > * {
-  border-radius: 20px; padding: 18px; transform: rotateY(-10deg) rotateX(6deg); transform-origin: 30% 50%; transition: transform 600ms var(--dg-ease);
+  background: linear-gradient(145deg, #07162d, #0c2545); border: 1px solid var(--dg-night-line-strong); border-radius: 20px; box-shadow: 0 24px 54px -34px rgba(7, 22, 45, .78); padding: 18px; transform: rotateY(-10deg) rotateX(6deg); transform-origin: 30% 50%; transition: transform 600ms var(--dg-ease);
 }
 .dg-hero-visual:hover > * { transform: rotateY(-3deg) rotateX(2deg); }
 /* Boundaries carry weight: heavier strokes, an inner wash, and a tag on the top edge. */
@@ -189,7 +189,7 @@
 
 /* Delivery path: a lit runway. */
 .dg-landing-main > .dg-delivery {
-  border-radius: 20px;
+  background: linear-gradient(145deg, #07162d, #0c2545); border: 1px solid var(--dg-night-line); border-radius: 20px;
 }
 .dg-landing-main > .dg-delivery .dg-kicker { color: var(--dg-primary-ink); }
 .dg-landing-main > .dg-delivery .dg-delivery-intro h2 { font-size: clamp(2.2rem, 4vw, 3.4rem); font-weight: 620; letter-spacing: -.05em; }
@@ -203,24 +203,7 @@
 .dg-landing .public-footer { border-top-color: var(--dg-line); }
 
 @media (max-width: 1080px) { .dg-hero-visual > * { transform: none; } .dg-hero { min-height: 0; } }
-@media (min-width: 1081px) { .dg-hero { grid-template-columns: minmax(0, 6fr) minmax(0, 6fr); } }
+@media (min-width: 1081px) { .dg-hero { grid-template-columns: minmax(300px, 4fr) minmax(0, 8fr); } }
 .dg-hero-copy h1 { font-size: clamp(2.8rem, 4.8vw, 4.6rem); }
 @media (max-width: 1080px) { .dg-hero { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .dg-hero-copy h1 { font-size: clamp(2.2rem, 10vw, 2.9rem); } }
-
-/* =====================================================================
- * Aurora direction — Landing: cyan / violet / orange, fully expressive.
- * Headline in lit ink, an orange → pink ignition CTA, the architecture held
- * in a pane of glass that catches the fields behind it.
- * ===================================================================== */
-.dg-kicker { color: #9eeefa; font-family: var(--dg-mono); font-weight: 500; letter-spacing: .14em; }
-.dg-hero-copy h1 { background: linear-gradient(100deg, #fff 30%, #d7e3ff 55%, #ffc9a8 80%, #ffb3d9); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: clamp(2.7rem, 4.8vw, 4.4rem); font-weight: 750; letter-spacing: -.055em; }
-:root:root .dg-landing .dg-cta { background: linear-gradient(105deg, transparent calc(var(--sheen) - 18%), rgba(255, 255, 255, .6) var(--sheen), transparent calc(var(--sheen) + 18%)), linear-gradient(180deg, rgba(255, 255, 255, .3), transparent 55%), linear-gradient(120deg, #ff8a3d, #ec4899); border: 1px solid rgba(255, 255, 255, .25); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 16px 36px -12px rgba(236, 72, 153, .85), 0 0 34px -10px rgba(255, 138, 61, .8); color: #1a0714; min-height: 50px; padding: 12px 24px; }
-:root:root .dg-landing .dg-cta:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), 0 22px 44px -12px rgba(236, 72, 153, .95), 0 0 44px -8px rgba(255, 138, 61, .9); color: #1a0714; }
-:root:root .dg-landing .dg-cta-secondary { background: linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .03)); border: 1px solid rgba(255, 255, 255, .22); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16); color: #fff; min-height: 50px; }
-.dg-hero-facts { border-top-color: rgba(255, 255, 255, .14); }
-.dg-hero-facts dt { color: #9eeefa; font-family: var(--dg-mono); font-weight: 500; letter-spacing: .12em; }
-:root:root .dg-hero-visual > * { border-radius: var(--au-r-xl); }
-.dg-landing .landing-about-link:hover { background: rgba(255, 255, 255, .08); color: #fff; }
-:root:root .dg-landing .landing-admin-link, :root:root .landing-admin-link { background: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .03)); border: 1px solid rgba(255, 255, 255, .2); border-radius: 999px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14); color: #fff; }
-.dg-landing .landing-account-menu summary { background: linear-gradient(135deg, #22d3ee, #8b5cf6); color: #fff; }

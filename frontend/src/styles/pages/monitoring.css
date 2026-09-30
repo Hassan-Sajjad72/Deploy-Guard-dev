@@ -119,3 +119,25 @@
 
 @media (max-width: 640px) { .dg-mon-toolbar { border-radius: var(--au-r-lg); padding: 12px 14px; } }
 @media (max-width: 640px) { :root:root .dg-monitor .monitoring-summary-grid .metric-card strong { font-size: 1.9rem; } }
+
+/* One readable summary strip, spacious charts, and a dark log instrument. */
+.dg-ground-light { background: transparent; color: var(--dg-ink); padding: clamp(20px, 3vw, 44px); }
+:root:root .dg-ground-light .dg-mon-toolbar,
+:root:root .dg-ground-light .monitoring-summary-strip,
+:root:root .dg-ground-light .monitoring-chart-grid .ds-chart-card,
+:root:root .dg-ground-light .monitoring-health-card { background: var(--dg-surface); border-color: var(--dg-line); box-shadow: var(--dg-shadow); }
+.dg-ground-light .monitoring-summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.dg-ground-light .monitoring-summary-strip > div { border-left: 1px solid var(--dg-line); padding: 16px; }
+.dg-ground-light .monitoring-summary-strip > div:first-child { border-left: 0; }
+.dg-ground-light .monitoring-summary-strip dt { color: var(--dg-muted); font-size: .7rem; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+.dg-ground-light .monitoring-summary-strip dd { color: var(--dg-ink); font-size: 1.45rem; font-variant-numeric: tabular-nums; font-weight: 620; margin: 5px 0 0; }
+.dg-ground-light .monitoring-chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dg-ground-light .monitoring-chart-grid .ds-chart-card :is(h2, p) { color: var(--dg-ink); }
+.dg-ground-light .monitoring-health-details strong, .dg-ground-light .monitoring-health-grid strong { color: var(--dg-ink); }
+:root:root .dg-ground-light .monitoring-log-card { background: var(--dg-night); border-color: var(--dg-night-line); box-shadow: none; }
+.dg-ground-light .monitoring-log-card :is(h2, p, .monitoring-log-connection) { color: var(--dg-night-ink); }
+@media (max-width: 760px) {
+  .dg-ground-light .monitoring-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dg-ground-light .monitoring-summary-strip > div:nth-child(odd) { border-left: 0; }
+  .dg-ground-light .monitoring-summary-strip > div:nth-child(n + 3) { border-top: 1px solid var(--dg-line); }
+}

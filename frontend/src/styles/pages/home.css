@@ -205,3 +205,18 @@
   .dg-home-row .dg-home-progress { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .dg-home-panel::after { animation: none; display: none; } }
+
+/* Information architecture: one compact fleet summary before active work. */
+.dg-home-hero { grid-template-columns: minmax(0, 1fr) auto; padding-bottom: 18px; }
+.dg-home-summary { align-self: end; border: 1px solid var(--dg-line); display: grid; grid-template-columns: repeat(4, minmax(92px, 1fr)); margin: 0; max-width: 530px; }
+.dg-home-summary > div { border-left: 1px solid var(--dg-line); padding: 12px 15px; }
+.dg-home-summary > div:first-child { border-left: 0; }
+.dg-home-summary dt { color: var(--dg-muted); font-size: .68rem; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.dg-home-summary dd { color: var(--dg-ink); font-size: 1.45rem; font-variant-numeric: tabular-nums; font-weight: 620; margin: 4px 0 0; }
+.dg-home-panel > header > div > p { color: var(--dg-muted); font-size: .84rem; margin: 5px 0 0; }
+@media (max-width: 760px) {
+  .dg-home-hero { grid-template-columns: 1fr; }
+  .dg-home-summary { max-width: none; width: 100%; }
+  .dg-home-summary > div { padding: 10px; }
+  .dg-home-summary dd { font-size: 1.18rem; }
+}

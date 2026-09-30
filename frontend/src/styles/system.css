@@ -1,25 +1,21 @@
 /*
  * DeployGuard design system.
  *
- * Identity is carried by type (Geist / Geist Mono), the brand pair from the
- * mark (ink #172033 + signal lime #b8f34a), controls, spacing and motion.
+ * Identity is carried by type (Geist / Geist Mono), cool blue emphasis,
+ * controls, spacing and motion.
  * One tonal system for every page: a shared neutral light ground and a shared
  * neutral dark ground. Pages differ by composition, density and surfaces —
- * not by palette. Colour is reserved for meaning, and each hue has one job:
- *   lime    brand, primary emphasis, completion
- *   signal  selection, focus, links, the primary data series (blue)
- *   aws     AWS / cloud boundaries only (orange)
- *   state   success green · warning amber · danger red · info blue
+ * not by palette. Colour is reserved for meaning: cool blue carries product
+ * actions, focus, links and data; green, amber and red are status-only.
  * Every shared primitive is written against tokens only, so it renders
  * correctly on either ground.
  *
  *   light ground   default (:root)
- *   dark ground    .dg-dark or [data-ground="night"] (a night panel inside a
- *                  light page), or any page root carrying .dg-ground-dark
- *                  (the shell, portalled modals and drawers follow it)
+ *   dark ground    .dg-dark or [data-ground="night"] on intentional technical
+ *                  islands; the surrounding product shell stays light
  *
  * Page accent contract. Pages should not set these to their own hue; the
- * defaults are ink on the light ground and lime on the dark ground.
+ * defaults use the same controlled blue family on both grounds.
  *   --pg-accent   emphasis, active markers, chart/diagram highlights
  *   --pg-ink      accent used as text (contrast-safe on the page ground)
  *   --pg-soft     tinted fill       --pg-line   tinted border
@@ -34,14 +30,15 @@
   --dg-mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --dg-serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
 
-  --dg-brand-ink: #172033;
-  --dg-brand-night: #0a0f1c;
-  --dg-lime: #b8f34a;
-  --dg-lime-hover: #c8f86a;
-  --dg-lime-deep: #5b8a0a;
-  --dg-aws: #ff9900;
-  --dg-aws-ink: #b45309;
-  --dg-aws-soft: #fff5e6;
+  --dg-brand-ink: #101828;
+  --dg-brand-night: #08162d;
+  /* Legacy names remain as compatibility aliases; blue is the only product accent. */
+  --dg-lime: #2563eb;
+  --dg-lime-hover: #1d4ed8;
+  --dg-lime-deep: #1e40af;
+  --dg-aws: #2563eb;
+  --dg-aws-ink: #1d4ed8;
+  --dg-aws-soft: #eff6ff;
 
   --dg-radius: 12px;
   --dg-radius-sm: 8px;
@@ -60,31 +57,31 @@
    *   porcelain  raised: inputs, featured sheets, modals
    *   snow       rare near-white highlight
    */
-  --dg-mist: #e1e7ee; --dg-silver: #d9e0e9; --dg-frost: #eaeff5; --dg-pearl: #f3f6f9; --dg-porcelain: #f7f9fb; --dg-snow: #fbfcfd;
+  --dg-mist: #f5f7fb; --dg-silver: #e8edf4; --dg-frost: #f1f4f8; --dg-pearl: #ffffff; --dg-porcelain: #ffffff; --dg-snow: #ffffff;
   --dg-canvas: var(--dg-mist);
   --dg-surface: var(--dg-pearl);
   --dg-surface-2: var(--dg-frost);
   --dg-surface-3: var(--dg-silver);
   --dg-raised: var(--dg-porcelain);
-  --dg-line: #d3dbe5;
-  --dg-line-strong: #bcc6d3;
+  --dg-line: #e3e8ef;
+  --dg-line-strong: #cbd5e1;
   /* Glass material (Mica/Acrylic-style): tinted, blurred, luminous edge. */
-  --dg-glass: rgba(241, 246, 251, .64); --dg-glass-strong: rgba(245, 248, 252, .84);
-  --dg-glass-line: rgba(30, 48, 78, .10); --dg-glass-edge: rgba(255, 255, 255, .78);
-  --dg-glass-filter: blur(20px) saturate(170%);
+  --dg-glass: rgba(255, 255, 255, .68); --dg-glass-strong: rgba(255, 255, 255, .86);
+  --dg-glass-line: rgba(16, 24, 40, .09); --dg-glass-edge: rgba(255, 255, 255, .92);
+  --dg-glass-filter: blur(22px) saturate(145%);
   --dg-glass-shadow: 0 1px 0 var(--dg-glass-edge) inset, 0 0 0 1px var(--dg-glass-line), 0 14px 34px -18px rgba(30, 48, 78, .32);
   --dg-ink: #0b1220;
   --dg-ink-2: #344054;
   --dg-muted: #667085;
   --dg-faint: #98a2b3;
-  --dg-primary: #172033;
-  --dg-primary-hover: #0b1220;
+  --dg-primary: #2563eb;
+  --dg-primary-hover: #1d4ed8;
   --dg-on-primary: #ffffff;
-  --dg-primary-soft: #e3e9f1;
-  --dg-primary-line: #cbd2de;
-  --dg-primary-ink: #172033;
-  --dg-link: #1d4fc4;
-  --dg-focus: 0 0 0 3px rgba(184, 243, 74, .55), 0 0 0 4px rgba(23, 32, 51, .55);
+  --dg-primary-soft: #eff6ff;
+  --dg-primary-line: #bfdbfe;
+  --dg-primary-ink: #1d4ed8;
+  --dg-link: #1d4ed8;
+  --dg-focus: 0 0 0 3px rgba(37, 99, 235, .22);
   /* Elevation: every lifted surface carries a pearl sheen on its top edge. */
   --dg-shadow: 0 1px 0 rgba(255, 255, 255, .7) inset, 0 1px 2px rgba(28, 42, 68, .07), 0 0 0 .5px rgba(28, 42, 68, .03);
   --dg-shadow-md: 0 1px 0 rgba(255, 255, 255, .75) inset, 0 1px 2px rgba(28, 42, 68, .05), 0 12px 28px -14px rgba(28, 42, 68, .2);
@@ -98,20 +95,17 @@
   --dg-console: #0a0f1c; --dg-console-2: #111827; --dg-console-line: #1f2a3d; --dg-console-ink: #e2e8f0; --dg-console-muted: #8a97ab;
 
   /* Signal blue: selection, focus, links, primary data series. */
-  --dg-signal: #2f6fed; --dg-signal-ink: #1d4fc4; --dg-signal-soft: #eef3fe; --dg-signal-line: #c7d7fb;
+  --dg-signal: #2563eb; --dg-signal-ink: #1d4ed8; --dg-signal-soft: #eff6ff; --dg-signal-line: #bfdbfe;
   /* Workspace (night) surface family, identical on both grounds. */
   --dg-night: #0a0f1c; --dg-night-2: #0e1525; --dg-night-3: #141d31; --dg-night-line: rgba(148, 163, 184, .14); --dg-night-line-strong: rgba(148, 163, 184, .26);
   --dg-night-ink: #eef2f8; --dg-night-ink-2: #b9c3d3; --dg-night-muted: #8591a6;
 
-  --pg-accent: var(--dg-brand-ink); --pg-ink: var(--dg-brand-ink); --pg-soft: var(--dg-surface-3); --pg-line: var(--dg-line-strong);
+  --pg-accent: var(--dg-primary); --pg-ink: var(--dg-primary-ink); --pg-soft: var(--dg-primary-soft); --pg-line: var(--dg-primary-line);
 }
 
 /* Dark ground — one definition, reused by the shell, dark pages and portals. */
 .dg-dark,
 [data-ground="night"],
-.app-shell .sidebar,
-.app-shell:has(.dg-ground-dark) .main-area,
-.admin-shell:has(.dg-ground-dark),
 :root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .ds-drawer-backdrop, .destroy-modal-backdrop) {
   --dg-canvas: #070b14;
   --dg-surface: #0d1422;
@@ -126,14 +120,14 @@
   --dg-ink-2: #b9c3d3;
   --dg-muted: #8591a6;
   --dg-faint: #5b687e;
-  --dg-primary: var(--dg-lime);
-  --dg-primary-hover: var(--dg-lime-hover);
-  --dg-on-primary: #0b1220;
-  --dg-primary-soft: rgba(184, 243, 74, .1);
-  --dg-primary-line: rgba(184, 243, 74, .32);
-  --dg-primary-ink: #d4fa8c;
+  --dg-primary: #60a5fa;
+  --dg-primary-hover: #93c5fd;
+  --dg-on-primary: #071426;
+  --dg-primary-soft: rgba(96, 165, 250, .12);
+  --dg-primary-line: rgba(96, 165, 250, .34);
+  --dg-primary-ink: #93c5fd;
   --dg-link: #9db8ff;
-  --dg-focus: 0 0 0 3px rgba(184, 243, 74, .45);
+  --dg-focus: 0 0 0 3px rgba(96, 165, 250, .36);
   --dg-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 1px 2px rgba(0, 0, 0, .4);
   --dg-shadow-md: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 12px 32px -12px rgba(0, 0, 0, .7);
   --dg-shadow-lg: 0 1px 0 rgba(255, 255, 255, .05) inset, 0 40px 80px -24px rgba(0, 0, 0, .8);
@@ -142,10 +136,10 @@
   --dg-warning: #fcd34d; --dg-warning-dot: #f59e0b; --dg-warning-soft: rgba(245, 158, 11, .1); --dg-warning-line: rgba(245, 158, 11, .32);
   --dg-danger: #fda4a4; --dg-danger-dot: #f43f5e; --dg-danger-soft: rgba(244, 63, 94, .1); --dg-danger-line: rgba(244, 63, 94, .34);
   --dg-info: #93c5fd; --dg-info-dot: #3b82f6; --dg-info-soft: rgba(59, 130, 246, .12); --dg-info-line: rgba(59, 130, 246, .34);
-  --dg-aws-soft: rgba(255, 153, 0, .1);
-  --dg-aws-ink: #fdba74;
+  --dg-aws-soft: rgba(96, 165, 250, .12);
+  --dg-aws-ink: #93c5fd;
   --dg-signal: #4c8dff; --dg-signal-ink: #9dbcff; --dg-signal-soft: rgba(76, 141, 255, .12); --dg-signal-line: rgba(76, 141, 255, .34);
-  --pg-accent: var(--dg-lime); --pg-ink: #d4fa8c; --pg-soft: rgba(184, 243, 74, .1); --pg-line: rgba(184, 243, 74, .3);
+  --pg-accent: #60a5fa; --pg-ink: #93c5fd; --pg-soft: rgba(96, 165, 250, .12); --pg-line: rgba(96, 165, 250, .34);
   color: var(--dg-ink);
   color-scheme: dark;
 }
@@ -157,9 +151,6 @@
 :root,
 .dg-dark,
 [data-ground="night"],
-.app-shell .sidebar,
-.app-shell:has(.dg-ground-dark) .main-area,
-.admin-shell:has(.dg-ground-dark),
 :root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .ds-drawer-backdrop, .destroy-modal-backdrop) {
   --canvas: var(--dg-canvas); --bg: var(--dg-canvas);
   --surface: var(--dg-surface); --surface-elevated: var(--dg-raised); --surface-raised: var(--dg-raised);
@@ -177,26 +168,40 @@
   --shadow: var(--dg-shadow); --shadow-sm: var(--dg-shadow); --shadow-md: var(--dg-shadow-md);
   --radius: var(--dg-radius); --radius-sm: var(--dg-radius-sm); --radius-lg: var(--dg-radius-lg);
   --font-mono: var(--dg-mono); --font-sans: var(--dg-font);
-  --glass-shadow: none; --glass-border: var(--dg-line); --glass-blur: 0px;
+  --glass-shadow: var(--dg-glass-shadow); --glass-border: var(--dg-glass-line); --glass-blur: 22px;
+  /* Compatibility bridge for pre-system route styles. */
+  --ds-ink: var(--dg-ink); --ds-ink-2: var(--dg-ink-2); --ds-muted: var(--dg-muted); --ds-faint: var(--dg-faint);
+  --ds-data: var(--dg-surface); --ds-data-border: var(--dg-line); --ds-tile: var(--dg-surface-2); --ds-tile-hover: var(--dg-primary-soft); --ds-field: var(--dg-raised);
+  --ds-glass: var(--dg-glass); --ds-glass-border: var(--dg-glass-line); --ds-glass-filter: var(--dg-glass-filter);
+  --ds-accent: var(--dg-primary); --ds-accent-deep: var(--dg-primary-hover); --ds-accent-ink: var(--dg-primary-ink); --ds-accent-soft: var(--dg-primary-soft); --ds-accent-line: var(--dg-primary-line);
+  --ds-accent-fill: var(--dg-primary); --ds-focus: var(--dg-focus);
+  --ds-success: var(--dg-success); --ds-success-dot: var(--dg-success-dot); --ds-success-soft: var(--dg-success-soft); --ds-success-line: var(--dg-success-line);
+  --ds-warning: var(--dg-warning); --ds-warning-dot: var(--dg-warning-dot); --ds-warning-soft: var(--dg-warning-soft); --ds-warning-line: var(--dg-warning-line);
+  --ds-danger: var(--dg-danger); --ds-danger-dot: var(--dg-danger-dot); --ds-danger-soft: var(--dg-danger-soft); --ds-danger-line: var(--dg-danger-line);
+  --ds-info: var(--dg-info); --ds-info-dot: var(--dg-info-dot); --ds-info-soft: var(--dg-info-soft); --ds-info-line: var(--dg-info-line);
+  --mf-accent: var(--dg-primary); --mf-accent-fill: var(--dg-primary); --mf-accent-hover: var(--dg-primary-hover); --mf-accent-ink: var(--dg-primary-ink);
+  --mf-on-accent: var(--dg-on-primary); --mf-accent-soft: var(--dg-primary-soft); --mf-accent-line: var(--dg-primary-line); --mf-focus: var(--dg-focus);
+  --mf-glass: var(--dg-glass); --mf-glass-dense: var(--dg-glass-strong); --mf-glass-inner: var(--dg-surface-2); --mf-glass-inner-hover: var(--dg-primary-soft);
+  --mf-field: var(--dg-raised); --mf-filter: var(--dg-glass-filter); --mf-edge: var(--dg-glass-line); --mf-edge-soft: var(--dg-line); --mf-border: 1px solid var(--dg-line);
+  --mf-highlight: 0 1px 0 var(--dg-glass-edge) inset; --mf-shadow: var(--dg-shadow); --mf-r-card: var(--dg-radius);
 }
 
 html, html[data-theme] { background: var(--dg-canvas); color-scheme: light; }
 body { background: var(--dg-canvas); color: var(--dg-ink); font-family: var(--dg-font); font-feature-settings: "ss01", "cv11"; font-size: 15px; letter-spacing: -.003em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-body::before, body::after { display: none; }
+body::before { background: radial-gradient(800px 460px at 82% -12%, rgba(37, 99, 235, .09), transparent 66%); content: ""; inset: 0; pointer-events: none; position: fixed; z-index: -1; }
+body::after { display: none; }
 button, input, select, textarea { font-family: inherit; }
 :where(h1, h2, h3, h4) { color: var(--dg-ink); font-weight: 650; letter-spacing: -.025em; text-shadow: none; }
 a { color: inherit; }
-:focus-visible { outline: 2px solid var(--dg-lime); outline-offset: 2px; }
-::selection { background: var(--dg-lime); color: #0b1220; }
+:focus-visible { outline: 2px solid var(--dg-primary); outline-offset: 2px; }
+::selection { background: #bfdbfe; color: #102a56; }
 code, pre, kbd, samp { font-family: var(--dg-mono); }
 
 .eyebrow, .metric-label, .sidebar-label { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .68rem; font-weight: 500; letter-spacing: .06em; opacity: 1; text-transform: uppercase; }
 .muted { color: var(--dg-muted); }
 .sr-only { border: 0; clip: rect(0 0 0 0); height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; white-space: nowrap; width: 1px; }
 
-:is(.glass-surface, .glass-surface-secondary, .glass-elevated, .glass-nav, .glass-control, .glass-control-bar, .glass-tabs, .glass-popover, .glass-modal, .glass-active) { -webkit-backdrop-filter: none; backdrop-filter: none; }
-:is(.glass-surface, .glass-surface-secondary, .glass-elevated, .glass-modal, .ds-card, .panel, .panel-flat, .metric-card, .state, .admin-section, .auth-card)::before,
-:is(.glass-surface, .glass-surface-secondary, .glass-elevated, .glass-modal, .ds-card, .panel, .panel-flat, .metric-card, .state, .admin-section, .auth-card)::after { display: none; }
+:is(.glass-surface, .glass-surface-secondary, .glass-elevated, .glass-nav, .glass-control, .glass-control-bar, .glass-tabs, .glass-popover, .glass-modal, .glass-active) { -webkit-backdrop-filter: var(--dg-glass-filter); backdrop-filter: var(--dg-glass-filter); }
 
 /* ---------- Surfaces ---------- */
 .ds-card, .panel, .panel-flat, .auth-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius); box-shadow: var(--dg-shadow); color: var(--dg-ink); padding: 20px; }
@@ -276,7 +281,7 @@ select option, select optgroup { background: var(--dg-raised); color: var(--dg-i
 @keyframes dg-beacon { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--dg-info-dot) 25%, transparent); } }
 
 /* ---------- Banners and inline states ---------- */
-.ds-banner, .state { background: var(--dg-surface); border: 1px solid var(--dg-line); border-left-width: 3px; border-radius: var(--dg-radius-sm); box-shadow: none; color: var(--dg-ink); padding: 12px 14px; }
+.ds-banner, .state { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius-sm); box-shadow: none; color: var(--dg-ink); padding: 12px 14px; }
 .ds-banner p, .state p { color: var(--dg-ink-2); margin: 4px 0 0; }
 .ds-banner strong, .state strong { color: var(--dg-ink); }
 :is(.ds-banner-success, .state.success) { background: var(--dg-success-soft); border-color: var(--dg-success-line); border-left-color: var(--dg-success-dot); }
@@ -337,8 +342,8 @@ select option, select optgroup { background: var(--dg-raised); color: var(--dg-i
 .overview-modal-actions, .destroy-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .toast { background: #0b1220; border: 1px solid rgba(255, 255, 255, .08); border-radius: 10px; box-shadow: var(--dg-shadow-lg); color: #fff; font-size: .88rem; }
 .toast button { background: transparent; border: 0; color: #cbd5e1; }
-.toast-success { border-left: 3px solid var(--dg-lime); }
-.toast-danger { border-left: 3px solid #f43f5e; }
+.toast-success { border-color: var(--dg-success-line); }
+.toast-danger { border-color: var(--dg-danger-line); }
 
 /* ---------- Copy value, chart card ---------- */
 .ds-copy-value { align-items: center; display: inline-flex; gap: 6px; max-width: 100%; }
