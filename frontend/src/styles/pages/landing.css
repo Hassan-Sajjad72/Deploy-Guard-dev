@@ -1,5 +1,35 @@
 /* Public landing: light brand shell with a single deliberate technical canvas. */
-.dg-landing { background: var(--dg-page); color: var(--dg-ink); min-height: 100vh; overflow-x: clip; }
+.dg-landing { background: var(--dg-page); color: var(--dg-ink); isolation: isolate; min-height: 100vh; overflow-x: clip; position: relative; }
+.dg-landing::before {
+  background: url("/deployguard-mountain-mist.jpg") center 68% / cover no-repeat;
+  content: "";
+  filter: grayscale(.78) brightness(1.06) contrast(.94);
+  height: min(800px, 66vw);
+  left: 0;
+  min-height: 560px;
+  opacity: .58;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: -2;
+}
+.dg-landing::after {
+  background:
+    linear-gradient(90deg, rgba(221, 232, 246, .46) 0%, rgba(219, 231, 246, .12) 45%, rgba(211, 226, 244, .36) 100%),
+    linear-gradient(180deg, rgba(223, 235, 248, .08), rgba(223, 235, 248, .44) 88%, var(--dg-canvas) 100%),
+    radial-gradient(42% 74% at 82% 8%, rgba(59, 104, 192, .13), transparent 75%);
+  content: "";
+  height: min(800px, 66vw);
+  left: 0;
+  min-height: 560px;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: -1;
+}
+.dg-landing > * { position: relative; z-index: 1; }
 .dg-landing.landing-loading { display: grid; min-height: 100vh; place-items: center; }
 .dg-landing-nav { align-items: center; -webkit-backdrop-filter: var(--glass-blur-chrome); backdrop-filter: var(--glass-blur-chrome); background: var(--glass-fill-chrome); border: 1px solid var(--glass-edge); border-radius: 16px; box-shadow: var(--glass-shadow); display: flex; gap: 18px; justify-content: space-between; margin: 12px auto 0; max-width: 1440px; padding: 12px clamp(18px, 4vw, 56px); position: relative; z-index: 5; }
 .dg-landing-nav > .brand { align-items: center; display: inline-flex; }
@@ -19,7 +49,18 @@
 .dg-landing-main { display: grid; gap: clamp(36px, 5vw, 70px); margin-inline: auto; max-width: 1500px; padding: 0 clamp(16px, 3.4vw, 48px) clamp(48px, 7vw, 88px); }
 .dg-hero { align-items: center; display: grid; gap: clamp(28px, 4vw, 58px); grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); min-height: 610px; padding: clamp(36px, 6vw, 70px) 0 0; position: relative; }
 .dg-hero-glow { display: none; }
-.dg-hero-copy { grid-area: auto; max-width: 610px; position: relative; }
+.dg-hero-copy {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  background: linear-gradient(145deg, rgba(244, 249, 255, .26), rgba(208, 223, 240, .12) 62%, rgba(210, 224, 243, .22)), var(--glass-fill);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--dg-radius-lg);
+  box-shadow: var(--glass-shadow);
+  grid-area: auto;
+  max-width: 610px;
+  padding: clamp(24px, 3.3vw, 40px);
+  position: relative;
+}
 .dg-kicker { color: var(--dg-primary-strong); font-family: var(--dg-mono); font-size: .68rem; font-weight: 560; letter-spacing: .05em; margin: 0; text-transform: uppercase; }
 .dg-hero-copy h1 { color: var(--dg-ink); font-size: clamp(2.6rem, 4.5vw, 4.1rem); font-weight: 640; letter-spacing: -.06em; line-height: 1.02; margin: 16px 0 19px; max-width: 13ch; text-wrap: balance; }
 .dg-hero-copy .landing-lead { color: var(--dg-ink-2); font-size: clamp(1rem, 1.25vw, 1.12rem); line-height: 1.65; margin: 0; max-width: 52ch; }
@@ -106,10 +147,12 @@
   .dg-hero-visual { margin-inline: auto; max-width: 820px; width: 100%; }
 }
 @media (max-width: 760px) {
+  .dg-landing::before, .dg-landing::after { height: 720px; min-height: 0; }
   .dg-landing-nav { margin-inline: 10px; padding: 13px 16px; }
   .dg-landing .brand-identity-copy small { display: none; }
   .dg-landing-main { gap: 36px; padding-inline: 14px; }
   .dg-hero { gap: 20px; padding-top: 23px; }
+  .dg-hero-copy { padding: 22px 18px; }
   .dg-hero-copy h1 { font-size: clamp(2.2rem, 9vw, 3.1rem); max-width: 16ch; }
   .dg-hero-visual { padding: 11px; }
   .dg-arch-diagram { display: none; }

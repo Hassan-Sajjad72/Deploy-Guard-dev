@@ -32,13 +32,15 @@ function Harness() {
     <button id="open-navigation" onClick={() => setNavigationOpen(true)} type="button">Open navigation</button>
     <aside aria-modal={navigationOpen ? "true" : undefined} hidden={!navigationOpen} id="mobile-navigation" ref={navigationRef} role={navigationOpen ? "dialog" : undefined} tabIndex={navigationOpen ? -1 : undefined}><button id="navigation-first" type="button">First navigation item</button><button id="navigation-last" type="button">Last navigation item</button></aside>
     <main id="obscured-content" inert={navigationOpen ? "" : undefined}><button id="obscured-action" type="button">Obscured action</button></main>
-    <section id="transformed-surface" style={{ height: 420, marginLeft: 170, overflow: "hidden", width: 690 }}>
+    <section id="transformed-surface" style={{ height: 420, marginLeft: 170, overflow: "hidden", transform: "translateZ(0)", width: 690 }}>
       <button id="open-destroy" onClick={() => setOverlay("destroy")} type="button">Open destroy</button>
       <button id="open-rollback" onClick={() => setOverlay("rollback")} type="button">Open rollback</button>
       <button id="open-drawer" onClick={() => setOverlay("drawer")} type="button">Open drawer</button>
       {overlay === "destroy" ? <Modal labelledBy="destroy-title" onClose={() => setOverlay(null)}>
         <p className="eyebrow">Permanent project deletion</p><h2 id="destroy-title">Delete this project and its owned resources?</h2>
         <p>Each recorded generation and the separate project resources will be cleaned by exact identity. Shared platform networking, cluster and load balancer remain untouched. Type <strong>DESTROY</strong> to confirm.</p>
+        <p>Review the permanent-action scope before confirming. This fixture keeps enough explanatory content to verify that a constrained viewport preserves a reachable internal scroll path.</p>
+        <p>Destroy remains guarded by the typed confirmation and does not alter shared platform resources. The confirmation action must remain visible after scrolling.</p>
         <label className="field"><span>Confirmation</span><input autoFocus defaultValue="DESTROY" id="destroy-input" /></label>
         <div className="overview-modal-actions"><button id="destroy-cancel" type="button">Cancel</button><button id="confirm-destroy" type="button">Confirm destroy</button></div>
       </Modal> : null}
@@ -200,5 +202,5 @@ try {
     await new Promise((resolveExit) => chrome.once("exit", resolveExit));
   }
   if (server) await new Promise((resolveClose) => server.close(resolveClose));
-  await rm(temporaryRoot, { recursive: true, force: true });
+  await rm(temporaryRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 }

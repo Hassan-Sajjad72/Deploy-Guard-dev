@@ -8,7 +8,7 @@
   --dg-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* One cool-spectrum atmosphere beneath the product; data surfaces stay opaque. */
-  --dg-canvas: #eaf0f8;
+  --dg-canvas: #dfe8f3;
   --dg-page: transparent;
   --dg-surface: #ffffff;
   --dg-surface-2: #f6f8fc;
@@ -83,18 +83,18 @@
   --dg-motion-dialog: 240ms;
 
   /* Frosted chrome and hero light are restrained; operational data is protected. */
-  --glass-fill: rgba(255, 255, 255, .24);
-  --glass-fill-secondary: rgba(255, 255, 255, .34);
-  --glass-fill-chrome: rgba(255, 255, 255, .56);
-  --glass-fill-interactive: rgba(255, 255, 255, .16);
+  --glass-fill: rgba(214, 226, 241, .20);
+  --glass-fill-secondary: rgba(221, 232, 246, .28);
+  --glass-fill-chrome: rgba(224, 234, 246, .42);
+  --glass-fill-interactive: rgba(220, 231, 246, .18);
   --glass-fill-data: rgba(255, 255, 255, .97);
-  --glass-edge: rgba(255, 255, 255, .76);
-  --glass-edge-subtle: rgba(54, 81, 125, .12);
-  --glass-highlight: rgba(255, 255, 255, .72);
-  --glass-border: rgba(255, 255, 255, .54);
-  --glass-blur: blur(24px) saturate(138%);
+  --glass-edge: rgba(245, 250, 255, .68);
+  --glass-edge-subtle: rgba(63, 87, 127, .16);
+  --glass-highlight: rgba(255, 255, 255, .64);
+  --glass-border: rgba(223, 235, 250, .52);
+  --glass-blur: blur(26px) saturate(132%);
   --glass-blur-chrome: blur(18px) saturate(132%);
-  --glass-shadow: 0 22px 58px -42px rgba(31, 54, 95, .38), inset 0 1px 0 rgba(255, 255, 255, .78);
+  --glass-shadow: 0 20px 54px -38px rgba(28, 48, 84, .32), inset 0 1px 0 rgba(255, 255, 255, .68);
 
   --technical-canvas: #071a33;
   --technical-surface: #0b2443;
