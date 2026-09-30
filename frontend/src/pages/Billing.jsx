@@ -5,7 +5,6 @@ import LoadingState from "../components/common/LoadingState.jsx";
 import EmptyState from "../components/common/EmptyState.jsx";
 import { Button, Card, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
 import { useAuth } from "../hooks/useAuth.js";
-import "../styles/pages/billing.css";
 
 const title = (plan) => String(plan || "FREE").replace("_", " ");
 const dateTime = (value) => value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Not started";

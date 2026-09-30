@@ -1,28 +1,36 @@
-/*
- * Audit Logs — forensic event stream. Scoped to .dg-audit.
- * Shared neutrals; dark counters band; filter toolbar; monospaced
- * stream with a status rail per event (rail colours are defined in admin.css
- * and apply to .audit-table everywhere).
- */
-.dg-audit { gap: 16px; margin: 0 auto; max-width: 1320px; }
-.dg-audit .eyebrow { color: var(--dg-muted); }
-.dg-audit .bento-grid { background: linear-gradient(135deg, var(--dg-night), var(--dg-night-3)); border: 1px solid var(--dg-night); border-radius: 12px; box-shadow: 0 18px 40px -26px rgba(3, 6, 14, .8); display: grid; gap: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
-.dg-audit .bento-grid .metric-card { background: transparent !important; border: 0 !important; border-radius: 0; box-shadow: none !important; padding: 14px 18px; }
-.dg-audit .bento-grid .metric-card + .metric-card { border-left: 1px solid rgba(255, 255, 255, .1) !important; }
-.dg-audit .bento-grid .metric-label { color: var(--dg-night-muted) !important; }
-.dg-audit .bento-grid .metric-card strong { color: #fff !important; font-size: 1.8rem; }
-.dg-audit .bento-grid .metric-card.tone-success strong { color: var(--dg-success) !important; }
-.dg-audit .bento-grid .metric-card.tone-danger strong { color: #fda29b !important; }
-.dg-audit .bento-grid .metric-card p { color: var(--dg-night-muted) !important; }
-:root:root .dg-audit > .panel { border: 1px solid var(--dg-line); border-left: 4px solid var(--pg-accent); border-radius: 12px; padding: 14px 18px; }
-.dg-audit > .panel h2 { font-size: 1rem; margin: 2px 0 8px; }
-.dg-audit .admin-audit-filters { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.dg-audit .admin-audit-filters .field { margin: 0; }
-.dg-audit .admin-audit-filters .field > span { color: var(--dg-muted); font-size: .72rem; }
-.dg-audit .admin-audit-filters .secondary-button { align-self: end; }
-.dg-audit .audit-table td { font-size: .84rem; padding-bottom: 8px; padding-top: 8px; }
-.dg-audit .audit-table td[data-label="Action"] .ds-button { font-size: .76rem; margin-left: 8px; min-height: 26px; padding: 2px 9px; }
-@media (max-width: 900px) { .dg-audit .bento-grid, .dg-audit .admin-audit-filters { grid-template-columns: 1fr 1fr; } }
-.dg-audit { min-width: 0; overflow-x: clip; }
-.dg-audit .ds-data-table-wrap { max-width: 100%; }
-@media (max-width: 640px) { .dg-audit .bento-grid, .dg-audit .admin-audit-filters { grid-template-columns: 1fr; } .dg-audit .bento-grid .metric-card + .metric-card { border-left: 0 !important; border-top: 1px solid rgba(255, 255, 255, .1) !important; } }
+/* Activity ledger: provenance and filtering on a light, high-contrast surface. */
+.dg-audit { display: grid; gap: 22px; margin-inline: auto; max-width: 1440px; }
+.dg-audit > .ds-page-header { border-bottom: 1px solid var(--dg-line); padding-bottom: 17px; }
+.dg-audit > .ds-page-header h1 { font-size: clamp(1.9rem, 3vw, 2.45rem); }
+.dg-audit > .ds-page-header .ds-page-header-description { color: var(--dg-ink-2); font-size: .85rem; max-width: 78ch; }
+.dg-audit .bento-grid { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
+.dg-audit .bento-grid .ds-metric-card { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 14px 17px; }
+.dg-audit .bento-grid .ds-metric-card + .ds-metric-card { border-left: 1px solid var(--dg-line); }
+.dg-audit .bento-grid .ds-metric-card strong { color: var(--dg-ink); font-size: 1.25rem; }
+.dg-audit > .panel { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; box-shadow: none; padding: 16px; }
+.dg-audit .section-heading { align-items: center; border-bottom: 1px solid var(--dg-line); display: flex; justify-content: space-between; margin-bottom: 13px; padding-bottom: 11px; }
+.dg-audit .section-heading h2 { color: var(--dg-ink); font-size: .97rem; }
+.dg-audit .admin-audit-filters { background: transparent; border: 0; padding: 0; }
+.dg-audit .ds-data-table-wrap { border-radius: 11px; }
+.dg-audit .audit-table { min-width: 890px; }
+.dg-audit .audit-table td { font-size: .74rem; }
+.dg-audit .audit-table td strong { color: var(--dg-ink); font-size: .77rem; }
+.dg-audit .audit-table .audit-action { align-items: center; display: flex; gap: 12px; justify-content: space-between; min-width: 190px; }
+.dg-audit .audit-action > div { display: grid; gap: 3px; }
+.dg-audit .audit-action .button { min-height: 30px; padding: 4px 8px; }
+.dg-audit .admin-cell-detail { color: var(--dg-muted); display: block; font-size: .67rem; margin-top: 3px; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-audit .audit-details-grid { display: grid; gap: 0 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dg-audit .audit-details-grid > article { border-bottom: 1px solid var(--dg-line); display: grid; gap: 5px; min-width: 0; padding: 10px 0; }
+.dg-audit .audit-details-grid > article > span:first-child { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .6rem; text-transform: uppercase; }
+.dg-audit .audit-details-grid > article > strong { color: var(--dg-ink-2); font-size: .77rem; overflow-wrap: anywhere; }
+.dg-audit .audit-details-evidence { border-top: 1px solid var(--dg-line); margin-top: 15px; padding-top: 13px; }
+.dg-audit .audit-details-evidence > .eyebrow { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .63rem; }
+.dg-audit .audit-details-evidence pre { background: #071a33; border: 1px solid #24466d; border-radius: 8px; color: #e7f0fd; font-family: var(--dg-mono); font-size: .69rem; line-height: 1.55; max-height: 360px; overflow: auto; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dg-audit .pagination { border-top: 1px solid var(--dg-line); padding-top: 13px; }
+.dg-audit .ds-empty-state { background: var(--dg-surface); border: 1px dashed var(--dg-line-strong); box-shadow: none; }
+
+@media (max-width: 720px) {
+  .dg-audit .bento-grid { grid-template-columns: 1fr; }
+  .dg-audit .bento-grid .ds-metric-card + .ds-metric-card { border-left: 0; border-top: 1px solid var(--dg-line); }
+  .dg-audit .audit-details-grid { grid-template-columns: 1fr; }
+}

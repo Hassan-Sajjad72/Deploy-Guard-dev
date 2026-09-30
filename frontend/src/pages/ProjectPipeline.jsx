@@ -10,7 +10,6 @@ import PipelineRecoveryPanel from "../components/projects/PipelineRecoveryPanel.
 import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 import { projectStatePresentation, projectStateTone } from "../utils/projectStatePresentation.js";
 import { useSerializedProjectRefresh } from "../hooks/useSerializedProjectRefresh.js";
-import "../styles/pages/pipeline.css";
 
 export default function ProjectPipeline() {
   const { projectId } = useParams();

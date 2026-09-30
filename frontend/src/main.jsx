@@ -1,15 +1,4 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
-import App from "./App.jsx";
-import "./styles/legacy.css";
 import "./styles/system.css";
-import "./styles/aurora.css";
-import "./styles/aurora-motion.css";
-/*
- * Keep route styles in the entry bundle so the cohesion contract below is
- * always the final cascade layer, including after lazy routes are loaded.
- */
 import "./styles/pages/about.css";
 import "./styles/pages/admin.css";
 import "./styles/pages/audit.css";
@@ -26,13 +15,15 @@ import "./styles/pages/pipeline.css";
 import "./styles/pages/projects.css";
 import "./styles/pages/settings.css";
 import "./styles/pages/troubleshoot.css";
-import "./styles/cohesion.css";
-import { installActionFeedback } from "./utils/actionFeedback.js";
-import { installSurfaceLight } from "./utils/surfaceLight.js";
+import "./styles/motion.css";
 
-document.documentElement.dataset.theme = "dark";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import App from "./App.jsx";
+import { installActionFeedback } from "./utils/actionFeedback.js";
+
 installActionFeedback();
-installSurfaceLight();
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

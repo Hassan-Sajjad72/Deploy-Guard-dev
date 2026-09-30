@@ -5,7 +5,6 @@ import AppIcon from "../components/common/AppIcon.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { useAuth } from "../hooks/useAuth.js";
-import "../styles/pages/gate.css";
 
 const RETURN_KEY = "deployguard_oauth_return_to";
 
@@ -67,7 +66,6 @@ export default function GithubConnecting() {
 
   return (
     <main className="oauth-connecting-page dg-gate">
-      <div aria-hidden="true" className="landing-ambient"><span /><span /><span /></div>
       <section className="oauth-connecting-card" aria-live="polite">
         <span className="oauth-spinner"><AppIcon name="github" size={24} /></span>
         <p className="eyebrow">Secure authentication</p>

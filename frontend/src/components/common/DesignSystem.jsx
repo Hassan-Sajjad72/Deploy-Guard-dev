@@ -195,19 +195,21 @@ export function ChartCard({ children, description, emptyMessage = "No verified n
   </Card>;
 }
 
-export function Tabs({ activeId, idPrefix, items, label = "Sections", onChange }) {
+export function Tabs({ activeId, idPrefix, items, label = "Sections", onChange, orientation = "horizontal" }) {
   const generatedId = useId().replaceAll(":", "");
   const id = idPrefix || `tabs-${generatedId}`;
   const tabsRef = useRef(null);
   function handleKeyDown(event) {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const forward = orientation === "vertical" ? "ArrowDown" : "ArrowRight";
+    const backward = orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
+    if (![backward, forward, "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const current = items.findIndex((item) => item.id === activeId);
-    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowRight" ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === forward ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
     onChange(items[next].id);
     window.requestAnimationFrame(() => tabsRef.current?.querySelector(`[data-tab-id="${items[next].id}"]`)?.focus());
   }
-  return <div aria-label={label} aria-orientation="horizontal" className="ds-tabs glass-tabs" ref={tabsRef} role="tablist">
+  return <div aria-label={label} aria-orientation={orientation} className="ds-tabs glass-tabs" ref={tabsRef} role="tablist">
     {items.map((item) => <button aria-controls={`${id}-panel-${item.id}`} aria-selected={activeId === item.id} className={activeId === item.id ? "is-active" : ""} data-tab-id={item.id} id={`${id}-tab-${item.id}`} key={item.id} onClick={() => onChange(item.id)} onKeyDown={handleKeyDown} role="tab" tabIndex={activeId === item.id ? 0 : -1} type="button">{item.icon ? <AppIcon name={item.icon} size={16} /> : null}{item.label}</button>)}
   </div>;
 }

@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { adminMe, adminSignIn } from "../api/adminAuthApi.js";
 import BrandLogo from "../components/common/BrandLogo.jsx";
-import "../styles/pages/admin.css";
 
 export default function AdminLogin() {
   const navigate = useNavigate();

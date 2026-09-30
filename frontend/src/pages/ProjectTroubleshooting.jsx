@@ -8,7 +8,6 @@ import LoadingState from "../components/common/LoadingState.jsx";
 import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 import { failureTroubleshootingProjection } from "../utils/developerDeploymentPresentation.js";
-import "../styles/pages/troubleshoot.css";
 
 const sourceLabels = { github_actions: "GitHub Actions", github_actions_status: "GitHub Actions", github_actions_stage: "GitHub Actions stages", railpack_build: "Application build evidence", deployguard_build_identity: "Service / build identity", deployguard_diagnosis: "DeployGuard diagnosis", security_scan: "Trivy security scan", terraform: "Terraform", aws_runtime_verification: "AWS runtime verification", cloudwatch_runtime: "CloudWatch application logs", ecs_cloudwatch_runtime: "ECS / CloudWatch runtime events", deployguard_lifecycle: "DeployGuard lifecycle evidence" };
 function label(value) { return String(value || "Unavailable").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }

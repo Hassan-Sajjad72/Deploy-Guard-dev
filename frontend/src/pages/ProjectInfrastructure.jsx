@@ -9,7 +9,6 @@ import { useToast } from "../hooks/useToast.js";
 import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 import AppIcon from "../components/common/AppIcon.jsx";
-import "../styles/pages/infrastructure.css";
 
 function label(value) {
   return value ? String(value).replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Unavailable";
@@ -87,7 +86,20 @@ function TopologyMap({ state, evidence, updating }) {
   const albHealthy = allTargets.length > 0 && healthyTargets === allTargets.length;
   const host = hostOf(state?.stableUrl);
   const storage = evidence?.persistentStorage;
+  const taskDefinitions = [
+    ...(identity.taskDefinitionArn ? [{ name: "Application", value: identity.taskDefinitionArn }] : []),
+    ...(Array.isArray(identity.services) ? identity.services.filter((service) => service.taskDefinitionArn).map((service) => ({ name: service.serviceName || "Application service", value: service.taskDefinitionArn })) : []),
+  ];
+  const hasEcrEvidence = Boolean(evidence?.ecr?.repository || evidence?.ecr?.imageDigest);
+  const hasCloudWatchEvidence = Boolean(evidence?.cloudWatch?.status || evidence?.cloudWatch?.logGroupName || identity.cloudWatchLogGroupName);
+  const hasTerraformEvidence = Boolean(evidence?.terraformState?.status || evidence?.terraformState?.key || identity.terraformStateKey);
   const statusFor = (healthy) => healthy ? "ok" : updating ? "warn" : "bad";
+  const supportStatus = (status) => {
+    const normalized = String(status || "").toLowerCase();
+    if (["failed", "error", "unhealthy"].includes(normalized)) return "bad";
+    if (["degraded", "updating", "pending"].includes(normalized)) return "warn";
+    return normalized === "active" ? "ok" : "off";
+  };
   const serviceHealthy = (service) => Boolean(service.ecs && service.ecs.runningCount === service.ecs.desiredCount && service.targets.length > 0 && service.targets.every((target) => target === "healthy"));
   const [selected, setSelected] = useState(allTargets.length ? "alb" : services[0] ? `svc:${services[0].id}` : "internet");
 
@@ -104,7 +116,8 @@ function TopologyMap({ state, evidence, updating }) {
     efs: { title: "Data storage", kind: "Persistent application data", status: storage?.status === "active" ? "ok" : "off", rows: [["Status", storage ? label(storage.status) : null], ["Encrypted", storage?.encrypted ? "Yes" : null], ["Backups", storage?.backupEnabled ? "Enabled" : null], ["Region", storage?.region]] },
     ecr: { title: "Amazon ECR", kind: "AWS · Container registry", status: evidence?.ecr?.imageDigest ? "ok" : "off", rows: [["Repository", evidence?.ecr?.repository], ["Image tag", evidence?.ecr?.imageTag], ["Digest", evidence?.ecr?.imageDigest ? shortened(evidence.ecr.imageDigest, 30) : null]] },
     cloudwatch: { title: "CloudWatch", kind: "AWS · Logs and metrics", status: evidence?.cloudWatch?.status === "active" ? "ok" : "off", rows: [["Status", label(evidence?.cloudWatch?.status)], ["Log group", identity.cloudWatchLogGroupName]] },
-    terraform: { title: "Terraform state", kind: "Infrastructure state", status: evidence?.terraformState?.status === "active" ? "ok" : "off", rows: [["Status", label(evidence?.terraformState?.status)], ["Storage", evidence?.terraformState?.storage === "encrypted_s3" ? "Encrypted S3" : evidence?.terraformState?.storage], ["State key", evidence?.terraformState?.key ? shortened(evidence.terraformState.key, 34) : null], ["Last apply", evidence?.terraformState?.lastApplyAt ? date(evidence.terraformState.lastApplyAt) : null]] },
+    terraform: { title: "Terraform state", kind: "Infrastructure state", status: evidence?.terraformState?.status === "active" ? "ok" : "off", rows: [["Status", label(evidence?.terraformState?.status)], ["Storage", evidence?.terraformState?.storage === "encrypted_s3" ? "Encrypted S3" : evidence?.terraformState?.storage], ["State key", evidence?.terraformState?.key ? shortened(evidence.terraformState.key, 34) : identity.terraformStateKey], ["Last apply", evidence?.terraformState?.lastApplyAt ? date(evidence.terraformState.lastApplyAt) : null]] },
+    tasks: { title: "ECS task definitions", kind: "ECS · Runtime revisions", status: "ok", rows: taskDefinitions.map((task) => [task.name, shortened(task.value, 54)]) },
   }[selected] || null;
   const node = ({ key, ...props }) => <TopologyNode key={key} onSelect={setSelected} selected={selected} {...props} />;
 
@@ -143,6 +156,13 @@ function TopologyMap({ state, evidence, updating }) {
             </div>
           </div>
         </div>
+        {hasEcrEvidence || taskDefinitions.length || hasCloudWatchEvidence || hasTerraformEvidence ? <div aria-label="Runtime dependencies and control plane" className="itw-support">
+          <span className="itw-tier">Runtime dependencies &amp; control plane</span>
+          {hasEcrEvidence ? node({ aws: true, detail: evidence?.ecr?.repository || evidence?.ecr?.imageTag || "Container image observed", icon: "code", id: "ecr", name: "Amazon ECR", status: evidence?.ecr?.imageDigest ? "ok" : supportStatus(evidence?.ecr?.status) }) : null}
+          {taskDefinitions.length ? node({ aws: true, detail: `${taskDefinitions.length} recorded revision${taskDefinitions.length === 1 ? "" : "s"}`, icon: "settings", id: "tasks", name: "ECS task definitions", status: "ok" }) : null}
+          {hasCloudWatchEvidence ? node({ aws: true, detail: identity.cloudWatchLogGroupName || evidence?.cloudWatch?.logGroupName || label(evidence?.cloudWatch?.status), icon: "activity", id: "cloudwatch", name: "CloudWatch logs", status: supportStatus(evidence?.cloudWatch?.status) }) : null}
+          {hasTerraformEvidence ? node({ aws: true, detail: evidence?.terraformState?.key || identity.terraformStateKey || label(evidence?.terraformState?.status), icon: "infrastructure", id: "terraform", name: "Terraform state", status: supportStatus(evidence?.terraformState?.status) }) : null}
+        </div> : null}
       </div>
       {inspector ? <aside aria-label="Selected resource" aria-live="polite" className={`itw-inspector is-${inspector.status}`}>
         <h3>{inspector.title}</h3>
@@ -152,27 +172,6 @@ function TopologyMap({ state, evidence, updating }) {
       </aside> : null}
     </div>
   </section>;
-}
-
-function ServiceFlow({ state, evidence }) {
-  const live = state?.stateAuthority?.runtime?.state === "present";
-  const updating = Boolean(state?.stateAuthority?.activeOperation && state.stateAuthority.activeOperation.type !== "destroy");
-  const ecsHealthy = Boolean(evidence?.ecs && evidence.ecs.runningCount >= evidence.ecs.desiredCount && evidence.ecs.pendingCount === 0);
-  const activeTargets = (evidence?.alb?.targetHealth || []).filter((item) => item !== "draining");
-  const albHealthy = activeTargets.length > 0 && activeTargets.every((item) => item === "healthy");
-  const nodes = [
-    { name: "Source", detail: shortened(state?.stableRelease?.commit, 18), available: Boolean(state?.stableRelease?.commit) },
-    { name: "Build", detail: live ? "Application image built" : "Unavailable", available: live },
-    { name: "ECR", detail: evidence?.ecr?.imageDigest ? "Immutable digest" : updating ? "Release updating" : "Unavailable", available: Boolean(evidence?.ecr?.imageDigest), updating },
-    { name: "ECS", detail: evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : updating ? "Release updating" : "Unavailable", available: ecsHealthy, updating },
-    { name: "ALB", detail: albHealthy ? "Targets healthy" : updating ? "Release updating" : "Unavailable", available: albHealthy, updating },
-    { name: "Application", detail: live ? "LIVE" : "Unavailable", available: live && Boolean(evidence?.alb?.endpoint || state?.stableUrl) },
-  ];
-  return <Card className="infrastructure-topology-card">
-    <div className="infrastructure-section-heading"><div><p className="eyebrow">Current AWS state</p><h2>Source to application</h2></div><span className="infrastructure-source">Generation {shortened(state?.generationState?.liveGenerationId, 20)}</span></div>
-    <ol aria-label="Infrastructure service flow" className="infrastructure-topology">{nodes.map((node) => <li data-status={healthStatus(evidence?.terraformState?.status, node.available, node.updating)} key={node.name}><strong>{node.name}</strong><span>{node.detail}</span><StatusChip status={node.available ? "healthy" : node.updating ? "running" : "unavailable"}>{node.available ? "Healthy" : node.updating ? "Updating" : "Unavailable"}</StatusChip></li>)}</ol>
-    {evidence?.alb?.endpoint ? <p className="infrastructure-endpoint">Application endpoint: <a href={evidence.alb.endpoint} rel="noreferrer" target="_blank">Open verified application</a></p> : null}
-  </Card>;
 }
 
 function ServiceRuntimeList({ evidence, transitioning = false }) {
@@ -258,6 +257,6 @@ export default function ProjectInfrastructure() {
   return <div className="infrastructure-page grid dg-infra dg-infra-light"><PageHeader actions={exportAction} title={releaseUpdating ? "Runtime release updating" : runtimeTitle} status={infrastructure?.status || "unavailable"} description={releaseUpdating ? "The previous live release remains available while the new release starts." : "Current architecture and runtime health for this release."} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
     <TopologyMap evidence={evidence} state={state} updating={releaseUpdating} />
     <section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="Application" value={runtimePresent ? (state?.stableUrl ? <a href={state.stableUrl} rel="noreferrer" target="_blank">Open application ↗</a> : "Healthy") : label(state?.stateAuthority?.runtime?.state)} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="Services" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : releaseUpdating ? "Release updating" : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="Targets" value={activeTargetHealth.length ? `${healthyTargets}/${activeTargetHealth.length} healthy${drainingTargets ? ` · ${drainingTargets} draining` : ""}` : releaseUpdating ? "Release updating" : "Unavailable"} tone={targetsHealthy ? "success" : "neutral"} /><MetricCard label="Region" value={evidence?.region || "Unavailable"} /></section>
-    <div className="infra-columns"><div className="infra-column-main"><ServiceRuntimeList evidence={evidence} transitioning={releaseUpdating} /><ServiceFlow evidence={evidence} state={state} /></div><div className="infra-column-side"><Pricing cost={evidence?.cost} /><SupportingServices evidence={evidence} /></div></div>
+    <div className="infra-columns"><div className="infra-column-main"><ServiceRuntimeList evidence={evidence} transitioning={releaseUpdating} /></div><div className="infra-column-side"><Pricing cost={evidence?.cost} /><SupportingServices evidence={evidence} /></div></div>
     <TechnicalDetails evidence={evidence} state={state} /></div>;
 }

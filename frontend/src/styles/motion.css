@@ -1,0 +1,13 @@
+/* Purposeful, short transitions only; the product remains calm and legible. */
+.page-transition { animation: dg-page-enter var(--dg-motion-page) var(--dg-ease) both; }
+.ds-button, .button, .secondary-button, .subtle-button, .danger-button, .danger-text-button,
+.nav-link, .itw-node, .pg-node, summary, a { transition-duration: var(--dg-motion-fast); }
+@keyframes dg-page-enter {
+  from { opacity: .86; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+  .page-transition { animation: none; }
+}

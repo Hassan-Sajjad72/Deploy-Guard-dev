@@ -1,161 +1,90 @@
-/*
- * Plan & Usage — "Statement". A financially precise surface on the shared light ground:
- * ink type, tabular mono figures and hairline rules, the way a well-set
- * account statement reads. The current plan is the statement header; capacity
- * is read on segmented meters; plans are a priced ladder; invoices are ledger
- * lines. Colour is reserved for meaning: lime marks the current plan, amber
- * and red mark at-limit and over-limit.
- */
-.app-shell:has(.dg-billing) .main-area { --pg-cast: rgba(190, 162, 110, .10); }
-.dg-billing { --bl-rule: var(--dg-line); --bl-paper: var(--dg-surface); --bl-ink: var(--dg-ink); --bl-label: var(--dg-muted); gap: 24px; margin: 0 auto; max-width: 1180px; }
-.dg-billing .eyebrow { color: var(--bl-label); }
-.dg-billing .ds-page-header h1 { font-size: clamp(2.3rem, 3.8vw, 3rem); font-weight: 600; letter-spacing: -.05em; }
-.dg-billing .ds-card { background: var(--bl-paper); border: 1px solid var(--bl-rule); border-radius: 12px; box-shadow: var(--dg-shadow); }
-.dg-billing .button, .dg-billing .ds-button-primary { background: var(--mf-accent-fill); border-color: var(--mf-accent); color: var(--mf-on-accent); }
-.dg-billing .button:hover:not(:disabled), .dg-billing .ds-button-primary:hover:not(:disabled) { background: var(--mf-accent-hover); border-color: var(--mf-accent-hover); color: var(--mf-on-accent); }
-.dg-billing .ds-button-secondary { background: rgba(255, 255, 255, .08); border-color: var(--mf-edge); box-shadow: var(--mf-highlight); color: var(--dg-ink); }
-
-/* Notices: slim margin notes on one glass strip. */
-.dg-bill-notices { -webkit-backdrop-filter: var(--mf-filter); backdrop-filter: var(--mf-filter); background: var(--mf-glass); border: var(--mf-border); border-radius: var(--mf-r-card); box-shadow: var(--mf-highlight), var(--mf-shadow); display: grid; gap: 0; overflow: hidden; }
-.dg-bill-notices:empty { display: none; }
-.dg-billing .dg-bill-notices .ds-card { align-items: baseline; background: transparent; border: 0; border-radius: 0; border-top: 1px solid var(--bl-rule); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 14px 22px; }
-.dg-billing .dg-bill-notices .ds-card:first-child { border-top: 0; }
-.dg-billing .dg-bill-notices .ds-card strong { font-family: var(--dg-mono); font-size: .68rem; font-weight: 500; letter-spacing: .06em; min-width: 190px; text-transform: uppercase; }
-.dg-billing .dg-bill-notices .ds-card p { color: var(--dg-ink-2); font-size: .86rem; margin: 0; }
-.dg-billing .dg-bill-notices .state.danger strong { color: var(--dg-danger); }
-
-/* Statement header: current plan + capacity, one continuous sheet. */
-.dg-bill-hero { background: var(--mf-glass); border: 1px solid var(--bl-rule); border-radius: 20px; box-shadow: var(--dg-shadow-md); display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); overflow: hidden; }
-.dg-billing .dg-bill-hero > .ds-card { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
-.dg-billing .billing-plan-card { border-right: 1px solid var(--bl-rule) !important; display: grid; gap: 18px 14px; grid-template-columns: 1fr auto; padding: 30px 32px; position: relative; }
-.dg-billing .dg-bill-hero .billing-plan-card::before { background: var(--mf-accent-fill); content: ""; display: block; height: 3px; left: 32px; position: absolute; top: 0; width: 56px; }
-.dg-billing .billing-plan-card h2 { color: var(--bl-ink); font-size: clamp(2.8rem, 5vw, 4rem); font-weight: 600; letter-spacing: -.055em; line-height: .9; margin: 12px 0 14px; }
-.dg-bill-price { color: var(--dg-muted); font-size: .92rem; margin: 0; }
-.dg-bill-price strong { color: var(--bl-ink); font-family: var(--dg-mono); font-size: 1.5rem; font-variant-numeric: tabular-nums; font-weight: 500; letter-spacing: -.02em; }
-.dg-billing .billing-plan-card .quick-actions { align-content: start; justify-content: flex-end; }
-.dg-bill-period { border-top: 1px dashed var(--dg-line-strong); display: grid; gap: 2px; grid-column: 1 / -1; padding-top: 16px; }
-.dg-bill-period h3 { color: var(--bl-ink); font-family: var(--dg-mono); font-size: 1rem; font-variant-numeric: tabular-nums; font-weight: 500; margin: 4px 0 2px; }
-.dg-bill-period p:last-child { color: var(--dg-muted); font-size: .8rem; margin: 0; }
-
-.dg-billing .dg-bill-usage { align-content: start; display: grid; gap: 4px; padding: 30px 32px; }
-.dg-billing .dg-bill-usage h2 { font-size: 1.15rem; font-weight: 600; letter-spacing: -.02em; margin: 6px 0 18px; }
-.dg-billing .billing-usage-grid { display: grid; gap: 22px; }
-.dg-billing .billing-usage-grid > div { background: none; border: 0; box-shadow: none; display: grid; gap: 10px; padding: 0; }
-.dg-billing .billing-usage-grid span { color: var(--bl-label); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; }
-.dg-billing .billing-usage-grid strong { color: var(--bl-ink); font-family: var(--dg-mono); font-size: 1.9rem; font-variant-numeric: tabular-nums; font-weight: 500; letter-spacing: -.04em; line-height: 1; }
-.dg-billing .billing-usage-grid strong small { color: var(--dg-faint); font-size: .95rem; letter-spacing: 0; }
-.dg-bill-meter { background: var(--dg-surface-3); border-radius: 2px; display: block; height: 8px; overflow: hidden; position: relative; }
-.dg-bill-meter::after { background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), rgba(var(--mf-tint), .9) calc(10% - 2px) 10%); content: ""; inset: 0; position: absolute; }
-.dg-bill-meter b { background: var(--mf-accent-fill); display: block; height: 100%; }
-.dg-billing .usage-at-limit .dg-bill-meter b { background: var(--dg-warning-dot); }
-.dg-billing .usage-over-limit .dg-bill-meter b { background: var(--dg-danger-dot); }
-.dg-billing .usage-over-limit > small { color: var(--dg-danger); font-family: var(--dg-mono); font-weight: 600; }
-.dg-billing .dg-bill-usage .billing-usage-grid { grid-template-columns: 1fr; }
-.dg-billing .dg-bill-usage .billing-usage-grid > div { grid-template-columns: minmax(0, 1fr) auto; }
-.dg-billing .dg-bill-usage .billing-usage-grid span { grid-column: 1; }
-.dg-billing .dg-bill-usage .billing-usage-grid strong { align-self: end; grid-column: 2; grid-row: 1 / span 2; }
-.dg-billing .dg-bill-usage .dg-bill-meter { grid-column: 1; width: 100%; }
-
-/* Plans: a priced ladder on one sheet, separated by rules not cards. */
+/* Billing & usage: transparent capacity, trial state and invoice actions. */
+.dg-billing { display: grid; gap: 22px; margin-inline: auto; max-width: 1380px; }
+.dg-billing > .ds-page-header { border-bottom: 1px solid var(--dg-line); padding-bottom: 16px; }
+.dg-billing > .ds-page-header h1 { font-size: clamp(1.9rem, 3vw, 2.45rem); }
+.dg-billing > .ds-page-header .ds-page-header-description { color: var(--dg-ink-2); font-size: .85rem; }
+.dg-bill-notices { display: grid; gap: 9px; }
+.dg-bill-notices > .ds-card { background: var(--dg-info-soft); border: 1px solid var(--dg-info-line); border-radius: 10px; box-shadow: none; padding: 12px 15px; }
+.dg-bill-notices > .ds-card > strong { color: var(--dg-ink); font-size: .83rem; }
+.dg-bill-notices > .ds-card > p { color: var(--dg-ink-2); font-size: .78rem; line-height: 1.5; margin-top: 4px; }
+.dg-bill-notices > .ds-card.state.danger { background: var(--dg-danger-soft); border-color: var(--dg-danger-line); }
+.dg-bill-hero { align-items: stretch; display: grid; gap: 16px; grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr); }
+.dg-bill-hero > .ds-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; box-shadow: none; min-width: 0; padding: 20px; }
+.billing-plan-card { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) auto; }
+.billing-plan-card h2 { color: var(--dg-ink); font-size: 1.38rem; margin: 4px 0 7px; }
+.billing-plan-card .dg-bill-price { color: var(--dg-muted); font-size: .76rem; }
+.billing-plan-card .dg-bill-price strong { color: var(--dg-ink); font-size: 1.65rem; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+.billing-plan-card > .quick-actions { align-items: start; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.billing-plan-card > .dg-bill-period { background: var(--dg-surface-2); border: 1px solid var(--dg-line); border-radius: 10px; grid-column: 1 / -1; padding: 13px 14px; }
+.dg-bill-period h3 { color: var(--dg-ink); font-size: .91rem; margin: 4px 0; }
+.dg-bill-period > p:last-child { color: var(--dg-muted); font-size: .75rem; line-height: 1.5; overflow-wrap: anywhere; }
+.dg-bill-usage > h2 { color: var(--dg-ink); font-size: 1rem; margin: 5px 0 13px; }
+.dg-bill-usage .billing-usage-grid { display: grid; gap: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dg-bill-usage .billing-usage-grid > div { background: transparent; border: 0; border-left: 1px solid var(--dg-line); border-radius: 0; min-width: 0; padding: 4px 12px; }
+.dg-bill-usage .billing-usage-grid > div:first-child { border-left: 0; padding-left: 0; }
+.dg-bill-usage .billing-usage-grid > div > span { color: var(--dg-muted); font-size: .72rem; }
+.dg-bill-usage .billing-usage-grid > div > strong { color: var(--dg-ink); font-size: 1.2rem; }
+.dg-bill-usage .billing-usage-grid > div > strong small { color: var(--dg-muted); font-size: .78rem; font-weight: 450; }
+.dg-bill-meter { background: var(--dg-surface-3); border-radius: 999px; display: block; height: 6px; margin-top: 9px; overflow: hidden; }
+.dg-bill-meter b { background: var(--dg-primary); border-radius: inherit; display: block; height: 100%; }
+.dg-bill-usage .usage-over-limit .dg-bill-meter b { background: var(--dg-danger-dot); }
+.dg-bill-usage .usage-over-limit > strong { color: var(--dg-danger); }
+.dg-bill-usage .usage-over-limit > small { color: var(--dg-danger); font-family: var(--dg-mono); font-size: .6rem; margin-top: 4px; }
 .dg-bill-plans { display: grid; gap: 14px; }
-.dg-bill-section-head h2 { font-size: 1.25rem; font-weight: 600; letter-spacing: -.03em; margin: 6px 0 0; }
-.dg-bill-plan-grid { background: var(--bl-paper); border: 1px solid var(--bl-rule); border-radius: 20px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
-.dg-bill-plan { align-content: start; background: transparent; display: grid; gap: 12px; padding: 26px 26px 24px; position: relative; }
-.dg-bill-plan + .dg-bill-plan { border-left: 1px solid var(--bl-rule); }
-.dg-bill-plan h3 { color: var(--bl-label); font-family: var(--dg-mono); font-size: .72rem; font-weight: 500; letter-spacing: .06em; margin: 0; }
-.dg-bill-plan-price { color: var(--dg-muted); font-size: .9rem; margin: 0; }
-.dg-bill-plan-price strong { color: var(--bl-ink); font-family: var(--dg-mono); font-size: 2.3rem; font-variant-numeric: tabular-nums; font-weight: 500; letter-spacing: -.05em; }
-.dg-bill-plan > p:not(.dg-bill-plan-price) { color: var(--dg-ink-2); font-size: .88rem; line-height: 1.55; margin: 0; min-height: 3.1em; }
-.dg-bill-plan.is-featured { background: linear-gradient(180deg, rgba(129, 140, 248, .07), transparent 70%); }
-.dg-bill-plan.is-current { background: rgba(255, 255, 255, .06); box-shadow: inset 0 0 0 1px var(--mf-accent-line), inset 0 2px 0 var(--mf-accent); }
-.dg-bill-plan.is-current :is(h3, .dg-bill-plan-price) { color: var(--dg-muted); }
-.dg-bill-plan.is-current .dg-bill-plan-price strong { color: var(--dg-ink); }
-.dg-bill-plan.is-current > p:not(.dg-bill-plan-price) { color: var(--dg-ink-2); }
-.dg-bill-ribbon { color: var(--mf-accent-ink); font-family: var(--dg-mono); font-size: .66rem; font-weight: 600; letter-spacing: .06em; position: absolute; right: 26px; text-transform: uppercase; top: 27px; }
-.dg-bill-plan.is-current .dg-bill-ribbon { color: var(--mf-accent-ink); }
-.dg-bill-current, .dg-bill-unavailable { border-radius: 999px; display: block; font-size: .84rem; font-weight: 560; margin-top: 4px; padding: 10px 12px; text-align: center; }
-.dg-bill-current { background: var(--mf-accent-fill); color: var(--mf-on-accent); }
-.dg-bill-unavailable { border: 1px dashed var(--dg-line-strong); color: var(--dg-muted); }
-.dg-bill-plan .ds-button { margin-top: 4px; width: 100%; }
-
-/* Invoices: ledger lines. */
-.dg-billing .dg-bill-invoices { display: grid; gap: 4px; padding: 26px 28px; }
-.dg-billing .dg-bill-invoices h2 { font-size: 1.2rem; font-weight: 600; letter-spacing: -.03em; margin: 4px 0 14px; }
-.dg-billing .session-list { border-top: 1.5px solid var(--bl-ink); display: grid; }
-.dg-billing .billing-invoice-head, .dg-billing .billing-invoice-row { align-items: center; display: grid; gap: 16px; grid-template-columns: minmax(0, 1.4fr) 140px 110px 270px; padding: 12px 4px; }
-.dg-billing .billing-invoice-head { color: var(--bl-label); font-family: var(--dg-mono); font-size: .62rem; letter-spacing: .06em; text-transform: uppercase; }
-.dg-billing .billing-invoice-head span:nth-child(2) { text-align: right; }
-.dg-billing .billing-invoice-row { background: none; border: 0; border-radius: 0; border-top: 1px solid var(--bl-rule); box-shadow: none; color: var(--dg-ink); min-height: 0; text-align: left; }
-.dg-billing .billing-invoice-row:hover { background: rgba(255, 255, 255, .05); }
-.dg-billing .billing-invoice-row > div:first-child { display: grid; gap: 2px; }
-.dg-billing .billing-invoice-row > div:first-child strong { font-family: var(--dg-mono); font-size: .86rem; font-weight: 500; }
-.dg-billing .billing-invoice-row > span { font-family: var(--dg-mono); font-size: .9rem; font-variant-numeric: tabular-nums; text-align: right; }
-.dg-billing .billing-invoice-row .quick-actions { justify-content: flex-end; }
-.dg-billing .billing-invoice-row .ds-status-chip { font-family: var(--dg-font); justify-self: start; text-transform: capitalize; }
-.dg-billing .dg-bill-invoice-detail { display: grid; gap: 8px; padding: 26px 28px; }
+.dg-bill-section-head { border-bottom: 1px solid var(--dg-line); padding-bottom: 11px; }
+.dg-bill-section-head h2 { color: var(--dg-ink); font-size: 1.12rem; margin-top: 4px; }
+.dg-bill-plan-grid { display: grid; gap: 13px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dg-bill-plan { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; display: grid; gap: 12px; min-width: 0; padding: 18px; position: relative; }
+.dg-bill-plan.is-featured { border-color: var(--dg-primary-line); box-shadow: 0 0 0 2px rgba(47, 111, 237, .06); }
+.dg-bill-plan.is-current { background: linear-gradient(180deg, var(--dg-primary-soft), var(--dg-surface) 70%); }
+.dg-bill-plan h3 { color: var(--dg-ink); font-size: .95rem; letter-spacing: .02em; }
+.dg-bill-plan > p:not(.dg-bill-plan-price) { color: var(--dg-muted); font-size: .78rem; line-height: 1.5; min-height: 44px; }
+.dg-bill-plan-price { color: var(--dg-muted); font-size: .72rem; }
+.dg-bill-plan-price strong { color: var(--dg-ink); font-size: 1.55rem; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+.dg-bill-plan > button { align-self: end; justify-self: start; max-width: 100%; white-space: normal; }
+.dg-bill-ribbon { background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 999px; color: var(--dg-primary-strong); font-size: .65rem; font-weight: 600; justify-self: start; padding: 4px 8px; }
+.dg-bill-current { align-self: end; color: var(--dg-success); font-size: .75rem; font-weight: 600; }
+.dg-bill-unavailable { align-self: end; color: var(--dg-muted); font-size: .71rem; }
+.dg-bill-invoices, .dg-bill-invoice-detail { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; box-shadow: none; min-width: 0; padding: 19px; }
+.dg-bill-invoices > h2, .dg-bill-invoice-detail > h2 { color: var(--dg-ink); font-size: 1rem; margin: 5px 0 14px; }
+.dg-bill-invoices > .session-list { display: grid; gap: 0; }
+.billing-invoice-head, .billing-invoice-row { align-items: center; display: grid; gap: 12px; grid-template-columns: minmax(150px, 1fr) minmax(95px, .55fr) minmax(90px, .5fr) minmax(190px, auto); min-width: 0; }
+.billing-invoice-head { background: #f7f9fc; border-bottom: 1px solid var(--dg-line); color: var(--dg-muted); font-family: var(--dg-mono); font-size: .61rem; letter-spacing: .04em; min-height: 35px; padding: 0 10px; text-transform: uppercase; }
+.billing-invoice-row { background: transparent; border: 0; border-bottom: 1px solid var(--dg-line); border-radius: 0; color: var(--dg-ink-2); cursor: default; justify-content: stretch; min-height: 66px; padding: 10px; text-align: left; }
+.billing-invoice-row > div:first-child { display: grid; gap: 4px; }
+.billing-invoice-row > div:first-child strong { color: var(--dg-ink); font-size: .8rem; }
+.billing-invoice-row > div:first-child small { color: var(--dg-muted); font-size: .69rem; }
+.billing-invoice-row > span { color: var(--dg-ink-2); font-family: var(--dg-mono); font-size: .72rem; }
+.billing-invoice-row > .quick-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.billing-invoice-row > .quick-actions > * { min-height: 30px; padding: 4px 8px; }
+.dg-bill-invoice-detail .billing-usage-grid { display: grid; gap: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.dg-bill-invoice-detail .billing-usage-grid > div { background: transparent; border: 0; border-left: 1px solid var(--dg-line); border-radius: 0; padding: 5px 12px; }
+.dg-bill-invoice-detail .billing-usage-grid > div:first-child { border-left: 0; padding-left: 0; }
+.dg-bill-invoice-detail .billing-usage-grid span { color: var(--dg-muted); font-size: .65rem; }
+.dg-bill-invoice-detail .billing-usage-grid strong { color: var(--dg-ink); font-size: .78rem; overflow-wrap: anywhere; }
+.dg-bill-invoice-detail > p:not(.eyebrow) { color: var(--dg-ink-2); font-family: var(--dg-mono); font-size: .7rem; margin-top: 9px; overflow-wrap: anywhere; }
 
 @media (max-width: 900px) {
-  .dg-bill-hero, .dg-bill-plan-grid { grid-template-columns: 1fr; }
-  .dg-billing .billing-plan-card { border-bottom: 1px solid var(--bl-rule) !important; border-right: 0 !important; }
-  .dg-bill-plan + .dg-bill-plan { border-left: 0; border-top: 1px solid var(--bl-rule); }
-  .dg-billing .billing-invoice-head { display: none; }
-  .dg-billing .billing-invoice-row { grid-template-columns: 1fr auto; }
-  .dg-billing .billing-invoice-row > .quick-actions { grid-column: 1 / -1; justify-content: flex-start; }
-  .dg-billing .dg-bill-notices .ds-card strong { min-width: 0; }
+  .dg-bill-hero { grid-template-columns: 1fr; }
+  .dg-bill-invoice-detail .billing-usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dg-bill-invoice-detail .billing-usage-grid > div:nth-child(odd) { border-left: 0; }
+  .dg-bill-invoice-detail .billing-usage-grid > div:nth-child(n + 3) { border-top: 1px solid var(--dg-line); padding-top: 9px; }
 }
-@media (max-width: 560px) {
-  .dg-billing .billing-plan-card, .dg-billing .dg-bill-usage { padding: 24px 20px; }
-  .dg-billing .billing-plan-card::before { left: 20px; }
+@media (max-width: 720px) {
+  .dg-bill-plan-grid { grid-template-columns: 1fr; }
+  .dg-bill-plan > p:not(.dg-bill-plan-price) { min-height: 0; }
+  .billing-invoice-head { display: none; }
+  .billing-invoice-row { align-items: start; gap: 8px 12px; grid-template-columns: minmax(0, 1fr) auto; }
+  .billing-invoice-row > div:first-child { grid-column: 1 / -1; }
+  .billing-invoice-row > .quick-actions { grid-column: 1 / -1; }
 }
-@media (max-width: 560px) {
-  .dg-billing .billing-plan-card { grid-template-columns: 1fr; }
-  .dg-billing .billing-plan-card .quick-actions { grid-row: 1; justify-content: space-between; }
+@media (max-width: 520px) {
+  .billing-plan-card { grid-template-columns: 1fr; }
+  .billing-plan-card > .quick-actions { justify-content: flex-start; }
+  .billing-plan-card > .dg-bill-period { grid-column: 1; }
+  .dg-bill-usage .billing-usage-grid { grid-template-columns: 1fr; }
+  .dg-bill-usage .billing-usage-grid > div { border-left: 0; padding: 9px 0; }
+  .dg-bill-usage .billing-usage-grid > div + div { border-top: 1px solid var(--dg-line); }
+  .dg-bill-invoice-detail .billing-usage-grid { grid-template-columns: 1fr; }
+  .dg-bill-invoice-detail .billing-usage-grid > div { border-left: 0; border-top: 1px solid var(--dg-line); padding: 9px 0; }
 }
-
-/* =====================================================================
- * Aurora direction — Plan & Usage: gold / violet.
- * The statement header is a pane of glass with a gold figure; capacity reads
- * on luminous meters; the plan ladder is three glass plates that lean toward
- * the pointer, the recommended plate edged in violet-to-gold light.
- * ===================================================================== */
-.dg-billing { --bl-rule: var(--au-ink-line); --bl-paper: var(--au-ink-flat); --bl-ink: #fff; --bl-label: var(--au-muted); gap: 26px; }
-.dg-billing .ds-page-header h1 { color: #fff; font-size: clamp(2.4rem, 4.6vw, 3.4rem); font-weight: 700; }
-.dg-billing .eyebrow { color: color-mix(in srgb, var(--au-gold) 60%, white); font-family: var(--dg-mono); letter-spacing: .12em; }
-:root:root .dg-billing .button, :root:root .dg-billing .ds-button-primary { background: linear-gradient(180deg, rgba(255, 255, 255, .3), transparent 55%), linear-gradient(120deg, #f8cf5f, #ffa25c); border-color: rgba(255, 255, 255, .25); color: #1a1204; }
-:root:root .dg-billing .dg-bill-notices { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); background: linear-gradient(90deg, rgba(79, 124, 255, .1), rgba(14, 20, 40, .6)); border: 1px solid rgba(120, 156, 255, .24); border-radius: var(--au-r-md); box-shadow: inset 3px 0 0 var(--au-blue); }
-.dg-billing .dg-bill-notices .ds-card strong { color: var(--au-info-ink); }
-:root:root .dg-bill-hero {
-  -webkit-backdrop-filter: blur(24px) saturate(160%); backdrop-filter: blur(24px) saturate(160%);
-  background: radial-gradient(60% 90% at 0% 0%, rgba(246, 195, 68, .2), transparent 60%), radial-gradient(60% 90% at 100% 100%, rgba(139, 92, 246, .22), transparent 60%), linear-gradient(180deg, rgba(255, 255, 255, .06), transparent 40%), rgba(14, 18, 36, .6);
-  border: 1px solid rgba(255, 255, 255, .13); border-radius: var(--au-r-xl); box-shadow: var(--au-edge), var(--au-refract), var(--au-depth-3);
-}
-.dg-billing .dg-bill-hero .billing-plan-card::before { background: linear-gradient(90deg, #f6c344, #ff8a3d); box-shadow: 0 0 16px rgba(246, 195, 68, .8); }
-.dg-billing .billing-plan-card h2 { background: linear-gradient(180deg, #fff 30%, #ffe19a 70%, #f6c344); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 0 24px rgba(246, 195, 68, .35)); }
-.dg-billing .billing-plan-card { border-right-color: rgba(255, 255, 255, .1) !important; }
-.dg-bill-meter { background: rgba(8, 12, 26, .7); border-radius: 999px; box-shadow: inset 0 1px 2px rgba(0, 0, 0, .5); height: 10px; }
-.dg-bill-meter::after { background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), rgba(8, 12, 26, .85) calc(10% - 2px) 10%); }
-:root:root:root .dg-bill-meter b { background: linear-gradient(90deg, #8b5cf6, #f6c344); border-radius: 999px; box-shadow: 0 0 14px rgba(246, 195, 68, .6); }
-.dg-bill-plans { gap: 18px; }
-:root:root .dg-bill-plans { background: none; border: 0; box-shadow: none; padding: 0; }
-.dg-bill-section-head h2 { color: #fff; font-size: 1.4rem; }
-:root:root .dg-bill-plan-grid { background: none; border: 0; gap: 16px; overflow: visible; }
-:root:root .dg-bill-plan {
-  -webkit-backdrop-filter: blur(20px) saturate(150%); backdrop-filter: blur(20px) saturate(150%);
-  background: radial-gradient(90% 70% at var(--lx, 30%) var(--ly, 0%), rgba(255, 255, 255, .1), transparent 60%), linear-gradient(180deg, rgba(255, 255, 255, .05), transparent 50%), rgba(14, 20, 40, .6);
-  border: 1px solid rgba(255, 255, 255, .12); border-radius: var(--au-r-lg); box-shadow: var(--au-edge), var(--au-depth-2); padding: 28px 26px 24px;
-}
-.dg-bill-plan + .dg-bill-plan { border-left: 1px solid rgba(255, 255, 255, .12); }
-:root:root .dg-bill-plan.is-featured {
-  background: radial-gradient(90% 70% at var(--lx, 30%) var(--ly, 0%), rgba(255, 255, 255, .12), transparent 60%), radial-gradient(100% 80% at 100% 0%, rgba(139, 92, 246, .3), transparent 60%), radial-gradient(90% 70% at 0% 100%, rgba(246, 195, 68, .18), transparent 60%), rgba(18, 18, 44, .62);
-  border-color: rgba(200, 170, 255, .4); box-shadow: var(--au-edge), var(--au-refract), 0 0 60px -20px rgba(139, 92, 246, .8), var(--au-depth-2);
-}
-:root:root .dg-bill-plan.is-current { box-shadow: var(--au-edge), inset 0 0 0 1px rgba(246, 195, 68, .5), 0 0 40px -18px rgba(246, 195, 68, .8), var(--au-depth-2); }
-.dg-bill-plan h3 { color: var(--au-ink-2); }
-.dg-bill-plan-price strong { color: #fff; font-size: 2.6rem; }
-.dg-bill-plan.is-featured .dg-bill-plan-price strong { background: linear-gradient(180deg, #fff, #d9c8ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.dg-bill-ribbon { background: linear-gradient(120deg, #8b5cf6, #f6c344); border-radius: 999px; box-shadow: 0 0 18px -4px rgba(139, 92, 246, .9); color: #fff !important; padding: 3px 10px; }
-:root:root .dg-bill-current { background: linear-gradient(120deg, rgba(246, 195, 68, .25), rgba(255, 138, 61, .15)); border: 1px solid rgba(246, 195, 68, .5); box-shadow: none; color: #ffe19a; }
-.dg-bill-unavailable { border-color: rgba(170, 186, 232, .2); color: var(--au-faint); }
-:root:root .dg-billing .dg-bill-invoices { background: var(--au-ink-surface); border-radius: var(--au-r-lg); }
-.dg-billing .session-list { border-top: 1px solid rgba(246, 195, 68, .4); }
-@media (max-width: 860px) { :root:root .dg-bill-plan-grid { grid-template-columns: 1fr; } }

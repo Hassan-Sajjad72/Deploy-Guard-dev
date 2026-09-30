@@ -1,195 +1,73 @@
-/*
- * Troubleshoot — issue-detail pattern. Deterministic diagnosis first (red),
- * AI assistance secondary (ink + lime marker), dark evidence viewer. Scoped to .dg-trouble.
- */
-.dg-trouble { --ts-line: var(--dg-line); --ts-red: var(--dg-danger-dot); --ts-violet: var(--dg-primary); gap: 18px; margin: 0 auto; max-width: 1280px; }
-.dg-trouble :is(h1, h2, h3, strong) { color: var(--dg-ink); text-shadow: none; }
-.dg-trouble p, .dg-trouble .muted { color: var(--dg-ink-2); opacity: 1; }
-.dg-trouble .eyebrow { color: var(--dg-muted); font-size: .72rem; font-weight: 700; letter-spacing: .06em; opacity: 1; text-transform: uppercase; }
-.dg-trouble .ds-page-header h1 { font-size: clamp(1.7rem, 2.4vw, 2rem); letter-spacing: -.02em; }
-.dg-trouble .ds-page-header p, .dg-trouble .page-context { color: var(--dg-ink-2); opacity: 1; }
-.dg-trouble .ds-card { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--dg-surface) !important; border: 1px solid var(--ts-line); border-radius: 12px; box-shadow: none; color: var(--dg-ink); display: grid; gap: 14px; padding: 18px 20px; }
-.dg-trouble .ds-card::before, .dg-trouble .ds-card::after { display: none; }
-.dg-trouble .compact-section-heading { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
-.dg-trouble .compact-section-heading h2 { font-size: 1.1rem; margin: 4px 0 0; }
+/* Troubleshooting: evidence availability first, technical records behind disclosure. */
+.dg-trouble { display: grid; gap: 22px; margin-inline: auto; max-width: 1460px; }
+.dg-trouble > .ds-page-header { border-bottom: 1px solid var(--dg-line); padding-bottom: 16px; }
+.dg-trouble > .ds-page-header h1 { font-size: clamp(1.9rem, 3vw, 2.45rem); }
+.dg-trouble > .ds-page-header .ds-page-header-description { color: var(--dg-ink-2); font-size: .86rem; }
+.dg-ts-layout { align-items: start; display: grid; gap: clamp(22px, 4vw, 44px); grid-template-columns: minmax(0, 1fr) minmax(275px, .38fr); }
+.dg-ts-main, .dg-ts-side { display: grid; gap: 17px; min-width: 0; }
+.dg-ts-side { position: sticky; top: 95px; }
+.dg-ts-side > .ds-card { display: grid; gap: 14px; }
+.dg-ts-side h2 { color: var(--dg-ink); font-size: .98rem; }
+.dg-ts-side > .ds-card > div:first-child p:not(.eyebrow) { color: var(--dg-muted); font-size: .76rem; line-height: 1.5; margin-top: 5px; }
+.dg-ts-side .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dg-ts-side .quick-actions > * { flex: 1 1 auto; }
+.dg-ts-side .muted { color: var(--dg-muted); font-size: .75rem; line-height: 1.5; }
+.dg-ts-issue, .troubleshooting-diagnosis, .dg-ts-main > .ds-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; min-width: 0; padding: clamp(16px, 2.5vw, 22px); }
+.dg-ts-issue { border-top: 2px solid var(--dg-danger-dot); display: grid; gap: 13px; }
+.dg-ts-issue .compact-section-heading, .troubleshooting-diagnosis .compact-section-heading { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 0; }
+.dg-ts-issue .compact-section-heading h2 { color: var(--dg-ink); font-size: 1.04rem; }
+.troubleshooting-operation-grid { display: grid; gap: 0 16px; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
+.troubleshooting-operation-grid article { border-top: 1px solid var(--dg-line); display: grid; gap: 4px; min-width: 0; padding: 9px 8px 9px 0; }
+.troubleshooting-operation-grid article span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .6rem; letter-spacing: .035em; text-transform: uppercase; }
+.troubleshooting-operation-grid article strong { color: var(--dg-ink-2); font-size: .78rem; font-weight: 550; overflow-wrap: anywhere; }
+.troubleshooting-failure-summary { color: var(--dg-ink-2); font-size: .83rem; line-height: 1.55; }
+.dg-ts-issue > .state.warning { background: var(--dg-warning-soft); border-left: 3px solid var(--dg-warning-dot); border-radius: 0 8px 8px 0; color: var(--dg-ink-2); font-size: .79rem; padding: 10px 12px; }
+.troubleshooting-advanced { border-top: 1px solid var(--dg-line); padding-top: 10px; }
+.troubleshooting-advanced > summary { color: var(--dg-primary-strong); cursor: pointer; font-size: .77rem; font-weight: 560; }
+.troubleshooting-advanced > p { color: var(--dg-ink-2); font-size: .76rem; margin-top: 8px; }
+.troubleshooting-advanced > p strong { color: var(--dg-ink); }
+.troubleshooting-diagnosis { display: grid; gap: 15px; }
+.troubleshooting-diagnosis .compact-section-heading h2 { color: var(--dg-ink); font-size: 1.08rem; }
+.troubleshooting-diagnosis .compact-section-heading p { color: var(--dg-ink-2); font-size: .84rem; line-height: 1.5; margin-top: 5px; }
+.troubleshooting-diagnosis > section { border-top: 1px solid var(--dg-line); display: grid; gap: 8px; padding-top: 13px; }
+.troubleshooting-diagnosis > section h3 { color: var(--dg-ink); font-size: .84rem; }
+.troubleshooting-diagnosis > section p { color: var(--dg-ink-2); font-size: .79rem; line-height: 1.55; }
+.troubleshooting-diagnosis .remediation-list { color: var(--dg-ink-2); display: grid; font-size: .78rem; gap: 7px; line-height: 1.5; margin: 0; padding-left: 20px; }
+.troubleshooting-diagnosis .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.troubleshooting-diagnosis .quick-actions button { text-align: left; white-space: normal; }
+.troubleshooting-evidence-groups { border-top: 1px solid var(--dg-line); display: grid; margin-top: 14px; }
+.troubleshooting-evidence-groups > details { border-bottom: 1px solid var(--dg-line); }
+.troubleshooting-evidence-groups > details > summary { align-items: center; color: var(--dg-ink); cursor: pointer; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; list-style: none; min-height: 43px; padding: 9px 3px; }
+.troubleshooting-evidence-groups > details > summary::-webkit-details-marker { display: none; }
+.troubleshooting-evidence-groups > details > summary span { background: var(--dg-surface-3); border-radius: 999px; color: var(--dg-muted); font-family: var(--dg-mono); font-size: .61rem; padding: 3px 7px; }
+.troubleshooting-evidence-groups > details ol { display: grid; gap: 9px; list-style: none; margin: 0; padding: 0 0 12px; }
+.troubleshooting-evidence-groups > details li { min-width: 0; }
+.troubleshooting-evidence-groups > details li > div { align-items: baseline; color: var(--dg-muted); display: flex; flex-wrap: wrap; font-family: var(--dg-mono); font-size: .62rem; gap: 7px 12px; justify-content: space-between; padding: 7px 0; }
+.troubleshooting-evidence-groups > details li > div strong { color: var(--dg-ink-2); font-weight: 550; }
+.troubleshooting-evidence-groups > details pre { background: #071a33; border: 1px solid #24466d; border-radius: 8px; color: #e7f0fd; font-family: var(--dg-mono); font-size: .68rem; line-height: 1.55; margin: 0; max-height: 340px; overflow: auto; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.troubleshooting-chat { display: grid; gap: 14px; }
+.troubleshooting-chat h2 { color: var(--dg-ink); font-size: .98rem; }
+.troubleshooting-chat > div:first-child p:not(.eyebrow) { color: var(--dg-muted); font-size: .77rem; line-height: 1.5; margin-top: 5px; }
+.troubleshooting-chat-history { border: 1px solid var(--dg-line); border-radius: 10px; display: grid; gap: 0; max-height: 430px; overflow: auto; padding: 5px 12px; }
+.troubleshooting-chat-history article { border-bottom: 1px solid var(--dg-line); display: grid; gap: 5px; padding: 11px 0; }
+.troubleshooting-chat-history article:last-child { border-bottom: 0; }
+.troubleshooting-chat-history article > strong { color: var(--dg-primary-strong); font-family: var(--dg-mono); font-size: .65rem; text-transform: uppercase; }
+.troubleshooting-chat-history article[data-role="assistant"] > strong { color: var(--dg-ink); }
+.troubleshooting-chat-history article > p { color: var(--dg-ink-2); font-size: .79rem; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.troubleshooting-chat-history > .muted { color: var(--dg-muted); font-size: .76rem; padding: 10px 0; }
+.troubleshooting-followup { align-items: end; display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto; }
+.troubleshooting-followup textarea { min-height: 88px; }
+.troubleshooting-followup button { margin-bottom: 1px; }
+.session-list { display: grid; gap: 6px; }
+.session-list button { font-size: .7rem; justify-content: flex-start; overflow-wrap: anywhere; text-align: left; white-space: normal; }
+.troubleshooting-empty-page .ds-empty-state { background: var(--dg-surface); border: 1px dashed var(--dg-line-strong); box-shadow: none; }
 
-.dg-ts-layout { align-items: start; display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) 320px; }
-.dg-ts-main, .dg-ts-side { display: grid; gap: 16px; min-width: 0; }
-.dg-ts-side { position: sticky; top: 70px; }
-
-/* Issue summary — the dominant, deterministic block */
-.dg-trouble .dg-ts-issue { border-left: 4px solid var(--ts-red); gap: 16px; padding: 20px 22px; }
-.dg-trouble .dg-ts-issue h2 { color: var(--dg-danger); font-size: 1.35rem; }
-.dg-trouble .troubleshooting-failure-summary { color: var(--dg-ink); font-size: 1.02rem; font-weight: 550; margin: 0; }
-.dg-trouble .troubleshooting-operation-grid { border: 1px solid var(--ts-line); border-radius: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
-.dg-trouble .troubleshooting-operation-grid article { background: var(--dg-surface); border-bottom: 1px solid var(--dg-surface-3); border-right: 1px solid var(--dg-surface-3); box-shadow: none; display: grid; gap: 3px; padding: 10px 12px; }
-.dg-trouble .troubleshooting-operation-grid article span { color: var(--dg-muted); font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.dg-trouble .troubleshooting-operation-grid article strong { color: var(--dg-ink); font-size: .86rem; font-weight: 600; overflow-wrap: anywhere; }
-.dg-trouble .troubleshooting-operation-grid article:nth-child(4) strong, .dg-trouble .troubleshooting-operation-grid article:nth-child(5) strong, .dg-trouble .troubleshooting-operation-grid article:nth-child(8) strong { font-family: var(--font-mono, ui-monospace, monospace); font-size: .8rem; }
-.dg-trouble .state { -webkit-backdrop-filter: none; backdrop-filter: none; border-radius: 12px; box-shadow: none; margin: 0; padding: 10px 14px; }
-.dg-trouble .state.warning { background: var(--dg-warning-soft); border: 1px solid var(--dg-warning-line); color: var(--dg-warning); }
-.dg-trouble .state.warning strong { color: var(--dg-warning); }
-
-/* AI analysis — secondary, violet accent */
-.dg-trouble .troubleshooting-diagnosis { background: var(--dg-surface) !important; border-left: 4px solid var(--ts-violet); }
-.dg-trouble .troubleshooting-diagnosis .eyebrow { color: var(--dg-primary-ink); }
-.dg-trouble .troubleshooting-diagnosis section { border-top: 1px solid var(--dg-surface-3); display: grid; gap: 6px; padding-top: 12px; }
-.dg-trouble .troubleshooting-diagnosis h3 { font-size: .9rem; margin: 0; }
-.dg-trouble .troubleshooting-diagnosis li { color: var(--dg-ink-2); }
-.dg-trouble .subtle-button { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 999px; box-shadow: none; color: var(--dg-primary-ink); font-size: .82rem; min-height: 32px; padding: 5px 12px; }
-.dg-trouble .subtle-button:hover { background: var(--dg-primary-soft); }
-.dg-trouble .evidence-reference-list { display: flex; flex-wrap: wrap; gap: 8px; }
-
-/* Evidence viewer — dark, collapsed by default */
-.dg-trouble .troubleshooting-evidence-groups { display: grid; gap: 6px; }
-.dg-trouble .troubleshooting-evidence-groups details { background: var(--dg-surface-2); border: 1px solid var(--ts-line); border-radius: 12px; }
-.dg-trouble .troubleshooting-evidence-groups summary { align-items: center; color: var(--dg-ink); cursor: pointer; display: flex; font-size: .88rem; font-weight: 600; justify-content: space-between; padding: 10px 12px; }
-.dg-trouble .troubleshooting-evidence-groups summary span { background: var(--dg-line); border-radius: 999px; color: var(--dg-ink-2); font-size: .72rem; padding: 1px 8px; }
-.dg-trouble .troubleshooting-evidence-groups ol { background: var(--dg-console); border-radius: 0 0 8px 8px; display: grid; gap: 8px; list-style: none; margin: 0; padding: 12px; }
-.dg-trouble .troubleshooting-evidence-groups li div { display: flex; gap: 10px; justify-content: space-between; }
-.dg-trouble .troubleshooting-evidence-groups li strong { color: var(--dg-console-ink); font-size: .8rem; }
-.dg-trouble .troubleshooting-evidence-groups time { color: var(--dg-console-muted); font-size: .74rem; }
-.dg-trouble .troubleshooting-evidence-groups pre { background: transparent; color: var(--dg-console-ink); font-size: .78rem; margin: 4px 0 0; }
-
-/* Follow-up */
-.dg-trouble .troubleshooting-chat-history { display: grid; gap: 8px; }
-.dg-trouble .troubleshooting-chat-history article { background: var(--dg-surface-2); border: 1px solid var(--ts-line); border-radius: 12px; padding: 10px 12px; }
-.dg-trouble .troubleshooting-chat-history article[data-role="user"] { background: var(--dg-info-soft); border-color: var(--dg-info-line); }
-.dg-trouble .field > span { color: var(--dg-ink-2); font-size: .82rem; font-weight: 600; }
-.dg-trouble .field select, .dg-trouble .field textarea { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--dg-surface); border: 1px solid var(--dg-line-strong); border-radius: 12px; box-shadow: none; color: var(--dg-ink); }
-.dg-trouble .secondary-button { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--dg-surface); border: 1px solid var(--dg-line-strong); border-radius: 12px; box-shadow: none; color: var(--dg-ink); }
-
-/* Side rail */
-.dg-trouble .troubleshooting-command h2 { font-size: .98rem; margin: 4px 0; }
-.dg-trouble .troubleshooting-command p { font-size: .84rem; }
-.dg-trouble .troubleshooting-command .button { border-radius: 12px; width: 100%; }
-.dg-trouble .troubleshooting-command .quick-actions { display: grid; gap: 8px; }
-.dg-trouble .session-list { display: grid; gap: 6px; }
-.dg-trouble .session-list .subtle-button { background: var(--dg-surface); border-color: var(--ts-line); border-radius: 6px; color: var(--dg-ink-2); font-family: var(--font-mono, ui-monospace, monospace); font-size: .76rem; justify-content: flex-start; }
-.dg-trouble .troubleshooting-provider-meta { color: var(--dg-ink-2); font-size: .84rem; }
-.dg-trouble .ds-empty-state { background: var(--dg-surface); border: 1px solid var(--ts-line); border-radius: 12px; padding: 20px; }
-
-@media (max-width: 1060px) {
+@media (max-width: 950px) {
+  .dg-ts-layout { grid-template-columns: minmax(0, 1fr) minmax(235px, .4fr); gap: 18px; }
+  .dg-ts-side { position: static; }
+}
+@media (max-width: 720px) {
   .dg-ts-layout { grid-template-columns: 1fr; }
-  .dg-ts-side { order: 1; position: static; }
-  .dg-trouble .troubleshooting-operation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dg-ts-side { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .troubleshooting-followup { grid-template-columns: 1fr; }
 }
-
-/* Diagnosis-first order: deterministic issue → evidence viewer → AI analysis → follow-up.
-   Visual order only; the DOM is unchanged. */
-.dg-ts-main > .troubleshooting-diagnosis { order: 2; }
-.dg-ts-main > .troubleshooting-chat { order: 3; }
-.dg-trouble .compact-section-heading > .ds-status-chip { flex: 0 0 auto; white-space: nowrap; }
-
-/* =====================================================================
- * Diagnosis workspace — a numbered investigation rail down the main column:
- *   1 Failure → 2 Evidence → 3 AI diagnosis → 4 Follow-up.
- * Semantic red stays on the failure; rose marks the assisted analysis.
- * ===================================================================== */
-.dg-ts-main { gap: 18px; padding-left: 46px; position: relative; }
-.dg-ts-main::before { background: linear-gradient(180deg, var(--dg-danger-line), var(--pg-line) 40%, var(--pg-line)); bottom: 24px; content: ""; left: 15px; position: absolute; top: 24px; width: 2px; }
-.dg-ts-main > .ds-card { overflow: visible; position: relative; }
-.dg-ts-main > .ds-card::before { align-items: center; background: var(--dg-surface); border: 2px solid var(--pg-line); border-radius: 50%; color: var(--pg-strong); content: attr(data-step); display: flex !important; font-size: .78rem; font-weight: 800; height: 30px; justify-content: center; left: -46px; position: absolute; top: 18px; width: 30px; z-index: 1; }
-.dg-ts-main > .dg-ts-issue::before { background: var(--dg-danger-dot); border-color: var(--dg-danger-dot); color: #fff; content: "1"; }
-.dg-ts-main > .ds-card:has(.troubleshooting-evidence-groups)::before { content: "2"; }
-.dg-ts-main > .troubleshooting-diagnosis::before { background: var(--pg-accent); border-color: var(--pg-accent); color: #fff; content: "3"; }
-.dg-ts-main > .troubleshooting-chat::before { content: "4"; }
-
-/* Failure summary: the incident header. */
-:root:root .dg-trouble .dg-ts-issue { border: 1px solid var(--dg-danger-line); border-left: 4px solid var(--dg-danger-dot); box-shadow: 0 16px 36px -24px rgba(180, 35, 24, .45); }
-.dg-trouble .dg-ts-issue h2 { font-size: 1.35rem !important; letter-spacing: -.02em; }
-.dg-trouble .troubleshooting-operation-grid { background: var(--dg-surface-2); border: 1px solid var(--dg-line); border-radius: 12px; gap: 0 !important; overflow: hidden; }
-.dg-trouble .troubleshooting-operation-grid article { background: transparent !important; border: 0 !important; border-bottom: 1px solid var(--dg-line) !important; border-radius: 0 !important; box-shadow: none !important; }
-.dg-trouble .troubleshooting-operation-grid article strong { font-family: var(--dg-mono); font-size: .82rem; }
-
-/* Evidence viewer: grouped sources open into a console. */
-.dg-trouble .troubleshooting-evidence-groups details { background: var(--dg-surface); border-color: var(--dg-line); border-left: 3px solid var(--dg-faint); }
-.dg-trouble .troubleshooting-evidence-groups details[open] { border-left-color: var(--dg-lime); }
-.dg-trouble .troubleshooting-evidence-groups ol { background: var(--dg-night-2) !important; border-top: 1px solid var(--dg-night); }
-.dg-trouble .troubleshooting-evidence-groups li strong { color: #e6ebf2 !important; font-family: var(--dg-mono); }
-.dg-trouble .troubleshooting-evidence-groups pre { color: #cbd5e1 !important; }
-.dg-trouble .troubleshooting-evidence-groups summary span { background: var(--pg-soft) !important; color: var(--pg-strong) !important; }
-
-/* AI diagnosis: rose-accented analysis document. */
-:root:root .dg-trouble .troubleshooting-diagnosis { background: linear-gradient(180deg, var(--pg-soft), var(--dg-surface) 180px) !important; border: 1px solid var(--pg-line) !important; border-left: 4px solid var(--pg-accent) !important; }
-.dg-trouble .troubleshooting-diagnosis h3 { color: var(--pg-strong) !important; font-size: .74rem !important; letter-spacing: .06em; text-transform: uppercase; }
-
-/* Follow-up: chat transcript. */
-.dg-trouble .troubleshooting-chat article[data-role="assistant"] { background: var(--dg-surface-2); border-left: 3px solid var(--pg-accent); }
-
-/* Side panel: investigation controls. */
-.dg-trouble .dg-ts-side .ds-card { border-top: 3px solid var(--pg-accent); }
-
-@media (max-width: 1060px) {
-  .dg-ts-main { padding-left: 38px; }
-  .dg-ts-main::before { left: 11px; }
-  .dg-ts-main > .ds-card::before { height: 24px; left: -38px; width: 24px; }
-}
-
-/* =====================================================================
- * Art direction — "Incident room". A storm-lit header opens the case; the
- * investigation rail runs down the shared light ground; the command panel is
- * the one dark instrument on the page. Failure stays semantic red; assisted
- * analysis is framed in ink with a lime marker, never a page hue.
- * ===================================================================== */
-.app-shell:has(.dg-trouble) .main-area { --pg-cast: rgba(240, 68, 56, .05); }
-.dg-trouble { --pg-strong: var(--dg-brand-ink); --ts-violet: var(--dg-brand-ink); }
-.dg-trouble > .ds-page-header {
-  background: linear-gradient(90deg, rgba(7, 11, 20, .97) 0%, rgba(7, 11, 20, .85) 45%, rgba(7, 11, 20, .45) 100%), url("../../assets/deployguard-storm-glass.webp") center 62% / cover, var(--dg-night);
-  background-blend-mode: normal, luminosity, normal;
-  border-radius: 20px; box-shadow: 0 30px 60px -32px rgba(3, 6, 14, .8); min-height: 220px; overflow: hidden; padding: 34px 36px; position: relative;
-}
-.dg-trouble > .ds-page-header::after { background: radial-gradient(circle, rgba(148, 163, 184, .14), transparent 65%); content: ""; height: 360px; position: absolute; right: 12%; top: -140px; width: 360px; }
-.dg-trouble > .ds-page-header .eyebrow { color: var(--dg-lime) !important; }
-.dg-trouble > .ds-page-header h1 { color: #fff !important; font-size: clamp(2.4rem, 4.2vw, 3.4rem); font-weight: 600; letter-spacing: -.05em; }
-.dg-trouble > .ds-page-header p, .dg-trouble > .ds-page-header .page-context { color: var(--dg-night-ink-2) !important; }
-.dg-trouble > .ds-page-header .ds-status-chip { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .2); color: #e2e8f0; }
-.dg-trouble .ds-card { border-radius: 20px; box-shadow: var(--dg-shadow-md); }
-.dg-trouble .dg-ts-issue h2 { font-weight: 620; }
-
-/* Command panel: dark instrument. */
-.dg-trouble .dg-ts-side .troubleshooting-command { --dg-card-bg: var(--dg-night); border: 1px solid var(--dg-night-line-strong); border-top: 3px solid var(--dg-lime); color: var(--dg-night-ink); }
-.dg-trouble .troubleshooting-command :is(h2, strong) { color: #fff !important; }
-.dg-trouble .troubleshooting-command p { color: var(--dg-night-ink-2) !important; }
-.dg-trouble .troubleshooting-command .eyebrow { color: var(--dg-night-muted) !important; }
-.dg-trouble .troubleshooting-command .field > span { color: var(--dg-night-ink-2); }
-.dg-trouble .troubleshooting-command select { background-color: rgba(255, 255, 255, .06); border-color: rgba(255, 255, 255, .16); color: #fff; }
-.dg-trouble .troubleshooting-command .button { background: var(--mf-accent-fill); border-color: var(--mf-accent); box-shadow: none; color: var(--mf-on-accent); }
-.dg-trouble .troubleshooting-command .button:hover:not(:disabled) { background: var(--mf-accent-hover); color: var(--mf-on-accent); }
-.dg-trouble .troubleshooting-command .secondary-button { background: transparent; border-color: rgba(255, 255, 255, .2); color: var(--dg-night-ink); }
-
-/* AI analysis: ink frame with the brand marker. */
-:root:root .dg-trouble .troubleshooting-diagnosis { border: 1px solid transparent !important; border-left: 1px solid transparent !important; --dg-card-bg: var(--dg-surface); border-color: var(--dg-line-strong) !important; box-shadow: inset 0 3px 0 var(--dg-lime), var(--dg-shadow-md); }
-.dg-trouble .troubleshooting-diagnosis > .compact-section-heading h2 { font-size: 1.3rem; font-weight: 600; letter-spacing: -.025em; }
-
-/* Evidence: console-dark source groups. */
-.dg-trouble .troubleshooting-evidence-groups details { background: var(--dg-night); border-color: var(--dg-night-line); border-left-color: var(--dg-night-line-strong); }
-.dg-trouble .troubleshooting-evidence-groups summary { color: #e6ebf2; font-family: var(--dg-mono); font-size: .8rem; }
-.dg-trouble .troubleshooting-evidence-groups summary span { background: rgba(255, 255, 255, .08) !important; color: var(--dg-night-ink-2) !important; }
-
-@media (max-width: 760px) { .dg-trouble > .ds-page-header { min-height: 0; padding: 24px 20px; } }
-:root:root .dg-trouble .dg-ts-side .troubleshooting-command { background: var(--dg-night) !important; }
-:root:root .dg-trouble .troubleshooting-command select { background-color: var(--mf-field) !important; border-color: rgba(255, 255, 255, .16) !important; color: #fff !important; }
-
-/* =====================================================================
- * Aurora direction — Troubleshoot: near-neutral graphite.
- * The environment is almost colourless so evidence reads cleanly; colour
- * appears only as status — the deterministic failure carries a coral edge.
- * ===================================================================== */
-.dg-trouble { --ts-red: var(--au-coral); gap: 22px; max-width: 1300px; }
-.dg-trouble .ds-page-header h1 { color: #fff; font-size: clamp(2.2rem, 4vw, 3.1rem); font-weight: 700; letter-spacing: -.05em; }
-.dg-trouble .eyebrow { color: #b9c4de; font-family: var(--dg-mono); font-weight: 500; letter-spacing: .12em; }
-.dg-trouble .ds-page-header::after { background: linear-gradient(90deg, #9fb0d8, transparent 60%) !important; }
-:root:root .dg-trouble .ds-card { background: linear-gradient(180deg, rgba(34, 40, 56, .9), rgba(18, 22, 34, .94)) !important; border: 1px solid rgba(190, 200, 225, .12); border-radius: var(--au-r-md); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), var(--au-depth-1); }
-:root:root .dg-trouble .dg-ts-issue { background: radial-gradient(60% 120% at 0% 0%, rgba(255, 93, 115, .14), transparent 60%), linear-gradient(180deg, rgba(34, 40, 56, .9), rgba(18, 22, 34, .94)) !important; border-left: 3px solid var(--au-coral); box-shadow: -10px 0 30px -20px var(--au-coral), inset 0 1px 0 rgba(255, 255, 255, .05), var(--au-depth-1); }
-.dg-trouble .dg-ts-issue h2 { color: var(--au-bad-ink); }
-.dg-trouble .troubleshooting-operation-grid { border-color: rgba(190, 200, 225, .1); border-radius: var(--au-r-sm); }
-.dg-trouble .troubleshooting-operation-grid article { background: rgba(10, 13, 22, .5); border-color: rgba(190, 200, 225, .07); }
-.dg-trouble .troubleshooting-operation-grid article span { color: #8e98b3; }
-.dg-trouble .troubleshooting-evidence-groups details { border-radius: var(--au-r-sm); }
-:root:root .dg-trouble :is(pre, .troubleshooting-evidence-groups pre) { background: rgba(4, 6, 12, .85); border: 1px solid rgba(190, 200, 225, .1); color: #d6deef; }
-:root:root .dg-trouble .troubleshooting-command { -webkit-backdrop-filter: blur(20px) saturate(130%) !important; backdrop-filter: blur(20px) saturate(130%) !important; background: linear-gradient(180deg, rgba(255, 255, 255, .07), transparent 40%), rgba(20, 24, 36, .62) !important; border-color: rgba(255, 255, 255, .12); box-shadow: var(--au-edge), var(--au-depth-2); }
-:root:root .dg-trouble .button { --pg-a: #dfe6f7; --pg-b: #aebdde; }
-.dg-trouble .troubleshooting-chat-history article { border-radius: var(--au-r-sm); }
-.dg-trouble .troubleshooting-chat-history article[data-role="user"] { background: rgba(160, 178, 232, .08); }
-.dg-trouble .troubleshooting-provider-meta { color: var(--au-muted); font-family: var(--dg-mono); font-size: .74rem; }

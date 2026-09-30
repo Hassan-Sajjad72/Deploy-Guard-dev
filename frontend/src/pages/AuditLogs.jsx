@@ -8,7 +8,6 @@ import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import Pagination from "../components/common/Pagination.jsx";
 import { BentoGrid, MetricCard, PageHeader } from "../components/common/Premium.jsx";
-import "../styles/pages/audit.css";
 
 const defaultFilters = {
   category: "",

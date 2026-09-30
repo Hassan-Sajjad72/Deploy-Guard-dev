@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const page = read("../src/pages/ProjectInfrastructure.jsx");
-const styles = read("../src/styles.css");
-const designSystem = read("../src/design-system.css");
+const styles = read("../src/styles/system.css");
+const pageStyles = read("../src/styles/pages/infrastructure.css");
+const designSystem = read("../src/components/common/DesignSystem.jsx");
+const presentationStyles = `${styles}\n${pageStyles}`;
 const routes = read("../src/routes/AppRoutes.jsx");
 const platformApi = read("../src/api/platformApi.js");
 
@@ -25,8 +27,14 @@ for (const heading of ["Resource", "Identifier"]) assert.match(page, new RegExp(
 assert.match(page, /<CopyValue/);
 assert.match(page, /label="Copy full identifier"/);
 assert.match(page, /function shortened/);
-assert.match(page, /Source to application/);
-for (const node of ["Source", "Build", "ECR", "ECS", "ALB", "Application"]) assert.match(page, new RegExp(node));
+for (const node of ["Internet", "Public endpoint", "Entry and load balancer", "Application service", "Amazon ECR", "Terraform state"]) assert.match(page, new RegExp(node));
+assert.match(page, /hasEcrEvidence \? node/);
+assert.match(page, /hasCloudWatchEvidence \? node/);
+assert.match(page, /hasTerraformEvidence \? node/);
+assert.match(page, /storage \? <div className="itw-storage"/);
+assert.match(page, /!services\.length \? <p className="itm-empty"/);
+assert.match(page, /const persisted = Array\.isArray\(evidence\?\.runtimeIdentity\?\.services\)/, "service topology is derived from observed/persisted runtime evidence");
+assert.match(page, /No target evidence/);
 for (const supporting of ["Terraform", "CloudWatch", "Infracost"]) assert.match(page, new RegExp(supporting));
 assert.match(page, /current release has no Infracost estimate/i);
 assert.match(page, /Pricing unavailable/);
@@ -46,8 +54,10 @@ assert.match(page, /View Destroy progress/, "An active Destroy links to its cano
 assert.match(page, /Release updating/, "An active non-Destroy lifecycle transition is represented as updating rather than absent.");
 assert.match(page, /filter\(\(target\) => target !== "draining"\)/, "Draining targets from the previous task set do not make the active release look absent.");
 assert.match(page, /evidence\?\.cloudWatch\?\.status/);
-for (const selector of ["infrastructure-summary-grid", "infrastructure-inventory-card", "infrastructure-topology", "infrastructure-finops-card", "infrastructure-support-grid"]) assert.match(styles, new RegExp(selector));
-assert.match(designSystem, /\.advanced-resource-details/);
-assert.match(styles, /@media\(max-width:560px\)[\s\S]*infrastructure-summary-grid/);
-assert.match(styles, /\.infrastructure-inventory-card \.ds-data-table\{min-width:760px\}/);
+for (const selector of ["infrastructure-summary-grid", "infra-topology-map", "itw-canvas", "itw-inspector", "infrastructure-support-grid", "advanced-resource-details", "infrastructure-cost-details"]) assert.match(presentationStyles, new RegExp(selector));
+assert.match(pageStyles, /\.itw-body \{[\s\S]*#071a33/ , "the architecture composition uses a deep-blue technical canvas");
+assert.match(pageStyles, /\.itw-node \{[\s\S]*background: rgba\(14, 39, 70, \.96\)/, "dense infrastructure evidence remains on an opaque, high-contrast surface");
+assert.match(pageStyles, /@media \(max-width: 520px\)[\s\S]*\.itw-support \{ grid-template-columns: 1fr/);
+assert.match(pageStyles, /\.advanced-resource-details \.ds-data-table \{ min-width: 660px; \}/);
+assert.match(designSystem, /export function CopyValue/);
 console.log("Infrastructure and FinOps presentation verification passed.");

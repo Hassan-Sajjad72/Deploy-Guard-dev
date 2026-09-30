@@ -8,7 +8,6 @@ import { Tabs } from "../components/common/DesignSystem.jsx";
 import EnvironmentVariablesPanel from "../components/projects/EnvironmentVariablesPanel.jsx";
 import NotificationSettingsPanel from "../components/projects/NotificationSettingsPanel.jsx";
 import { redirectDeletedProject } from "../utils/projectStateSync.js";
-import "../styles/pages/settings.css";
 
 const settingsSections = [
   { id: "general", label: "General" },
@@ -97,7 +96,7 @@ export default function ProjectSettings() {
   return <div className="workspace-page project-settings-page dg-settings">
     <PageHeader eyebrow="Project" title="Settings" description="Configure this project by category." context={[project.name, project.environmentName ? `Environment ${project.environmentName}` : null, project.repositoryFullName, project.targetBranch, selectedService?.name ? `Service ${selectedService.name}` : null].filter(Boolean).join(" · ")} />
     <div className="dg-set-layout">
-    <aside className="dg-set-nav"><Tabs activeId={activeSection} idPrefix="project-settings" items={settingsSections} label="Project settings" onChange={setActiveSection} /></aside>
+    <aside className="dg-set-nav"><Tabs activeId={activeSection} idPrefix="project-settings" items={settingsSections} label="Project settings" onChange={setActiveSection} orientation="vertical" /></aside>
     <div className="dg-set-content">
     {error ? <ErrorState message={error} /> : null}{success ? <div aria-live="polite" className="state success" role="status">{success}</div> : null}
 

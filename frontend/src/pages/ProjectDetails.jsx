@@ -10,7 +10,6 @@ import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/p
 import { projectStatePresentation, projectStateTone } from "../utils/projectStatePresentation.js";
 import { useSerializedProjectRefresh } from "../hooks/useSerializedProjectRefresh.js";
 import { formatRelativeTime } from "../utils/time.js";
-import "../styles/pages/overview.css";
 
 export default function ProjectDetails() {
   const { projectId } = useParams();

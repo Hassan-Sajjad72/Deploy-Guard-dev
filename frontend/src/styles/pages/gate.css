@@ -1,108 +1,20 @@
-/*
- * Status gates — GitHub OAuth handoff and 403. Scoped to .dg-gate.
- * Continues the Landing ground (light grid, no photography) so the handoff
- * between the public page and GitHub feels like one flow.
- */
-
-.dg-gate {
-  align-items: center;
-  background:
-    radial-gradient(ellipse 50% 45% at 50% 42%, rgba(148, 163, 184, .06), transparent 70%),
-    linear-gradient(var(--dg-line) 1px, transparent 1px) 0 0 / 32px 32px,
-    linear-gradient(90deg, var(--dg-line) 1px, transparent 1px) 0 0 / 32px 32px,
-    var(--dg-surface-2);
-  color: var(--dg-ink);
-  display: flex;
-  justify-content: center;
-  min-height: 100vh;
-  padding: 24px 16px;
-}
-.dg-gate::before, .dg-gate::after, .dg-gate .landing-ambient { display: none; }
-.dg-gate :is(h1, p, a, span, strong, small) { text-shadow: none; }
-
-.dg-gate > section {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  background: var(--dg-surface);
-  border: 1px solid var(--dg-line);
-  border-radius: 12px;
-  box-shadow: var(--dg-shadow-lg);
-  display: grid;
-  gap: 12px;
-  justify-items: center;
-  max-width: 460px;
-  padding: 36px 32px 30px;
-  text-align: center;
-  width: 100%;
-}
-.dg-gate > section::before, .dg-gate > section::after { display: none; }
-.dg-gate h1 { color: var(--dg-ink); font-size: 1.6rem; letter-spacing: -.02em; margin: 0; }
-.dg-gate p { color: var(--dg-ink-2); line-height: 1.6; margin: 0; }
-.dg-gate .eyebrow { color: var(--dg-primary-ink); font-size: .74rem; font-weight: 700; letter-spacing: .06em; opacity: 1; text-transform: uppercase; }
-.dg-gate .button { background: var(--dg-primary); border-radius: 12px; box-shadow: none; color: #fff; margin-top: 8px; min-height: 44px; padding: 10px 20px; }
-.dg-gate .button:hover { background: var(--dg-primary-hover); }
-.dg-gate .ghost-nav-link { color: var(--dg-muted); font-size: .9rem; margin-top: 6px; text-decoration: underline; text-underline-offset: 4px; }
-.dg-gate .ghost-nav-link:hover { color: var(--dg-ink); }
-
-/* OAuth handoff: GitHub mark inside a rotating ring. */
-.dg-gate .oauth-spinner { align-items: center; color: var(--dg-ink); display: inline-flex; height: 64px; justify-content: center; margin-bottom: 6px; position: relative; width: 64px; }
-.dg-gate .oauth-spinner::before { animation: dg-gate-spin 1s linear infinite; border: 2px solid var(--dg-line); border-radius: 50%; border-top-color: var(--dg-primary); content: ""; inset: 0; position: absolute; }
-@keyframes dg-gate-spin { to { transform: rotate(1turn); } }
-
-/* Error and loading states inside a gate. */
-.dg-gate .error-state, .dg-gate .loading-state { background: transparent; border: 0; box-shadow: none; color: var(--dg-ink); justify-content: center; padding: 0; text-align: left; }
-.dg-gate .error-state p, .dg-gate .loading-state p { color: var(--dg-ink-2); }
-
-/* 403: status numeral as the visual anchor, in the danger hue. */
-.dg-gate.is-forbidden h1 { color: var(--dg-danger); font-family: var(--font-mono, ui-monospace, monospace); font-size: 3.2rem; letter-spacing: -.04em; line-height: 1; }
-.dg-gate.is-forbidden > section { border-top: 3px solid var(--dg-danger-dot); }
-
-@media (prefers-reduced-motion: reduce) { .dg-gate .oauth-spinner::before { animation: none; } }
-.dg-gate .ds-banner { justify-self: stretch; text-align: left; }
-.dg-gate .ds-banner * { text-align: left; }
-/* Gates carry the brand gradient from Landing into the handoff. */
-.dg-gate > section { border-top: 3px solid var(--dg-lime); }
-.dg-gate .oauth-spinner::before { border-top-color: var(--dg-lime); }
-
-/* Authorization flow indicator: DeployGuard → GitHub → workspace. */
-.dg-gate-flow { align-items: center; display: flex; gap: 0; list-style: none; margin: 14px 0 4px; padding: 0; width: 100%; }
-.dg-gate-flow li { align-items: center; color: var(--dg-muted); display: grid; flex: 1; font-size: .74rem; font-weight: 600; gap: 6px; justify-items: center; position: relative; }
-.dg-gate-flow li span { background: var(--dg-surface); border: 2px solid var(--dg-line-strong); border-radius: 50%; height: 12px; position: relative; width: 12px; z-index: 1; }
-.dg-gate-flow li:not(:last-child)::after { background: var(--dg-line); content: ""; height: 2px; left: 50%; position: absolute; top: 5px; width: 100%; }
-.dg-gate-flow li.is-done { color: var(--dg-ink-2); }
-.dg-gate-flow li.is-done span { background: var(--dg-lime); border-color: var(--dg-lime); }
-.dg-gate-flow li.is-done::after { background: linear-gradient(90deg, var(--dg-lime), var(--dg-line)); }
-.dg-gate-flow li.is-active { color: var(--dg-ink); }
-.dg-gate-flow li.is-active span { border-color: var(--dg-lime); box-shadow: 0 0 0 4px rgba(184, 243, 74, .18); }
-
-/* 403: minimal system state — code band + large numeral. */
-.dg-gate-code { background: var(--dg-danger-soft); border: 1px solid var(--dg-danger-line); border-radius: 999px; color: var(--dg-danger) !important; font-family: var(--dg-mono); font-size: .74rem !important; font-weight: 600; letter-spacing: .04em; padding: 3px 12px; }
-.dg-gate.is-forbidden h1 { font-size: 4.2rem !important; font-weight: 800; }
-.dg-gate.is-forbidden .button { background: var(--dg-ink) !important; }
-.dg-gate.is-forbidden > section { border-top-color: var(--dg-danger-dot) !important; }
-
-/* =====================================================================
- * Art direction — "Threshold". Gate pages are a single card on the shared
- * light ground with a drafting grid. A night brand strip crowns the card;
- * the 403 code stays semantic red.
- * ===================================================================== */
-.dg-gate { align-items: center; background: transparent; display: flex; justify-content: center; min-height: 100vh; padding: 24px; }
-.dg-gate.is-forbidden { background: transparent; }
-.dg-gate > section { background: var(--ds-glass) !important; border: 1px solid var(--dg-line) !important; border-radius: 20px !important; border-top: 1px solid var(--mf-edge) !important; box-shadow: var(--dg-shadow-lg) !important; color: var(--dg-ink); max-width: 460px; padding: 40px 36px !important; text-align: center; width: 100%; }
-.dg-gate.is-forbidden > section { border-top-color: var(--dg-danger-dot) !important; }
-.dg-gate :is(h1, strong) { color: var(--dg-ink) !important; }
-.dg-gate p { color: var(--dg-ink-2) !important; }
-.dg-gate .eyebrow { color: var(--dg-muted) !important; }
-.dg-gate.is-forbidden h1 { background: linear-gradient(180deg, var(--dg-ink), var(--dg-danger-dot)); -webkit-background-clip: text; background-clip: text; color: transparent !important; font-size: clamp(5rem, 14vw, 8rem); font-weight: 650; letter-spacing: -.07em; line-height: .9; margin: 10px 0; }
-.dg-gate .dg-gate-code { background: var(--dg-danger-soft); border: 1px solid var(--dg-danger-line); border-radius: 999px; color: var(--dg-danger) !important; display: inline-block; font-family: var(--dg-mono); font-size: .7rem; letter-spacing: .06em; padding: 4px 12px; text-transform: uppercase; }
-.dg-gate .button { margin-top: 12px; }
-.dg-gate .oauth-spinner { background: var(--dg-night); box-shadow: 0 0 0 1px rgba(184, 243, 74, .4), 0 12px 30px -10px rgba(91, 138, 10, .5); color: #fff; }
-@layer dg-important {
-  .dg-gate.is-forbidden h1 { font-family: var(--dg-font) !important; font-size: clamp(5rem, 14vw, 8rem) !important; }
-  .dg-gate .button { background: var(--mf-accent-fill) !important; border-color: var(--mf-accent) !important; color: var(--mf-on-accent) !important; }
-}
-
-/* Aurora direction — gates (403, GitHub connecting): one glass pane over an expressive field. */
-:root:root .dg-gate > section { border-radius: var(--au-r-xl); }
-.dg-gate h1 { background: linear-gradient(180deg, #fff 30%, #ffb3c0 80%); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 0 30px rgba(255, 93, 115, .45)); }
-.dg-gate-code { color: #ffb3c0; font-family: var(--dg-mono); letter-spacing: .14em; }
+/* Authentication transitions and access boundaries. */
+.dg-gate { align-items: center; background: radial-gradient(78% 92% at 50% 0, rgba(47, 111, 237, .07), transparent 72%), var(--dg-page); color: var(--dg-ink); display: grid; justify-items: center; min-height: 100vh; min-height: 100dvh; overflow: hidden; padding: max(20px, env(safe-area-inset-top)) 18px max(20px, env(safe-area-inset-bottom)); position: relative; }
+.oauth-connecting-card, .dg-gate .auth-panel { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 15px; box-shadow: var(--dg-shadow-md); display: grid; gap: 13px; max-width: 480px; padding: clamp(22px, 5vw, 36px); position: relative; width: 100%; z-index: 1; }
+.oauth-connecting-card h1, .dg-gate .auth-panel h1 { color: var(--dg-ink); font-size: 1.55rem; letter-spacing: -.04em; }
+.oauth-connecting-card > p:not(.eyebrow), .dg-gate .auth-panel > p:not(.dg-gate-code) { color: var(--dg-ink-2); font-size: .85rem; line-height: 1.55; }
+.oauth-connecting-card .eyebrow { color: var(--dg-primary-strong); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .045em; text-transform: uppercase; }
+.oauth-spinner { align-items: center; background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 12px; color: var(--dg-primary-strong); display: inline-flex; height: 48px; justify-content: center; width: 48px; }
+.dg-gate-flow { border-top: 1px solid var(--dg-line); display: grid; gap: 0; list-style: none; margin: 3px 0 0; padding: 13px 0 0; }
+.dg-gate-flow li { align-items: center; color: var(--dg-muted); display: flex; font-size: .77rem; gap: 9px; min-height: 30px; }
+.dg-gate-flow li > span { background: var(--dg-surface-3); border: 1px solid var(--dg-line-strong); border-radius: 50%; height: 8px; width: 8px; }
+.dg-gate-flow li.is-done { color: var(--dg-success); }
+.dg-gate-flow li.is-done > span { background: var(--dg-success-dot); border-color: var(--dg-success-dot); }
+.dg-gate-flow li.is-active { color: var(--dg-primary-strong); font-weight: 590; }
+.dg-gate-flow li.is-active > span { background: var(--dg-primary); border-color: var(--dg-primary); box-shadow: 0 0 0 4px var(--dg-primary-soft); }
+.dg-gate .ghost-nav-link { color: var(--dg-muted); font-size: .77rem; justify-self: start; }
+.dg-gate .ghost-nav-link:hover { color: var(--dg-primary-strong); }
+.dg-gate.is-forbidden .auth-panel { border-top: 3px solid var(--dg-danger-dot); }
+.dg-gate-code { color: var(--dg-danger); font-family: var(--dg-mono); font-size: .65rem; letter-spacing: .04em; text-transform: uppercase; }
+.dg-gate.is-forbidden h1 { color: var(--dg-ink); font-family: var(--dg-mono); font-size: clamp(3rem, 12vw, 5.5rem); letter-spacing: -.07em; line-height: 1; }
+.dg-gate .auth-panel .button { justify-self: start; margin-top: 4px; }

@@ -7,7 +7,6 @@ import LoadingState from "../components/common/LoadingState.jsx";
 import { managedDatabaseAliases } from "../utils/envOwnership.js";
 import { parseEnvPaste } from "../utils/envPaste.js";
 import { createDeploymentSelectionGate, deploymentSelectionKey } from "../utils/deploymentSelection.js";
-import "../styles/pages/new-project.css";
 
 function safeMessage(error) {
   const message = String(error?.message || "DeployGuard could not complete this step.");

@@ -9,7 +9,6 @@ import { useAuth } from "../hooks/useAuth.js";
 import { formatRelativeTime } from "../utils/time.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 import { conciseProjectSummary } from "../utils/overviewLifecyclePresentation.js";
-import "../styles/pages/home.css";
 
 export default function Dashboard() {
   const { role } = useAuth();
@@ -44,7 +43,7 @@ export default function Dashboard() {
   const liveCount = view.live.length;
   const total = usage?.totalProjects ?? summaries.length;
   return <div className="workspace-page dashboard-page dg-home">
-    <section className="dg-home-hero dg-dark" aria-label="Workspace status">
+    <section className="dg-home-hero" aria-label="Workspace status">
       <div className="dg-home-hero-copy">
         <h1>Home</h1>
         <p>See active deployments and projects that need attention.</p>

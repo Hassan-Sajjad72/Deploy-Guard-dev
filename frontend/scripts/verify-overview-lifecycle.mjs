@@ -7,7 +7,9 @@ import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPre
 const overview = readFileSync(new URL("../src/pages/ProjectDetails.jsx", import.meta.url), "utf8");
 const lifecycle = readFileSync(new URL("../src/components/projects/ProjectOverviewLifecycle.jsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../src/api/projectApi.js", import.meta.url), "utf8");
-const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const systemStyles = readFileSync(new URL("../src/styles/system.css", import.meta.url), "utf8");
+const overviewStyles = readFileSync(new URL("../src/styles/pages/overview.css", import.meta.url), "utf8");
+const styles = `${systemStyles}\n${overviewStyles}`;
 const designSystem = readFileSync(new URL("../src/components/common/DesignSystem.jsx", import.meta.url), "utf8");
 
 const actions = (state, canManage = true) => overviewLifecycleActions({ stateAuthority: { state }, canRetry: true, stableUrl: "https://example.test" }, canManage);
@@ -153,7 +155,8 @@ assert.doesNotMatch(lifecycle, /label="Application health"/, "Overview does not 
 assert.doesNotMatch(lifecycle, /applicationHealth|health\.observedAt|health\.source/, "Overview does not consume detailed runtime health data");
 assert.doesNotMatch(lifecycle, /detail=\{`Commit \$\{shortCommit\(latest/, "Overview does not show a commit beneath Latest Operation");
 assert.doesNotMatch(lifecycle, /\$\{formatDate\(latest\.startedAt\)\} to \$\{formatDate\(latest\.completedAt\)\}/, "Overview does not show a verbose deployment timestamp range");
-assert.match(styles, /\.overview-lifecycle-card \.ds-stage-rail\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/, "six deployment phases remain on the primary overview rail row");
+assert.match(systemStyles, /\.ds-stage-rail \{[^}]*grid-auto-columns: minmax\(0, 1fr\)[^}]*grid-auto-flow: column/, "the full lifecycle rail remains horizontally composed on desktop");
+assert.match(overviewStyles, /\.dg-overview \.overview-lifecycle-card > \.ds-stage-rail/, "the lifecycle rail remains in the primary Overview summary");
 assert.doesNotMatch(overview, /CanonicalDeploymentView|getProjectDetailedCurrentState/);
 assert.match(overview, /subscribeProjectStateChanged/);
 assert.match(lifecycle, /StageRail/);
@@ -161,9 +164,9 @@ for (const state of ["ready", "deploying", "failed", "live", "destroying", "dest
   assert.match(styles, new RegExp(`overview-state-${state}`), `responsive lifecycle styling covers ${state}`);
 }
 assert.doesNotMatch(styles, /overview-state-(?:deploying|destroying)[^}]*var\(--(?:cyan|amber)\)/);
-assert.match(styles, /\.ds-modal-backdrop\{[^}]*align-items:flex-start[^}]*overflow-y:auto[^}]*overscroll-behavior:contain/, "shared modal backdrop permits bounded viewport scrolling");
-assert.match(styles, /\.ds-modal\{[^}]*max-height:calc\(100dvh[^}]*overflow-y:auto[^}]*overscroll-behavior:contain/, "shared modal content scrolls within the dynamic viewport");
-assert.match(styles, /@media\(max-width:560px\),\(max-height:640px\)\{\.ds-modal-backdrop\{--modal-viewport-gutter:var\(--space-3\)/, "short and narrow viewports retain a reachable dialog gutter");
+assert.match(systemStyles, /\.ds-modal-backdrop, \.destroy-modal-backdrop, \.ds-drawer-backdrop \{[\s\S]*inset: 0;[\s\S]*overflow: auto;[\s\S]*overscroll-behavior: contain;[\s\S]*position: fixed;/, "shared modal backdrop permits bounded viewport scrolling");
+assert.match(systemStyles, /\.ds-modal, \.destroy-modal \{[\s\S]*max-height: min\(820px, calc\(100dvh - 32px\)\);[\s\S]*overflow: auto;/, "shared modal content scrolls within the dynamic viewport");
+assert.match(systemStyles, /@media \(max-width: 520px\)[\s\S]*\.ds-modal-backdrop, \.destroy-modal-backdrop \{ padding: 12px; \}/, "narrow viewports retain a reachable dialog gutter");
 assert.match(designSystem, /document\.body\.style\.overflow = "hidden"[\s\S]*document\.body\.style\.overflow = bodyOverflow/, "modal preserves and restores body scroll locking");
 assert.match(designSystem, /event\.key === "Escape"[\s\S]*event\.key !== "Tab"/, "Escape close and keyboard focus trapping remain active");
 assert.match(designSystem, /event\.target === event\.currentTarget && onClose\?\.\(\)/, "backdrop close remains scoped to backdrop interaction");

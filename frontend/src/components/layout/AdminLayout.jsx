@@ -1,7 +1,6 @@
 import { Outlet, useNavigate } from "react-router-dom";
 import { adminSignOut } from "../../api/adminAuthApi.js";
 import BrandLogo from "../common/BrandLogo.jsx";
-import "../../styles/pages/admin.css";
 
 export default function AdminLayout() {
   const navigate = useNavigate();

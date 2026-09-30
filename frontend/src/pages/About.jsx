@@ -3,7 +3,6 @@ import AppIcon from "../components/common/AppIcon.jsx";
 import BrandLogo from "../components/common/BrandLogo.jsx";
 import PublicAdminLink from "../components/layout/PublicAdminLink.jsx";
 import PublicFooter from "../components/layout/PublicFooter.jsx";
-import "../styles/pages/about.css";
 
 const founders = [
   {

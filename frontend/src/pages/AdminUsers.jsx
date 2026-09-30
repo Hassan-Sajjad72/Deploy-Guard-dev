@@ -21,7 +21,7 @@ const serviceLabels = { backend: "Backend", database: "PostgreSQL", githubOAuth:
 const serviceGroups = [
   ["Core", ["backend", "database"]],
   ["GitHub", ["githubOAuth", "githubApp", "githubActions"]],
-  ["Cloud execution", ["awsOidc", "terraformState"]],
+  ["Execution", ["awsOidc", "terraformState"]],
   ["Observability", ["prometheus", "grafana"]],
 ];
 
@@ -121,7 +121,7 @@ export default function AdminUsers() {
   const pageContext = overview?.generatedAt
     ? `Source: live API · Last updated: ${date(overview.generatedAt)}`
     : overview ? "Source: live API · Refresh time not provided" : "Platform data unavailable";
-  const attentionServices = overview ? Object.entries(overview.services).filter(([, service]) => ["degraded", "unavailable"].includes(service.status)) : [];
+  const attentionServices = overview ? Object.entries(overview.services).filter(([, service]) => ["degraded", "unavailable", "failed", "error", "unhealthy"].includes(service.status)) : [];
   return <div className="admin-console grid" data-admin-console="canonical">
     <PageHeader context={pageContext} description="Platform status, user access, project operation evidence, and sanitized audit records." eyebrow="Platform administration" title="Admin" />
     {success ? <Banner title="Access updated" tone="success">{success}</Banner> : null}

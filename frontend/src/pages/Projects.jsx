@@ -9,7 +9,6 @@ import LoadingState from "../components/common/LoadingState.jsx";
 import { useAuth } from "../hooks/useAuth.js";
 import { formatRelativeTime } from "../utils/time.js";
 import { projectStatePresentation, projectStateTone } from "../utils/projectStatePresentation.js";
-import "../styles/pages/projects.css";
 
 const filters = [
   ["ALL", "All"],

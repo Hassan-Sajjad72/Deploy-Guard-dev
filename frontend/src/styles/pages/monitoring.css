@@ -1,121 +1,99 @@
-/*
- * Monitoring — the observatory. Atmosphere: teal / cyan / blue. Telemetry is
- * the visual material: KPI tiles are glass lit from below by their series,
- * charts are ink with luminous lines that draw in, and logs sit in a terminal
- * well. Series colours are categorical; teal/coral are reserved for health.
- */
-.app-shell:has(.dg-monitor) .main-area { background: transparent; }
-.dg-monitor {
-  --s-cpu: #22d3ee; --s-mem: #7c9bff; --s-lat: #b69cff; --s-ok: var(--au-teal); --s-bad: var(--au-coral); --s-avail: var(--au-gold);
-  gap: 18px; margin: 0 auto; max-width: 1340px;
+/* Monitoring: conditional telemetry, live log stream, operational details. */
+.dg-monitor { display: grid; gap: 24px; margin-inline: auto; max-width: 1440px; }
+.dg-monitor .ds-page-header { align-items: center; }
+.dg-monitor .ds-page-header h1 { font-size: clamp(1.9rem, 3vw, 2.5rem); }
+.dg-monitor .ds-page-header .ds-page-header-context { color: var(--dg-muted); font-size: .78rem; }
+.dg-mon-toolbar { align-items: center; background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 12px 20px; justify-content: space-between; padding: 11px 14px; }
+.monitoring-service-selector { align-items: center; color: var(--dg-muted); display: flex; font-size: .75rem; gap: 9px; min-width: min(100%, 280px); }
+.monitoring-service-selector select { flex: 1; min-width: 0; }
+.monitoring-range-controls { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.monitoring-range-controls .button, .monitoring-range-controls .secondary-button { min-height: 34px; padding: 6px 11px; }
+.dg-mon-refresh { color: var(--dg-muted); font-size: .72rem; margin-left: auto; }
+.dg-monitor > .ds-card { background: var(--dg-info-soft); border: 1px solid var(--dg-info-line); box-shadow: none; }
+.dg-monitor > .ds-card p { color: var(--dg-ink-2); font-size: .85rem; margin-top: 5px; }
+.dg-mon-board { display: grid; gap: 18px; }
+.monitoring-summary-strip { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; display: flex; flex-wrap: wrap; margin: 0; overflow: hidden; }
+.monitoring-summary-strip > div { display: grid; gap: 5px; min-width: 128px; padding: 12px 18px; position: relative; }
+.monitoring-summary-strip > div + div::before { background: var(--dg-line); bottom: 12px; content: ""; left: 0; position: absolute; top: 12px; width: 1px; }
+.monitoring-summary-strip dt { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .045em; text-transform: uppercase; }
+.monitoring-summary-strip dd { color: var(--dg-ink); font-family: var(--dg-mono); font-size: 1rem; font-weight: 560; margin: 0; }
+.monitoring-chart-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dg-monitor .ds-chart-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; box-shadow: none; min-width: 0; padding: 16px 18px; }
+.dg-monitor .ds-chart-card > header { align-items: baseline; border-bottom: 1px solid var(--dg-line); display: flex; flex-wrap: wrap; gap: 5px 14px; justify-content: space-between; padding-bottom: 10px; }
+.dg-monitor .ds-chart-card > header h3 { color: var(--dg-ink); font-size: .9rem; }
+.dg-monitor .ds-chart-card > header p { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .68rem; }
+.monitoring-line-chart { min-width: 0; padding-top: 9px; }
+.monitoring-sample-chart { display: block; height: clamp(155px, 20vw, 210px); overflow: visible; width: 100%; }
+.monitoring-sample-chart text { fill: var(--dg-muted); font-family: var(--dg-mono); font-size: 10px; }
+.monitoring-sample-chart line { stroke: var(--dg-line); stroke-dasharray: 3 4; stroke-width: 1; }
+.monitoring-sample-chart polyline { stroke: var(--dg-primary-strong); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.4; }
+.monitoring-sample-chart circle { fill: var(--dg-primary-strong); stroke: #fff; stroke-width: 1.5; }
+.monitoring-sample-chart .monitoring-fill-top { stop-color: rgba(47, 111, 237, .21); }
+.monitoring-sample-chart .monitoring-fill-bottom { stop-color: rgba(47, 111, 237, .01); }
+.monitoring-line-chart.metric-unhealthyHosts .monitoring-sample-chart polyline, .monitoring-line-chart.metric-unhealthyHosts .monitoring-sample-chart circle { stroke: var(--dg-danger); fill: var(--dg-danger); }
+.monitoring-chart-axis { color: var(--dg-muted); display: flex; font-family: var(--dg-mono); font-size: .59rem; gap: 10px; justify-content: space-between; padding-left: 8%; }
+.dg-monitor .ds-empty-state { background: var(--dg-surface); border: 1px dashed var(--dg-line-strong); border-radius: 12px; color: var(--dg-ink); box-shadow: none; }
+.dg-monitor .ds-empty-state p { color: var(--dg-ink-2); }
+.dg-mon-bottom { align-items: start; display: grid; gap: 18px; grid-template-columns: minmax(250px, .68fr) minmax(0, 1.32fr); }
+.monitoring-health-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; min-width: 0; }
+.monitoring-health-details > summary { align-items: center; color: var(--dg-ink); cursor: pointer; display: flex; gap: 12px; justify-content: space-between; list-style: none; min-height: 54px; padding: 13px 15px; }
+.monitoring-health-details > summary::-webkit-details-marker { display: none; }
+.monitoring-health-details > summary::after { color: var(--dg-muted); content: "+"; font-family: var(--dg-mono); font-size: 1rem; }
+.monitoring-health-details[open] > summary::after { content: "−"; }
+.monitoring-health-details[open] > summary { border-bottom: 1px solid var(--dg-line); }
+.monitoring-health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 6px 15px 10px; }
+.monitoring-health-grid article { border-bottom: 1px solid var(--dg-line); display: grid; gap: 4px; min-width: 0; padding: 9px 8px 9px 0; }
+.monitoring-health-grid article > span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .59rem; letter-spacing: .035em; text-transform: uppercase; }
+.monitoring-health-grid article > strong { color: var(--dg-ink-2); font-size: .76rem; font-weight: 500; overflow-wrap: anywhere; }
+.monitoring-health-grid a { color: var(--dg-primary-strong); }
+
+/* Dense telemetry belongs on the deep technical surface, never low-contrast glass. */
+.dg-monitor .monitoring-log-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 13px; box-shadow: none; min-width: 0; padding: 16px; }
+.monitoring-section-heading { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+.monitoring-section-heading h2 { color: var(--dg-ink); font-size: .98rem; margin: 0 0 4px; }
+.monitoring-section-heading p { color: var(--dg-muted); font-size: .76rem; }
+.monitoring-log-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.monitoring-log-actions .secondary-button { min-height: 32px; padding: 5px 9px; }
+.monitoring-log-connection { color: var(--dg-muted); font-size: .74rem; margin: 9px 0; }
+.monitoring-log-search { display: block; margin-bottom: 8px; max-width: 380px; }
+.monitoring-log-search input { background: var(--dg-surface-2); font-size: .78rem; min-height: 34px; }
+.monitoring-log-viewer {
+  background: #071a33;
+  border: 1px solid #24466d;
+  border-radius: 9px;
+  color: #e7f0fd;
+  display: grid;
+  font-family: var(--dg-mono);
+  font-size: .72rem;
+  gap: 0;
+  max-height: min(52vh, 460px);
+  min-height: 110px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 7px 0;
 }
-.dg-monitor .eyebrow { color: color-mix(in srgb, var(--au-teal) 55%, white); }
+.monitoring-log-line { align-items: baseline; border-bottom: 1px solid rgba(157, 187, 225, .1); display: grid; gap: 9px; grid-template-columns: 92px minmax(86px, 135px) minmax(0, 1fr); min-width: 0; padding: 5px 10px; }
+.monitoring-log-line time { color: #91a9c7; font-size: .64rem; white-space: nowrap; }
+.monitoring-log-line > span { color: #a9c8ef; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.monitoring-log-line code { background: transparent; color: #eef5ff; font-family: inherit; font-size: inherit; overflow-wrap: anywhere; white-space: pre-wrap; }
+.monitoring-log-empty { color: #b6c6dc; margin: auto; padding: 20px; text-align: center; }
 
-/* Header */
-.dg-monitor .ds-page-header { padding-bottom: 4px; }
-.dg-monitor .ds-page-header h1 { color: #fff; font-size: clamp(2.4rem, 4.6vw, 3.6rem); font-weight: 700; letter-spacing: -.05em; line-height: 1; }
-.dg-monitor .ds-page-header .page-context { color: var(--dg-muted); }
-.dg-monitor .ds-page-header .secondary-button { background: rgba(255, 255, 255, .04); }
-
-/* Toolbar */
-.dg-mon-toolbar { -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%); align-items: center; background: radial-gradient(60% 120% at var(--lx, 20%) 0%, rgba(255, 255, 255, .08), transparent 60%), linear-gradient(90deg, rgba(45, 212, 168, .08), rgba(34, 211, 238, .04)), rgba(10, 16, 32, .55); border: 1px solid rgba(255, 255, 255, .12); border-radius: 999px; box-shadow: var(--au-edge), var(--au-depth-1); transition: --lx .5s var(--au-glide); display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 8px 10px 8px 14px; }
-.dg-monitor .monitoring-service-selector { align-items: center; display: flex; gap: 8px; margin: 0; }
-.dg-monitor .monitoring-service-selector span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; }
-.dg-monitor .monitoring-service-selector select { min-height: 32px; min-width: 130px; padding: 4px 30px 4px 10px; }
-.dg-monitor .monitoring-range-controls { background: rgba(5, 9, 20, .6); border: 1px solid rgba(160, 178, 232, .14); border-radius: 999px; box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45); display: inline-flex; gap: 2px; margin: 0; padding: 3px; }
-.dg-monitor .monitoring-range-controls button { background: transparent; border: 0; border-radius: 999px; box-shadow: none; color: var(--dg-ink-2); font-family: var(--dg-mono); font-size: .76rem; min-height: 28px; padding: 4px 14px; }
-:root:root .dg-monitor .monitoring-range-controls button.button { background: linear-gradient(180deg, rgba(255, 255, 255, .3), transparent 60%), linear-gradient(120deg, var(--au-teal), var(--au-cyan)); border: 0; box-shadow: 0 0 18px -4px rgba(45, 212, 168, .8); color: #06131a; }
-.dg-monitor .monitoring-range-controls button:not(.button):hover { color: #fff; }
-.dg-mon-refresh { align-items: center; color: var(--dg-muted); display: inline-flex; font-family: var(--dg-mono); font-size: .72rem; gap: 8px; margin-left: auto; }
-.dg-mon-refresh::before { animation: dg-mon-pulse 2s ease-in-out infinite; background: var(--au-teal); border-radius: 50%; box-shadow: 0 0 8px var(--au-teal); content: ""; height: 6px; width: 6px; }
-@keyframes dg-mon-pulse { 50% { opacity: .3; } }
-
-/* Board */
-.dg-mon-board { display: grid; gap: 14px; }
-.dg-monitor .monitoring-summary-grid { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-:root:root .dg-monitor .monitoring-summary-grid .metric-card {
-  --series: var(--s-cpu);
-  -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%);
-  background: radial-gradient(90% 70% at var(--lx, 30%) 0%, rgba(255, 255, 255, .1), transparent 60%), radial-gradient(120% 90% at 50% 120%, color-mix(in srgb, var(--series) 34%, transparent), transparent 65%), rgba(12, 18, 36, .55);
-  border: 1px solid rgba(255, 255, 255, .12); border-radius: var(--au-r-lg); box-shadow: var(--au-edge), var(--au-refract), 0 22px 40px -26px rgba(2, 4, 14, .9), 0 0 36px -20px var(--series); gap: 8px; overflow: hidden; padding: 18px 20px 20px; position: relative;
-}
-:root:root .dg-monitor .monitoring-summary-grid .metric-card::after { background: linear-gradient(90deg, transparent, var(--series), transparent); bottom: 0; box-shadow: 0 0 14px var(--series); content: ""; display: block; height: 2px; inset: auto 12% 0; opacity: 1; position: absolute; }
-.dg-monitor .monitoring-summary-grid .metric-card:nth-child(2) { --series: var(--s-mem); }
-.dg-monitor .monitoring-summary-grid .metric-card:nth-child(3) { --series: var(--s-lat); }
-.dg-monitor .monitoring-summary-grid .metric-card:nth-child(4) { --series: #6a7696; }
-.dg-monitor .monitoring-summary-grid .metric-card.tone-success { --series: var(--s-ok); }
-.dg-monitor .metric-label { align-items: center; color: var(--dg-muted); display: inline-flex; gap: 8px; }
-.dg-monitor .metric-label::before { background: var(--series, var(--dg-faint)); border-radius: 50%; box-shadow: 0 0 8px var(--series); content: ""; height: 7px; width: 7px; }
-.dg-monitor .monitoring-summary-grid .metric-card strong { color: #fff; font-size: 2.6rem; font-weight: 560; text-shadow: 0 0 28px color-mix(in srgb, var(--series) 60%, transparent); letter-spacing: -.05em; }
-.dg-monitor .monitoring-summary-grid .metric-card.tone-success strong { color: var(--au-ok-ink); }
-
-.dg-monitor .monitoring-chart-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-:root:root .dg-monitor .monitoring-chart-grid .ds-chart-card { background: radial-gradient(80% 60% at 0% 100%, rgba(45, 212, 168, .07), transparent 70%), var(--au-ink-surface); border: 1px solid var(--au-ink-line); border-radius: var(--au-r-lg); display: grid; gap: 8px; padding: 16px 18px 12px; }
-.dg-monitor .ds-chart-card h2 { color: #fff; font-size: .95rem; font-weight: 600; margin: 0 0 2px; }
-.dg-monitor .ds-chart-card p { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .7rem; }
-.dg-monitor .monitoring-line-chart { --series: var(--s-cpu); }
-.dg-monitor .monitoring-line-chart.metric-memory { --series: var(--s-mem); }
-.dg-monitor .monitoring-line-chart.metric-httpLatency { --series: var(--s-lat); }
-.dg-monitor .monitoring-line-chart.metric-healthyHosts { --series: var(--s-ok); }
-.dg-monitor .monitoring-line-chart.metric-unhealthyHosts { --series: var(--s-bad); }
-.dg-monitor .monitoring-line-chart.metric-runtimeAvailability { --series: var(--s-avail); }
-.dg-monitor .monitoring-sample-chart { background: transparent; display: block; height: 180px; overflow: visible; width: 100%; }
-.dg-monitor .monitoring-sample-chart line { stroke: rgba(160, 190, 240, .1); stroke-dasharray: 3 5; stroke-width: 1; }
-.dg-monitor .monitoring-sample-chart text { fill: var(--dg-faint); font-family: var(--dg-mono); font-size: 10px; }
-.dg-monitor .monitoring-fill-top { stop-color: var(--series); stop-opacity: .42; }
-.dg-monitor .monitoring-fill-bottom { stop-color: var(--series); stop-opacity: 0; }
-.dg-monitor .monitoring-sample-chart polyline { filter: drop-shadow(0 0 8px color-mix(in srgb, var(--series) 75%, transparent)); stroke: var(--series); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.4; }
-.dg-monitor .monitoring-sample-chart circle { fill: var(--series); opacity: 0; r: 3; transition: opacity 120ms; }
-.dg-monitor .monitoring-sample-chart circle:last-of-type { filter: drop-shadow(0 0 6px var(--series)); opacity: 1; r: 4.5; }
-.dg-monitor .monitoring-sample-chart:hover circle { opacity: .7; }
-.dg-monitor .monitoring-chart-axis { color: var(--dg-faint); display: flex; font-family: var(--dg-mono); font-size: .66rem; justify-content: space-between; }
-
-
-
-/* Bottom: health + logs */
-.dg-mon-bottom { align-items: start; display: grid; gap: 14px; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); }
-.dg-monitor .monitoring-health-card { border-radius: 20px; overflow: hidden; padding: 0; }
-.dg-monitor .monitoring-health-details > summary { align-items: center; background: linear-gradient(90deg, rgba(45, 212, 168, .12), transparent 70%); border-bottom: 1px solid var(--au-ink-line); cursor: pointer; display: flex; justify-content: space-between; list-style: none; padding: 14px 16px; }
-.dg-monitor .monitoring-health-details > summary > span { display: grid; gap: 4px; }
-.dg-monitor .monitoring-health-details > summary strong { color: #fff; display: block; font-size: .95rem; }
-.dg-monitor .monitoring-health-grid { display: grid; grid-template-columns: 1fr; padding: 4px 0; }
-.dg-monitor .monitoring-health-grid article { border-bottom: 1px solid var(--dg-line); display: grid; gap: 3px; padding: 10px 16px; }
-.dg-monitor .monitoring-health-grid article:last-child { border-bottom: 0; }
-.dg-monitor .monitoring-health-grid span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .6rem; letter-spacing: .06em; text-transform: uppercase; }
-.dg-monitor .monitoring-health-grid strong { color: #fff; font-size: .86rem; font-weight: 500; }
-.dg-monitor .monitoring-health-grid a { color: var(--dg-signal-ink); font-weight: 560; }
-
-.dg-monitor .monitoring-log-card { --dg-card-bg: var(--au-ink-flat); border-radius: var(--au-r-lg); display: grid; gap: 10px; padding: 16px 18px; }
-.dg-monitor .monitoring-section-heading { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
-.dg-monitor .monitoring-section-heading h2 { color: #fff; font-size: 1rem; margin: 4px 0; }
-.dg-monitor .monitoring-section-heading p { color: var(--dg-muted); font-size: .8rem; margin: 0; }
-.dg-monitor .monitoring-log-actions { align-items: center; display: flex; gap: 8px; }
-.dg-monitor .monitoring-log-connection { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .72rem; margin: 0; }
-.dg-monitor .monitoring-log-search input { font-family: var(--dg-mono); font-size: .8rem; min-height: 34px; }
-:root:root .dg-monitor .monitoring-log-viewer { background: linear-gradient(180deg, rgba(45, 212, 168, .04), transparent 30%), rgba(3, 6, 14, .88); border: 1px solid rgba(45, 212, 168, .16); border-radius: var(--au-r-sm); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03), inset 0 8px 30px rgba(0, 0, 0, .5); font-size: .76rem; max-height: 380px; min-height: 240px; overflow: auto; padding: 10px 0; position: relative; }
-.dg-monitor .monitoring-log-line { display: grid; gap: 14px; grid-template-columns: 84px 90px minmax(0, 1fr); padding: 2px 14px; }
-.dg-monitor .monitoring-log-line:hover { background: rgba(148, 163, 184, .06); }
-.dg-monitor .monitoring-log-line time { color: var(--dg-muted); }
-.dg-monitor .monitoring-log-line span { color: #6fe9d0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dg-monitor .monitoring-log-line code { background: transparent; color: #d7e0ec; white-space: pre-wrap; }
-.dg-monitor .monitoring-log-empty { color: var(--dg-muted); margin: 0; padding: 14px; }
-
-@media (max-width: 1000px) {
+@media (max-width: 900px) {
   .dg-mon-bottom { grid-template-columns: 1fr; }
-  .dg-monitor .monitoring-chart-grid { grid-template-columns: 1fr; }
+  .monitoring-chart-grid { grid-template-columns: 1fr; }
 }
-@media (max-width: 640px) {
-  .dg-monitor .monitoring-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 600px) {
+  .dg-mon-toolbar { align-items: stretch; }
+  .monitoring-service-selector { width: 100%; }
   .dg-mon-refresh { margin-left: 0; }
-  .dg-monitor .monitoring-log-line { grid-template-columns: 72px minmax(0, 1fr); }
-  .dg-monitor .monitoring-log-line span { display: none; }
+  .monitoring-summary-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitoring-summary-strip > div { min-width: 0; padding: 10px 12px; }
+  .monitoring-summary-strip > div + div::before { display: none; }
+  .monitoring-summary-strip > div:nth-child(even) { border-left: 1px solid var(--dg-line); }
+  .monitoring-summary-strip > div:nth-child(n + 3) { border-top: 1px solid var(--dg-line); }
+  .monitoring-log-line { gap: 4px 8px; grid-template-columns: 1fr auto; }
+  .monitoring-log-line time { grid-column: 1; }
+  .monitoring-log-line > span { grid-column: 2; }
+  .monitoring-log-line code { grid-column: 1 / -1; }
+  .monitoring-health-grid { grid-template-columns: 1fr; }
 }
-@media (prefers-reduced-motion: reduce) { .dg-mon-refresh::before { animation: none; } }
-
-/* Legacy counters: health list entries and log lines are rows, not boxes. */
-.dg-monitor .monitoring-health-grid article { background: transparent; border: 0; border-bottom: 1px solid var(--dg-line); border-radius: 0; box-shadow: none; margin: 0; }
-.dg-monitor .monitoring-health-details > summary .ds-status-chip { white-space: nowrap; }
-.dg-monitor .monitoring-log-line { animation: none !important; border: 0 !important; box-shadow: none !important; }
-
-@media (max-width: 640px) { .dg-mon-toolbar { border-radius: var(--au-r-lg); padding: 12px 14px; } }
-@media (max-width: 640px) { :root:root .dg-monitor .monitoring-summary-grid .metric-card strong { font-size: 1.9rem; } }

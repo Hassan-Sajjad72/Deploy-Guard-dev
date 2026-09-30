@@ -23,7 +23,6 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DetailsDrawer, Modal, useDialogFocus } from "@design-system";
 import "@styles";
-import "@enterprise";
 
 function Harness() {
   const [overlay, setOverlay] = useState(null);
@@ -78,8 +77,7 @@ try {
     plugins: [react()],
     resolve: { alias: {
       "@design-system": resolve(frontendRoot, "src/components/common/DesignSystem.jsx"),
-      "@styles": resolve(frontendRoot, "src/styles.css"),
-      "@enterprise": resolve(frontendRoot, "src/design-system.css"),
+      "@styles": resolve(frontendRoot, "src/styles/system.css"),
     } },
     build: { outDir: outputRoot, emptyOutDir: true },
   });

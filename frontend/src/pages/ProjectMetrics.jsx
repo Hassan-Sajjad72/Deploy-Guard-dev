@@ -13,7 +13,6 @@ import LoadingState from "../components/common/LoadingState.jsx";
 import { grafanaDashboardUrl } from "../utils/grafanaDashboardUrl.js";
 import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
-import "../styles/pages/monitoring.css";
 
 const metricDefinitions = [
   { key: "cpu", title: "CPU utilization", unit: "%" },
@@ -183,7 +182,7 @@ export default function ProjectMetrics() {
 
   if (loading) return <LoadingState message="Loading deployment health…" />;
   if (error && !state) return <ErrorState message={error} onRetry={() => loadState({ showLoading: true })} />;
-  if (state && !liveInfrastructure) return <div className="monitoring-page page-stack dg-monitor dg-ground-dark" data-authoritative-state={presentation.state} data-monitoring-available="false"><PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} description="Performance data appears after a runtime is deployed." eyebrow="Runtime" status={presentation.state} title="Monitoring" /><EmptyState icon="activity" message={authority?.monitoring?.reason || "The current runtime is not present."} title="Runtime monitoring unavailable" /></div>;
+  if (state && !liveInfrastructure) return <div className="monitoring-page page-stack dg-monitor" data-authoritative-state={presentation.state} data-monitoring-available="false"><PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} description="Performance data appears after a runtime is deployed." eyebrow="Runtime" status={presentation.state} title="Monitoring" /><EmptyState icon="activity" message={authority?.monitoring?.reason || "The current runtime is not present."} title="Runtime monitoring unavailable" /></div>;
 
   const ecs = evidence?.ecs;
   const albHealth = evidence?.alb?.targetHealth || [];
@@ -194,7 +193,7 @@ export default function ProjectMetrics() {
     ? grafanaDashboardUrl(runtime.grafana.url, projectId, selectedService?.ecs?.service || "")
     : "";
   const destroyOperation = authority?.activeOperation?.type === "destroy" ? "running" : authority?.latestCompletedOperation?.type === "destroy" && authority?.latestCompletedOperation?.outcome === "failed" ? "failed" : null;
-  return <div className="monitoring-page page-stack dg-monitor dg-ground-light" data-authoritative-state={presentation.state} data-monitoring-available={authority?.monitoring?.available ? "true" : "false"}>
+  return <div className="monitoring-page page-stack dg-monitor" data-authoritative-state={presentation.state} data-monitoring-available={authority?.monitoring?.available ? "true" : "false"}>
     <PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} context={[selectedService?.serviceName ? `Service ${selectedService.serviceName}` : null, state?.branch, state?.stableRelease?.commit ? `Release ${state.stableRelease.commit.slice(0, 12)}` : null].filter(Boolean).join(" · ")} description="Current performance and runtime health." title="Monitoring" />
     {error ? <ErrorState message={error} onRetry={refreshAll} /> : null}
     <div className="dg-mon-toolbar">

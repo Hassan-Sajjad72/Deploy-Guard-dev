@@ -6,7 +6,6 @@ import BrandLogo from "../components/common/BrandLogo.jsx";
 import PublicAdminLink from "../components/layout/PublicAdminLink.jsx";
 import PublicFooter from "../components/layout/PublicFooter.jsx";
 import DeployGuardArchitecture, { DeliveryPath } from "../components/marketing/DeployGuardArchitecture.jsx";
-import "../styles/pages/landing.css";
 
 export default function Landing() {
   const { isAuthenticated, isLoading, logout, user } = useAuth();
