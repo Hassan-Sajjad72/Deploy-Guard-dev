@@ -5,7 +5,6 @@ import {
   Card,
   ChartCard,
   EmptyState,
-  MetricCard,
   PageHeader,
   StatusChip,
 } from "../components/common/DesignSystem.jsx";
@@ -17,9 +16,9 @@ import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/p
 import "../styles/pages/monitoring.css";
 
 const metricDefinitions = [
-  { key: "cpu", title: "ECS CPU utilization", unit: "%" },
-  { key: "memory", title: "ECS memory utilization", unit: "%" },
-  { key: "httpLatency", title: "ALB response latency", unit: "s" },
+  { key: "cpu", title: "CPU utilization", unit: "%" },
+  { key: "memory", title: "Memory utilization", unit: "%" },
+  { key: "httpLatency", title: "Response time", unit: "s" },
   { key: "healthyHosts", title: "Healthy targets", unit: "" },
   { key: "unhealthyHosts", title: "Unhealthy targets", unit: "" },
   { key: "runtimeAvailability", title: "Runtime availability", unit: "" },
@@ -36,7 +35,7 @@ function date(value) {
 // CloudWatch returns averaged floats; present them at a precision an operator can read.
 function formatMetric(value, unit = "") {
   const number = Number(value);
-  if (!Number.isFinite(number)) return "Unavailable";
+  if (!Number.isFinite(number)) return null;
   if (unit === "%") return `${number.toFixed(1)}%`;
   if (unit === "s") return number < 1 ? `${Math.round(number * 1000)} ms` : `${number.toFixed(2)} s`;
   return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(2)));
@@ -62,7 +61,7 @@ function MetricChart({ metric, metricKey, title, unit }) {
 
 function latestMetric(runtime, key, unit = "") {
   const point = runtime?.[key]?.points?.at(-1);
-  return point && Number.isFinite(Number(point.value)) ? formatMetric(point.value, unit) : "Unavailable";
+  return point && Number.isFinite(Number(point.value)) ? formatMetric(point.value, unit) : null;
 }
 
 function mergeLogEvents(current, incoming) {
@@ -72,13 +71,13 @@ function mergeLogEvents(current, incoming) {
 }
 
 function RuntimeLogViewer({ projectId, serviceId, live }) {
-  const [connection, setConnection] = useState({ state: "connecting", message: "Connecting to the LIVE CloudWatch log group…", generationId: null });
+  const [connection, setConnection] = useState({ state: "connecting", message: "Connecting to live application logs…", generationId: null });
   const [events, setEvents] = useState([]);
   const [filter, setFilter] = useState("");
   const [reconnectKey, setReconnectKey] = useState(0);
   useEffect(() => {
     setEvents([]);
-    setConnection({ state: "connecting", message: "Connecting to the LIVE CloudWatch log group…", generationId: null });
+    setConnection({ state: "connecting", message: "Connecting to live application logs…", generationId: null });
     if (!live || !serviceId) return undefined;
     let active = true;
     const source = new EventSource(getApplicationLogStreamUrl(projectId, serviceId), { withCredentials: true });
@@ -86,7 +85,7 @@ function RuntimeLogViewer({ projectId, serviceId, live }) {
       if (!active) return;
       const payload = JSON.parse(event.data);
       setEvents((current) => mergeLogEvents(name === "generation_changed" ? [] : current, payload.history || []));
-      const next = { state: "connected", message: name === "generation_changed" ? "Switched to the new authoritative LIVE generation." : "Streaming the authoritative LIVE application logs.", generationId: payload.generationId };
+      const next = { state: "connected", message: name === "generation_changed" ? "Switched to the current release." : "Streaming current application logs.", generationId: payload.generationId };
       setConnection(next);
     };
     const connected = receiveIdentity("connected");
@@ -99,7 +98,7 @@ function RuntimeLogViewer({ projectId, serviceId, live }) {
     const warning = (event) => {
       if (!active) return;
       const payload = JSON.parse(event.data);
-      setConnection((value) => ({ state: "reconnecting", message: payload.message || "CloudWatch is temporarily unavailable; retrying.", generationId: value.generationId }));
+      setConnection((value) => ({ state: "reconnecting", message: payload.message || "Logs are temporarily unavailable; retrying.", generationId: value.generationId }));
     };
     source.addEventListener("connected", connected);
     source.addEventListener("generation_changed", generationChanged);
@@ -113,10 +112,10 @@ function RuntimeLogViewer({ projectId, serviceId, live }) {
   }, [live, projectId, serviceId, reconnectKey]);
   const visibleEvents = filter.trim() ? events.filter((entry) => `${entry.source || ""} ${entry.message || ""}`.toLowerCase().includes(filter.trim().toLowerCase())) : events;
   return <Card className="monitoring-log-card">
-    <div className="monitoring-section-heading"><div><p className="eyebrow">Runtime output</p><h2>Logs</h2><p>Recent CloudWatch events followed by live output.</p></div><div className="monitoring-log-actions"><StatusChip status={connection.state === "connected" ? "healthy" : connection.state}>{label(connection.state)}</StatusChip><button className="secondary-button" onClick={() => setReconnectKey((value) => value + 1)} type="button">Reconnect</button></div></div>
+    <div className="monitoring-section-heading"><div><h2>Application logs</h2><p>Recent events followed by live output.</p></div><div className="monitoring-log-actions"><StatusChip status={connection.state === "connected" ? "healthy" : connection.state}>{label(connection.state)}</StatusChip><button className="secondary-button" onClick={() => setReconnectKey((value) => value + 1)} type="button">Reconnect</button></div></div>
     <p className="monitoring-log-connection">{connection.message}</p>
     <label className="monitoring-log-search"><span className="sr-only">Filter logs</span><input autoComplete="off" name="logFilter" onChange={(event) => setFilter(event.target.value)} placeholder="Filter logs…" type="search" value={filter} /></label>
-    <div aria-label="Live ECS application logs" aria-live="polite" className="monitoring-log-viewer" role="log">
+    <div aria-label="Live application logs" aria-live="polite" className="monitoring-log-viewer" role="log">
       {visibleEvents.length ? visibleEvents.map((entry, index) => <div className="monitoring-log-line" key={entry.id || `${entry.timestamp}-${index}`}><time>{new Date(entry.timestamp).toLocaleTimeString()}</time><span title={entry.source}>{entry.source || "ecs/app"}</span><code>{entry.message}</code></div>) : <p className="monitoring-log-empty">{events.length ? "No log entries match this filter." : "No application log events are available yet."}</p>}
     </div>
   </Card>;
@@ -195,22 +194,22 @@ export default function ProjectMetrics() {
     ? grafanaDashboardUrl(runtime.grafana.url, projectId, selectedService?.ecs?.service || "")
     : "";
   const destroyOperation = authority?.activeOperation?.type === "destroy" ? "running" : authority?.latestCompletedOperation?.type === "destroy" && authority?.latestCompletedOperation?.outcome === "failed" ? "failed" : null;
-  return <div className="monitoring-page page-stack dg-monitor dg-ground-dark" data-authoritative-state={presentation.state} data-monitoring-available={authority?.monitoring?.available ? "true" : "false"}>
-    <PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} context={[selectedService?.serviceName ? `Service ${selectedService.serviceName}` : null, state?.branch, state?.stableRelease?.commit ? `Release ${state.stableRelease.commit.slice(0, 12)}` : null, `Updated ${date(evidence?.lastUpdatedAt)}`, label(evidence?.freshness)].filter(Boolean).join(" · ")} description="Current performance and runtime health." eyebrow="Runtime" status={authority?.applicationHealth?.status || presentation.state} title="Monitoring" />
+  return <div className="monitoring-page page-stack dg-monitor dg-ground-light" data-authoritative-state={presentation.state} data-monitoring-available={authority?.monitoring?.available ? "true" : "false"}>
+    <PageHeader actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} context={[selectedService?.serviceName ? `Service ${selectedService.serviceName}` : null, state?.branch, state?.stableRelease?.commit ? `Release ${state.stableRelease.commit.slice(0, 12)}` : null].filter(Boolean).join(" · ")} description="Current performance and runtime health." title="Monitoring" />
     {error ? <ErrorState message={error} onRetry={refreshAll} /> : null}
     <div className="dg-mon-toolbar">
       {services.length > 1 ? <label className="monitoring-service-selector"><span>Service</span><select aria-label="Runtime service" name="runtimeService" onChange={(event) => setSelectedServiceId(event.target.value)} value={selectedService?.serviceId || ""}>{services.map((service) => <option key={service.serviceId} value={service.serviceId}>{service.serviceName}</option>)}</select></label> : null}
       <section aria-label="Metrics time range" className="monitoring-range-controls">{["1h", "6h", "24h"].map((item) => <button aria-pressed={range === item} className={range === item ? "button" : "secondary-button"} key={item} onClick={() => setRange(item)} type="button">{item}</button>)}</section>
-      <span className="dg-mon-refresh">Auto-refresh 30s · Last scrape {date(lastScrape)}</span>
+      <span className="dg-mon-refresh">Auto-refreshes every 30 seconds</span>
     </div>
     {destroyOperation ? <Card><strong>{destroyOperation === "running" ? "Destroy is in progress." : "The latest Destroy failed."}</strong><p>The authoritative runtime is still present, so its ECS, ALB, logs, and metrics remain available.</p></Card> : null}
     <div className="dg-mon-board">
-    <section aria-label="Runtime performance summary" className="monitoring-summary-grid monitoring-performance-grid">
-      <MetricCard label="CPU" value={latestMetric(runtime, "cpu", "%")} />
-      <MetricCard label="Memory" value={latestMetric(runtime, "memory", "%")} />
-      <MetricCard label="Latency" value={latestMetric(runtime, "httpLatency", "s")} />
-      <MetricCard label="Targets" tone={albHealth.length && albHealth.every((item) => item === "healthy") ? "success" : "neutral"} value={runtime?.healthyHosts?.points?.length ? latestMetric(runtime, "healthyHosts") : albHealth.length ? `${albHealth.filter((item) => item === "healthy").length}/${albHealth.length}` : "Unavailable"} />
-    </section>
+    <dl aria-label="Runtime performance summary" className="monitoring-summary-strip">
+      {latestMetric(runtime, "cpu", "%") ? <div><dt>CPU</dt><dd>{latestMetric(runtime, "cpu", "%")}</dd></div> : null}
+      {latestMetric(runtime, "memory", "%") ? <div><dt>Memory</dt><dd>{latestMetric(runtime, "memory", "%")}</dd></div> : null}
+      {latestMetric(runtime, "httpLatency", "s") ? <div><dt>Response time</dt><dd>{latestMetric(runtime, "httpLatency", "s")}</dd></div> : null}
+      {albHealth.length ? <div><dt>Health</dt><dd>{albHealth.every((item) => item === "healthy") ? "Available" : `${albHealth.filter((item) => item === "healthy").length}/${albHealth.length} healthy`}</dd></div> : null}
+    </dl>
     <>
       {metricsState === "disabled_by_configuration" ? <EmptyState icon="activity" message={runtime?.message || "CloudWatch metrics are disabled by configuration."} title="Metrics disabled" /> : null}
       {metricsState === "temporarily_unavailable" ? <EmptyState icon="activity" message={runtime?.message || "CloudWatch metrics are temporarily unavailable."} title="Metrics temporarily unavailable" /> : null}
@@ -219,17 +218,16 @@ export default function ProjectMetrics() {
     </>
     </div>
     <div className="dg-mon-bottom">
-    <Card className="monitoring-health-card"><details className="monitoring-health-details" open><summary><span><span className="eyebrow">Runtime details</span><strong>Health and integrations</strong></span><StatusChip status={evidence?.freshness}>{label(evidence?.freshness)}</StatusChip></summary>
+    <section className="monitoring-health-card"><details className="monitoring-health-details"><summary><span><strong>Monitoring details</strong></span><StatusChip status={evidence?.freshness}>{label(evidence?.freshness)}</StatusChip></summary>
       <div className="monitoring-health-grid">
-        <article><span>Runtime telemetry</span><strong>{runtime?.source === "aws_cloudwatch" ? "AWS CloudWatch" : "Unavailable"}</strong></article>
-        <article><span>Last scrape</span><strong>{date(lastScrape)}</strong></article>
-        <article><span>AWS observation</span><strong>{date(evidence?.lastUpdatedAt)}</strong></article>
-        <article><span>Evidence freshness</span><strong>{label(evidence?.freshness)}</strong></article>
-        <article><span>ALB health</span><strong>{albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"}</strong></article>
-        <article><span>ECS task health</span><strong>{ecs ? `${ecs.runningCount} running / ${ecs.desiredCount} desired / ${ecs.pendingCount} pending` : "Unavailable"}</strong></article>
-        <article><span>Grafana</span><strong>{grafanaConfigured ? <a href={grafanaUrl} rel="noreferrer" target="_blank">Open Grafana</a> : "Not configured"}</strong></article>
+        {runtime?.source ? <article><span>Telemetry source</span><strong>{runtime.source === "aws_cloudwatch" ? "Cloud monitoring" : label(runtime.source)}</strong></article> : null}
+        {lastScrape ? <article><span>Last scrape</span><strong>{date(lastScrape)}</strong></article> : null}
+        {evidence?.lastUpdatedAt ? <article><span>Observation time</span><strong>{date(evidence.lastUpdatedAt)}</strong></article> : null}
+        {evidence?.freshness ? <article><span>Evidence freshness</span><strong>{label(evidence.freshness)}</strong></article> : null}
+        {ecs ? <article><span>Service tasks</span><strong>{`${ecs.runningCount} running / ${ecs.desiredCount} desired${ecs.pendingCount ? ` / ${ecs.pendingCount} pending` : ""}`}</strong></article> : null}
+        {grafanaConfigured ? <article><span>Dashboard</span><strong><a href={grafanaUrl} rel="noreferrer" target="_blank">Open Grafana</a></strong></article> : null}
       </div>
-    </details></Card>
+    </details></section>
     <RuntimeLogViewer key={selectedService?.serviceId || "default"} live={liveInfrastructure} projectId={projectId} serviceId={selectedService?.serviceId || ""} />
     </div>
   </div>;

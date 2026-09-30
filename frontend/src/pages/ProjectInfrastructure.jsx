@@ -92,16 +92,16 @@ function TopologyMap({ state, evidence, updating }) {
   const [selected, setSelected] = useState(allTargets.length ? "alb" : services[0] ? `svc:${services[0].id}` : "internet");
 
   const selectedService = selected.startsWith("svc:") ? services.find((service) => `svc:${service.id}` === selected) : null;
-  const paths = { internet: "internet", endpoint: "internet endpoint", alb: "internet endpoint alb", efs: "efs", ecr: "ecr", cloudwatch: "cloudwatch", terraform: "terraform" };
+  const paths = { internet: "internet", endpoint: "internet endpoint", alb: "internet endpoint alb", efs: "efs" };
   const activePath = selectedService ? "internet endpoint alb services" : paths[selected] || "";
   const inspector = selectedService ? {
-    title: selectedService.name || "ECS service", kind: "ECS Fargate service", status: statusFor(serviceHealthy(selectedService)),
-    rows: [["ECS service", selectedService.ecs?.service], ["Tasks", selectedService.ecs ? `${selectedService.ecs.runningCount} running / ${selectedService.ecs.desiredCount} desired` : null], ["Pending", selectedService.ecs?.pendingCount], ["Port", selectedService.port], ["Directory", selectedService.directory], ["Targets", selectedService.targets.length ? `${selectedService.targets.filter((target) => target === "healthy").length}/${selectedService.targets.length} healthy` : "No load balancer targets"], ["Public URL", selectedService.publicUrl], ["Image digest", selectedService.imageDigest ? shortened(selectedService.imageDigest, 30) : null]],
+    title: selectedService.name || "Application service", kind: "Application service", status: statusFor(serviceHealthy(selectedService)),
+    rows: [["Tasks", selectedService.ecs ? `${selectedService.ecs.runningCount} running / ${selectedService.ecs.desiredCount} desired` : null], ["Pending", selectedService.ecs?.pendingCount], ["Directory", selectedService.directory], ["Health", selectedService.targets.length ? `${selectedService.targets.filter((target) => target === "healthy").length}/${selectedService.targets.length} healthy` : null], ["Public URL", selectedService.publicUrl]],
   } : {
     internet: { title: "Internet", kind: "Public traffic", status: "off", rows: [["Entry point", host || "No verified route"]] },
     endpoint: { title: "Public endpoint", kind: "Verified project route", status: host ? "ok" : "off", rows: [["Host", host], ["URL", state?.stableUrl]] },
-    alb: { title: "Application Load Balancer", kind: "AWS · Elastic Load Balancing", status: allTargets.length ? statusFor(albHealthy) : "off", rows: [["Name", evidence?.alb?.name || identity.albName], ["Status", evidence?.alb?.status ? label(evidence.alb.status) : null], ["Targets", allTargets.length ? `${healthyTargets}/${allTargets.length} healthy` : updating ? "Release updating" : null], ["Target group", identity.targetGroupName], ["Region", evidence?.region]] },
-    efs: { title: "EFS storage", kind: "AWS · Elastic File System", status: storage?.status === "active" ? "ok" : "off", rows: [["Status", storage ? label(storage.status) : null], ["Encrypted", storage ? (storage.encrypted ? "Yes" : "No") : null], ["Backups", storage ? (storage.backupEnabled ? "Enabled" : "Disabled") : null], ["Region", storage?.region]] },
+    alb: { title: "Entry and load balancer", kind: "Application entry", status: allTargets.length ? statusFor(albHealthy) : "off", rows: [["Status", evidence?.alb?.status ? label(evidence.alb.status) : null], ["Health", allTargets.length ? `${healthyTargets}/${allTargets.length} healthy` : updating ? "Release updating" : null], ["Region", evidence?.region]] },
+    efs: { title: "Data storage", kind: "Persistent application data", status: storage?.status === "active" ? "ok" : "off", rows: [["Status", storage ? label(storage.status) : null], ["Encrypted", storage?.encrypted ? "Yes" : null], ["Backups", storage?.backupEnabled ? "Enabled" : null], ["Region", storage?.region]] },
     ecr: { title: "Amazon ECR", kind: "AWS · Container registry", status: evidence?.ecr?.imageDigest ? "ok" : "off", rows: [["Repository", evidence?.ecr?.repository], ["Image tag", evidence?.ecr?.imageTag], ["Digest", evidence?.ecr?.imageDigest ? shortened(evidence.ecr.imageDigest, 30) : null]] },
     cloudwatch: { title: "CloudWatch", kind: "AWS · Logs and metrics", status: evidence?.cloudWatch?.status === "active" ? "ok" : "off", rows: [["Status", label(evidence?.cloudWatch?.status)], ["Log group", identity.cloudWatchLogGroupName]] },
     terraform: { title: "Terraform state", kind: "Infrastructure state", status: evidence?.terraformState?.status === "active" ? "ok" : "off", rows: [["Status", label(evidence?.terraformState?.status)], ["Storage", evidence?.terraformState?.storage === "encrypted_s3" ? "Encrypted S3" : evidence?.terraformState?.storage], ["State key", evidence?.terraformState?.key ? shortened(evidence.terraformState.key, 34) : null], ["Last apply", evidence?.terraformState?.lastApplyAt ? date(evidence.terraformState.lastApplyAt) : null]] },
@@ -110,52 +110,44 @@ function TopologyMap({ state, evidence, updating }) {
 
   return <section aria-labelledby="itm-title" className="infra-topology-map itw">
     <header className="itw-bar">
-      <div><p className="eyebrow">Deployed topology</p><h2 id="itm-title">Runtime architecture</h2></div>
+      <div><h2 id="itm-title">Application architecture</h2><p>How traffic reaches the current application.</p></div>
       <div className="itw-bar-meta">
-        <span className="itw-chip"><AppIcon name="infrastructure" size={13} />AWS · {evidence?.region || "Region unavailable"}</span>
+        {evidence?.region ? <span className="itw-chip"><AppIcon name="infrastructure" size={13} />{evidence.region}</span> : null}
         <span className="itw-chip">{services.length} service{services.length === 1 ? "" : "s"}</span>
-        <span className="itm-legend"><i className="is-ok" />Healthy<i className="is-warn" />Updating<i className="is-bad" />Attention</span>
       </div>
     </header>
     <div className="itw-body">
       <div className="itw-canvas" data-path={activePath}>
         <div className="itw-edge">
-          <span className="itw-tier">Public edge</span>
+          <span className="itw-tier">Public traffic</span>
           {node({ id: "internet", detail: "Public traffic", icon: "user", name: "Internet" })}
           <TopologyLink caption="requests" id="endpoint" vertical />
           {node({ id: "endpoint", detail: host || "No verified route", icon: "activity", name: "Public endpoint", status: host ? "ok" : "off" })}
         </div>
         <TopologyLink caption="routes" id="alb" />
         <div className="itw-aws">
-          <span className="itw-boundary-label">AWS Cloud · {evidence?.region || "Region unavailable"}</span>
+          <span className="itw-boundary-label">Application network</span>
           <div className="itw-aws-main">
             <div className="itw-ingress">
               <span className="itw-tier">Ingress</span>
-              {node({ aws: true, className: "is-hub", detail: allTargets.length ? `${healthyTargets}/${allTargets.length} targets healthy` : updating ? "Release updating" : "No target evidence", icon: "branch", id: "alb", name: "Application Load Balancer", status: allTargets.length ? statusFor(albHealthy) : "off" })}
+              {node({ aws: true, className: "is-hub", detail: allTargets.length ? `${healthyTargets}/${allTargets.length} targets healthy` : updating ? "Release updating" : "No target evidence", icon: "branch", id: "alb", name: "Entry and load balancer", status: allTargets.length ? statusFor(albHealthy) : "off" })}
             </div>
             <TopologyLink caption="targets" id="services" />
             <div className="itw-vpc">
-              <span className="itw-boundary-label">VPC · ECS Fargate</span>
+              <span className="itw-boundary-label">Application services</span>
               <div className="itw-bus">
-                {services.map((service) => node({ aws: true, className: "is-service", detail: `${service.ecs ? `${service.ecs.runningCount}/${service.ecs.desiredCount} tasks` : "No task evidence"}${service.port ? ` · port ${service.port}` : ""}`, icon: "infrastructure", id: `svc:${service.id}`, key: service.id, name: service.name || "ECS service", status: statusFor(serviceHealthy(service)) }))}
+                {services.map((service) => node({ aws: true, className: "is-service", detail: service.ecs ? `${service.ecs.runningCount}/${service.ecs.desiredCount} running` : "Awaiting runtime evidence", icon: "infrastructure", id: `svc:${service.id}`, key: service.id, name: service.name || "Application service", status: statusFor(serviceHealthy(service)) }))}
                 {!services.length ? <p className="itm-empty">{updating ? "Release updating — ECS evidence pending." : "No ECS service evidence for this release."}</p> : null}
               </div>
-              {storage ? <div className="itw-storage">{node({ aws: true, detail: `${label(storage.status)}${storage.encrypted ? " · encrypted" : ""}${storage.backupEnabled ? " · backups" : ""}`, icon: "storage", id: "efs", name: "EFS storage", status: storage.status === "active" ? "ok" : "off" })}</div> : null}
+              {storage ? <div className="itw-storage">{node({ aws: true, detail: label(storage.status), icon: "storage", id: "efs", name: "Data storage", status: storage.status === "active" ? "ok" : "off" })}</div> : null}
             </div>
-          </div>
-          <div className="itw-support" aria-label="Supporting services">
-            <span className="itw-tier">Supporting resources</span>
-            {node({ aws: true, detail: evidence?.ecr?.imageDigest ? `digest ${shortened(evidence.ecr.imageDigest, 22)}` : "No image evidence", icon: "box", id: "ecr", name: "Amazon ECR", status: evidence?.ecr?.imageDigest ? "ok" : "off" })}
-            {node({ aws: true, detail: evidence?.cloudWatch?.status === "active" ? "Log group observed" : label(evidence?.cloudWatch?.status), icon: "logs", id: "cloudwatch", name: "CloudWatch", status: evidence?.cloudWatch?.status === "active" ? "ok" : "off" })}
-            {node({ detail: evidence?.terraformState?.status === "active" ? `State active${evidence.terraformState.storage === "encrypted_s3" ? " · encrypted S3" : ""}` : label(evidence?.terraformState?.status), icon: "state", id: "terraform", name: "Terraform state", status: evidence?.terraformState?.status === "active" ? "ok" : "off" })}
           </div>
         </div>
       </div>
       {inspector ? <aside aria-label="Selected resource" aria-live="polite" className={`itw-inspector is-${inspector.status}`}>
-        <p className="eyebrow">Selected resource</p>
         <h3>{inspector.title}</h3>
         <span className="itw-kind">{inspector.kind}</span>
-        <div className="itw-props">{inspector.rows.map(([name, item]) => <div className="itw-prop" key={name}><span>{name}</span><strong className={item === null || item === undefined || item === "" ? "is-empty" : ""}>{value(item)}</strong></div>)}</div>
+        <div className="itw-props">{inspector.rows.filter(([, item]) => item !== null && item !== undefined && item !== "").map(([name, item]) => <div className="itw-prop" key={name}><span>{name}</span><strong>{value(item)}</strong></div>)}</div>
         <p className="itw-hint">Select any resource in the topology to inspect its recorded evidence.</p>
       </aside> : null}
     </div>
@@ -263,7 +255,7 @@ export default function ProjectInfrastructure() {
   const drainingTargets = targetHealth.filter((target) => target === "draining").length;
   const healthyTargets = activeTargetHealth.filter((target) => target === "healthy").length;
   const targetsHealthy = activeTargetHealth.length > 0 && healthyTargets === activeTargetHealth.length;
-  return <div className="infrastructure-page grid dg-infra"><PageHeader actions={exportAction} eyebrow="Infrastructure" title={releaseUpdating ? "Runtime release updating" : runtimeTitle} status={infrastructure?.status || "unavailable"} description={releaseUpdating ? "The previous LIVE release remains canonical while AWS activates the candidate release." : "Current AWS state for this release."} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
+  return <div className="infrastructure-page grid dg-infra dg-infra-light"><PageHeader actions={exportAction} title={releaseUpdating ? "Runtime release updating" : runtimeTitle} status={infrastructure?.status || "unavailable"} description={releaseUpdating ? "The previous live release remains available while the new release starts." : "Current architecture and runtime health for this release."} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
     <TopologyMap evidence={evidence} state={state} updating={releaseUpdating} />
     <section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="Application" value={runtimePresent ? (state?.stableUrl ? <a href={state.stableUrl} rel="noreferrer" target="_blank">Open application ↗</a> : "Healthy") : label(state?.stateAuthority?.runtime?.state)} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="Services" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : releaseUpdating ? "Release updating" : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="Targets" value={activeTargetHealth.length ? `${healthyTargets}/${activeTargetHealth.length} healthy${drainingTargets ? ` · ${drainingTargets} draining` : ""}` : releaseUpdating ? "Release updating" : "Unavailable"} tone={targetsHealthy ? "success" : "neutral"} /><MetricCard label="Region" value={evidence?.region || "Unavailable"} /></section>
     <div className="infra-columns"><div className="infra-column-main"><ServiceRuntimeList evidence={evidence} transitioning={releaseUpdating} /><ServiceFlow evidence={evidence} state={state} /></div><div className="infra-column-side"><Pricing cost={evidence?.cost} /><SupportingServices evidence={evidence} /></div></div>

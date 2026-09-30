@@ -62,7 +62,7 @@ assert.match(notifications, /Test notification published to SNS for/, "the synch
 assert.match(notifications, /emailMatchesSubscription/, "a test notification cannot silently target an older confirmed address while the input shows a replacement address");
 assert.match(notifications, /result\.status === "error"[\s\S]*result\.status === "not_configured"/, "subscription responses that did not send confirmation email are presented as errors");
 assert.doesNotMatch(notifications, /Test notification queued/, "the test action does not label a completed SNS publish request as queued");
-assert.match(troubleshooting, /No troubleshooting evidence available/);
+assert.match(troubleshooting, /No troubleshooting evidence yet/);
 assert.match(troubleshooting, /eligibleOperations\.length && !selected/, "the troubleshooting view requires bounded failed-deployment or LIVE runtime evidence");
 assert.match(admin, /data-admin-section="overview"/);
 assert.match(admin, /data-admin-section="users"/);

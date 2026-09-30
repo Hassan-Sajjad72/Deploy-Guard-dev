@@ -632,6 +632,61 @@ textarea {
   .dg-home-hero { grid-template-columns: 1fr; }
 }
 
+/* Specialist pages: a light operating shell with one deep evidence canvas. */
+.dg-infra-light,
+.dg-ground-light { --dg-ink: #172033; --dg-ink-2: #44516a; --dg-muted: #65718a; --dg-line: rgba(25, 38, 66, .13); --dg-line-strong: rgba(25, 38, 66, .22); background: #f5f6f8; color: #172033; padding: clamp(20px, 3vw, 44px); }
+.dg-infra-light .ds-page-header,
+.dg-ground-light .ds-page-header { background: transparent; border-bottom: 1px solid var(--dg-line); padding-bottom: 24px; }
+.dg-infra-light .ds-page-header :is(h1, p, .page-context),
+.dg-ground-light .ds-page-header :is(h1, p, .page-context) { color: inherit; }
+.dg-infra-light .infra-topology-map { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.dg-infra-light .itw-bar { background: transparent; border: 0; padding: 0 0 16px; }
+.dg-infra-light .itw-bar h2 { color: #172033; font-size: clamp(1.5rem, 2.5vw, 2.15rem); }
+.dg-infra-light .itw-bar p { color: #65718a; margin: 6px 0 0; }
+.dg-infra-light .itw-chip { background: #fff; border-color: var(--dg-line); color: #44516a; }
+.dg-infra-light .itw-body { background: linear-gradient(145deg, #07162d, #0c2545); border: 0; border-radius: 16px; box-shadow: 0 22px 48px -34px rgba(7, 22, 45, .75); }
+.dg-infra-light .itw-body::after { display: none; }
+.dg-infra-light .itw-canvas { background-image: none; }
+.dg-infra-light .itw-aws { background: rgba(82, 128, 185, .08); border-color: rgba(163, 198, 238, .4); box-shadow: none; }
+.dg-infra-light .itw-vpc { background: rgba(110, 156, 211, .08); border-color: rgba(163, 198, 238, .34); box-shadow: none; }
+.dg-infra-light .itw-boundary-label { background: rgba(8, 25, 48, .9); box-shadow: none; color: #b8d4f2; }
+.dg-infra-light .itw-node,
+.dg-infra-light .itw-node.is-hub { backdrop-filter: blur(12px); background: rgba(255, 255, 255, .09); border-color: rgba(214, 231, 249, .2); box-shadow: none; }
+.dg-infra-light .itw-node.is-aws .itw-node-icon { background: rgba(185, 215, 246, .13); box-shadow: none; color: #c9e2fb; }
+.dg-infra-light .itw-inspector { backdrop-filter: blur(14px); background: rgba(4, 18, 37, .74); border-top-color: rgba(214, 231, 249, .16) !important; }
+.dg-infra-light .infrastructure-summary-grid { background: #fff !important; border-color: var(--dg-line) !important; box-shadow: none; }
+.dg-infra-light .infrastructure-summary-grid .metric-card { color: #172033; }
+.dg-infra-light .infrastructure-summary-grid .metric-card strong { color: #172033; }
+.dg-infra-light .infra-columns :is(.ds-card, .infrastructure-finops-card),
+.dg-infra-light .infrastructure-inventory-card { background: transparent !important; border-color: var(--dg-line) !important; box-shadow: none; }
+
+.dg-ground-light .dg-mon-toolbar,
+.dg-ground-light .monitoring-summary-strip,
+.dg-ground-light .monitoring-chart-grid .ds-chart-card,
+.dg-ground-light .monitoring-health-card { background: #fff; border-color: var(--dg-line); box-shadow: none; }
+.dg-ground-light .monitoring-summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.dg-ground-light .monitoring-summary-strip > div { border-left: 1px solid var(--dg-line); padding: 16px; }
+.dg-ground-light .monitoring-summary-strip > div:first-child { border-left: 0; }
+.dg-ground-light .monitoring-summary-strip dt { color: #65718a; font-size: .7rem; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+.dg-ground-light .monitoring-summary-strip dd { color: #172033; font-size: 1.45rem; font-variant-numeric: tabular-nums; font-weight: 620; margin: 5px 0 0; }
+.dg-ground-light .monitoring-chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dg-ground-light .monitoring-chart-grid .ds-chart-card :is(h2, p) { color: #172033; }
+.dg-ground-light .monitoring-health-details > summary { background: transparent; border-color: var(--dg-line); }
+.dg-ground-light .monitoring-health-details strong,
+.dg-ground-light .monitoring-health-grid strong { color: #172033; }
+.dg-ground-light .monitoring-log-card { background: #0a172b; border: 0; box-shadow: none; }
+.dg-ground-light .monitoring-log-card :is(h2, p, .monitoring-log-connection) { color: #e5edf7; }
+
+.dg-trouble .dg-ts-issue,
+.dg-trouble .troubleshooting-diagnosis { border-left-width: 1px !important; }
+.dg-trouble .troubleshooting-advanced { border-top: 1px solid var(--dg-line); color: var(--dg-muted); margin-top: 16px; padding-top: 14px; }
+.dg-trouble .troubleshooting-advanced summary { color: var(--dg-ink-2); cursor: pointer; font-weight: 600; }
+@media (max-width: 760px) {
+  .dg-ground-light .monitoring-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dg-ground-light .monitoring-summary-strip > div:nth-child(odd) { border-left: 0; }
+  .dg-ground-light .monitoring-summary-strip > div:nth-child(n + 3) { border-top: 1px solid var(--dg-line); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dg-np-route::after { display: none; }
 }
