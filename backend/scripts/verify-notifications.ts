@@ -2,6 +2,8 @@ import { strict as assert } from "node:assert";
 import { NotificationDispatcherService } from "../src/notifications/notification-dispatcher.service";
 import { NotificationsService } from "../src/notifications/notifications.service";
 import { SnsNotificationAdapter } from "../src/notifications/sns-notification.adapter";
+import { PipelineRunStatus } from "../src/projects/project-pipeline-run.entity";
+import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { UserRole } from "../src/users/user.entity";
 const service = Object.create(NotificationDispatcherService.prototype) as NotificationDispatcherService;
 assert.deepEqual(service.classify("docker_build", "failed"), { type: "deployment_failed", kind: "critical" });
@@ -10,6 +12,7 @@ assert.deepEqual(service.classify("stable_release", "completed"), { type: "deplo
 assert.deepEqual(service.classify("infrastructure_destroy", "failed"), { type: "destroy_failed", kind: "critical" });
 assert.deepEqual(service.classify("rollback", "started"), { type: "rollback_started", kind: "stage" });
 assert.deepEqual(service.classify("redeploy_completed", "completed"), { type: "redeployment_succeeded", kind: "success" });
+assert.deepEqual(service.classify("deploy_started", "started"), { type: "deployment_started", kind: "stage" });
 assert.deepEqual(service.classify("runtime_unhealthy", "failed"), { type: "runtime_unhealthy", kind: "critical" });
 assert.deepEqual(service.classify("cost_threshold_exceeded", "warning"), { type: "cost_threshold_exceeded", kind: "critical" });
 
@@ -225,8 +228,101 @@ async function verifyLegacyDeliveryHistoryIsPresentedHonestly() {
   assert.equal("sentAt" in settings.deliveries[0], false, "the public delivery history does not expose a misleading sent timestamp");
 }
 
+function lifecycleOperation(action: "deploy" | "rollback" | "destroy", status: PipelineRunStatus, releaseStrategy?: "direct_ecs" | "terraform_bootstrap") {
+  return {
+    id: `run-${action}-${releaseStrategy || "default"}`,
+    projectId: "project-1",
+    generationId: "generation-1",
+    commitSha: "a".repeat(40),
+    status,
+    currentStage: status === PipelineRunStatus.FAILED ? "release_failed" : "release_complete",
+    errorMessage: status === PipelineRunStatus.FAILED ? `${action} failed safely` : null,
+    metadata: {
+      deploymentAction: action,
+      releaseStrategy,
+      releaseEvidenceVerified: action !== "destroy" && status === PipelineRunStatus.COMPLETED,
+      destroyEvidenceValidated: action === "destroy" && status === PipelineRunStatus.COMPLETED,
+      failedStage: status === PipelineRunStatus.FAILED ? "release_failed" : null,
+    },
+  } as any;
+}
+
+async function verifyRailpackLifecycleMappingAndBestEffortBoundary() {
+  const observed: Array<{ stage: string; status: string }> = [];
+  const lifecycle: any = Object.create(RailpackDeploymentService.prototype);
+  lifecycle.notifications = { dispatch: async (input: { stage: string; status: string }) => { observed.push({ stage: input.stage, status: input.status }); } };
+  const cases = [
+    ["deploy", undefined, "deploy"],
+    ["deploy", "direct_ecs", "redeploy"],
+    ["rollback", undefined, "rollback"],
+    ["destroy", undefined, "destroy"],
+  ] as const;
+  for (const [action, strategy, expected] of cases) {
+    await lifecycle.dispatchLifecycleNotification(lifecycleOperation(action, PipelineRunStatus.COMPLETED, strategy), "completed");
+    await lifecycle.dispatchLifecycleNotification(lifecycleOperation(action, PipelineRunStatus.FAILED, strategy), "failed");
+    assert.deepEqual(observed.slice(-2), [
+      { stage: `${expected}_completed`, status: "completed" },
+      { stage: `${expected}_failed`, status: "failed" },
+    ], `${expected} emits success and failure through the existing dispatcher`);
+  }
+  const unverified = lifecycleOperation("deploy", PipelineRunStatus.COMPLETED);
+  unverified.metadata.releaseEvidenceVerified = false;
+  await lifecycle.dispatchLifecycleNotification(unverified, "completed");
+  assert.equal(observed.length, 8, "GitHub success without authoritative release verification cannot emit lifecycle success");
+
+  lifecycle.notifications = { dispatch: async () => { throw new Error("SNS unavailable"); } };
+  const completed = lifecycleOperation("rollback", PipelineRunStatus.COMPLETED);
+  await lifecycle.dispatchLifecycleNotification(completed, "completed");
+  assert.equal(completed.status, PipelineRunStatus.COMPLETED, "notification failure cannot alter the authoritative lifecycle result");
+}
+
+async function verifyRailpackLifecyclePreferencesAndDeduplication() {
+  async function scenario(options: { enabled: boolean; stageUpdatesEnabled: boolean; confirmed: boolean }) {
+    let providerCalls = 0;
+    const stored = new Map<string, Record<string, any>>();
+    const dispatcher = new NotificationDispatcherService(
+      { findOne: async () => ({ id: "project-1", ownerUserId: 7, name: "Project" }) } as never,
+      { findOne: async () => ({ enabled: options.enabled, criticalEnabled: true, successEnabled: true, stageUpdatesEnabled: options.stageUpdatesEnabled }) } as never,
+      { findOne: async () => options.confirmed ? ({ status: "confirmed" }) : null } as never,
+      {
+        findOne: async ({ where }: { where: { deduplicationKey: string } }) => stored.get(where.deduplicationKey) || null,
+        create: (value: Record<string, unknown>) => ({ id: `delivery-${stored.size + 1}`, publishedAt: null, attempts: 0, ...value }),
+        save: async (value: Record<string, any>) => { stored.set(String(value.deduplicationKey), value); return value; },
+      } as never,
+      { status: () => ({ configured: true }), send: async () => { providerCalls += 1; return { status: "published", messageId: `message-${providerCalls}` }; } } as never,
+      { sanitize: (value: unknown) => String(value) } as never,
+      { record: async () => undefined } as never,
+    );
+    const lifecycle: any = Object.create(RailpackDeploymentService.prototype);
+    lifecycle.notifications = dispatcher;
+    return { lifecycle, calls: () => providerCalls };
+  }
+
+  const enabled = await scenario({ enabled: true, stageUpdatesEnabled: true, confirmed: true });
+  const completed = lifecycleOperation("deploy", PipelineRunStatus.COMPLETED);
+  await enabled.lifecycle.dispatchLifecycleNotification(completed, "completed");
+  await enabled.lifecycle.dispatchLifecycleNotification(completed, "completed");
+  assert.equal(enabled.calls(), 1, "repeated reconciliation is deduplicated by the existing delivery key");
+  await enabled.lifecycle.dispatchLifecycleNotification(lifecycleOperation("deploy", PipelineRunStatus.RUNNING), "started");
+  assert.equal(enabled.calls(), 2, "enabled stage updates publish lifecycle start notifications");
+
+  const disabled = await scenario({ enabled: false, stageUpdatesEnabled: true, confirmed: true });
+  await disabled.lifecycle.dispatchLifecycleNotification(lifecycleOperation("deploy", PipelineRunStatus.COMPLETED), "completed");
+  assert.equal(disabled.calls(), 0, "disabled notifications do not publish");
+
+  const unsubscribed = await scenario({ enabled: true, stageUpdatesEnabled: true, confirmed: false });
+  const rollback = lifecycleOperation("rollback", PipelineRunStatus.COMPLETED);
+  await unsubscribed.lifecycle.dispatchLifecycleNotification(rollback, "completed");
+  assert.equal(unsubscribed.calls(), 0, "unsubscribed notifications do not publish");
+  assert.equal(rollback.status, PipelineRunStatus.COMPLETED, "unsubscribed notification handling leaves lifecycle success intact");
+
+  const noStages = await scenario({ enabled: true, stageUpdatesEnabled: false, confirmed: true });
+  await noStages.lifecycle.dispatchLifecycleNotification(lifecycleOperation("deploy", PipelineRunStatus.RUNNING), "started");
+  assert.equal(noStages.calls(), 0, "start notifications obey stageUpdatesEnabled");
+}
+
 verifyProviderGate();
 verifyIncompleteProviderIsUnavailable();
-Promise.all([verifyDisabledProviderEndpointsDoNotThrow(), verifyUnconfirmedIsNotSent(), verifyRetryAndDeduplication(), verifyConcurrentInsertCollisionFailsClosed(), verifyPendingConfirmationCanBecomeConfirmed(), verifySubscribeDoesNotAssumeEmailConfirmation(), verifyProviderPendingOverridesStaleConfirmedArn(), verifySettingsReconcilePrematureConfirmation(), verifySettingsClearMissingProviderSubscription(), verifyPublishMeansProviderAcceptance(), verifyLegacyDeliveryHistoryIsPresentedHonestly()])
+Promise.all([verifyDisabledProviderEndpointsDoNotThrow(), verifyUnconfirmedIsNotSent(), verifyRetryAndDeduplication(), verifyConcurrentInsertCollisionFailsClosed(), verifyPendingConfirmationCanBecomeConfirmed(), verifySubscribeDoesNotAssumeEmailConfirmation(), verifyProviderPendingOverridesStaleConfirmedArn(), verifySettingsReconcilePrematureConfirmation(), verifySettingsClearMissingProviderSubscription(), verifyPublishMeansProviderAcceptance(), verifyLegacyDeliveryHistoryIsPresentedHonestly(), verifyRailpackLifecycleMappingAndBestEffortBoundary(), verifyRailpackLifecyclePreferencesAndDeduplication()])
   .then(() => console.log("Notification provider gate, mapping, retry, and deduplication honesty passed"))
   .catch((error) => { console.error(error); process.exitCode = 1; });

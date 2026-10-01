@@ -35,6 +35,16 @@ assert.throws(() => canonicalDeployguardReusableWorkflow(emptyConfig), (error: a
 await assert.rejects(() => github.connectInstallation({} as any, "not-numeric"), (error: any) => error instanceof BadRequestException && /Invalid GitHub App installation id/.test(error.message));
 await assert.rejects(() => github.tokenForRepository(1, "inaccessible/repository"), (error: any) => error instanceof BadRequestException && /Install the DeployGuard GitHub App/.test(error.message));
 
+const oidcGithub = Object.create(GithubAppService.prototype) as any;
+oidcGithub.tokenForRepository = async () => ({ token: "installation-token", installationId: "42", repositoryId: "1300095798" });
+oidcGithub.appJwt = () => "app-jwt";
+oidcGithub.headers = () => ({});
+oidcGithub.githubFetch = async () => new Response(JSON.stringify({ account: { login: "232378taniakhawar", id: 151642905 } }), { status: 200 });
+assert.deepEqual(await oidcGithub.oidcTrustSubjects(1, "232378taniakhawar/react-node-app", "42"), [
+  "repo:232378taniakhawar@151642905/react-node-app@1300095798:*",
+  "repo:232378taniakhawar/react-node-app:*",
+], "verified GitHub App identity produces both exact immutable and legacy OIDC subjects");
+
 const workflowCalls: Array<{ url: string; init?: RequestInit }> = [];
 const workflowGithub = Object.create(GithubAppService.prototype) as any;
 workflowGithub.config = new ConfigService({ DEPLOYGUARD_REUSABLE_WORKFLOW: canonicalReusable });

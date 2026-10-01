@@ -22,6 +22,17 @@ export const DEVELOPER_DESTROY_PHASES = Object.freeze([
   { key: "finalize", label: "Finalize Cleanup" },
 ]);
 
+/** GitHub Actions workflow step keys grouped by lifecycle phase (shared by the lifecycle rail and the Pipeline graph). */
+export const PIPELINE_PHASE_STAGE_KEYS = Object.freeze({
+  source: ["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack"],
+  build: ["build_immutable_railpack_image", "build_immutable_railpack_images", "build_and_push_immutable_railpack_image", "validate_application_runtime"],
+  publish: ["publish_immutable_image_to_ecr", "publish_immutable_images_to_ecr", "install_trivy_scanner", "scan_exact_immutable_service_images"],
+  deploy: ["install_terraform", "materialize_release_runtime"],
+  verify: ["verify_alb_health_and_write_result"],
+  finalize: ["publish_verified_release_result", "project_delete_cleanup"],
+  destroy: ["install_terraform", "materialize_release_runtime"],
+});
+
 const ACTIVE_STATES = new Set(["preparing", "queued", "building", "deploying", "verifying", "destroying"]);
 
 export function deploymentPhasePresentation(currentState) {
@@ -45,15 +56,7 @@ export function deploymentPhasePresentation(currentState) {
     && currentState?.latestAttempt?.outcome === "blocked";
   const active = ACTIVE_STATES.has(currentState?.developerState);
   const evidence = Array.isArray(currentState?.latestAttempt?.workflowStages) ? currentState.latestAttempt.workflowStages : [];
-  const lifecycleKeys = {
-    source: ["checkout_exact_application_source", "configure_aws_credentials_through_oidc", "validate_immutable_release_input", "install_pinned_railpack"],
-    build: ["build_immutable_railpack_image", "build_immutable_railpack_images", "build_and_push_immutable_railpack_image", "validate_application_runtime"],
-    publish: ["publish_immutable_image_to_ecr", "publish_immutable_images_to_ecr", "install_trivy_scanner", "scan_exact_immutable_service_images"],
-    deploy: ["install_terraform", "materialize_release_runtime"],
-    verify: ["verify_alb_health_and_write_result"],
-    finalize: ["publish_verified_release_result", "project_delete_cleanup"],
-    destroy: ["install_terraform", "materialize_release_runtime"],
-  };
+  const lifecycleKeys = PIPELINE_PHASE_STAGE_KEYS;
 
   function evidenceStatus(phase) {
     const entries = evidence.filter((entry) => lifecycleKeys[phase]?.includes(entry?.key));

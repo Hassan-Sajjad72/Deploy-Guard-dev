@@ -17,6 +17,7 @@ const publicFooter = readFileSync(new URL("../src/components/layout/PublicFooter
 const architecture = readFileSync(new URL("../src/components/marketing/DeployGuardArchitecture.jsx", import.meta.url), "utf8");
 const publicAdminLink = readFileSync(new URL("../src/components/layout/PublicAdminLink.jsx", import.meta.url), "utf8");
 const routes = readFileSync(new URL("../src/routes/AppRoutes.jsx", import.meta.url), "utf8");
+const cohesion = readFileSync(new URL("../src/styles/cohesion.css", import.meta.url), "utf8");
 
 assert.match(styles, /prefers-reduced-motion/);
 assert.match(main, /dataset\.theme = "dark"/);
@@ -72,7 +73,10 @@ assert.match(primitives, /event\.key === "ArrowRight"/);
 assert.match(primitives, /role="tab" tabIndex=\{activeId === item\.id \? 0 : -1\}/);
 assert.match(routes, /lazy\(\(\) => import\(/, "route screens must be split into lazy-loaded chunks");
 assert.match(routes, /<Suspense fallback=\{<LoadingState message="Loading page…" \/>\}>/);
-assert.match(index, /meta name="theme-color" content="#102a2d"/);
+assert.match(index, /meta name="theme-color" content="#0B0D12"/);
+for (const token of ["#0b0d12", "#12151c", "#f97316", "#ef4444", "#22c55e", "#eab308", "#3b82f6"]) assert.match(cohesion, new RegExp(token, "i"));
+assert.match(cohesion, /One graphite environment, one orange product accent/);
+assert.match(cohesion, /grid-template-columns: minmax\(300px, 4fr\) minmax\(0, 8fr\)/, "landing architecture must remain more prominent than hero copy");
 for (const state of ["READY_WITH_WARNINGS", "READY", "INPUT_REQUIRED", "BLOCKED"]) assert.match(primitives, new RegExp(state));
 assert.match(routes, /<Route element={<About \/>} path="\/about" \/>/);
 for (const name of ["Hassan Sajjad", "Faria Fatima", "Tania Khawar"]) assert.match(about, new RegExp(name));

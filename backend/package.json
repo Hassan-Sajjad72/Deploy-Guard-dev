@@ -48,6 +48,7 @@
     "test:billing-subscriptions": "ts-node scripts/verify-billing-subscriptions.ts",
     "test:stripe-billing": "ts-node scripts/verify-stripe-billing.ts",
     "test:billing-migration": "ts-node scripts/verify-billing-migration.ts",
+    "test:notifications": "ts-node scripts/verify-notifications.ts",
     "test:trivy-controls": "ts-node scripts/verify-trivy-controls.ts",
     "test:uuid-admission": "ts-node scripts/verify-uuid-admission-contract.ts",
     "test:configuration-admission": "ts-node scripts/verify-configuration-admission.ts && npm run test:dispatch-state-projection && npm run test:railpack-runtime-contract && npm run test:uuid-admission",

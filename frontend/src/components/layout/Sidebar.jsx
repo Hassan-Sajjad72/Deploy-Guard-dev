@@ -1,4 +1,5 @@
-import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { useLayoutEffect } from "react";
+import { NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth.js";
 import AppIcon from "../common/AppIcon.jsx";
 import BrandLogo from "../common/BrandLogo.jsx";
@@ -29,6 +30,23 @@ export default function Sidebar({ isOpen = false, onClose, projectId: projectIdP
   const projectId = projectIdProp || routeProjectId || null;
   const navigate = useNavigate();
   const navigationRef = useDialogFocus(onClose, { active: isOpen });
+  const { pathname } = useLocation();
+  // Active-item indicator: one element that slides to the active link (visual only).
+  useLayoutEffect(() => {
+    const aside = document.getElementById("authenticated-navigation");
+    const active = aside?.querySelector(".nav-link.active");
+    if (!aside) return undefined;
+    const place = () => {
+      if (!active) { aside.classList.remove("has-indicator"); return; }
+      const top = active.getBoundingClientRect().top - aside.getBoundingClientRect().top + aside.scrollTop;
+      aside.style.setProperty("--nav-indicator-top", `${top}px`);
+      aside.style.setProperty("--nav-indicator-height", `${active.offsetHeight}px`);
+      aside.classList.add("has-indicator");
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [pathname, projectId]);
   async function handleLogout() { await logout().catch(() => undefined); onClose?.(); navigate("/", { replace: true }); }
   return <>
     <button aria-label="Close navigation" className={isOpen ? "mobile-navigation-backdrop is-open" : "mobile-navigation-backdrop"} onClick={onClose} type="button" />

@@ -134,8 +134,7 @@ export class AiEvidencePreprocessorService {
     if (!item.remediationSteps.length || item.remediationSteps.length > 8 || item.remediationSteps.some((step) => typeof step !== "string" || !step.trim() || step.length > 1000)) return null;
     const allowed = new Map(allowedEvidence.map((row) => [`${row.source}|${row.eventId || ""}|${row.stage || ""}`, row]));
     const requestedReferences = (item.evidenceReferences as Array<Record<string, unknown>>).slice(0, 20);
-    if (!requestedReferences.length || requestedReferences.some((reference) => !allowed.has(this.referenceKey(reference)))) return null;
-    const references = requestedReferences.map((reference) => {
+    const references = requestedReferences.filter((reference) => allowed.has(this.referenceKey(reference))).map((reference) => {
       const row = allowed.get(this.referenceKey(reference));
       return { source: String(reference.source || ""), eventId: reference.eventId ? String(reference.eventId) : null, stage: reference.stage ? String(reference.stage) : null, lineReference: row?.lineReference || null };
     });

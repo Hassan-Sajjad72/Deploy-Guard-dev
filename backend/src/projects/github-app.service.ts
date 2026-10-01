@@ -128,7 +128,7 @@ export class GithubAppService {
     throw new BadRequestException("Install the DeployGuard GitHub App for this repository before continuing.");
   }
 
-  async oidcTrustSubject(userId: number, repositoryFullName: string, preferredInstallationId?: string | null) {
+  async oidcTrustSubjects(userId: number, repositoryFullName: string, preferredInstallationId?: string | null) {
     const credential = await this.tokenForRepository(userId, repositoryFullName, preferredInstallationId);
     const response = await this.githubFetch(`https://api.github.com/app/installations/${credential.installationId}`, { headers: this.headers(this.appJwt()) });
     if (!response.ok) throw new BadRequestException("GitHub App installation scope could not be verified for AWS authorization.");
@@ -142,7 +142,10 @@ export class GithubAppService {
     // OIDC authorization is always scoped to the exact repository being
     // deployed, even when the App installation itself can access every
     // repository owned by the account.
-    return `repo:${account}@${accountId}/${repositoryName}@${credential.repositoryId}:*`;
+    return [
+      `repo:${account}@${accountId}/${repositoryName}@${credential.repositoryId}:*`,
+      `repo:${account}/${repositoryName}:*`,
+    ];
   }
 
   async ensureWorkflow(userId: number, repositoryFullName: string, installationId?: string | null) {

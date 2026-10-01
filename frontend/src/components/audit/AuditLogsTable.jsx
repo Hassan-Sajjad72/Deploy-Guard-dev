@@ -21,10 +21,10 @@ export default function AuditLogsTable({ logs }) {
   return <>
     <DataTable caption="Sanitized administrative and product audit records" className="admin-responsive-table audit-table" label="Audit log table">
       <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Result</th><th>Source</th></tr></thead>
-      <tbody>{logs.map((log) => <tr key={log.id}>
+      <tbody>{logs.map((log) => <tr data-status={log.status} key={log.id}>
         <td data-label="Time" title={log.createdAt || "Unavailable"}>{date(log.createdAt)}</td>
         <td data-label="Actor"><strong title={log.actorEmail || "System"}>{log.actorEmail || "System"}</strong><span className="admin-cell-detail">{label(log.actorRole || "system")}</span></td>
-        <td data-label="Action"><strong>{label(log.action)}</strong><span className="admin-cell-detail">{summary(log)}</span><Button onClick={() => setSelected(log)} tone="ghost">Details</Button></td>
+        <td data-label="Action"><div className="audit-action"><div><strong>{label(log.action)}</strong><span className="admin-cell-detail">{summary(log)}</span></div><Button onClick={() => setSelected(log)} tone="ghost">Details</Button></div></td>
         <td data-label="Resource"><strong>{label(log.resourceType)}</strong><span className="admin-cell-detail" title={log.resourceId || "No resource identifier"}>{log.resourceId || "No resource identifier"}</span></td>
         <td data-label="Result"><StatusChip status={log.status} /></td>
         <td data-label="Source">Audit log</td>

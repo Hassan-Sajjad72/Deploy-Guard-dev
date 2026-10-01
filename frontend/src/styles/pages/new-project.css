@@ -1,0 +1,200 @@
+/*
+ * Deploy — "Guided launch sequence". An ink-night header states the sequence
+ * DeployGuard runs once you press Deploy; an ink checklist rail tracks what is
+ * still missing; the form lives on bright numbered sheets. Lime is reserved
+ * for readiness and the ignition moment.
+ */
+.app-shell:has(.dg-newproj) .main-area { --pg-cast: rgba(184, 243, 74, .08); }
+.dg-newproj { --np-ink: var(--dg-night); gap: 20px; margin: 0 auto; max-width: 1220px; }
+.dg-np-kicker { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .68rem; letter-spacing: .06em; margin: 0; text-transform: uppercase; }
+
+/* ---------- Header: title + launch sequence ---------- */
+.dg-np-head {
+  align-items: end;
+  background:
+    radial-gradient(45% 120% at 70% 120%, rgba(184, 243, 74, .10), transparent 60%),
+    linear-gradient(160deg, #0b1020, #121a2e 70%);
+  border-radius: 20px; box-shadow: 0 30px 60px -36px rgba(11, 16, 32, .9); color: #fff; display: grid; gap: 24px 48px;
+  grid-template-columns: minmax(0, .85fr) minmax(0, 1.5fr); overflow: hidden; padding: 30px 34px; position: relative;
+}
+.dg-np-head::before { background-image: none; background-size: 28px 28px; content: ""; inset: 0; -webkit-mask-image: linear-gradient(90deg, transparent 20%, #000 80%); mask-image: linear-gradient(90deg, transparent 20%, #000 80%); position: absolute; }
+.dg-np-head > div { position: relative; }
+.dg-np-head .dg-np-kicker { color: var(--dg-muted); }
+.dg-np-head h1 { color: var(--dg-ink); font-size: clamp(2rem, 3.4vw, 2.8rem); font-weight: 600; letter-spacing: -.045em; line-height: 1.02; margin: 12px 0 10px; max-width: 14ch; }
+.dg-np-head > div:first-child > p:not(.dg-np-kicker) { color: var(--dg-ink-2); font-size: .95rem; margin: 0; max-width: 42ch; }
+.dg-np-sequence { background: rgba(255, 255, 255, .035); border: 1px solid rgba(148, 163, 184, .16); border-radius: 12px; display: grid; gap: 18px; padding: 16px 18px 18px; }
+.dg-np-sequence > p { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .06em; margin: 0; text-transform: uppercase; }
+.dg-np-route { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; position: relative; }
+.dg-np-route::before { background: linear-gradient(90deg, rgba(255, 255, 255, .25), var(--mf-accent)); border-radius: 2px; content: ""; height: 1.5px; left: 5px; position: absolute; right: calc(100% / 6 - 5px); top: 5px; }
+.dg-np-route li { color: var(--dg-ink-2); display: grid; font-family: var(--dg-mono); font-size: .66rem; gap: 12px; letter-spacing: .03em; line-height: 1.35; padding-right: 6px; position: relative; }
+.dg-np-route i { animation: dg-np-stop 4.2s ease-in-out infinite; animation-delay: calc(var(--stop) * .5s); background: rgba(var(--mf-tint), .8); border: 1.5px solid var(--dg-muted); border-radius: 50%; height: 11px; width: 11px; }
+.dg-np-route li:last-child { color: var(--mf-accent-ink); }
+.dg-np-route li:last-child i { background: var(--mf-accent-fill); border-color: var(--mf-accent); box-shadow: 0 0 0 4px var(--mf-accent-soft); }
+@keyframes dg-np-stop { 0%, 55%, 100% { border-color: var(--dg-muted); } 25% { border-color: var(--mf-accent); box-shadow: 0 0 0 4px var(--mf-accent-soft); } }
+
+/* ---------- Layout: checklist rail + sheets ---------- */
+.dg-np-layout { align-items: start; display: grid; gap: 20px; grid-template-columns: 272px minmax(0, 1fr); }
+.dg-np-rail { border-radius: 20px; color: var(--dg-ink); display: grid; gap: 20px; padding: 22px 20px; position: sticky; top: 72px; }
+.dg-np-rail .dg-np-kicker { color: var(--dg-muted); }
+.dg-newproj .deployment-journey { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; }
+.dg-newproj .deployment-journey li { display: grid; gap: 12px; grid-template-columns: 26px minmax(0, 1fr); padding-bottom: 20px; position: relative; }
+.dg-newproj .deployment-journey li:not(:last-child)::after { background: rgba(148, 163, 184, .18); bottom: 2px; content: ""; left: 12px; position: absolute; top: 30px; width: 1.5px; }
+.dg-newproj .deployment-journey li.is-complete:not(:last-child)::after { background: var(--dg-success-line); }
+.dg-newproj .deployment-journey-marker { align-items: center; background: transparent; border: 1.5px solid rgba(255, 255, 255, .3); border-radius: 12px; color: var(--dg-muted); display: inline-flex; font-family: var(--dg-mono); font-size: .72rem; height: 26px; justify-content: center; width: 26px; }
+.dg-newproj .deployment-journey li.is-current .deployment-journey-marker { background: var(--mf-accent-fill); border-color: var(--mf-accent); color: var(--mf-on-accent); }
+.dg-newproj .deployment-journey li.is-complete .deployment-journey-marker { background: var(--dg-success-soft); border-color: var(--dg-success-line); color: var(--dg-success); }
+.dg-newproj .deployment-journey strong { color: #fff; display: block; font-size: .9rem; font-weight: 600; margin-top: 3px; }
+.dg-newproj .deployment-journey li:not(.is-current):not(.is-complete) strong { color: var(--dg-ink-2); }
+.dg-newproj .deployment-journey small { color: var(--dg-muted); display: block; font-size: .76rem; margin-top: 2px; }
+.dg-newproj .deployment-journey li.is-current small { color: var(--mf-accent-ink); }
+.dg-np-rail-note { border-top: 1px solid var(--dg-line); color: var(--dg-muted) !important; font-size: .78rem; line-height: 1.6; margin: 0; padding-top: 16px; }
+
+.dg-np-steps { display: grid; gap: 16px; min-width: 0; }
+.dg-np-step { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 20px; box-shadow: var(--dg-shadow); display: grid; gap: 18px; padding: 22px 24px; position: relative; transition: box-shadow 200ms var(--dg-ease), border-color 200ms var(--dg-ease); }
+.dg-np-step.is-current { border-color: rgba(255, 255, 255, .24); }
+.dg-np-step.is-current::before { background: var(--mf-accent-fill); border-radius: 0 3px 3px 0; bottom: 22px; content: ""; left: -1px; position: absolute; top: 22px; width: 3px; }
+
+.dg-np-step > header { align-items: flex-start; display: grid; gap: 16px; grid-template-columns: auto minmax(0, 1fr) auto; }
+.dg-np-step-number { align-items: center; background: var(--dg-surface-3); border-radius: 12px; color: var(--dg-muted); display: inline-flex; font-family: var(--dg-mono); font-size: .8rem; font-variant-numeric: tabular-nums; font-weight: 500; height: 32px; justify-content: center; width: 32px; }
+.dg-np-step-number::before { content: "0"; }
+.dg-np-step.is-current .dg-np-step-number { background: var(--mf-accent-fill); color: var(--mf-on-accent); }
+.dg-np-step.is-complete .dg-np-step-number { background: var(--dg-success-soft); color: var(--dg-success); }
+.dg-np-step h2 { color: var(--dg-ink); font-size: 1.12rem; font-weight: 600; letter-spacing: -.025em; margin: 0 0 4px; }
+.dg-np-step header p { color: var(--dg-ink-2); font-size: .9rem; margin: 0; }
+.dg-newproj .new-project-fields { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dg-newproj .field > span { color: var(--dg-ink); font-size: .82rem; }
+.dg-newproj .field input, .dg-newproj .field select { min-height: 44px; }
+.dg-newproj :is(input, select, textarea):focus { border-color: var(--np-ink); box-shadow: 0 0 0 3px rgba(184, 243, 74, .5); }
+.dg-newproj .field textarea { min-height: 120px; }
+.dg-newproj .button { min-height: 44px; padding: 10px 22px; }
+/* Ignition: the one lime button on the page. */
+.dg-newproj .new-project-actions .button:not(:disabled) { background: var(--mf-accent-fill); border-color: var(--mf-accent); color: var(--mf-on-accent); }
+.dg-newproj .new-project-actions .button:hover:not(:disabled) { background: var(--mf-accent-hover); color: var(--mf-on-accent); }
+
+.dg-np-service { background: linear-gradient(180deg, var(--dg-surface-2), var(--dg-surface)); border: 1px solid var(--dg-line); border-radius: 12px; display: grid; gap: 16px; padding: 18px 20px; }
+.dg-np-service-head { align-items: center; display: flex; justify-content: space-between; }
+.dg-np-service-head strong { align-items: center; color: var(--dg-ink); display: inline-flex; gap: 10px; }
+.dg-np-service-head strong span { background: var(--pg-soft); border: 1px solid var(--pg-line); border-radius: 6px; color: var(--pg-ink); font-family: var(--dg-mono); font-size: .72rem; padding: 2px 6px; }
+.dg-np-hint { background: var(--dg-warning-soft); border: 1px solid var(--dg-warning-line); border-radius: 12px; color: var(--dg-warning); font-size: .88rem; margin: 0; padding: 10px 12px; }
+
+.dg-newproj .service-directory-tree { background: var(--dg-raised); border: 1px solid var(--dg-line-strong); border-radius: 12px; box-shadow: var(--dg-shadow-lg); }
+.dg-newproj .service-directory-tree-directory, .dg-newproj .service-directory-tree-toggle { color: var(--dg-ink); }
+.dg-newproj .service-directory-tree-item[aria-selected="true"] > .service-directory-tree-row { background: var(--pg-soft); }
+
+.dg-newproj .deploy-review-summary { background: var(--dg-surface-2); border: 1px solid var(--dg-line); border-radius: 12px; display: grid; gap: 0; margin: 0; overflow: hidden; }
+.dg-newproj .deploy-review-summary > div { display: grid; gap: 12px; grid-template-columns: 170px minmax(0, 1fr); padding: 11px 16px; }
+.dg-newproj .deploy-review-summary > div + div { border-top: 1px solid var(--dg-line); }
+.dg-newproj .deploy-review-summary dt { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .66rem; letter-spacing: .06em; padding-top: 3px; text-transform: uppercase; }
+.dg-newproj .deploy-review-summary dd { color: var(--dg-ink); font-size: .9rem; margin: 0; overflow-wrap: anywhere; }
+.dg-newproj .ds-readiness-summary, .dg-newproj .ds-issue-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; box-shadow: none; }
+.dg-newproj .ds-readiness-summary.tone-success, .dg-newproj .ds-issue-card.tone-success { border-left: 3px solid var(--dg-success-dot); }
+.dg-newproj .ds-readiness-summary.tone-danger, .dg-newproj .ds-issue-card.tone-danger { border-left: 3px solid var(--dg-danger-dot); }
+.dg-newproj .ds-readiness-summary.tone-warning, .dg-newproj .ds-issue-card.tone-warning { border-left: 3px solid var(--dg-warning-dot); }
+.dg-newproj .new-project-actions { border-top: 1px solid var(--dg-line); display: flex; justify-content: flex-end; padding-top: 16px; }
+
+.dg-np-connect { align-items: flex-start; background: var(--dg-surface); border: 1px solid var(--dg-line); border-left: 3px solid var(--dg-warning-dot); border-radius: 20px; box-shadow: var(--dg-shadow-md); display: flex; gap: 18px; padding: 26px; }
+.dg-np-connect-mark { align-items: center; background: var(--mf-glass-inner); border: 1px solid var(--mf-edge-soft); border-radius: 12px; color: var(--dg-ink); display: inline-flex; flex: 0 0 auto; height: 52px; justify-content: center; width: 52px; }
+.dg-np-connect h2 { font-size: 1.25rem; margin: 10px 0 4px; }
+
+@media (max-width: 960px) {
+  .dg-np-layout { grid-template-columns: 1fr; }
+  .dg-np-rail { position: static; }
+  .dg-newproj .deployment-journey { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dg-newproj .deployment-journey li { grid-template-columns: 1fr; padding-bottom: 0; }
+  .dg-newproj .deployment-journey li:not(:last-child)::after { display: none; }
+  .dg-np-head { grid-template-columns: 1fr; }
+  .dg-np-route { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 16px; }
+  .dg-np-route::before { display: none; }
+}
+@media (max-width: 640px) {
+  .dg-np-head { padding: 24px 20px; }
+  .dg-newproj .new-project-fields { grid-template-columns: 1fr; }
+  .dg-np-step { padding: 20px 18px; }
+  .dg-np-step > header { grid-template-columns: auto minmax(0, 1fr); }
+  .dg-np-step > header > .secondary-button { grid-column: 1 / -1; justify-self: start; }
+  .dg-newproj .deployment-journey { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
+  .dg-newproj .deploy-review-summary > div { gap: 2px; grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { .dg-np-route i { animation: none; } }
+
+/* Legacy counters: the journey is a vertical rail here, not a strip. */
+.dg-newproj .dg-np-rail .deployment-journey { background: none; border: 0; display: grid; grid-template-columns: 1fr; }
+.dg-newproj .dg-np-rail .deployment-journey li { align-items: start; background: none; border: 0; color: inherit; padding: 0 0 22px; }
+.dg-newproj .dg-np-rail .deployment-journey li div { display: grid; gap: 2px; min-width: 0; }
+.dg-newproj .dg-np-rail .deployment-journey small { white-space: normal; }
+.dg-newproj .dg-np-rail .deployment-journey-marker { animation: none; }
+.dg-np-layout { align-items: start; background: none; border: 0; box-shadow: none; padding: 0; }
+.dg-np-layout > .dg-np-rail { align-self: start; }
+.dg-newproj .field small { color: var(--dg-muted); }
+
+/* Narrow screens: the checklist rail becomes a compact four-step strip above the sheets. */
+@media (max-width: 960px) {
+  .dg-np-rail { gap: 14px; padding: 16px; }
+  .dg-newproj .dg-np-rail .deployment-journey { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dg-newproj .dg-np-rail .deployment-journey li { gap: 8px; grid-template-columns: 1fr; padding: 0; }
+  .dg-newproj .dg-np-rail .deployment-journey li::after { display: none; }
+  .dg-newproj .dg-np-rail .deployment-journey strong { font-size: .74rem; hyphens: auto; line-height: 1.25; overflow-wrap: anywhere; }
+  .dg-newproj .dg-np-rail .deployment-journey small, .dg-np-rail-note { display: none; }
+}
+
+/* =====================================================================
+ * Aurora direction — Deploy: onboarding, the strongest colour moment.
+ * Atmosphere: orange → pink with violet and cyan. The header is open; the
+ * launch sequence is a glass flight path with a travelling light packet; the
+ * checklist rail is glass; the current step is edged in warm light and the
+ * Deploy button is the ignition.
+ * ===================================================================== */
+.dg-newproj { gap: 26px; max-width: 1240px; }
+.dg-np-kicker { color: #ffc49a; letter-spacing: .14em; }
+:root:root .dg-np-head { background: none; border: 0; box-shadow: none; overflow: visible; padding: 14px 2px 6px; }
+.dg-np-head { gap: 28px 48px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+@media (max-width: 960px) { .dg-np-head { grid-template-columns: 1fr; } .dg-np-head h1 { max-width: none; } }
+.dg-np-head h1 { max-width: 18ch; }
+.dg-np-head .dg-np-kicker { color: #ffc49a; }
+.dg-np-head h1 { background: linear-gradient(100deg, #fff 35%, #ffd2b3 60%, #ffb3d9 85%); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: clamp(2.4rem, 4.6vw, 3.8rem); font-weight: 700; letter-spacing: -.055em; line-height: .98; }
+.dg-np-head > div:first-child > p:not(.dg-np-kicker) { color: var(--au-ink-2); font-size: 1.02rem; }
+.dg-np-sequence {
+  -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%);
+  background: radial-gradient(70% 120% at 100% 100%, rgba(236, 72, 153, .2), transparent 60%), radial-gradient(60% 120% at 0% 0%, rgba(255, 138, 61, .16), transparent 60%), rgba(16, 16, 36, .5);
+  border: 1px solid rgba(255, 255, 255, .13); border-radius: var(--au-r-lg); box-shadow: var(--au-edge), var(--au-refract), var(--au-depth-2); padding: 20px 22px 22px;
+}
+.dg-np-sequence > p { color: #ffd2b3; }
+.dg-np-route::before { background: linear-gradient(90deg, #ff8a3d, #ec4899 55%, #8b5cf6); box-shadow: 0 0 12px rgba(236, 72, 153, .7); height: 2px; }
+.dg-np-route::after { animation: dg-np-packet 3.6s var(--au-ease) infinite; background: radial-gradient(circle, #fff 0 2px, rgba(255, 180, 120, .9) 3px, transparent 8px); content: ""; height: 16px; left: 0; position: absolute; top: -2px; width: 16px; }
+@keyframes dg-np-packet { 0% { left: 0; opacity: 0; } 10% { opacity: 1; } 85% { opacity: 1; } 100% { left: calc(100% - 100% / 6); opacity: 0; } }
+.dg-np-route li { color: var(--au-ink-2); }
+.dg-np-route i { background: #1a1430; border-color: #ffb07a; box-shadow: 0 0 8px rgba(255, 138, 61, .6); }
+.dg-np-route li:nth-child(n + 3) i { border-color: #f472b6; box-shadow: 0 0 8px rgba(236, 72, 153, .6); }
+.dg-np-route li:nth-child(n + 5) i { border-color: #b69cff; box-shadow: 0 0 8px rgba(139, 92, 246, .6); }
+.dg-np-route li:last-child { color: #fff; font-weight: 600; }
+.dg-np-route li:last-child i { background: linear-gradient(135deg, #ff8a3d, #ec4899); border-color: #fff; box-shadow: 0 0 0 4px rgba(236, 72, 153, .25), 0 0 16px rgba(236, 72, 153, .9); }
+
+:root:root .dg-np-rail {
+  -webkit-backdrop-filter: blur(22px) saturate(150%); backdrop-filter: blur(22px) saturate(150%);
+  background: radial-gradient(90% 50% at var(--lx, 30%) var(--ly, 0%), rgba(255, 255, 255, .09), transparent 60%), linear-gradient(180deg, rgba(255, 138, 61, .1), rgba(139, 92, 246, .08)), rgba(14, 16, 34, .56);
+  border: 1px solid rgba(255, 255, 255, .12); border-radius: var(--au-r-lg); box-shadow: var(--au-edge), var(--au-refract), var(--au-depth-2); top: 80px;
+  transition: --lx .5s var(--au-glide), --ly .5s var(--au-glide);
+}
+.dg-newproj .deployment-journey-marker { border-color: rgba(255, 255, 255, .26); border-radius: 50%; }
+.dg-newproj .deployment-journey li.is-current .deployment-journey-marker { background: linear-gradient(135deg, #ff8a3d, #ec4899); border-color: transparent; box-shadow: 0 0 0 4px rgba(236, 72, 153, .2), 0 0 16px rgba(236, 72, 153, .8); color: #fff; }
+.dg-newproj .deployment-journey li.is-complete .deployment-journey-marker { background: rgba(45, 212, 168, .16); border-color: rgba(45, 212, 168, .5); box-shadow: 0 0 12px -2px rgba(45, 212, 168, .7); color: var(--au-ok-ink); }
+.dg-newproj .deployment-journey li.is-ready .deployment-journey-marker { border-color: #ffb07a; color: #ffd2b3; }
+.dg-newproj .deployment-journey li.is-complete:not(:last-child)::after { background: linear-gradient(180deg, var(--au-teal), rgba(45, 212, 168, .2)); }
+.dg-newproj .deployment-journey li.is-current small { color: #ffc49a; }
+.dg-np-rail-note { border-top-color: rgba(255, 255, 255, .1); }
+
+:root:root .dg-np-step { border-radius: var(--au-r-lg); overflow: visible; padding: 24px 26px; transition: border-color .4s var(--au-ease), box-shadow .5s var(--au-ease); }
+:root:root .dg-np-step.is-current { background: radial-gradient(70% 90% at 0% 0%, rgba(255, 138, 61, .1), transparent 60%), radial-gradient(60% 90% at 100% 0%, rgba(236, 72, 153, .08), transparent 60%), var(--au-ink-surface); border-color: rgba(255, 170, 130, .3); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 0 50px -24px rgba(236, 72, 153, .6), var(--au-depth-1); }
+.dg-np-step.is-current::before { background: linear-gradient(180deg, #ff8a3d, #ec4899); box-shadow: 0 0 14px rgba(236, 72, 153, .8); }
+.dg-np-step-number { border-radius: 50%; }
+.dg-np-step.is-current .dg-np-step-number { background: linear-gradient(135deg, #ff8a3d, #ec4899); box-shadow: 0 0 16px -2px rgba(236, 72, 153, .8); color: #fff; }
+.dg-np-step.is-complete .dg-np-step-number { background: rgba(45, 212, 168, .16); box-shadow: 0 0 12px -2px rgba(45, 212, 168, .6); color: var(--au-ok-ink); }
+.dg-np-step h2 { color: #fff; font-size: 1.2rem; }
+.dg-newproj :is(input, select, textarea):focus { border-color: #ffb07a; box-shadow: 0 0 0 3px rgba(255, 138, 61, .25), 0 0 24px -6px rgba(236, 72, 153, .6); }
+:root:root .dg-np-service { background: var(--au-tile); border: 1px solid var(--au-ink-line); border-radius: var(--au-r-md); }
+.dg-np-service-head strong span { background: rgba(255, 138, 61, .14); border-color: rgba(255, 159, 77, .35); color: #ffc49a; }
+:root:root .dg-newproj .new-project-actions .button:not(:disabled) { background: linear-gradient(105deg, transparent calc(var(--sheen) - 18%), rgba(255, 255, 255, .6) var(--sheen), transparent calc(var(--sheen) + 18%)), linear-gradient(180deg, rgba(255, 255, 255, .28), transparent 55%), linear-gradient(120deg, #ff8a3d, #ec4899 60%, #b16cf6); border-color: rgba(255, 255, 255, .25); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 14px 34px -12px rgba(236, 72, 153, .9), 0 0 30px -10px rgba(255, 138, 61, .8); color: #1a0714; }
+:root:root .dg-newproj .service-directory-tree { background: rgba(14, 18, 36, .96); border: 1px solid rgba(255, 255, 255, .14); border-radius: var(--au-r-md); box-shadow: var(--au-edge), var(--au-depth-3); }
+:root:root .dg-np-connect { background: radial-gradient(50% 120% at 0% 50%, rgba(255, 138, 61, .26), transparent 60%), radial-gradient(50% 120% at 100% 50%, rgba(139, 92, 246, .28), transparent 60%), var(--au-ink-surface); border: 1px solid rgba(255, 255, 255, .14); border-radius: var(--au-r-xl); }
+.dg-np-connect-mark { background: conic-gradient(from 200deg, #ff8a3d, #ec4899, #8b5cf6, #22d3ee, #ff8a3d) !important; border-radius: 50% !important; box-shadow: 0 0 40px -6px rgba(236, 72, 153, .8); color: #fff !important; }
+@media (prefers-reduced-motion: reduce) { .dg-np-route::after { display: none; } }

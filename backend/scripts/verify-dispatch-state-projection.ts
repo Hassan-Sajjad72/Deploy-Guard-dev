@@ -463,7 +463,7 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
       return { token: "fixture-token" };
     },
     ensureWorkflow: async () => ({ registrationBranch: "main" }),
-    oidcTrustSubject: async () => "repo:fixture",
+    oidcTrustSubjects: async () => ["repo:example@1/application@2:*", "repo:example/application:*"],
   };
   let validatedServices: any[] = [];
   service.source = {
@@ -472,7 +472,10 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
     resolveRequirementsAtExactSha: async () => ({ status: "READY", fingerprint: "b".repeat(64), requirements: [], unresolvedRequired: [], prohibitedOverrides: [], duplicateConflicts: [], validationBlockers: [], managedDatabaseUrlSchemes: { [serviceRow.id]: "postgresql+psycopg" } }),
   };
   service.buildTargetRevisions = { create: (row: any) => row, save: async (row: any) => ({ ...row, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }) };
-  service.oidcTrust = { ensureRepositoryAuthorized: async () => undefined };
+  service.oidcTrust = { ensureRepositoryAuthorized: async (repository: string, subjects: string[]) => {
+    assert.equal(repository, project.repositoryFullName);
+    assert.deepEqual(subjects, ["repo:example@1/application@2:*", "repo:example/application:*"], "dispatch waits on both verified exact OIDC subjects");
+  } };
   const materializedSecrets: any[] = [];
   service.runtimeSecrets = { materialize: async (input: any) => {
     materializedSecrets.push(input);
@@ -607,6 +610,10 @@ async function verifyProviderContractAndConditionalDatabaseScope() {
   }
   assert.equal(PINNED_AWS_PROVIDER_VERSION, "5.100.0");
   const root = join(__dirname, "..", "..");
+  const deploymentSource = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
+  const oidcAuthorization = deploymentSource.indexOf("await this.oidcTrust.ensureRepositoryAuthorized");
+  const workflowDispatch = deploymentSource.indexOf("await this.actions.triggerWorkflow", oidcAuthorization);
+  assert.ok(oidcAuthorization >= 0 && workflowDispatch > oidcAuthorization, "IAM OIDC reconciliation and verification must complete before workflow dispatch");
   const terraform = readFileSync(join(root, "infrastructure", "railpack-runtime", "main.tf"), "utf8");
   const manifestActions = new Set(Object.values(RAILPACK_RUNTIME_PROVIDER_API_REQUIREMENTS).flat());
   for (const expected of PINNED_PROVIDER_INDIRECT_API_EXPECTATIONS) {

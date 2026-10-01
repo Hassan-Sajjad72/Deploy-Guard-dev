@@ -3,12 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import { getGithubActionsDeploymentHistory, getProject, getProjectCurrentState } from "../api/projectApi.js";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
-import { PageHeader } from "../components/common/DesignSystem.jsx";
+import { StatusChip } from "../components/common/DesignSystem.jsx";
+import AppIcon from "../components/common/AppIcon.jsx";
 import PipelineExecution from "../components/projects/PipelineExecution.jsx";
 import PipelineRecoveryPanel from "../components/projects/PipelineRecoveryPanel.jsx";
 import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
-import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+import { projectStatePresentation, projectStateTone } from "../utils/projectStatePresentation.js";
 import { useSerializedProjectRefresh } from "../hooks/useSerializedProjectRefresh.js";
+import "../styles/pages/pipeline.css";
 
 export default function ProjectPipeline() {
   const { projectId } = useParams();
@@ -50,8 +52,17 @@ export default function ProjectPipeline() {
   }
 
   const state = projectStatePresentation(currentState);
-  return <div className="workspace-page project-pipeline-page" data-authoritative-state={state.state}>
-    <PageHeader context={[project.name, project.environmentName ? `Environment ${project.environmentName}` : null, currentState.repository || project.repositoryFullName, currentState.branch || project.targetBranch, currentState.stableRelease?.commit ? `Release ${currentState.stableRelease.commit.slice(0, 12)}` : null].filter(Boolean).join(" · ")} eyebrow="Deployments" status={state.state} title="Deployment pipeline" />
+  const release = currentState.stableRelease?.commit ? currentState.stableRelease.commit.slice(0, 12) : null;
+  return <div className="workspace-page project-pipeline-page dg-pipeline" data-authoritative-state={state.state}>
+    <header className="dg-pl-head">
+      <div><p className="dg-pl-kicker">Deployments · {project.name}</p><div className="dg-pl-title-row"><h1>Deployment pipeline</h1><StatusChip status={state.state} tone={projectStateTone(state.state)} /></div></div>
+      <p className="dg-pl-context">
+        {project.environmentName ? <span>Environment {project.environmentName}</span> : null}
+        <span><AppIcon name="github" size={13} />{currentState.repository || project.repositoryFullName}</span>
+        <span className="is-mono"><AppIcon name="branch" size={13} />{currentState.branch || project.targetBranch}</span>
+        {release ? <span className="is-mono">Release {release}</span> : null}
+      </p>
+    </header>
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     <PipelineExecution canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} operations={operations} projectId={projectId} />
     <PipelineRecoveryPanel operations={operations} />

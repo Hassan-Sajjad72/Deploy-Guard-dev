@@ -3,6 +3,7 @@ import AppIcon from "../components/common/AppIcon.jsx";
 import BrandLogo from "../components/common/BrandLogo.jsx";
 import PublicAdminLink from "../components/layout/PublicAdminLink.jsx";
 import PublicFooter from "../components/layout/PublicFooter.jsx";
+import "../styles/pages/about.css";
 
 const founders = [
   {
@@ -89,37 +90,39 @@ function TeamAvatar({ accent, name, photo, variant }) {
 }
 
 export default function About() {
-  return <div className="about-page">
-    <header className="public-header glass-nav">
+  return <div className="dg-about">
+    <header className="dg-about-nav">
       <Link aria-label="DeployGuard home" to="/"><BrandLogo /></Link>
-      <nav aria-label="Public navigation"><Link className="landing-about-link" to="/about">About us</Link><PublicAdminLink /></nav>
+      <nav aria-label="Public navigation"><Link aria-current="page" className="landing-about-link" to="/about">About us</Link><PublicAdminLink /></nav>
     </header>
 
     <main>
-      <section className="about-hero">
-        <div><p className="eyebrow">The people behind DeployGuard</p><h1>Three founders.<br /><span>One platform.</span></h1><h2>Different minds. Shared vision.</h2></div>
-        <div className="about-hero-copy"><p>DeployGuard brings product thinking, backend engineering, cloud infrastructure, DevOps, and AI into one shared build.</p><strong>Different specialties. Shared ownership.</strong></div>
+      <section className="dg-about-hero">
+        <div className="dg-about-hero-title"><p className="dg-about-kicker">The people behind DeployGuard</p><h1>Three founders.<br /><span>One platform.</span></h1><h2>Different minds. Shared vision.</h2></div>
+        <div className="dg-about-hero-copy"><p>DeployGuard brings product thinking, backend engineering, cloud infrastructure, DevOps, and AI into one shared build.</p><strong>Different specialties. Shared ownership.</strong></div>
       </section>
 
-      <section aria-labelledby="mission-title" className="about-mission"><p className="eyebrow">Our mission</p><h2 id="mission-title">Our mission: Turn complex cloud deployment into a secure, automated path from repository to running infrastructure.</h2></section>
+      <div className="dg-about-paper">
+        <section aria-labelledby="mission-title" className="dg-about-mission"><p className="dg-about-label">Our mission</p><h2 id="mission-title">Our mission: Turn complex cloud deployment into a secure, automated path from repository to running infrastructure.</h2></section>
 
-      <section aria-labelledby="team-title" className="about-team-section" id="team">
-        <div className="about-section-heading"><p className="eyebrow">Founding team</p><h2 id="team-title">Meet the builders.</h2><p>Each founder brings a different engineering edge to DeployGuard while sharing ownership of the platform as a whole.</p></div>
-        <div className="team-stack">{founders.map((founder) => <article className={`team-member-card tone-${founder.accent}`} key={founder.name}>
-          <TeamAvatar accent={founder.accent} name={founder.name} photo={founder.photo} variant={founder.avatar} />
-          <div className="team-member-copy"><p className="founder-designation">{founder.designation}</p><h3>{founder.name}</h3><p className="founder-specialty">{founder.specialty}</p><h4 className="founder-punchline">{founder.punchline}</h4><p className="founder-description">{founder.description}</p></div>
-          <FounderSocials founder={founder} />
-        </article>)}</div>
-      </section>
+        <section aria-labelledby="team-title" className="dg-about-team" id="team">
+          <div className="dg-about-heading"><p className="dg-about-label">Founding team</p><div><h2 id="team-title">Meet the builders.</h2><p>Each founder brings a different engineering edge to DeployGuard while sharing ownership of the platform as a whole.</p></div></div>
+          <div className="team-stack">{founders.map((founder) => <article className={`dg-founder tone-${founder.accent}`} key={founder.name}>
+            <div className="dg-founder-portrait"><TeamAvatar accent={founder.accent} name={founder.name} photo={founder.photo} variant={founder.avatar} /></div>
+            <div className="dg-founder-copy"><p className="dg-founder-designation">{founder.designation}</p><h3>{founder.name}</h3><p className="dg-founder-specialty">{founder.specialty}</p><blockquote className="dg-founder-punchline">{founder.punchline}</blockquote><p className="dg-founder-description">{founder.description}</p>
+              <FounderSocials founder={founder} /></div>
+          </article>)}</div>
+        </section>
 
-      <section aria-labelledby="acknowledgements-title" className="about-acknowledgements">
-        <div><p className="eyebrow">Mentor &amp; acknowledgements</p><h2 id="acknowledgements-title">Guidance behind the work.</h2></div>
-        <dl><div><dt>Mentorship</dt><dd>Asim Ali Fayyaz</dd></div><div><dt>Supervision</dt><dd>Yaseen Mushtaq</dd></div><div><dt>Company</dt><dd><a href="https://www.intelligement.com" rel="noreferrer" target="_blank">Intelligement<span aria-hidden="true"> ↗</span></a></dd></div></dl>
-      </section>
+        <section aria-labelledby="acknowledgements-title" className="dg-about-credits">
+          <div><p className="dg-about-label">Mentor &amp; acknowledgements</p><h2 id="acknowledgements-title">Guidance behind the work.</h2></div>
+          <dl><div><dt>Mentorship</dt><dd>Asim Ali Fayyaz</dd></div><div><dt>Supervision</dt><dd>Yaseen Mushtaq</dd></div><div><dt>Company</dt><dd><a href="https://www.intelligement.com" rel="noreferrer" target="_blank">Intelligement<span aria-hidden="true"> ↗</span></a></dd></div></dl>
+        </section>
+      </div>
 
-      <section className="about-collaboration" id="philosophy">
-        <div aria-hidden="true" className="collaboration-mark"><span /><span /><span /></div>
-        <div><p className="eyebrow">How we build</p><h2>Ideas come in, assumptions get challenged, and stronger products make it out.</h2></div>
+      <section className="dg-about-closing" id="philosophy">
+        <p className="dg-about-kicker">How we build</p>
+        <h2>Ideas come in, assumptions get challenged, and stronger products make it out.</h2>
       </section>
     </main>
 

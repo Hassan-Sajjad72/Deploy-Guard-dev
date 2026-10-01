@@ -1,0 +1,447 @@
+/*
+ * DeployGuard design system.
+ *
+ * Identity is carried by type (Geist / Geist Mono), the brand pair from the
+ * mark (ink #172033 + signal lime #b8f34a), controls, spacing and motion.
+ * One tonal system for every page: a shared neutral light ground and a shared
+ * neutral dark ground. Pages differ by composition, density and surfaces —
+ * not by palette. Colour is reserved for meaning, and each hue has one job:
+ *   lime    brand, primary emphasis, completion
+ *   signal  selection, focus, links, the primary data series (blue)
+ *   aws     AWS / cloud boundaries only (orange)
+ *   state   success green · warning amber · danger red · info blue
+ * Every shared primitive is written against tokens only, so it renders
+ * correctly on either ground.
+ *
+ *   light ground   default (:root)
+ *   dark ground    .dg-dark or [data-ground="night"] (a night panel inside a
+ *                  light page), or any page root carrying .dg-ground-dark
+ *                  (the shell, portalled modals and drawers follow it)
+ *
+ * Page accent contract. Pages should not set these to their own hue; the
+ * defaults are ink on the light ground and lime on the dark ground.
+ *   --pg-accent   emphasis, active markers, chart/diagram highlights
+ *   --pg-ink      accent used as text (contrast-safe on the page ground)
+ *   --pg-soft     tinted fill       --pg-line   tinted border
+ *
+ * Workspace surfaces (.dg-workspace): the primary technical canvases —
+ * topology, cloud/VPC boundary, orchestration block, execution graph — share
+ * one heavier treatment (night ground, hairline grid, boundary label, depth)
+ * so they read as the product's working areas rather than ordinary cards.
+ */
+:root {
+  --dg-font: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --dg-mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --dg-serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+
+  --dg-brand-ink: #172033;
+  --dg-brand-night: #0a0f1c;
+  --dg-lime: #b8f34a;
+  --dg-lime-hover: #c8f86a;
+  --dg-lime-deep: #5b8a0a;
+  --dg-aws: #ff9900;
+  --dg-aws-ink: #b45309;
+  --dg-aws-soft: #fff5e6;
+
+  --dg-radius: 12px;
+  --dg-radius-sm: 8px;
+  --dg-radius-lg: 18px;
+  --dg-ease: cubic-bezier(.2, .7, .2, 1);
+  --dg-grid-light: rgba(15, 23, 42, .055);
+
+  /*
+   * Light ground: a cool chromatic mist material ramp (blue-leaning, never
+   * grey, rarely white). Content surfaces are solid; glass is reserved for
+   * chrome and floating layers (see "Glass material" below).
+   *   mist       ground, lit from beneath by soft atmospheric light
+   *   haze       tracks, chips, dividers
+   *   frost      recessed wells inside cards (table heads, hover rows)
+   *   pearl      base content surface (solid)
+   *   porcelain  raised: inputs, featured sheets, modals
+   *   snow       rare near-white highlight
+   */
+  --dg-mist: #e1e7ee; --dg-silver: #d9e0e9; --dg-frost: #eaeff5; --dg-pearl: #f3f6f9; --dg-porcelain: #f7f9fb; --dg-snow: #fbfcfd;
+  --dg-canvas: var(--dg-mist);
+  --dg-surface: var(--dg-pearl);
+  --dg-surface-2: var(--dg-frost);
+  --dg-surface-3: var(--dg-silver);
+  --dg-raised: var(--dg-porcelain);
+  --dg-line: #d3dbe5;
+  --dg-line-strong: #bcc6d3;
+  /* Glass material (Mica/Acrylic-style): tinted, blurred, luminous edge. */
+  --dg-glass: rgba(241, 246, 251, .64); --dg-glass-strong: rgba(245, 248, 252, .84);
+  --dg-glass-line: rgba(30, 48, 78, .10); --dg-glass-edge: rgba(255, 255, 255, .78);
+  --dg-glass-filter: blur(20px) saturate(170%);
+  --dg-glass-shadow: 0 1px 0 var(--dg-glass-edge) inset, 0 0 0 1px var(--dg-glass-line), 0 14px 34px -18px rgba(30, 48, 78, .32);
+  --dg-ink: #0b1220;
+  --dg-ink-2: #344054;
+  --dg-muted: #667085;
+  --dg-faint: #98a2b3;
+  --dg-primary: #172033;
+  --dg-primary-hover: #0b1220;
+  --dg-on-primary: #ffffff;
+  --dg-primary-soft: #e3e9f1;
+  --dg-primary-line: #cbd2de;
+  --dg-primary-ink: #172033;
+  --dg-link: #1d4fc4;
+  --dg-focus: 0 0 0 3px rgba(184, 243, 74, .55), 0 0 0 4px rgba(23, 32, 51, .55);
+  /* Elevation: every lifted surface carries a pearl sheen on its top edge. */
+  --dg-shadow: 0 1px 0 rgba(255, 255, 255, .7) inset, 0 1px 2px rgba(28, 42, 68, .07), 0 0 0 .5px rgba(28, 42, 68, .03);
+  --dg-shadow-md: 0 1px 0 rgba(255, 255, 255, .75) inset, 0 1px 2px rgba(28, 42, 68, .05), 0 12px 28px -14px rgba(28, 42, 68, .2);
+  --dg-shadow-lg: 0 1px 0 rgba(255, 255, 255, .8) inset, 0 2px 4px rgba(28, 42, 68, .05), 0 32px 64px -24px rgba(28, 42, 68, .32);
+
+  --dg-success: #067647; --dg-success-dot: #17b26a; --dg-success-soft: #ecfdf3; --dg-success-line: #abefc6;
+  --dg-warning: #b54708; --dg-warning-dot: #f79009; --dg-warning-soft: #fffaeb; --dg-warning-line: #fedf89;
+  --dg-danger: #b42318; --dg-danger-dot: #f04438; --dg-danger-soft: #fef3f2; --dg-danger-line: #fecdca;
+  --dg-info: #175cd3; --dg-info-dot: #2e90fa; --dg-info-soft: #eff8ff; --dg-info-line: #b2ddff;
+
+  --dg-console: #0a0f1c; --dg-console-2: #111827; --dg-console-line: #1f2a3d; --dg-console-ink: #e2e8f0; --dg-console-muted: #8a97ab;
+
+  /* Signal blue: selection, focus, links, primary data series. */
+  --dg-signal: #2f6fed; --dg-signal-ink: #1d4fc4; --dg-signal-soft: #eef3fe; --dg-signal-line: #c7d7fb;
+  /* Workspace (night) surface family, identical on both grounds. */
+  --dg-night: #0a0f1c; --dg-night-2: #0e1525; --dg-night-3: #141d31; --dg-night-line: rgba(148, 163, 184, .14); --dg-night-line-strong: rgba(148, 163, 184, .26);
+  --dg-night-ink: #eef2f8; --dg-night-ink-2: #b9c3d3; --dg-night-muted: #8591a6;
+
+  --pg-accent: var(--dg-brand-ink); --pg-ink: var(--dg-brand-ink); --pg-soft: var(--dg-surface-3); --pg-line: var(--dg-line-strong);
+}
+
+/* Dark ground — one definition, reused by the shell, dark pages and portals. */
+.dg-dark,
+[data-ground="night"],
+.app-shell .sidebar,
+.app-shell:has(.dg-ground-dark) .main-area,
+.admin-shell:has(.dg-ground-dark),
+:root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .ds-drawer-backdrop, .destroy-modal-backdrop) {
+  --dg-canvas: #070b14;
+  --dg-surface: #0d1422;
+  --dg-surface-2: #111a2b;
+  --dg-surface-3: #172236;
+  --dg-raised: #141e31;
+  --dg-glass: rgba(14, 21, 37, .58); --dg-glass-strong: rgba(14, 21, 37, .8); --dg-glass-line: rgba(148, 163, 184, .16); --dg-glass-edge: rgba(255, 255, 255, .07);
+  --dg-glass-shadow: 0 1px 0 var(--dg-glass-edge) inset, 0 0 0 1px var(--dg-glass-line), 0 18px 40px -20px rgba(0, 0, 0, .8);
+  --dg-line: rgba(148, 163, 184, .13);
+  --dg-line-strong: rgba(148, 163, 184, .24);
+  --dg-ink: #eef2f8;
+  --dg-ink-2: #b9c3d3;
+  --dg-muted: #8591a6;
+  --dg-faint: #5b687e;
+  --dg-primary: var(--dg-lime);
+  --dg-primary-hover: var(--dg-lime-hover);
+  --dg-on-primary: #0b1220;
+  --dg-primary-soft: rgba(184, 243, 74, .1);
+  --dg-primary-line: rgba(184, 243, 74, .32);
+  --dg-primary-ink: #d4fa8c;
+  --dg-link: #9db8ff;
+  --dg-focus: 0 0 0 3px rgba(184, 243, 74, .45);
+  --dg-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 1px 2px rgba(0, 0, 0, .4);
+  --dg-shadow-md: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 12px 32px -12px rgba(0, 0, 0, .7);
+  --dg-shadow-lg: 0 1px 0 rgba(255, 255, 255, .05) inset, 0 40px 80px -24px rgba(0, 0, 0, .8);
+
+  --dg-success: #6ee7a6; --dg-success-dot: #22c55e; --dg-success-soft: rgba(34, 197, 94, .1); --dg-success-line: rgba(34, 197, 94, .3);
+  --dg-warning: #fcd34d; --dg-warning-dot: #f59e0b; --dg-warning-soft: rgba(245, 158, 11, .1); --dg-warning-line: rgba(245, 158, 11, .32);
+  --dg-danger: #fda4a4; --dg-danger-dot: #f43f5e; --dg-danger-soft: rgba(244, 63, 94, .1); --dg-danger-line: rgba(244, 63, 94, .34);
+  --dg-info: #93c5fd; --dg-info-dot: #3b82f6; --dg-info-soft: rgba(59, 130, 246, .12); --dg-info-line: rgba(59, 130, 246, .34);
+  --dg-aws-soft: rgba(255, 153, 0, .1);
+  --dg-aws-ink: #fdba74;
+  --dg-signal: #4c8dff; --dg-signal-ink: #9dbcff; --dg-signal-soft: rgba(76, 141, 255, .12); --dg-signal-line: rgba(76, 141, 255, .34);
+  --pg-accent: var(--dg-lime); --pg-ink: #d4fa8c; --pg-soft: rgba(184, 243, 74, .1); --pg-line: rgba(184, 243, 74, .3);
+  color: var(--dg-ink);
+  color-scheme: dark;
+}
+
+/*
+ * Legacy token names, re-declared on every ground so primitives that still
+ * read them resolve against the ground they sit on.
+ */
+:root,
+.dg-dark,
+[data-ground="night"],
+.app-shell .sidebar,
+.app-shell:has(.dg-ground-dark) .main-area,
+.admin-shell:has(.dg-ground-dark),
+:root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .ds-drawer-backdrop, .destroy-modal-backdrop) {
+  --canvas: var(--dg-canvas); --bg: var(--dg-canvas);
+  --surface: var(--dg-surface); --surface-elevated: var(--dg-raised); --surface-raised: var(--dg-raised);
+  --surface-subtle: var(--dg-surface-2); --surface-muted: var(--dg-surface-3); --surface-strong: var(--dg-ink);
+  --border: var(--dg-line); --border-strong: var(--dg-line-strong);
+  --ink: var(--dg-ink); --ink-soft: var(--dg-ink-2); --muted: var(--dg-muted);
+  --text-primary: var(--dg-ink); --text-secondary: var(--dg-ink-2); --text-tertiary: var(--dg-muted);
+  --accent: var(--dg-primary); --accent-dark: var(--dg-primary); --accent-hover: var(--dg-primary-hover); --accent-soft: var(--dg-primary-soft);
+  --on-strong: var(--dg-on-primary);
+  --success: var(--dg-success); --success-soft: var(--dg-success-soft);
+  --warning: var(--dg-warning); --warning-soft: var(--dg-warning-soft);
+  --danger: var(--dg-danger); --danger-soft: var(--dg-danger-soft);
+  --info: var(--dg-info); --info-soft: var(--dg-info-soft);
+  --violet: var(--dg-primary); --violet-soft: var(--dg-primary-soft);
+  --shadow: var(--dg-shadow); --shadow-sm: var(--dg-shadow); --shadow-md: var(--dg-shadow-md);
+  --radius: var(--dg-radius); --radius-sm: var(--dg-radius-sm); --radius-lg: var(--dg-radius-lg);
+  --font-mono: var(--dg-mono); --font-sans: var(--dg-font);
+  --glass-shadow: none; --glass-border: var(--dg-line); --glass-blur: 0px;
+}
+
+html, html[data-theme] { background: var(--dg-canvas); color-scheme: light; }
+body { background: var(--dg-canvas); color: var(--dg-ink); font-family: var(--dg-font); font-feature-settings: "ss01", "cv11"; font-size: 15px; letter-spacing: -.003em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body::before, body::after { display: none; }
+button, input, select, textarea { font-family: inherit; }
+:where(h1, h2, h3, h4) { color: var(--dg-ink); font-weight: 650; letter-spacing: -.025em; text-shadow: none; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--dg-lime); outline-offset: 2px; }
+::selection { background: var(--dg-lime); color: #0b1220; }
+code, pre, kbd, samp { font-family: var(--dg-mono); }
+
+.eyebrow, .metric-label, .sidebar-label { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .68rem; font-weight: 500; letter-spacing: .06em; opacity: 1; text-transform: uppercase; }
+.muted { color: var(--dg-muted); }
+.sr-only { border: 0; clip: rect(0 0 0 0); height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; white-space: nowrap; width: 1px; }
+
+:is(.glass-surface, .glass-surface-secondary, .glass-elevated, .glass-nav, .glass-control, .glass-control-bar, .glass-tabs, .glass-popover, .glass-modal, .glass-active) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+:is(.glass-surface, .glass-surface-secondary, .glass-elevated, .glass-modal, .ds-card, .panel, .panel-flat, .metric-card, .state, .admin-section, .auth-card)::before,
+:is(.glass-surface, .glass-surface-secondary, .glass-elevated, .glass-modal, .ds-card, .panel, .panel-flat, .metric-card, .state, .admin-section, .auth-card)::after { display: none; }
+
+/* ---------- Surfaces ---------- */
+.ds-card, .panel, .panel-flat, .auth-card { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius); box-shadow: var(--dg-shadow); color: var(--dg-ink); padding: 20px; }
+.metric-card { align-content: start; background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius); box-shadow: var(--dg-shadow); color: var(--dg-ink); display: grid; gap: 4px; padding: 16px 18px; }
+.metric-card strong { color: var(--dg-ink); font-size: 1.6rem; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: -.03em; line-height: 1.15; }
+.metric-card p { color: var(--dg-muted); font-size: .84rem; margin: 0; }
+.metric-card.tone-success strong { color: var(--dg-success); }
+.metric-card.tone-danger strong { color: var(--dg-danger); }
+.metric-card.tone-warning strong { color: var(--dg-warning); }
+
+/* ---------- Buttons: one shape and weight everywhere; the ground picks the fill. ---------- */
+.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button {
+  align-items: center; border: 1px solid transparent; border-radius: var(--dg-radius-sm); box-shadow: none; cursor: pointer; display: inline-flex;
+  font-size: .875rem; font-weight: 560; gap: 8px; justify-content: center; letter-spacing: -.005em; line-height: 1.2; min-height: 38px; padding: 8px 14px;
+  text-decoration: none; text-shadow: none; transform: none;
+  transition: background 140ms var(--dg-ease), border-color 140ms var(--dg-ease), color 140ms var(--dg-ease), box-shadow 140ms var(--dg-ease), transform 140ms var(--dg-ease);
+}
+.button, .ds-button-primary { background: var(--dg-primary); border-color: var(--dg-primary); box-shadow: 0 1px 0 rgba(255, 255, 255, .12) inset, 0 1px 2px rgba(11, 18, 32, .2); color: var(--dg-on-primary); }
+.button:hover:not(:disabled), .ds-button-primary:hover:not(:disabled) { background: var(--dg-primary-hover); border-color: var(--dg-primary-hover); color: var(--dg-on-primary); transform: translateY(-1px); }
+.button .app-icon, .ds-button-primary .app-icon { color: currentColor; }
+.secondary-button, .ds-button-secondary { background: var(--dg-surface); border-color: var(--dg-line-strong); box-shadow: var(--dg-shadow); color: var(--dg-ink); }
+.secondary-button:hover:not(:disabled), .ds-button-secondary:hover:not(:disabled) { background: var(--dg-surface-2); border-color: var(--dg-faint); color: var(--dg-ink); }
+.subtle-button, .ds-button-ghost { background: transparent; border-color: transparent; color: var(--dg-ink-2); }
+.subtle-button:hover:not(:disabled), .ds-button-ghost:hover:not(:disabled) { background: var(--dg-surface-3); color: var(--dg-ink); }
+.danger-button, .ds-button-danger { background: #d92d20; border-color: #d92d20; color: #fff; }
+.danger-button:hover:not(:disabled), .ds-button-danger:hover:not(:disabled) { background: #b42318; border-color: #b42318; }
+.danger-text-button { background: transparent; border-color: var(--dg-danger-line); color: var(--dg-danger); }
+.danger-text-button:hover:not(:disabled) { background: var(--dg-danger-soft); }
+:is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button):disabled,
+:is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button)[aria-disabled="true"] { background: var(--dg-surface-3); border-color: var(--dg-line); box-shadow: none; color: var(--dg-faint); cursor: not-allowed; opacity: 1; transform: none; }
+:is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button):focus-visible { box-shadow: var(--dg-focus); outline: 0; }
+/* Action bars are layout groups, never surfaces (legacy glass fills leaked onto light grounds). */
+.ds-action-bar, .glass-control-bar { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 0; }
+.quick-actions, .button-row { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.text-link { color: var(--dg-link); font-weight: 560; }
+.text-link:hover { text-decoration: underline; }
+
+/* ---------- Form controls ---------- */
+.field { display: grid; gap: 6px; margin: 0; }
+.field > span { color: var(--dg-ink-2); font-size: .82rem; font-weight: 560; }
+.field small { color: var(--dg-muted); font-size: .78rem; }
+input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])), select, textarea {
+  background: var(--dg-raised); border: 1px solid var(--dg-line-strong); border-radius: var(--dg-radius-sm); box-shadow: var(--dg-shadow); color: var(--dg-ink);
+  font: inherit; font-size: .9rem; font-weight: 400; min-height: 38px; padding: 8px 12px; transition: border-color 140ms var(--dg-ease), box-shadow 140ms var(--dg-ease); width: 100%;
+}
+textarea { font-family: var(--dg-mono); font-size: .84rem; line-height: 1.55; }
+select {
+  -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='%238591a6' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 10px center; background-repeat: no-repeat;
+}
+:is(input, select, textarea)::placeholder { color: var(--dg-faint); opacity: 1; }
+:is(input, select, textarea):hover:not(:disabled) { border-color: var(--dg-faint); }
+:is(input, select, textarea):focus { border-color: var(--dg-ink); box-shadow: 0 0 0 3px rgba(184, 243, 74, .45); outline: 0; }
+.dg-dark :is(input, select, textarea):focus, .app-shell:has(.dg-ground-dark) .main-area :is(input, select, textarea):focus { border-color: var(--dg-lime); }
+:is(input, select, textarea):disabled { background: var(--dg-surface-3); box-shadow: none; color: var(--dg-muted); cursor: not-allowed; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--dg-brand-ink); height: 16px; margin: 0; width: 16px; }
+.checkbox-row { align-items: center; color: var(--dg-ink-2); display: flex; font-size: .9rem; gap: 10px; }
+select option, select optgroup { background: var(--dg-raised); color: var(--dg-ink); }
+
+/* ---------- Status chips (semantic only) ---------- */
+.status-badge, .ds-status-chip {
+  align-items: center; border: 1px solid var(--dg-line); border-radius: 999px; box-shadow: none; display: inline-flex; flex: 0 0 auto; font-size: .72rem;
+  font-weight: 560; gap: 6px; letter-spacing: .005em; line-height: 1; padding: 4px 9px 4px 8px; text-shadow: none; text-transform: none; white-space: nowrap; width: auto;
+}
+.status-badge .status-dot, .ds-status-chip .status-dot { background: currentColor; border-radius: 50%; flex: 0 0 auto; height: 6px; width: 6px; }
+:is(.status-badge, .ds-status-chip).tone-success { background: var(--dg-success-soft); border-color: var(--dg-success-line); color: var(--dg-success); }
+:is(.status-badge, .ds-status-chip).tone-success .status-dot { background: var(--dg-success-dot); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dg-success-dot) 22%, transparent); }
+:is(.status-badge, .ds-status-chip).tone-warning { background: var(--dg-warning-soft); border-color: var(--dg-warning-line); color: var(--dg-warning); }
+:is(.status-badge, .ds-status-chip).tone-warning .status-dot { background: var(--dg-warning-dot); }
+:is(.status-badge, .ds-status-chip).tone-danger { background: var(--dg-danger-soft); border-color: var(--dg-danger-line); color: var(--dg-danger); }
+:is(.status-badge, .ds-status-chip).tone-danger .status-dot { background: var(--dg-danger-dot); }
+:is(.status-badge, .ds-status-chip).tone-info { background: var(--dg-info-soft); border-color: var(--dg-info-line); color: var(--dg-info); }
+:is(.status-badge, .ds-status-chip).tone-info .status-dot { animation: dg-beacon 1.8s ease-in-out infinite; background: var(--dg-info-dot); }
+:is(.status-badge, .ds-status-chip).tone-neutral { background: var(--dg-surface-3); border-color: var(--dg-line); color: var(--dg-ink-2); }
+:is(.status-badge, .ds-status-chip).tone-neutral .status-dot { background: var(--dg-faint); }
+@keyframes dg-beacon { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--dg-info-dot) 25%, transparent); } }
+
+/* ---------- Banners and inline states ---------- */
+.ds-banner, .state { background: var(--dg-surface); border: 1px solid var(--dg-line); border-left-width: 3px; border-radius: var(--dg-radius-sm); box-shadow: none; color: var(--dg-ink); padding: 12px 14px; }
+.ds-banner p, .state p { color: var(--dg-ink-2); margin: 4px 0 0; }
+.ds-banner strong, .state strong { color: var(--dg-ink); }
+:is(.ds-banner-success, .state.success) { background: var(--dg-success-soft); border-color: var(--dg-success-line); border-left-color: var(--dg-success-dot); }
+:is(.ds-banner-warning, .state.warning) { background: var(--dg-warning-soft); border-color: var(--dg-warning-line); border-left-color: var(--dg-warning-dot); }
+:is(.ds-banner-danger, .state.error, .state.danger) { background: var(--dg-danger-soft); border-color: var(--dg-danger-line); border-left-color: var(--dg-danger-dot); }
+:is(.ds-banner-info, .state.info) { background: var(--dg-info-soft); border-color: var(--dg-info-line); border-left-color: var(--dg-info-dot); }
+.ds-banner > :first-child { align-items: center; display: flex; gap: 8px; }
+.ds-banner .app-icon { flex: 0 0 auto; height: 16px; width: 16px; }
+
+/* ---------- Loading, empty ---------- */
+.loading-state { align-items: flex-start; background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius); box-shadow: var(--dg-shadow); display: flex; gap: 14px; padding: 18px 20px; }
+.loading-indicator { animation: dg-spin .8s linear infinite; border: 2px solid var(--dg-line-strong); border-radius: 50%; border-top-color: var(--dg-ink); flex: 0 0 auto; height: 20px; width: 20px; }
+.loading-copy { display: grid; flex: 1; gap: 4px; }
+.loading-copy strong { color: var(--dg-ink); font-size: .9rem; }
+.loading-copy p { color: var(--dg-muted); font-size: .86rem; margin: 0; }
+.ds-skeleton { display: grid; gap: 8px; margin-top: 8px; max-width: 520px; }
+.ds-skeleton span { animation: dg-shimmer 1.4s ease-in-out infinite; background: linear-gradient(90deg, var(--dg-surface-3) 0%, var(--dg-line-strong) 50%, var(--dg-surface-3) 100%); background-size: 200% 100%; border-radius: 6px; display: block; height: 10px; }
+.ds-skeleton span:nth-child(2) { width: 82%; }
+.ds-skeleton span:nth-child(3) { width: 60%; }
+@keyframes dg-spin { to { transform: rotate(1turn); } }
+@keyframes dg-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.empty-state, .ds-empty-state { align-items: center; background: var(--dg-surface); border: 1px dashed var(--dg-line-strong); border-radius: var(--dg-radius); box-shadow: none; display: flex; flex-wrap: wrap; gap: 14px; padding: 22px; }
+.empty-state-mark { align-items: center; background: var(--dg-surface-3); border-radius: 10px; color: var(--dg-muted); display: inline-flex; flex: 0 0 auto; height: 40px; justify-content: center; width: 40px; }
+.empty-state h2, .empty-state h3, .empty-state strong { color: var(--dg-ink); font-size: 1rem; margin: 0; }
+.empty-state p { color: var(--dg-muted); margin: 2px 0 0; }
+
+/* ---------- Page header (pages may restyle it) ---------- */
+.ds-page-header, .page-header { align-items: flex-end; border: 0; display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; margin: 0; padding: 0; }
+.ds-page-header h1, .page-header h1 { color: var(--dg-ink); font-size: clamp(1.7rem, 2.6vw, 2.2rem); font-weight: 650; letter-spacing: -.035em; line-height: 1.1; margin: 4px 0 6px; }
+.ds-page-header .header-title-row { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; }
+.ds-page-header .muted, .ds-page-header p { color: var(--dg-ink-2); margin: 0; }
+.ds-page-header .page-context, .page-context { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .76rem; margin-top: 6px; }
+
+/* ---------- Tables ---------- */
+.ds-data-table-wrap, .table-wrap { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius); box-shadow: var(--dg-shadow); max-width: 100%; overflow-x: auto; padding: 0; }
+.ds-data-table-wrap caption, .table-wrap caption { caption-side: top; color: var(--dg-muted); font-size: .78rem; padding: 10px 14px; text-align: left; }
+:is(.ds-data-table-wrap, .table-wrap) table { border-collapse: collapse; width: 100%; }
+:is(.ds-data-table-wrap, .table-wrap) th { background: var(--dg-surface-2); border-bottom: 1px solid var(--dg-line); color: var(--dg-muted); font-family: var(--dg-mono); font-size: .66rem; font-weight: 500; letter-spacing: .06em; padding: 10px 14px; text-align: left; text-transform: uppercase; white-space: nowrap; }
+:is(.ds-data-table-wrap, .table-wrap) td { background: transparent; border-bottom: 1px solid var(--dg-line); color: var(--dg-ink); font-size: .88rem; padding: 11px 14px; vertical-align: middle; }
+:is(.ds-data-table-wrap, .table-wrap) :is(tr, thead, tbody) { background: transparent; border: 0; box-shadow: none; }
+:is(.ds-data-table-wrap, .table-wrap) tbody tr { transition: background 120ms var(--dg-ease); }
+:is(.ds-data-table-wrap, .table-wrap) tbody tr:hover td { background: var(--dg-surface-2); }
+:is(.ds-data-table-wrap, .table-wrap) tr:last-child td { border-bottom: 0; }
+:is(.ds-data-table-wrap, .table-wrap) td small { color: var(--dg-muted); display: block; font-size: .78rem; }
+
+/* ---------- Tabs ---------- */
+.ds-tabs { background: transparent; border: 0; border-bottom: 1px solid var(--dg-line); border-radius: 0; box-shadow: none; display: flex; gap: 2px; overflow-x: auto; padding: 0; }
+.ds-tabs button { align-items: center; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; color: var(--dg-muted); display: inline-flex; font-size: .88rem; font-weight: 560; gap: 7px; margin-bottom: -1px; min-height: 40px; padding: 8px 12px; white-space: nowrap; }
+.ds-tabs button:hover { background: transparent; color: var(--dg-ink); }
+.ds-tabs button[aria-selected="true"], .ds-tabs button.is-active { background: transparent; border-bottom-color: var(--pg-accent); color: var(--dg-ink); }
+
+/* ---------- Modals, drawers, toasts ---------- */
+.ds-modal-backdrop, .destroy-modal-backdrop, .ds-drawer-backdrop { -webkit-backdrop-filter: blur(14px) saturate(150%); backdrop-filter: blur(14px) saturate(150%); background: rgba(196, 208, 224, .46); }
+:root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .destroy-modal-backdrop, .ds-drawer-backdrop) { background: rgba(7, 11, 20, .55); }
+.ds-modal, .destroy-modal, .ds-details-drawer { background: var(--dg-raised); border: 1px solid var(--dg-line); border-radius: 16px; box-shadow: var(--dg-shadow-lg); color: var(--dg-ink); }
+.ds-details-drawer { border-radius: 16px 0 0 16px; }
+.ds-modal p, .destroy-modal p, .ds-details-drawer p { color: var(--dg-ink-2); }
+.overview-modal-actions, .destroy-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.toast { background: #0b1220; border: 1px solid rgba(255, 255, 255, .08); border-radius: 10px; box-shadow: var(--dg-shadow-lg); color: #fff; font-size: .88rem; }
+.toast button { background: transparent; border: 0; color: #cbd5e1; }
+.toast-success { border-left: 3px solid var(--dg-lime); }
+.toast-danger { border-left: 3px solid #f43f5e; }
+
+/* ---------- Copy value, chart card ---------- */
+.ds-copy-value { align-items: center; display: inline-flex; gap: 6px; max-width: 100%; }
+.ds-copy-text { color: var(--dg-ink-2); font-family: var(--dg-mono); font-size: .8rem; }
+.ds-copy-button { background: var(--dg-surface); border: 1px solid var(--dg-line-strong); border-radius: 6px; color: var(--dg-ink-2); font-size: .74rem; min-height: 26px; padding: 2px 8px; }
+.ds-chart-card { display: grid; gap: 10px; }
+.ds-chart-card h2, .ds-chart-card h3 { font-size: 1rem; margin: 0; }
+.ds-chart-card p { color: var(--dg-muted); font-size: .84rem; margin: 2px 0 0; }
+
+/* ---------- Stage rail (lifecycle line; green only across completed stages) ---------- */
+.ds-stage-rail { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; list-style: none; margin: 0; padding: 0; }
+.ds-stage-rail li { color: var(--dg-muted); position: relative; text-align: center; }
+.ds-stage-rail li:not(:last-child)::after { background: var(--dg-line-strong); content: ""; height: 2px; left: calc(50% + 14px); position: absolute; right: calc(-50% + 14px); top: 11px; }
+.ds-stage-rail li > span { align-items: center; background: var(--dg-surface); border: 2px solid var(--dg-line-strong); border-radius: 50%; box-shadow: none; color: #fff; display: flex; height: 24px; justify-content: center; margin: 0 auto; position: relative; width: 24px; z-index: 1; }
+.ds-stage-rail small { color: var(--dg-ink-2); display: block; font-size: .78rem; font-weight: 560; margin-top: 8px; }
+.ds-stage-rail .is-passed > span { background: var(--dg-success-dot); border-color: var(--dg-success-dot); }
+.ds-stage-rail .is-passed:not(:last-child)::after { background: var(--dg-success-dot); }
+.ds-stage-rail .is-passed small { color: var(--dg-ink); }
+.ds-stage-rail .is-running > span { border-color: var(--dg-info-dot); box-shadow: 0 0 0 4px var(--dg-info-soft); }
+.ds-stage-rail .is-running small { color: var(--dg-info); }
+.ds-stage-rail .is-failed > span { background: var(--dg-danger-dot); border-color: var(--dg-danger-dot); }
+.ds-stage-rail .is-failed small { color: var(--dg-danger); }
+.ds-stage-rail .is-attention > span { border-color: var(--dg-warning-dot); }
+
+/* ---------- Console (logs, raw evidence) ---------- */
+.dg-console, .monitoring-log-viewer, pre.dg-console { background: var(--dg-console); border: 1px solid var(--dg-console-line); border-radius: var(--dg-radius-sm); color: var(--dg-console-ink); font-family: var(--dg-mono); font-size: .8rem; line-height: 1.6; }
+
+/* ---------- Pagination ---------- */
+.pagination { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.pagination .muted { color: var(--dg-muted); font-size: .84rem; }
+.pagination select { min-height: 34px; width: auto; }
+
+/* ---------- Public footer ---------- */
+.public-footer { background: transparent; border: 0; border-radius: 0; border-top: 1px solid var(--dg-line); box-shadow: none; color: var(--dg-ink-2); margin: 0; max-width: none; width: 100%; }
+.public-footer :is(p, a, small, span) { color: var(--dg-muted); text-shadow: none; }
+.public-footer strong, .public-footer h2, .public-footer h3 { color: var(--dg-ink); }
+.public-footer a:hover { color: var(--dg-ink); }
+.landing-admin-link { align-items: center; background: var(--dg-surface); border: 1px solid var(--dg-line-strong); border-radius: 8px; box-shadow: var(--dg-shadow); color: var(--dg-ink-2); display: inline-flex; font-size: .88rem; font-weight: 560; line-height: 1; padding: 9px 14px; text-decoration: none; }
+.landing-admin-link:hover { background: var(--dg-surface-2); color: var(--dg-ink); }
+
+/* ---------- Workspace surface: primary technical canvases ---------- */
+.dg-workspace {
+  --ws-grid: rgba(148, 163, 184, .075);
+  background:
+    radial-gradient(90% 70% at 50% 0%, rgba(148, 163, 184, .07), transparent 70%),
+    linear-gradient(var(--ws-grid) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(90deg, var(--ws-grid) 1px, transparent 1px) 0 0 / 28px 28px,
+    var(--dg-night);
+  border: 1px solid var(--dg-night-line-strong); border-radius: 18px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .05) inset, 0 0 0 1px rgba(0, 0, 0, .35), 0 40px 80px -40px rgba(3, 6, 14, .85);
+  color: var(--dg-night-ink); position: relative;
+}
+/* A labelled boundary: mono tag sitting on the top edge. */
+.dg-boundary { border: 1.5px solid var(--dg-night-line-strong); border-radius: 14px; position: relative; }
+.dg-boundary-label { background: var(--dg-night); border: 1px solid currentColor; border-radius: 6px; font-family: var(--dg-mono); font-size: .62rem; font-weight: 600; left: 16px; letter-spacing: .06em; padding: 3px 8px; position: absolute; text-transform: uppercase; top: -11px; }
+.dg-boundary.is-aws { border-color: rgba(255, 153, 0, .55); box-shadow: 0 0 0 4px rgba(255, 153, 0, .04), inset 0 0 60px rgba(255, 153, 0, .035); color: #ffb547; }
+.dg-boundary.is-vpc { border-color: rgba(76, 141, 255, .5); color: #9dbcff; }
+
+/* ---------- Glass material: chrome and floating layers only ----------
+ * Content stays on solid pearl. Glass is for navigation, sticky/floating
+ * controls, inspectors, overlays and metadata strips — layers that sit above
+ * content and benefit from showing the light beneath them.
+ */
+.dg-glass,
+:root :is(.app-shell .navbar, .dg-admin .admin-shell-header, .dg-landing .landing-account-popover, .dg-newproj .service-directory-tree, .dg-monitor .dg-mon-toolbar) {
+  -webkit-backdrop-filter: var(--dg-glass-filter); backdrop-filter: var(--dg-glass-filter);
+  background: var(--dg-glass); box-shadow: var(--dg-glass-shadow);
+}
+/* Inspectors and drawers: stronger tint so dense evidence stays legible. */
+:root :is(.ds-details-drawer, .dg-infra .itw-inspector) {
+  -webkit-backdrop-filter: var(--dg-glass-filter); backdrop-filter: var(--dg-glass-filter);
+  background: var(--dg-glass-strong); box-shadow: var(--dg-glass-shadow);
+}
+/* Metadata strips and context chips: light glass over the page atmosphere. */
+:root :is(.dg-overview .overview-summary-grid, .dg-pl-context span, .dg-settings .ds-page-header .page-context, .dg-infra .infrastructure-summary-grid) {
+  -webkit-backdrop-filter: var(--dg-glass-filter); backdrop-filter: var(--dg-glass-filter);
+  background: var(--dg-glass); border-color: var(--dg-glass-line); box-shadow: 0 1px 0 var(--dg-glass-edge) inset;
+}
+:root .app-shell .navbar, :root .dg-admin .admin-shell-header { border-bottom: 1px solid var(--dg-glass-line); box-shadow: 0 1px 0 var(--dg-glass-edge) inset; }
+.dg-monitor .dg-mon-toolbar { position: sticky; top: 60px; z-index: 10; }
+
+/* ---------- Shared compositional helpers pages can opt into ---------- */
+/* Hairline grid texture for dark grounds. */
+.dg-texture-grid { background-image: linear-gradient(rgba(148, 163, 184, .06) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, .06) 1px, transparent 1px); background-size: 32px 32px; }
+/* Mono numeric/technical text. */
+.dg-mono { font-family: var(--dg-mono); letter-spacing: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+body *, body *::before, body *::after { text-shadow: none; }
+.app-shell::before, .app-shell::after, .main-area::before, .main-area::after, .content::before, .content::after,
+.sidebar::before, .sidebar::after, .navbar::before, .navbar::after { content: none; display: none; }
+
+/*
+ * Neutralise legacy colour leaks. Unlayered zero-specificity rules beat every
+ * rule in the legacy layer, so text follows its ground unless set explicitly.
+ */
+body :where(h1, h2, h3, h4, h5, h6, p, strong, b, em, small, span, label, dt, dd, li, td, th, summary, blockquote, figcaption, legend, time, code) { color: inherit; }
+body :where(p) { color: var(--dg-ink-2); }
+body :where(small, figcaption) { color: var(--dg-muted); }
+body :where(h1, h2, h3, h4, strong, dt) { color: var(--dg-ink); }
+
+.skip-link { background: var(--dg-lime); border-radius: 0 0 8px 0; color: #0b1220; font-weight: 600; left: 0; padding: 8px 14px; position: absolute; top: 0; transform: translateY(-120%); z-index: 100; }
+.skip-link:focus, .skip-link:focus-visible { transform: none; }
