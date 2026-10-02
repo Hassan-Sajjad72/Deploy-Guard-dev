@@ -5,7 +5,7 @@ import AppIcon from "../components/common/AppIcon.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
 import { useAuth } from "../hooks/useAuth.js";
-import "../styles/pages/gate.css";
+import BrandLogo from "../components/common/BrandLogo.jsx";
 
 const RETURN_KEY = "deployguard_oauth_return_to";
 
@@ -60,25 +60,19 @@ export default function GithubConnecting() {
   }, [isAuthenticated, isComplete, isLoading, location.state, navigate, oauthError, refreshUser]);
 
   if (oauthError || callbackFailed) {
-    return <main className="oauth-connecting-page dg-gate"><section className="oauth-connecting-card"><ErrorState message="GitHub authentication could not be completed. Your account was not changed." /><Link className="button" to="/">Return to home</Link></section></main>;
+    return <main className="center-page"><section className="center-card"><BrandLogo /><div><h1>GitHub sign-in did not finish</h1><p>Nothing about your GitHub or DeployGuard account was changed. You can try again.</p></div><ErrorState message={oauthError ? `GitHub returned: ${oauthError}.` : "DeployGuard could not confirm your session after GitHub sent you back."} title="Sign-in failed" /><div className="actions"><Link className="btn btn-primary" state={{ from: { pathname: "/deploy" } }} to="/auth/github">Try again</Link><Link className="btn btn-ghost" to="/">Back to home</Link></div></section></main>;
   }
 
-  if (isComplete) return <main className="oauth-connecting-page dg-gate"><section className="oauth-connecting-card"><LoadingState message="Opening your DeployGuard workspace…" /></section></main>;
+  if (isComplete) return <main className="center-page"><section className="center-card"><BrandLogo /><LoadingState inline message="Opening your workspace…" /></section></main>;
 
   return (
-    <main className="oauth-connecting-page dg-gate">
-      <div aria-hidden="true" className="landing-ambient"><span /><span /><span /></div>
-      <section className="oauth-connecting-card" aria-live="polite">
-        <span className="oauth-spinner"><AppIcon name="github" size={24} /></span>
-        <p className="eyebrow">Secure authentication</p>
-        <h1>Connecting to GitHub…</h1>
-        <p>You’ll continue on GitHub and return to your deployment dashboard after authentication.</p>
-        <ol aria-label="Authorization progress" className="dg-gate-flow">
-          <li className="is-done"><span aria-hidden="true" />DeployGuard</li>
-          <li className="is-active"><span aria-hidden="true" />GitHub</li>
-          <li><span aria-hidden="true" />Your workspace</li>
-        </ol>
-        <Link className="ghost-nav-link" to="/">Cancel and return home</Link>
+    <main className="center-page">
+      <section aria-live="polite" className="center-card">
+        <BrandLogo />
+        <div className="connecting-mark"><span className="inline-spinner" /><AppIcon name="github" size={20} /></div>
+        <div><h1>Taking you to GitHub…</h1><p>Approve DeployGuard on GitHub and you will come straight back here.</p></div>
+        <p className="field-hint">Signing in does not change your GitHub account, repositories or settings.</p>
+        <Link className="link" to="/">Cancel</Link>
       </section>
     </main>
   );

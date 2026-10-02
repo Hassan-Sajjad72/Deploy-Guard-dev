@@ -1,17 +1,12 @@
 import { Link } from "react-router-dom";
-import "../styles/pages/gate.css";
+import BrandLogo from "../components/common/BrandLogo.jsx";
 
 export default function Forbidden() {
-  return (
-    <div className="auth-shell dg-gate is-forbidden">
-      <section className="auth-panel">
-        <p className="dg-gate-code">HTTP 403 · Forbidden</p>
-        <h1>403</h1>
-        <p>You do not have permission to access this page.</p>
-        <Link className="button" to="/dashboard">
-          Back to dashboard
-        </Link>
-      </section>
-    </div>
-  );
+  return <main className="center-page">
+    <section className="center-card">
+      <BrandLogo />
+      <div><h1>You don’t have access to this page</h1><p>Your account’s role does not allow this action. Ask a workspace developer or an administrator if you need access.</p></div>
+      <div className="actions"><Link className="btn btn-primary" to="/projects">Back to projects</Link></div>
+    </section>
+  </main>;
 }

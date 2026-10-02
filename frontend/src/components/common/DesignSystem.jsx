@@ -5,21 +5,24 @@ import AppIcon from "./AppIcon.jsx";
 
 function humanize(value) {
   if (!value) return "Unknown";
-  return String(value)
-    .replaceAll("_", " ")
-    .replaceAll("-", " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const words = String(value).replaceAll("_", " ").replaceAll("-", " ").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+const TONE_CLASS = { success: "ok", ok: "ok", danger: "bad", bad: "bad", warning: "warn", warn: "warn", info: "info", neutral: "neutral" };
+const toneClass = (tone) => `tone-${TONE_CLASS[tone] || "neutral"}`;
+
+/** Maps any backend status word to a tone. Unknown words are neutral, never "success". */
 export function statusTone(status) {
   const value = String(status || "").toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
-  if (["failed", "failure", "failed_application", "error", "rejected", "cost_rejected", "blocked", "blocked_by_cost_limit", "unhealthy", "corrupt", "orphaned", "state_recovery_required", "state_lock_failed", "storage_failed", "backup_failed", "ecs_service_unhealthy", "ecs_deployment_failed", "rollback_failed"].includes(value)) return "danger";
-  if (["warning", "degraded", "pending", "queued", "waiting", "stale", "historical", "configuration_required", "platform_attention", "unavailable", "paused", "cancelled", "requires_approval", "approval_required", "disabled", "disabled_by_config", "safe_mode", "interrupted", "waiting_for_cost_approval", "waiting_for_state_lock"].includes(value)) return "warning";
-  if (["success", "paid", "passed", "complete", "completed", "live", "deployed", "healthy", "approved", "connected", "matched", "ready", "destroyed", "ready_to_start_pipeline", "no_approval_required", "skipped"].includes(value)) return "success";
-  if (["running", "started", "preparing", "building", "planning", "provisioning", "deploying", "verifying", "destroying", "active", "ready_for_detection", "ready_for_preflight", "cost_analysis_running", "state_lock_acquiring", "storage_provisioning", "backup_configuring", "ecs_deployment_queued", "ecs_task_definition_registering", "ecs_service_updating", "ecs_waiting_for_stability", "rollback_started"].includes(value)) return "info";
+  if (["failed", "failure", "failed_application", "error", "rejected", "cost_rejected", "blocked", "blocked_by_cost_limit", "unhealthy", "corrupt", "orphaned", "state_recovery_required", "state_lock_failed", "storage_failed", "backup_failed", "ecs_service_unhealthy", "ecs_deployment_failed", "rollback_failed", "dispatch_failed", "failed_permanent"].includes(value)) return "danger";
+  if (["warning", "degraded", "pending", "queued", "waiting", "stale", "historical", "configuration_required", "platform_attention", "paused", "requires_approval", "approval_required", "safe_mode", "interrupted", "waiting_for_cost_approval", "waiting_for_state_lock", "pending_confirmation", "reconnecting", "retrying"].includes(value)) return "warning";
+  if (["success", "succeeded", "paid", "passed", "complete", "completed", "live", "deployed", "healthy", "approved", "connected", "matched", "ready", "ready_to_start_pipeline", "no_approval_required", "available", "configured", "confirmed", "published", "active", "enabled"].includes(value)) return "success";
+  if (["running", "started", "preparing", "building", "planning", "provisioning", "deploying", "verifying", "destroying", "connecting", "ready_for_detection", "ready_for_preflight", "cost_analysis_running", "state_lock_acquiring", "storage_provisioning", "backup_configuring", "ecs_deployment_queued", "ecs_task_definition_registering", "ecs_service_updating", "ecs_waiting_for_stability", "rollback_started"].includes(value)) return "info";
   return "neutral";
 }
 
+/* ---------- Focus management for dialogs and drawers ---------- */
 export function useDialogFocus(onClose, { active = true } = {}) {
   const dialogRef = useRef(null);
   const onCloseRef = useRef(onClose);
@@ -62,116 +65,131 @@ export function useDialogFocus(onClose, { active = true } = {}) {
   return dialogRef;
 }
 
-export function Button({ children, className = "", href, to, tone = "primary", ...props }) {
-  const classes = `ds-button ds-button-${tone} ${className}`.trim();
-  if (to) return <Link className={classes} to={to} {...props}>{children}</Link>;
-  if (href) return <a className={classes} href={href} {...props}>{children}</a>;
-  return <button className={classes} type="button" {...props}>{children}</button>;
+/* ---------- Actions ---------- */
+const BUTTON_TONES = { primary: "btn-primary", secondary: "", ghost: "btn-ghost", danger: "btn-danger", "danger-solid": "btn-danger-solid", link: "btn-link" };
+
+export function Button({ children, className = "", href, to, tone = "secondary", size, icon, external = false, ...props }) {
+  const classes = ["btn", BUTTON_TONES[tone] ?? "", size === "sm" ? "btn-sm" : "", className].filter(Boolean).join(" ");
+  const content = <>{icon ? <AppIcon name={icon} size={16} /> : null}{children}{external ? <AppIcon className="external" name="external" size={14} /> : null}</>;
+  if (to) return <Link className={classes} to={to} {...props}>{content}</Link>;
+  if (href) return <a className={classes} href={href} {...(external ? { rel: "noreferrer", target: "_blank" } : {})} {...props}>{content}</a>;
+  return <button className={classes} type="button" {...props}>{content}</button>;
 }
 
-export function Card({ children, className = "", tone = "default", ...props }) {
-  return <section className={`ds-card glass-surface ds-card-${tone} ${className}`.trim()} {...props}>{children}</section>;
+/** Overflow menu for secondary actions. Items: { label, onSelect, to, href, danger, disabled, title }. */
+export function ActionMenu({ items = [], label = "More actions" }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const menuId = useId();
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+    const onKey = (event) => { if (event.key === "Escape") { setOpen(false); rootRef.current?.querySelector("button")?.focus(); } };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    window.requestAnimationFrame(() => rootRef.current?.querySelector('[role="menuitem"]:not(:disabled)')?.focus());
+    return () => { document.removeEventListener("pointerdown", onPointer); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const visible = items.filter(Boolean);
+  if (!visible.length) return null;
+  function onMenuKey(event) {
+    if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    event.preventDefault();
+    const entries = [...rootRef.current.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+    const index = entries.indexOf(document.activeElement);
+    entries[(index + (event.key === "ArrowDown" ? 1 : -1) + entries.length) % entries.length]?.focus();
+  }
+  return <div className="menu-root" ref={rootRef}>
+    <button aria-controls={menuId} aria-expanded={open} aria-haspopup="menu" aria-label={label} className="btn btn-icon" onClick={() => setOpen((value) => !value)} title={label} type="button"><AppIcon name="more" size={18} /></button>
+    {open ? <div className="menu" id={menuId} onKeyDown={onMenuKey} role="menu">
+      {visible.map((item) => item.separator ? <div className="menu-sep" key={item.key || "sep"} role="separator" /> : item.to
+        ? <Link className={item.danger ? "menu-danger" : ""} key={item.label} onClick={() => setOpen(false)} role="menuitem" to={item.to}>{item.icon ? <AppIcon name={item.icon} size={16} /> : null}{item.label}</Link>
+        : <button className={item.danger ? "menu-danger" : ""} disabled={item.disabled} key={item.label} onClick={() => { setOpen(false); item.onSelect?.(); }} role="menuitem" title={item.title} type="button">{item.icon ? <AppIcon name={item.icon} size={16} /> : null}{item.label}</button>)}
+    </div> : null}
+  </div>;
 }
 
-export function MetricCard({ detail, label, tone = "neutral", value }) {
-  return <section className={`metric-card glass-surface-secondary ds-metric-card tone-${tone}`}>
-    <span className="metric-label">{label}</span>
-    <strong>{value ?? "—"}</strong>
-    {detail ? <p>{detail}</p> : null}
-  </section>;
+/* ---------- Status ---------- */
+/** Dot + label. Colour is never the only signal: the label always names the state. */
+export function Status({ children, tone = "neutral", active = false, className = "" }) {
+  return <span className={`status ${toneClass(tone)}${active ? " is-active" : ""} ${className}`.trim()}>{children}</span>;
 }
 
+export function Badge({ children, tone = "neutral" }) {
+  return <span className={`badge ${toneClass(tone)}`}>{children}</span>;
+}
+
+/** Status word from the backend rendered as a status line. */
 export function StatusChip({ children, status, tone }) {
   const resolvedTone = tone || statusTone(status || children);
-  return <span className={`status-badge ds-status-chip tone-${resolvedTone}`} data-status={typeof status === "string" ? status.toLowerCase() : undefined}>
-    <span aria-hidden="true" className="status-dot" />
-    {children || humanize(status)}
-  </span>;
+  const label = typeof children === "string" ? humanize(children) : children || humanize(status);
+  return <Status active={resolvedTone === "info"} tone={resolvedTone}>{label}</Status>;
 }
 
-export function PageHeader({ actions, context, description, eyebrow, status, title }) {
-  return <header className="page-header premium-page-header ds-page-header">
-    <div className="page-heading">
-      {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
-      <div className="header-title-row"><h1>{title}</h1>{status ? <StatusChip status={status} /> : null}</div>
-      {description ? <p className="muted">{description}</p> : null}
-      {context ? <p className="page-context">{context}</p> : null}
+/* ---------- Layout ---------- */
+export function PageHeader({ actions, description, title, meta, titleAddon }) {
+  return <header className="page-head">
+    <div>
+      <h1>{title}{titleAddon}</h1>
+      {description ? <p className="page-sub">{description}</p> : null}
+      {meta ? <div className="page-meta">{meta}</div> : null}
     </div>
-    {actions ? <div className="quick-actions">{actions}</div> : null}
+    {actions ? <div className="page-actions">{actions}</div> : null}
   </header>;
 }
 
-export function ActionBar({ children, className = "", label = "Available actions" }) {
-  return <div aria-label={label} className={`ds-action-bar glass-control-bar ${className}`.trim()} role="group">{children}</div>;
-}
-
-export function DataRow({ label, value, technical = false }) {
-  return <div className="ds-data-row"><dt>{label}</dt><dd className={technical ? "ds-technical-value" : undefined}>{value ?? "Unavailable"}</dd></div>;
-}
-
-export function IssueCard({ action, children, severity = "warning", title }) {
-  const icon = severity === "danger" ? "shield" : severity === "success" ? "check" : "activity";
-  return <article className={`ds-issue-card tone-${severity}`}>
-    <span aria-hidden="true" className="ds-issue-icon"><AppIcon name={icon} size={18} /></span>
-    <div className="ds-issue-copy"><div className="ds-issue-heading"><strong>{title}</strong><StatusChip tone={severity}>{severity === "danger" ? "Blocker" : severity === "success" ? "Ready" : "Warning"}</StatusChip></div>{children}{action ? <div className="ds-issue-action">{action}</div> : null}</div>
-  </article>;
-}
-
-export function ReadinessSummary({ children, level = "blocked", message, requiredInputs = [] }) {
-  const tone = level === "ready" ? "success" : level === "warning" ? "warning" : level === "input_required" ? "warning" : "danger";
-  const label = level === "warning" ? "READY_WITH_WARNINGS" : level === "ready" ? "READY" : level === "input_required" ? "INPUT_REQUIRED" : "BLOCKED";
-  const title = level === "ready" ? "Ready to deploy" : level === "warning" ? "Ready with warnings" : level === "input_required" ? "Configuration required" : "Deployment blocked";
-  return <section aria-labelledby="deployment-readiness-title" aria-live="polite" className={`deployment-readiness deployment-readiness-${level} ds-readiness-summary tone-${tone}`}>
-    <header className="ds-readiness-heading"><span aria-hidden="true" className="ds-readiness-icon"><AppIcon name={tone === "danger" ? "shield" : tone === "success" ? "check" : "activity"} size={22} /></span><div><p className="eyebrow">Deployment readiness</p><h3 id="deployment-readiness-title">{title}</h3></div><StatusChip tone={tone}>{label}</StatusChip></header>
-    <p className="ds-readiness-message">{message}</p>
-    {requiredInputs.length ? <div className="ds-required-inputs"><strong>Action required</strong><p>Provide: {requiredInputs.join(", ")}.</p></div> : null}
-    {children ? <div className="ds-readiness-content">{children}</div> : null}
+export function Section({ title, count, description, actions, children, className = "", id }) {
+  const headingId = id || undefined;
+  return <section aria-labelledby={headingId} className={`section ${className}`.trim()}>
+    {title ? <div className="section-head">
+      <div><h2 id={headingId}>{title}{count !== undefined ? <span className="count">{count}</span> : null}</h2>{description ? <p>{description}</p> : null}</div>
+      {actions ? <div className="actions">{actions}</div> : null}
+    </div> : null}
+    {children}
   </section>;
 }
 
-export function Modal({ children, className = "", labelledBy, onClose }) {
-  const dialogRef = useDialogFocus(onClose);
-  if (typeof document === "undefined") return null;
-  return createPortal(<div className="ds-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
-    <section aria-labelledby={labelledBy} aria-modal="true" className={`ds-modal glass-modal ${className}`.trim()} ref={dialogRef} role="dialog" tabIndex={-1}>{children}</section>
-  </div>, document.body);
+export function Card({ children, className = "", padded = true, ...props }) {
+  return <section className={`panel${padded ? " panel-pad" : ""} ${className}`.trim()} {...props}>{children}</section>;
 }
 
-export function ViewportPortal({ children }) {
-  if (typeof document === "undefined") return null;
-  return createPortal(children, document.body);
+/* ---------- Feedback ---------- */
+const CALLOUT_ICON = { ok: "check-circle", bad: "alert", warn: "alert", info: "info", neutral: "info" };
+export function Callout({ children, tone = "info", title, actions, icon, role }) {
+  const key = TONE_CLASS[tone] || "info";
+  return <div className={`callout ${toneClass(tone)}`} role={role || (key === "bad" ? "alert" : key === "ok" ? "status" : undefined)}>
+    <AppIcon name={icon || CALLOUT_ICON[key]} size={18} />
+    <div>{title ? <strong>{title}</strong> : null}{children}{actions ? <div className="actions">{actions}</div> : null}</div>
+  </div>;
 }
+export const Banner = Callout;
 
-export function Banner({ children, tone = "info", title }) {
-  return <section aria-live={tone === "success" ? "polite" : undefined} className={`ds-banner ds-banner-${tone}`} role={tone === "danger" ? "alert" : tone === "success" ? "status" : undefined}>
-    <AppIcon name={tone === "danger" ? "shield" : tone === "success" ? "check" : "activity"} size={18} />
-    <div>{title ? <strong>{title}</strong> : null}{children}</div>
-  </section>;
-}
-
-export function Skeleton({ lines = 3, label = "Loading" }) {
-  return <div aria-label={label} aria-live="polite" className="ds-skeleton" role="status">
+export function Skeleton({ lines = 4, label = "Loading" }) {
+  return <div aria-busy="true" aria-label={label} className="skeleton" role="status">
     {Array.from({ length: lines }, (_, index) => <span key={index} />)}
   </div>;
 }
 
-export function EmptyState({ action, icon = "box", message = "No records are available yet.", title = "Nothing to show yet" }) {
-  return <section className="state empty-state ds-empty-state">
-    <span aria-hidden="true" className="empty-state-mark"><AppIcon name={icon} size={20} /></span>
-    <div><strong>{title}</strong><p>{message}</p>{action ? <div className="empty-state-action">{action}</div> : null}</div>
-  </section>;
+export function EmptyState({ action, icon = "box", message, title = "Nothing here yet", compact = false }) {
+  return <div className={`empty${compact ? " empty-compact" : ""}`}>
+    <span aria-hidden="true" className="empty-icon"><AppIcon name={icon} size={20} /></span>
+    <h2>{title}</h2>
+    {message ? <p>{message}</p> : null}
+    {action ? <div className="actions">{action}</div> : null}
+  </div>;
 }
 
-export function DataTable({ caption, children, className = "", label = "Data table" }) {
-  return <div aria-label={label} className={`ds-data-table-wrap ${className}`.trim()} tabIndex={0}>
-    <table className="ds-data-table">
-      {caption ? <caption>{caption}</caption> : null}
+/* ---------- Data ---------- */
+export function DataTable({ caption, children, className = "", label = "Data table", stack = true }) {
+  return <div aria-label={label} className={`table-wrap${stack ? " table-stack" : ""} ${className}`.trim()} role="region" tabIndex={0}>
+    <table className="table">
+      {caption ? <caption className="sr-only">{caption}</caption> : null}
       {children}
     </table>
   </div>;
 }
 
-export function CopyValue({ label = "Copy value", value, visibleValue }) {
+export function CopyValue({ label = "Copy", value, visibleValue }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -182,17 +200,17 @@ export function CopyValue({ label = "Copy value", value, visibleValue }) {
       setCopied(false);
     }
   }
-  return <span className="ds-copy-value" title={String(value || "")}>
-    <span className="ds-copy-text">{visibleValue || value || "—"}</span>
-    <button aria-label={copied ? "Copied" : label} className="ds-copy-button" disabled={!value} onClick={() => void copy()} type="button">{copied ? "Copied" : "Copy"}</button>
+  return <span className="copy" title={String(value || "")}>
+    <span className="copy-text">{visibleValue || value || "—"}</span>
+    {value ? <button aria-label={copied ? "Copied" : `${label}: ${value}`} onClick={() => void copy()} type="button">{copied ? "Copied" : "Copy"}</button> : null}
   </span>;
 }
 
-export function ChartCard({ children, description, emptyMessage = "No verified numeric series is available.", hasData, title }) {
-  return <Card className="ds-chart-card">
-    <div className="ds-chart-heading"><div><h2>{title}</h2>{description ? <p>{description}</p> : null}</div></div>
-    {hasData ? children : <EmptyState icon="activity" message={emptyMessage} title="Chart unavailable" />}
-  </Card>;
+export function Disclosure({ summary, meta, children, open, className = "" }) {
+  return <details className={`disclosure ${className}`.trim()} open={open}>
+    <summary>{summary}{meta ? <span className="summary-meta">{meta}</span> : null}</summary>
+    <div className="disclosure-body">{children}</div>
+  </details>;
 }
 
 export function Tabs({ activeId, idPrefix, items, label = "Sections", onChange }) {
@@ -200,34 +218,53 @@ export function Tabs({ activeId, idPrefix, items, label = "Sections", onChange }
   const id = idPrefix || `tabs-${generatedId}`;
   const tabsRef = useRef(null);
   function handleKeyDown(event) {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const current = items.findIndex((item) => item.id === activeId);
-    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowRight" ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
+    const forward = ["ArrowRight", "ArrowDown"].includes(event.key);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : forward ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
     onChange(items[next].id);
     window.requestAnimationFrame(() => tabsRef.current?.querySelector(`[data-tab-id="${items[next].id}"]`)?.focus());
   }
-  return <div aria-label={label} aria-orientation="horizontal" className="ds-tabs glass-tabs" ref={tabsRef} role="tablist">
-    {items.map((item) => <button aria-controls={`${id}-panel-${item.id}`} aria-selected={activeId === item.id} className={activeId === item.id ? "is-active" : ""} data-tab-id={item.id} id={`${id}-tab-${item.id}`} key={item.id} onClick={() => onChange(item.id)} onKeyDown={handleKeyDown} role="tab" tabIndex={activeId === item.id ? 0 : -1} type="button">{item.icon ? <AppIcon name={item.icon} size={16} /> : null}{item.label}</button>)}
+  return <div aria-label={label} className="tabs" ref={tabsRef} role="tablist">
+    {items.map((item) => <button aria-controls={`${id}-panel-${item.id}`} aria-selected={activeId === item.id} className={item.danger ? "is-danger" : ""} data-tab-id={item.id} id={`${id}-tab-${item.id}`} key={item.id} onClick={() => onChange(item.id)} onKeyDown={handleKeyDown} role="tab" tabIndex={activeId === item.id ? 0 : -1} type="button">{item.label}</button>)}
   </div>;
+}
+
+/* ---------- Overlays ---------- */
+export function Modal({ children, className = "", labelledBy, onClose, wide = false }) {
+  const dialogRef = useDialogFocus(onClose);
+  if (typeof document === "undefined") return null;
+  return createPortal(<div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
+    <section aria-labelledby={labelledBy} aria-modal="true" className={`dialog${wide ? " dialog-wide" : ""} ${className}`.trim()} ref={dialogRef} role="dialog" tabIndex={-1}>{children}</section>
+  </div>, document.body);
+}
+
+/** A destructive confirmation that requires typing an exact phrase. */
+export function ConfirmPhraseDialog({ title, children, phrase, confirmLabel, busyLabel, busy = false, error, onConfirm, onClose, id = "confirm-dialog" }) {
+  const [value, setValue] = useState("");
+  const matches = value === phrase;
+  return <Modal labelledBy={`${id}-title`} onClose={() => { if (!busy) onClose(); }}>
+    <h2 id={`${id}-title`}>{title}</h2>
+    {children}
+    <label className="field"><span>Type <span className="mono">{phrase}</span> to confirm</span><input autoComplete="off" autoFocus onChange={(event) => setValue(event.target.value)} spellCheck={false} value={value} /></label>
+    {error ? <Callout tone="danger">{error}</Callout> : null}
+    <div className="dialog-actions"><Button disabled={busy} onClick={onClose} tone="ghost">Cancel</Button><Button aria-busy={busy || undefined} disabled={busy || !matches} onClick={() => onConfirm(value)} tone="danger-solid">{busy ? busyLabel || confirmLabel : confirmLabel}</Button></div>
+  </Modal>;
+}
+
+export function ViewportPortal({ children }) {
+  if (typeof document === "undefined") return null;
+  return createPortal(children, document.body);
 }
 
 export function DetailsDrawer({ children, labelledBy, onClose, title }) {
   const dialogRef = useDialogFocus(onClose);
   if (typeof document === "undefined") return null;
-  return createPortal(<div className="ds-drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
-    <aside aria-labelledby={labelledBy} aria-modal="true" className="ds-details-drawer glass-modal" ref={dialogRef} role="dialog" tabIndex={-1}>
-      <header><h2 id={labelledBy}>{title}</h2><button aria-label="Close details" className="ds-drawer-close" onClick={onClose} type="button">Close</button></header>
-      <div className="ds-drawer-body">{children}</div>
+  return createPortal(<div className="overlay overlay-drawer" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
+    <aside aria-labelledby={labelledBy} aria-modal="true" className="drawer" ref={dialogRef} role="dialog" tabIndex={-1}>
+      <header className="drawer-head"><h2 id={labelledBy}>{title}</h2><Button aria-label="Close details" onClick={onClose} tone="ghost" size="sm"><AppIcon name="close" size={16} /></Button></header>
+      <div className="drawer-body">{children}</div>
     </aside>
   </div>, document.body);
-}
-
-export function StageRail({ phases = [] }) {
-  return <ol aria-label="Deployment phases" className="ds-stage-rail">
-    {phases.map((phase) => <li className={`is-${phase.status}`} data-phase={phase.key} data-status={phase.status} key={phase.key}>
-      <span aria-hidden="true">{phase.status === "passed" ? <AppIcon name="check" size={12} /> : null}</span>
-      <small>{phase.label}</small>
-    </li>)}
-  </ol>;
 }

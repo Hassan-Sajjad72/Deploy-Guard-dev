@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { adminMe, adminSignIn } from "../api/adminAuthApi.js";
 import BrandLogo from "../components/common/BrandLogo.jsx";
-import "../styles/pages/admin.css";
+import { Callout } from "../components/common/DesignSystem.jsx";
 
 export default function AdminLogin() {
   const navigate = useNavigate();
@@ -17,5 +17,17 @@ export default function AdminLogin() {
     catch (caught) { setError(caught.message || "Admin sign-in failed."); }
     finally { setBusy(false); }
   }
-  return <main className="auth-page dg-admin-login"><section className="auth-card"><Link aria-label="DeployGuard home" className="auth-brand" to="/"><BrandLogo context="Administration" /></Link><p className="eyebrow">Dedicated operator access</p><h1>Admin sign in</h1><p className="muted">Use the dedicated administrator email and password. GitHub accounts cannot enter this console.</p><form onSubmit={submit}><label className="field"><span>Email</span><input autoComplete="username" name="email" onChange={(event) => setForm({ ...form, email: event.target.value })} required type="email" value={form.email} /></label><label className="field"><span>Password</span><input autoComplete="current-password" name="password" onChange={(event) => setForm({ ...form, password: event.target.value })} required type="password" value={form.password} /></label>{error ? <p className="form-error" role="alert">{error}</p> : null}<button className="button" disabled={busy} type="submit">{busy ? "Signing in…" : "Sign in as Admin"}</button></form></section></main>;
+  return <main className="center-page dg-admin-login">
+    <section aria-labelledby="admin-login-title" className="center-card">
+      <Link aria-label="DeployGuard home" to="/"><BrandLogo context="Administration" /></Link>
+      <div><h1 id="admin-login-title">Administrator sign in</h1><p>Use the administrator email and password. GitHub accounts cannot sign in here.</p></div>
+      <form className="panel panel-pad auth-form" onSubmit={submit}>
+        <label className="field"><span>Email</span><input autoComplete="username" name="email" onChange={(event) => setForm({ ...form, email: event.target.value })} required type="email" value={form.email} /></label>
+        <label className="field"><span>Password</span><input autoComplete="current-password" name="password" onChange={(event) => setForm({ ...form, password: event.target.value })} required type="password" value={form.password} /></label>
+        {error ? <Callout tone="danger"><p>{error}</p></Callout> : null}
+        <button aria-busy={busy || undefined} className="btn btn-primary" disabled={busy} type="submit">{busy ? "Signing in…" : "Sign in"}</button>
+      </form>
+      <Link className="link auth-back" to="/">Back to DeployGuard</Link>
+    </section>
+  </main>;
 }

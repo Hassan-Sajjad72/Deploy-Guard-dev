@@ -13,16 +13,18 @@ const newProject = readFileSync(new URL("../src/pages/NewProject.jsx", import.me
 const appLayout = readFileSync(new URL("../src/components/layout/AppLayout.jsx", import.meta.url), "utf8");
 const routes = readFileSync(new URL("../src/routes/AppRoutes.jsx", import.meta.url), "utf8");
 
-assert.match(projects, /summaries\.filter/);
-assert.match(projects, /projectStatePresentation\(currentState\)/);
-assert.match(projects, /Last activity/);
+assert.match(projects, /rows\.filter/);
+assert.match(projects, /projectStatePresentation\(summary\.currentState\)/);
+assert.match(projects, /<Time value=\{activity\} \/>/);
+const timeComponent = readFileSync(new URL("../src/components/common/Time.jsx", import.meta.url), "utf8");
+assert.match(timeComponent, /<time className=\{className\} dateTime=\{value\} title=\{exact\}>/, "relative times keep the exact timestamp available");
 assert.match(projects, /project\.activity\?\.lastMeaningfulActivityAt/);
-assert.match(projects, /formatRelativeTime\(activity\)/);
+assert.match(timeComponent, /formatRelativeTime\(value\)/);
 assert.doesNotMatch(projects, /project\.updatedAt/);
 assert.match(newProject, /caught\.payload\.existingProject/);
 assert.match(newProject, /deployGithubActionsDeployment\(readiness\.project\.id\)/);
 assert.doesNotMatch(newProject, /Create another environment|Archive existing and create fresh/);
 assert.match(appLayout, /recordProjectView/);
-assert.match(routes, /<Route element=\{<Dashboard \/>\} path="\/dashboard"/);
+assert.match(routes, /<Route element=\{<Navigate replace to="\/projects" \/>\} path="\/dashboard"/);
 
 console.log("Browser-local time, project recency, and idempotent existing-project continuation verification passed.");

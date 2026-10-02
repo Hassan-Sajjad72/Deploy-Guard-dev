@@ -1,9 +1,6 @@
-import { Link } from "react-router-dom";
 import AppIcon from "../components/common/AppIcon.jsx";
-import BrandLogo from "../components/common/BrandLogo.jsx";
-import PublicAdminLink from "../components/layout/PublicAdminLink.jsx";
 import PublicFooter from "../components/layout/PublicFooter.jsx";
-import "../styles/pages/about.css";
+import PublicHeader from "../components/layout/PublicHeader.jsx";
 
 const founders = [
   {
@@ -12,7 +9,6 @@ const founders = [
     name: "Hassan Sajjad",
     designation: "Co-Founder & CEO",
     specialty: "DevOps Engineer",
-    punchline: "The force that carried an ambitious idea through every failure, rebuild, and breakthrough until it became real.",
     description: "Drives DeployGuard from product vision to cloud execution, leading infrastructure, DevOps, automation, and the relentless debugging that keeps the whole system moving.",
     photo: "/team/hassan-sajjad.webp",
     linkedin: "https://www.linkedin.com/in/hassan-sajjad-2751202b9",
@@ -25,7 +21,6 @@ const founders = [
     name: "Faria Fatima",
     designation: "Co-Founder",
     specialty: "Backend & Systems Engineer",
-    punchline: "The mind that finds clarity in the mess and a way forward when the obvious answers stop working.",
     description: "Leads DeployGuard’s backend foundation, shaping APIs, system logic, integrations, and reliability while turning complex failures into solutions that keep the platform working as one.",
     linkedin: null,
     github: null,
@@ -37,9 +32,8 @@ const founders = [
     name: "Tania Khawar",
     designation: "Co-Founder",
     specialty: "Backend & AI Engineer",
-    punchline: "The thinker who questions what everyone else accepts—and often uncovers what nobody else thought to look for.",
     description: "Shapes DeployGuard across backend, AI, and monitoring with sharp architectural judgment—challenging assumptions that uncovered hidden defects and repeatedly made the system stronger.",
-    photo: "/team/tania-khawar.webp",
+    photo: "/team/tania-khawar-portrait.webp",
     linkedin: "https://www.linkedin.com/in/tania-khawar-8a0965372",
     github: "https://github.com/232378taniakhawar",
     portfolio: null,
@@ -55,19 +49,15 @@ function SocialIcon({ type }) {
 }
 
 function FounderSocials({ founder }) {
+  const links = Object.keys(socialLabels).filter((type) => founder[type]);
+  if (!links.length) return null;
   return <div aria-label={`${founder.name} social profiles`} className="founder-socials">
-    {Object.keys(socialLabels).map((type) => {
-      const href = founder[type];
-      const label = socialLabels[type];
-      return href
-        ? <a aria-label={`${founder.name} on ${label}`} href={href} key={type} rel="noreferrer" target="_blank"><SocialIcon type={type} /><span>{label}</span></a>
-        : <span aria-disabled="true" aria-label={`${founder.name} ${label} profile is not available yet`} className="is-disabled" key={type} title="Profile link not available"><SocialIcon type={type} /><span>{label}</span></span>;
-    })}
+    {links.map((type) => <a aria-label={`${founder.name} on ${socialLabels[type]}`} href={founder[type]} key={type} rel="noreferrer" target="_blank"><SocialIcon type={type} /><span>{socialLabels[type]}</span></a>)}
   </div>;
 }
 
 function TeamAvatar({ accent, name, photo, variant }) {
-  if (photo) return <img alt={`${name}, DeployGuard co-founder`} className={`team-avatar team-avatar-photo portrait-${variant}`} decoding="async" height={variant === "hassan" ? 576 : 854} loading="lazy" src={photo} width="640" />;
+  if (photo) return <img alt={`${name}, DeployGuard co-founder`} className={`team-avatar team-avatar-photo portrait-${variant}`} decoding="async" height={variant === "hassan" ? 576 : 600} loading="lazy" src={photo} width={variant === "hassan" ? 640 : 480} />;
 
   const common = <><circle className="team-avatar-backdrop" cx="90" cy="90" r="86" /><path className="team-avatar-shadow" d="M30 176c4-38 26-58 60-58s56 20 60 58" /></>;
 
@@ -90,42 +80,32 @@ function TeamAvatar({ accent, name, photo, variant }) {
 }
 
 export default function About() {
-  return <div className="dg-about">
-    <header className="dg-about-nav">
-      <Link aria-label="DeployGuard home" to="/"><BrandLogo /></Link>
-      <nav aria-label="Public navigation"><Link aria-current="page" className="landing-about-link" to="/about">About us</Link><PublicAdminLink /></nav>
-    </header>
-
-    <main>
-      <section className="dg-about-hero">
-        <div className="dg-about-hero-title"><p className="dg-about-kicker">The people behind DeployGuard</p><h1>Three founders.<br /><span>One platform.</span></h1><h2>Different minds. Shared vision.</h2></div>
-        <div className="dg-about-hero-copy"><p>DeployGuard brings product thinking, backend engineering, cloud infrastructure, DevOps, and AI into one shared build.</p><strong>Different specialties. Shared ownership.</strong></div>
+  return <div className="public about">
+    <PublicHeader />
+    <main id="main-content">
+      <section className="about-hero" aria-labelledby="about-title">
+        <h1 id="about-title">One mission: deployment without uncertainty.</h1>
+        <p className="hero-lead">DeployGuard brings product thinking, backend engineering, cloud infrastructure, DevOps and AI into one shared build — a secure path from repository to running app.</p>
       </section>
 
-      <div className="dg-about-paper">
-        <section aria-labelledby="mission-title" className="dg-about-mission"><p className="dg-about-label">Our mission</p><h2 id="mission-title">Our mission: Turn complex cloud deployment into a secure, automated path from repository to running infrastructure.</h2></section>
+      <section aria-labelledby="team-title" className="public-section" id="team">
+        <div className="public-section-head"><h2 id="team-title">The founders</h2><p>Different strengths, shared ownership of the whole platform.</p></div>
+        <div className="founders">{founders.map((founder) => <article className={`founder tone-${founder.accent}`} key={founder.name}>
+          <div className="founder-portrait"><TeamAvatar accent={founder.accent} name={founder.name} photo={founder.photo} variant={founder.avatar} /></div>
+          <div className="founder-copy"><h3>{founder.name}</h3><p className="founder-role">{founder.designation} · {founder.specialty}</p><p className="founder-description">{founder.description}</p>
+            <FounderSocials founder={founder} /></div>
+        </article>)}</div>
+      </section>
 
-        <section aria-labelledby="team-title" className="dg-about-team" id="team">
-          <div className="dg-about-heading"><p className="dg-about-label">Founding team</p><div><h2 id="team-title">Meet the builders.</h2><p>Each founder brings a different engineering edge to DeployGuard while sharing ownership of the platform as a whole.</p></div></div>
-          <div className="team-stack">{founders.map((founder) => <article className={`dg-founder tone-${founder.accent}`} key={founder.name}>
-            <div className="dg-founder-portrait"><TeamAvatar accent={founder.accent} name={founder.name} photo={founder.photo} variant={founder.avatar} /></div>
-            <div className="dg-founder-copy"><p className="dg-founder-designation">{founder.designation}</p><h3>{founder.name}</h3><p className="dg-founder-specialty">{founder.specialty}</p><blockquote className="dg-founder-punchline">{founder.punchline}</blockquote><p className="dg-founder-description">{founder.description}</p>
-              <FounderSocials founder={founder} /></div>
-          </article>)}</div>
-        </section>
+      <section aria-labelledby="acknowledgements-title" className="public-section about-credits">
+        <div className="public-section-head"><h2 id="acknowledgements-title">Guidance behind the work</h2></div>
+        <dl className="facts"><div><dt>Mentorship</dt><dd>Asim Ali Fayyaz</dd></div><div><dt>Supervision</dt><dd>Yaseen Mushtaq</dd></div><div><dt>Company</dt><dd><a className="link" href="https://www.intelligement.com" rel="noreferrer" target="_blank">Intelligement</a></dd></div></dl>
+      </section>
 
-        <section aria-labelledby="acknowledgements-title" className="dg-about-credits">
-          <div><p className="dg-about-label">Mentor &amp; acknowledgements</p><h2 id="acknowledgements-title">Guidance behind the work.</h2></div>
-          <dl><div><dt>Mentorship</dt><dd>Asim Ali Fayyaz</dd></div><div><dt>Supervision</dt><dd>Yaseen Mushtaq</dd></div><div><dt>Company</dt><dd><a href="https://www.intelligement.com" rel="noreferrer" target="_blank">Intelligement<span aria-hidden="true"> ↗</span></a></dd></div></dl>
-        </section>
-      </div>
-
-      <section className="dg-about-closing" id="philosophy">
-        <p className="dg-about-kicker">How we build</p>
+      <section className="public-closing" id="philosophy">
         <h2>Ideas come in, assumptions get challenged, and stronger products make it out.</h2>
       </section>
     </main>
-
     <PublicFooter />
   </div>;
 }

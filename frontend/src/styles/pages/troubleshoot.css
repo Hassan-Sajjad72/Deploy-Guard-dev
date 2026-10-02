@@ -1,195 +1,44 @@
-/*
- * Troubleshoot — issue-detail pattern. Deterministic diagnosis first (red),
- * AI assistance secondary (ink + lime marker), dark evidence viewer. Scoped to .dg-trouble.
- */
-.dg-trouble { --ts-line: var(--dg-line); --ts-red: var(--dg-danger-dot); --ts-violet: var(--dg-primary); gap: 18px; margin: 0 auto; max-width: 1280px; }
-.dg-trouble :is(h1, h2, h3, strong) { color: var(--dg-ink); text-shadow: none; }
-.dg-trouble p, .dg-trouble .muted { color: var(--dg-ink-2); opacity: 1; }
-.dg-trouble .eyebrow { color: var(--dg-muted); font-size: .72rem; font-weight: 700; letter-spacing: .06em; opacity: 1; text-transform: uppercase; }
-.dg-trouble .ds-page-header h1 { font-size: clamp(1.7rem, 2.4vw, 2rem); letter-spacing: -.02em; }
-.dg-trouble .ds-page-header p, .dg-trouble .page-context { color: var(--dg-ink-2); opacity: 1; }
-.dg-trouble .ds-card { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--dg-surface) !important; border: 1px solid var(--ts-line); border-radius: 12px; box-shadow: none; color: var(--dg-ink); display: grid; gap: 14px; padding: 18px 20px; }
-.dg-trouble .ds-card::before, .dg-trouble .ds-card::after { display: none; }
-.dg-trouble .compact-section-heading { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
-.dg-trouble .compact-section-heading h2 { font-size: 1.1rem; margin: 4px 0 0; }
+/* Troubleshoot: what happened, how to fix it, then evidence and AI. */
+.troubleshoot-picker { min-width: min(320px, 100%); }
+.ts-issue { padding: var(--s-2) 0 var(--s-6); display: grid; gap: var(--s-3); border-top: 0; }
+.ts-issue-head { display: flex; justify-content: space-between; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+.ts-when { font-size: var(--text-xs); }
+.ts-summary { font-size: var(--text-xl); font-weight: 600; line-height: 1.35; letter-spacing: -0.012em; max-width: 64ch; }
+.ts-owner { display: flex; align-items: flex-start; gap: var(--s-2); color: var(--text-2); font-size: var(--text-sm); }
+.ts-owner svg { margin-top: 2px; color: var(--text-3); }
+.ts-facts { padding-top: var(--s-4); border-top: 1px solid var(--line); margin-top: var(--s-1); }
+@media (max-width: 720px) { .ts-summary { font-size: var(--text-lg); } }
 
-.dg-ts-layout { align-items: start; display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) 320px; }
-.dg-ts-main, .dg-ts-side { display: grid; gap: 16px; min-width: 0; }
-.dg-ts-side { position: sticky; top: 70px; }
+.ts-fix { display: grid; gap: var(--s-4); }
+.ts-action { font-size: var(--text-md); font-weight: 550; }
+.ts-steps { list-style: decimal; padding-left: 1.4em; display: grid; gap: var(--s-2); color: var(--text-2); font-size: var(--text-sm); }
+.ts-steps li::marker { color: var(--text-3); }
+.ts-hint { font-size: var(--text-xs); }
 
-/* Issue summary — the dominant, deterministic block */
-.dg-trouble .dg-ts-issue { border-left: 4px solid var(--ts-red); gap: 16px; padding: 20px 22px; }
-.dg-trouble .dg-ts-issue h2 { color: var(--dg-danger); font-size: 1.35rem; }
-.dg-trouble .troubleshooting-failure-summary { color: var(--dg-ink); font-size: 1.02rem; font-weight: 550; margin: 0; }
-.dg-trouble .troubleshooting-operation-grid { border: 1px solid var(--ts-line); border-radius: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
-.dg-trouble .troubleshooting-operation-grid article { background: var(--dg-surface); border-bottom: 1px solid var(--dg-surface-3); border-right: 1px solid var(--dg-surface-3); box-shadow: none; display: grid; gap: 3px; padding: 10px 12px; }
-.dg-trouble .troubleshooting-operation-grid article span { color: var(--dg-muted); font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.dg-trouble .troubleshooting-operation-grid article strong { color: var(--dg-ink); font-size: .86rem; font-weight: 600; overflow-wrap: anywhere; }
-.dg-trouble .troubleshooting-operation-grid article:nth-child(4) strong, .dg-trouble .troubleshooting-operation-grid article:nth-child(5) strong, .dg-trouble .troubleshooting-operation-grid article:nth-child(8) strong { font-family: var(--font-mono, ui-monospace, monospace); font-size: .8rem; }
-.dg-trouble .state { -webkit-backdrop-filter: none; backdrop-filter: none; border-radius: 12px; box-shadow: none; margin: 0; padding: 10px 14px; }
-.dg-trouble .state.warning { background: var(--dg-warning-soft); border: 1px solid var(--dg-warning-line); color: var(--dg-warning); }
-.dg-trouble .state.warning strong { color: var(--dg-warning); }
+.ts-ai-start { display: grid; gap: var(--s-4); }
+.ts-ai-start > p { color: var(--text-2); font-size: var(--text-sm); max-width: 70ch; }
+.troubleshooting-diagnosis { display: grid; gap: var(--s-5); }
+.ts-ai-summary { font-size: var(--text-lg); line-height: 1.4; }
+.ts-ai-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--s-5) var(--s-8); }
+.ts-ai-grid h4 { font-size: var(--text-sm); color: var(--text-3); font-weight: 550; margin-bottom: var(--s-2); }
+.ts-ai-grid p { font-size: var(--text-sm); color: var(--text-2); }
+.ts-ai-grid p + p, .ts-ai-grid p + ol { margin-top: var(--s-2); }
+.ts-ai-foot { font-size: var(--text-xs); padding-top: var(--s-4); border-top: 1px solid var(--line); }
 
-/* AI analysis — secondary, violet accent */
-.dg-trouble .troubleshooting-diagnosis { background: var(--dg-surface) !important; border-left: 4px solid var(--ts-violet); }
-.dg-trouble .troubleshooting-diagnosis .eyebrow { color: var(--dg-primary-ink); }
-.dg-trouble .troubleshooting-diagnosis section { border-top: 1px solid var(--dg-surface-3); display: grid; gap: 6px; padding-top: 12px; }
-.dg-trouble .troubleshooting-diagnosis h3 { font-size: .9rem; margin: 0; }
-.dg-trouble .troubleshooting-diagnosis li { color: var(--dg-ink-2); }
-.dg-trouble .subtle-button { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 999px; box-shadow: none; color: var(--dg-primary-ink); font-size: .82rem; min-height: 32px; padding: 5px 12px; }
-.dg-trouble .subtle-button:hover { background: var(--dg-primary-soft); }
-.dg-trouble .evidence-reference-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.troubleshooting-chat { display: grid; }
+.troubleshooting-chat > * { padding: var(--s-4) 0; }
+.troubleshooting-chat > * + * { border-top: 1px solid var(--line); }
+.ts-chat-log { display: grid; gap: var(--s-3); max-height: 420px; overflow: auto; }
+.ts-chat-log article { display: grid; gap: 2px; font-size: var(--text-sm); }
+.ts-chat-log article strong { font-size: var(--text-xs); color: var(--text-3); font-weight: 550; }
+.ts-chat-log article[data-role="user"] p { color: var(--text); }
+.ts-chat-log article p { color: var(--text-2); white-space: pre-wrap; }
+.ts-followup { display: grid; grid-template-columns: 1fr auto; gap: var(--s-3); align-items: end; }
+.ts-followup textarea { font-family: var(--font-sans) !important; font-size: var(--text-sm) !important; min-height: 44px !important; }
+@media (max-width: 560px) { .ts-followup { grid-template-columns: 1fr; } }
 
-/* Evidence viewer — dark, collapsed by default */
-.dg-trouble .troubleshooting-evidence-groups { display: grid; gap: 6px; }
-.dg-trouble .troubleshooting-evidence-groups details { background: var(--dg-surface-2); border: 1px solid var(--ts-line); border-radius: 12px; }
-.dg-trouble .troubleshooting-evidence-groups summary { align-items: center; color: var(--dg-ink); cursor: pointer; display: flex; font-size: .88rem; font-weight: 600; justify-content: space-between; padding: 10px 12px; }
-.dg-trouble .troubleshooting-evidence-groups summary span { background: var(--dg-line); border-radius: 999px; color: var(--dg-ink-2); font-size: .72rem; padding: 1px 8px; }
-.dg-trouble .troubleshooting-evidence-groups ol { background: var(--dg-console); border-radius: 0 0 8px 8px; display: grid; gap: 8px; list-style: none; margin: 0; padding: 12px; }
-.dg-trouble .troubleshooting-evidence-groups li div { display: flex; gap: 10px; justify-content: space-between; }
-.dg-trouble .troubleshooting-evidence-groups li strong { color: var(--dg-console-ink); font-size: .8rem; }
-.dg-trouble .troubleshooting-evidence-groups time { color: var(--dg-console-muted); font-size: .74rem; }
-.dg-trouble .troubleshooting-evidence-groups pre { background: transparent; color: var(--dg-console-ink); font-size: .78rem; margin: 4px 0 0; }
-
-/* Follow-up */
-.dg-trouble .troubleshooting-chat-history { display: grid; gap: 8px; }
-.dg-trouble .troubleshooting-chat-history article { background: var(--dg-surface-2); border: 1px solid var(--ts-line); border-radius: 12px; padding: 10px 12px; }
-.dg-trouble .troubleshooting-chat-history article[data-role="user"] { background: var(--dg-info-soft); border-color: var(--dg-info-line); }
-.dg-trouble .field > span { color: var(--dg-ink-2); font-size: .82rem; font-weight: 600; }
-.dg-trouble .field select, .dg-trouble .field textarea { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--dg-surface); border: 1px solid var(--dg-line-strong); border-radius: 12px; box-shadow: none; color: var(--dg-ink); }
-.dg-trouble .secondary-button { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--dg-surface); border: 1px solid var(--dg-line-strong); border-radius: 12px; box-shadow: none; color: var(--dg-ink); }
-
-/* Side rail */
-.dg-trouble .troubleshooting-command h2 { font-size: .98rem; margin: 4px 0; }
-.dg-trouble .troubleshooting-command p { font-size: .84rem; }
-.dg-trouble .troubleshooting-command .button { border-radius: 12px; width: 100%; }
-.dg-trouble .troubleshooting-command .quick-actions { display: grid; gap: 8px; }
-.dg-trouble .session-list { display: grid; gap: 6px; }
-.dg-trouble .session-list .subtle-button { background: var(--dg-surface); border-color: var(--ts-line); border-radius: 6px; color: var(--dg-ink-2); font-family: var(--font-mono, ui-monospace, monospace); font-size: .76rem; justify-content: flex-start; }
-.dg-trouble .troubleshooting-provider-meta { color: var(--dg-ink-2); font-size: .84rem; }
-.dg-trouble .ds-empty-state { background: var(--dg-surface); border: 1px solid var(--ts-line); border-radius: 12px; padding: 20px; }
-
-@media (max-width: 1060px) {
-  .dg-ts-layout { grid-template-columns: 1fr; }
-  .dg-ts-side { order: 1; position: static; }
-  .dg-trouble .troubleshooting-operation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-/* Diagnosis-first order: deterministic issue → evidence viewer → AI analysis → follow-up.
-   Visual order only; the DOM is unchanged. */
-.dg-ts-main > .troubleshooting-diagnosis { order: 2; }
-.dg-ts-main > .troubleshooting-chat { order: 3; }
-.dg-trouble .compact-section-heading > .ds-status-chip { flex: 0 0 auto; white-space: nowrap; }
-
-/* =====================================================================
- * Diagnosis workspace — a numbered investigation rail down the main column:
- *   1 Failure → 2 Evidence → 3 AI diagnosis → 4 Follow-up.
- * Semantic red stays on the failure; rose marks the assisted analysis.
- * ===================================================================== */
-.dg-ts-main { gap: 18px; padding-left: 46px; position: relative; }
-.dg-ts-main::before { background: linear-gradient(180deg, var(--dg-danger-line), var(--pg-line) 40%, var(--pg-line)); bottom: 24px; content: ""; left: 15px; position: absolute; top: 24px; width: 2px; }
-.dg-ts-main > .ds-card { overflow: visible; position: relative; }
-.dg-ts-main > .ds-card::before { align-items: center; background: var(--dg-surface); border: 2px solid var(--pg-line); border-radius: 50%; color: var(--pg-strong); content: attr(data-step); display: flex !important; font-size: .78rem; font-weight: 800; height: 30px; justify-content: center; left: -46px; position: absolute; top: 18px; width: 30px; z-index: 1; }
-.dg-ts-main > .dg-ts-issue::before { background: var(--dg-danger-dot); border-color: var(--dg-danger-dot); color: #fff; content: "1"; }
-.dg-ts-main > .ds-card:has(.troubleshooting-evidence-groups)::before { content: "2"; }
-.dg-ts-main > .troubleshooting-diagnosis::before { background: var(--pg-accent); border-color: var(--pg-accent); color: #fff; content: "3"; }
-.dg-ts-main > .troubleshooting-chat::before { content: "4"; }
-
-/* Failure summary: the incident header. */
-:root:root .dg-trouble .dg-ts-issue { border: 1px solid var(--dg-danger-line); border-left: 4px solid var(--dg-danger-dot); box-shadow: 0 16px 36px -24px rgba(180, 35, 24, .45); }
-.dg-trouble .dg-ts-issue h2 { font-size: 1.35rem !important; letter-spacing: -.02em; }
-.dg-trouble .troubleshooting-operation-grid { background: var(--dg-surface-2); border: 1px solid var(--dg-line); border-radius: 12px; gap: 0 !important; overflow: hidden; }
-.dg-trouble .troubleshooting-operation-grid article { background: transparent !important; border: 0 !important; border-bottom: 1px solid var(--dg-line) !important; border-radius: 0 !important; box-shadow: none !important; }
-.dg-trouble .troubleshooting-operation-grid article strong { font-family: var(--dg-mono); font-size: .82rem; }
-
-/* Evidence viewer: grouped sources open into a console. */
-.dg-trouble .troubleshooting-evidence-groups details { background: var(--dg-surface); border-color: var(--dg-line); border-left: 3px solid var(--dg-faint); }
-.dg-trouble .troubleshooting-evidence-groups details[open] { border-left-color: var(--dg-lime); }
-.dg-trouble .troubleshooting-evidence-groups ol { background: var(--dg-night-2) !important; border-top: 1px solid var(--dg-night); }
-.dg-trouble .troubleshooting-evidence-groups li strong { color: #e6ebf2 !important; font-family: var(--dg-mono); }
-.dg-trouble .troubleshooting-evidence-groups pre { color: #cbd5e1 !important; }
-.dg-trouble .troubleshooting-evidence-groups summary span { background: var(--pg-soft) !important; color: var(--pg-strong) !important; }
-
-/* AI diagnosis: rose-accented analysis document. */
-:root:root .dg-trouble .troubleshooting-diagnosis { background: linear-gradient(180deg, var(--pg-soft), var(--dg-surface) 180px) !important; border: 1px solid var(--pg-line) !important; border-left: 4px solid var(--pg-accent) !important; }
-.dg-trouble .troubleshooting-diagnosis h3 { color: var(--pg-strong) !important; font-size: .74rem !important; letter-spacing: .06em; text-transform: uppercase; }
-
-/* Follow-up: chat transcript. */
-.dg-trouble .troubleshooting-chat article[data-role="assistant"] { background: var(--dg-surface-2); border-left: 3px solid var(--pg-accent); }
-
-/* Side panel: investigation controls. */
-.dg-trouble .dg-ts-side .ds-card { border-top: 3px solid var(--pg-accent); }
-
-@media (max-width: 1060px) {
-  .dg-ts-main { padding-left: 38px; }
-  .dg-ts-main::before { left: 11px; }
-  .dg-ts-main > .ds-card::before { height: 24px; left: -38px; width: 24px; }
-}
-
-/* =====================================================================
- * Art direction — "Incident room". A storm-lit header opens the case; the
- * investigation rail runs down the shared light ground; the command panel is
- * the one dark instrument on the page. Failure stays semantic red; assisted
- * analysis is framed in ink with a lime marker, never a page hue.
- * ===================================================================== */
-.app-shell:has(.dg-trouble) .main-area { --pg-cast: rgba(240, 68, 56, .05); }
-.dg-trouble { --pg-strong: var(--dg-brand-ink); --ts-violet: var(--dg-brand-ink); }
-.dg-trouble > .ds-page-header {
-  background: linear-gradient(90deg, rgba(7, 11, 20, .97) 0%, rgba(7, 11, 20, .85) 45%, rgba(7, 11, 20, .45) 100%), url("../../assets/deployguard-storm-glass.webp") center 62% / cover, var(--dg-night);
-  background-blend-mode: normal, luminosity, normal;
-  border-radius: 20px; box-shadow: 0 30px 60px -32px rgba(3, 6, 14, .8); min-height: 220px; overflow: hidden; padding: 34px 36px; position: relative;
-}
-.dg-trouble > .ds-page-header::after { background: radial-gradient(circle, rgba(148, 163, 184, .14), transparent 65%); content: ""; height: 360px; position: absolute; right: 12%; top: -140px; width: 360px; }
-.dg-trouble > .ds-page-header .eyebrow { color: var(--dg-lime) !important; }
-.dg-trouble > .ds-page-header h1 { color: #fff !important; font-size: clamp(2.4rem, 4.2vw, 3.4rem); font-weight: 600; letter-spacing: -.05em; }
-.dg-trouble > .ds-page-header p, .dg-trouble > .ds-page-header .page-context { color: var(--dg-night-ink-2) !important; }
-.dg-trouble > .ds-page-header .ds-status-chip { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .2); color: #e2e8f0; }
-.dg-trouble .ds-card { border-radius: 20px; box-shadow: var(--dg-shadow-md); }
-.dg-trouble .dg-ts-issue h2 { font-weight: 620; }
-
-/* Command panel: dark instrument. */
-.dg-trouble .dg-ts-side .troubleshooting-command { --dg-card-bg: var(--dg-night); border: 1px solid var(--dg-night-line-strong); border-top: 3px solid var(--dg-lime); color: var(--dg-night-ink); }
-.dg-trouble .troubleshooting-command :is(h2, strong) { color: #fff !important; }
-.dg-trouble .troubleshooting-command p { color: var(--dg-night-ink-2) !important; }
-.dg-trouble .troubleshooting-command .eyebrow { color: var(--dg-night-muted) !important; }
-.dg-trouble .troubleshooting-command .field > span { color: var(--dg-night-ink-2); }
-.dg-trouble .troubleshooting-command select { background-color: rgba(255, 255, 255, .06); border-color: rgba(255, 255, 255, .16); color: #fff; }
-.dg-trouble .troubleshooting-command .button { background: var(--mf-accent-fill); border-color: var(--mf-accent); box-shadow: none; color: var(--mf-on-accent); }
-.dg-trouble .troubleshooting-command .button:hover:not(:disabled) { background: var(--mf-accent-hover); color: var(--mf-on-accent); }
-.dg-trouble .troubleshooting-command .secondary-button { background: transparent; border-color: rgba(255, 255, 255, .2); color: var(--dg-night-ink); }
-
-/* AI analysis: ink frame with the brand marker. */
-:root:root .dg-trouble .troubleshooting-diagnosis { border: 1px solid transparent !important; border-left: 1px solid transparent !important; --dg-card-bg: var(--dg-surface); border-color: var(--dg-line-strong) !important; box-shadow: inset 0 3px 0 var(--dg-lime), var(--dg-shadow-md); }
-.dg-trouble .troubleshooting-diagnosis > .compact-section-heading h2 { font-size: 1.3rem; font-weight: 600; letter-spacing: -.025em; }
-
-/* Evidence: console-dark source groups. */
-.dg-trouble .troubleshooting-evidence-groups details { background: var(--dg-night); border-color: var(--dg-night-line); border-left-color: var(--dg-night-line-strong); }
-.dg-trouble .troubleshooting-evidence-groups summary { color: #e6ebf2; font-family: var(--dg-mono); font-size: .8rem; }
-.dg-trouble .troubleshooting-evidence-groups summary span { background: rgba(255, 255, 255, .08) !important; color: var(--dg-night-ink-2) !important; }
-
-@media (max-width: 760px) { .dg-trouble > .ds-page-header { min-height: 0; padding: 24px 20px; } }
-:root:root .dg-trouble .dg-ts-side .troubleshooting-command { background: var(--dg-night) !important; }
-:root:root .dg-trouble .troubleshooting-command select { background-color: var(--mf-field) !important; border-color: rgba(255, 255, 255, .16) !important; color: #fff !important; }
-
-/* =====================================================================
- * Aurora direction — Troubleshoot: near-neutral graphite.
- * The environment is almost colourless so evidence reads cleanly; colour
- * appears only as status — the deterministic failure carries a coral edge.
- * ===================================================================== */
-.dg-trouble { --ts-red: var(--au-coral); gap: 22px; max-width: 1300px; }
-.dg-trouble .ds-page-header h1 { color: #fff; font-size: clamp(2.2rem, 4vw, 3.1rem); font-weight: 700; letter-spacing: -.05em; }
-.dg-trouble .eyebrow { color: #b9c4de; font-family: var(--dg-mono); font-weight: 500; letter-spacing: .12em; }
-.dg-trouble .ds-page-header::after { background: linear-gradient(90deg, #9fb0d8, transparent 60%) !important; }
-:root:root .dg-trouble .ds-card { background: linear-gradient(180deg, rgba(34, 40, 56, .9), rgba(18, 22, 34, .94)) !important; border: 1px solid rgba(190, 200, 225, .12); border-radius: var(--au-r-md); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), var(--au-depth-1); }
-:root:root .dg-trouble .dg-ts-issue { background: radial-gradient(60% 120% at 0% 0%, rgba(255, 93, 115, .14), transparent 60%), linear-gradient(180deg, rgba(34, 40, 56, .9), rgba(18, 22, 34, .94)) !important; border-left: 3px solid var(--au-coral); box-shadow: -10px 0 30px -20px var(--au-coral), inset 0 1px 0 rgba(255, 255, 255, .05), var(--au-depth-1); }
-.dg-trouble .dg-ts-issue h2 { color: var(--au-bad-ink); }
-.dg-trouble .troubleshooting-operation-grid { border-color: rgba(190, 200, 225, .1); border-radius: var(--au-r-sm); }
-.dg-trouble .troubleshooting-operation-grid article { background: rgba(10, 13, 22, .5); border-color: rgba(190, 200, 225, .07); }
-.dg-trouble .troubleshooting-operation-grid article span { color: #8e98b3; }
-.dg-trouble .troubleshooting-evidence-groups details { border-radius: var(--au-r-sm); }
-:root:root .dg-trouble :is(pre, .troubleshooting-evidence-groups pre) { background: rgba(4, 6, 12, .85); border: 1px solid rgba(190, 200, 225, .1); color: #d6deef; }
-:root:root .dg-trouble .troubleshooting-command { -webkit-backdrop-filter: blur(20px) saturate(130%) !important; backdrop-filter: blur(20px) saturate(130%) !important; background: linear-gradient(180deg, rgba(255, 255, 255, .07), transparent 40%), rgba(20, 24, 36, .62) !important; border-color: rgba(255, 255, 255, .12); box-shadow: var(--au-edge), var(--au-depth-2); }
-:root:root .dg-trouble .button { --pg-a: #dfe6f7; --pg-b: #aebdde; }
-.dg-trouble .troubleshooting-chat-history article { border-radius: var(--au-r-sm); }
-.dg-trouble .troubleshooting-chat-history article[data-role="user"] { background: rgba(160, 178, 232, .08); }
-.dg-trouble .troubleshooting-provider-meta { color: var(--au-muted); font-family: var(--dg-mono); font-size: .74rem; }
+.ts-evidence { display: grid; gap: var(--s-2); }
+.ts-evidence details { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.ts-evidence summary { padding: var(--s-2) var(--s-3); font-size: var(--text-sm); font-weight: 550; }
+.ts-evidence ol { display: grid; gap: var(--s-3); padding: 0 var(--s-3) var(--s-3); }
+.ts-evidence li p { font-size: var(--text-xs); margin-bottom: var(--s-1); }

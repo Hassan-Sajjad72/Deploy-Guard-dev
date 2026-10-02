@@ -10,7 +10,7 @@ import AdminLayout from "../components/layout/AdminLayout.jsx";
 const About = lazy(() => import("../pages/About.jsx"));
 const AdminLogin = lazy(() => import("../pages/AdminLogin.jsx"));
 const AdminUsers = lazy(() => import("../pages/AdminUsers.jsx"));
-const Dashboard = lazy(() => import("../pages/Dashboard.jsx"));
+const AdminCloudCleanup = lazy(() => import("../pages/AdminCloudCleanup.jsx"));
 const Forbidden = lazy(() => import("../pages/Forbidden.jsx"));
 const GithubConnecting = lazy(() => import("../pages/GithubConnecting.jsx"));
 const Landing = lazy(() => import("../pages/Landing.jsx"));
@@ -37,7 +37,7 @@ export default function AppRoutes() {
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
-          <Route element={<Dashboard />} path="/dashboard" />
+          <Route element={<Navigate replace to="/projects" />} path="/dashboard" />
           <Route element={<Projects />} path="/projects" />
           <Route element={<Billing />} path="/billing" />
           <Route element={<ProjectDetails />} path="/projects/:projectId" />
@@ -72,9 +72,12 @@ export default function AppRoutes() {
       <Route element={<AdminProtectedRoute />}>
         <Route element={<AdminLayout />}>
           <Route element={<AdminUsers />} path="/admin" />
-          <Route element={<Navigate replace to="/admin" />} path="/admin/users" />
-          <Route element={<Navigate replace to="/admin" />} path="/activity" />
-          <Route element={<Navigate replace to="/admin" />} path="/audit-logs" />
+          <Route element={<Navigate replace to="/admin?section=users" />} path="/admin/users" />
+          <Route element={<Navigate replace to="/admin?section=projects" />} path="/admin/projects" />
+          <Route element={<Navigate replace to="/admin?section=audit" />} path="/admin/audit" />
+          <Route element={<AdminCloudCleanup />} path="/admin/cleanup" />
+          <Route element={<Navigate replace to="/admin?section=audit" />} path="/activity" />
+          <Route element={<Navigate replace to="/admin?section=audit" />} path="/audit-logs" />
         </Route>
       </Route>
 

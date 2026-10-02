@@ -1,397 +1,745 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-29T17:29:12Z",
+  "generatedAt": "2026-10-02T04:58:23.809812+00:00",
   "title": "Design System: DeployGuard",
   "extensions": {
     "colorMeta": {
-      "primary": {
+      "paper-ground": {
+        "role": "neutral",
+        "displayName": "Paper Ground",
+        "canonical": "#f6f6f4",
+        "cssVar": "--bg",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-sunken": {
+        "role": "neutral",
+        "displayName": "Paper Sunken",
+        "canonical": "#efefec",
+        "cssVar": "--bg-sunken",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-surface": {
+        "role": "neutral",
+        "displayName": "Paper Surface",
+        "canonical": "#ffffff",
+        "cssVar": "--surface",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-surface-2": {
+        "role": "neutral",
+        "displayName": "Paper Surface 2",
+        "canonical": "#f3f3f0",
+        "cssVar": "--surface-2",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-surface-hover": {
+        "role": "neutral",
+        "displayName": "Paper Surface Hover",
+        "canonical": "#ecece8",
+        "cssVar": "--surface-hover",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-line": {
+        "role": "neutral",
+        "displayName": "Paper Hairline",
+        "canonical": "#e2e2dd",
+        "cssVar": "--line",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-line-strong": {
+        "role": "neutral",
+        "displayName": "Paper Strong Line",
+        "canonical": "#cbcbc5",
+        "cssVar": "--line-strong",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-ink": {
+        "role": "neutral",
+        "displayName": "Paper Ink",
+        "canonical": "#151618",
+        "cssVar": "--text",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-ink-2": {
+        "role": "neutral",
+        "displayName": "Paper Ink 2",
+        "canonical": "#464a50",
+        "cssVar": "--text-2",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-ink-3": {
+        "role": "neutral",
+        "displayName": "Paper Ink 3",
+        "canonical": "#686c73",
+        "cssVar": "--text-3",
+        "theme": "light",
+        "tonalRamp": [
+          "#151618",
+          "#2b2d31",
+          "#464a50",
+          "#686c73",
+          "#cbcbc5",
+          "#e2e2dd",
+          "#efefec",
+          "#f6f6f4"
+        ]
+      },
+      "paper-signal-blue": {
         "role": "primary",
-        "displayName": "Control Orange",
-        "canonical": "#F97316",
-        "tonalRamp": ["#431407", "#7C2D12", "#C2410C", "#F97316", "#FB923C", "#FDBA74", "#FED7AA", "#FFF7ED"]
+        "displayName": "Paper Signal Blue",
+        "canonical": "#1d63d8",
+        "cssVar": "--accent",
+        "theme": "light",
+        "tonalRamp": [
+          "#0d2a5c",
+          "#123d85",
+          "#1d63d8",
+          "#3f7fe6",
+          "#6aa5ff",
+          "#9cc3ff",
+          "#c9dcff",
+          "#eaf1ff"
+        ]
       },
-      "primary-hover": {
+      "paper-ok": {
+        "role": "state",
+        "displayName": "Paper Verified Green",
+        "canonical": "#157a42",
+        "cssVar": "--ok",
+        "theme": "light",
+        "tonalRamp": [
+          "#0a3a20",
+          "#0f5a31",
+          "#157a42",
+          "#22a05a",
+          "#4ad386",
+          "#7fe0a8",
+          "#b5eecb",
+          "#e3f8eb"
+        ]
+      },
+      "paper-warn": {
+        "role": "state",
+        "displayName": "Paper Caution Amber",
+        "canonical": "#9a5b00",
+        "cssVar": "--warn",
+        "theme": "light",
+        "tonalRamp": [
+          "#3d2400",
+          "#6b3f00",
+          "#9a5b00",
+          "#c48008",
+          "#f0bd4f",
+          "#f5d17f",
+          "#f9e3b0",
+          "#fdf4df"
+        ]
+      },
+      "paper-bad": {
+        "role": "state",
+        "displayName": "Paper Failure Red",
+        "canonical": "#c42b2b",
+        "cssVar": "--bad",
+        "theme": "light",
+        "tonalRamp": [
+          "#4d1010",
+          "#851d1d",
+          "#c42b2b",
+          "#dd4a4a",
+          "#f37575",
+          "#f69c9c",
+          "#fac4c4",
+          "#fdeaea"
+        ]
+      },
+      "graphite-ground": {
+        "role": "neutral",
+        "displayName": "Graphite Ground",
+        "canonical": "#0e0f11",
+        "cssVar": "--bg",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-sunken": {
+        "role": "neutral",
+        "displayName": "Graphite Sunken",
+        "canonical": "#0a0b0c",
+        "cssVar": "--bg-sunken",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-surface": {
+        "role": "neutral",
+        "displayName": "Graphite Surface",
+        "canonical": "#15171a",
+        "cssVar": "--surface",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-surface-2": {
+        "role": "neutral",
+        "displayName": "Graphite Surface 2",
+        "canonical": "#1b1e22",
+        "cssVar": "--surface-2",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-surface-hover": {
+        "role": "neutral",
+        "displayName": "Graphite Surface Hover",
+        "canonical": "#22252a",
+        "cssVar": "--surface-hover",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-line": {
+        "role": "neutral",
+        "displayName": "Graphite Hairline",
+        "canonical": "#262a30",
+        "cssVar": "--line",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-line-strong": {
+        "role": "neutral",
+        "displayName": "Graphite Strong Line",
+        "canonical": "#363b42",
+        "cssVar": "--line-strong",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-ink": {
+        "role": "neutral",
+        "displayName": "Graphite Ink",
+        "canonical": "#edeef0",
+        "cssVar": "--text",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-ink-2": {
+        "role": "neutral",
+        "displayName": "Graphite Ink 2",
+        "canonical": "#b6bac1",
+        "cssVar": "--text-2",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-ink-3": {
+        "role": "neutral",
+        "displayName": "Graphite Ink 3",
+        "canonical": "#8d929b",
+        "cssVar": "--text-3",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#0e0f11",
+          "#15171a",
+          "#1b1e22",
+          "#262a30",
+          "#363b42",
+          "#8d929b",
+          "#edeef0"
+        ]
+      },
+      "graphite-signal-blue": {
         "role": "primary",
-        "displayName": "Control Orange Hover",
-        "canonical": "#FB8A3C",
-        "tonalRamp": ["#431407", "#7C2D12", "#C2410C", "#F97316", "#FB8A3C", "#FDBA74", "#FED7AA", "#FFF7ED"]
+        "displayName": "Graphite Signal Blue",
+        "canonical": "#6aa5ff",
+        "cssVar": "--accent",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0d2a5c",
+          "#123d85",
+          "#1d63d8",
+          "#3f7fe6",
+          "#6aa5ff",
+          "#9cc3ff",
+          "#c9dcff",
+          "#eaf1ff"
+        ]
       },
-      "primary-ink": {
-        "role": "primary",
-        "displayName": "Signal Orange",
-        "canonical": "#FB923C",
-        "tonalRamp": ["#431407", "#7C2D12", "#C2410C", "#F97316", "#FB923C", "#FDBA74", "#FED7AA", "#FFF7ED"]
+      "graphite-ok": {
+        "role": "state",
+        "displayName": "Graphite Verified Green",
+        "canonical": "#4ad386",
+        "cssVar": "--ok",
+        "theme": "dark",
+        "tonalRamp": [
+          "#0a3a20",
+          "#0f5a31",
+          "#157a42",
+          "#22a05a",
+          "#4ad386",
+          "#7fe0a8",
+          "#b5eecb",
+          "#e3f8eb"
+        ]
       },
-      "primary-soft": {
-        "role": "primary",
-        "displayName": "Ember Wash",
-        "canonical": "rgba(249, 115, 22, 0.12)",
-        "tonalRamp": ["oklch(24% 0.08 48)", "oklch(34% 0.11 48)", "oklch(45% 0.15 48)", "oklch(58% 0.19 48)", "oklch(68% 0.16 48)", "oklch(78% 0.12 48)", "oklch(87% 0.07 48)", "oklch(95% 0.03 48)"]
+      "graphite-warn": {
+        "role": "state",
+        "displayName": "Graphite Caution Amber",
+        "canonical": "#f0bd4f",
+        "cssVar": "--warn",
+        "theme": "dark",
+        "tonalRamp": [
+          "#3d2400",
+          "#6b3f00",
+          "#9a5b00",
+          "#c48008",
+          "#f0bd4f",
+          "#f5d17f",
+          "#f9e3b0",
+          "#fdf4df"
+        ]
       },
-      "primary-line": {
-        "role": "primary",
-        "displayName": "Ember Boundary",
-        "canonical": "rgba(249, 115, 22, 0.32)",
-        "tonalRamp": ["oklch(24% 0.08 48)", "oklch(34% 0.11 48)", "oklch(45% 0.15 48)", "oklch(58% 0.19 48)", "oklch(68% 0.16 48)", "oklch(78% 0.12 48)", "oklch(87% 0.07 48)", "oklch(95% 0.03 48)"]
-      },
-      "on-primary": {
-        "role": "neutral",
-        "displayName": "Ember Ink",
-        "canonical": "#160A02",
-        "tonalRamp": ["#160A02", "#2B1508", "#4A250E", "#6B3B1D", "#98603B", "#C28B68", "#E4BFA3", "#FFF4EA"]
-      },
-      "canvas": {
-        "role": "neutral",
-        "displayName": "Graphite Canvas",
-        "canonical": "#0B0D12",
-        "tonalRamp": ["#090A0E", "#0B0D12", "#12151C", "#1A1E27", "#343A45", "#646C7B", "#B6BDC9", "#EDEFF3"]
-      },
-      "recessed": {
-        "role": "neutral",
-        "displayName": "Recessed Graphite",
-        "canonical": "#0F1117",
-        "tonalRamp": ["#090A0E", "#0F1117", "#171A22", "#202530", "#3A404C", "#6C7482", "#BAC0CB", "#F0F2F5"]
-      },
-      "surface": {
-        "role": "neutral",
-        "displayName": "Control Surface",
-        "canonical": "#12151C",
-        "tonalRamp": ["#090A0E", "#0F1117", "#12151C", "#1A1E27", "#3A404C", "#707886", "#C0C5CE", "#F1F3F6"]
-      },
-      "raised": {
-        "role": "neutral",
-        "displayName": "Raised Graphite",
-        "canonical": "#171A22",
-        "tonalRamp": ["#0B0D12", "#12151C", "#171A22", "#202530", "#414753", "#777F8C", "#C5CAD2", "#F3F4F6"]
-      },
-      "surface-strong": {
-        "role": "neutral",
-        "displayName": "Instrument Tile",
-        "canonical": "#1A1E27",
-        "tonalRamp": ["#0B0D12", "#12151C", "#1A1E27", "#252A35", "#474D59", "#7D8591", "#C9CDD4", "#F4F5F7"]
-      },
-      "surface-hover": {
-        "role": "neutral",
-        "displayName": "Hover Graphite",
-        "canonical": "#202530",
-        "tonalRamp": ["#0B0D12", "#151820", "#202530", "#2B313D", "#4F5662", "#858C97", "#CDD1D7", "#F5F6F7"]
-      },
-      "line": {
-        "role": "neutral",
-        "displayName": "Hairline",
-        "canonical": "rgba(255, 255, 255, 0.08)",
-        "tonalRamp": ["oklch(15% 0.008 260)", "oklch(25% 0.008 260)", "oklch(35% 0.008 260)", "oklch(47% 0.008 260)", "oklch(59% 0.008 260)", "oklch(71% 0.008 260)", "oklch(83% 0.008 260)", "oklch(95% 0.008 260)"]
-      },
-      "line-strong": {
-        "role": "neutral",
-        "displayName": "Strong Hairline",
-        "canonical": "rgba(255, 255, 255, 0.14)",
-        "tonalRamp": ["oklch(15% 0.008 260)", "oklch(25% 0.008 260)", "oklch(35% 0.008 260)", "oklch(47% 0.008 260)", "oklch(59% 0.008 260)", "oklch(71% 0.008 260)", "oklch(83% 0.008 260)", "oklch(95% 0.008 260)"]
-      },
-      "ink": {
-        "role": "neutral",
-        "displayName": "Primary Ink",
-        "canonical": "#EDEFF3",
-        "tonalRamp": ["#17191E", "#2B2E35", "#454951", "#626771", "#858B96", "#A9AFB9", "#D0D4DA", "#EDEFF3"]
-      },
-      "ink-secondary": {
-        "role": "neutral",
-        "displayName": "Secondary Ink",
-        "canonical": "#B6BDC9",
-        "tonalRamp": ["#17191E", "#292C33", "#41454D", "#5D626C", "#7D838E", "#9EA5B0", "#B6BDC9", "#ECEEF2"]
-      },
-      "muted": {
-        "role": "neutral",
-        "displayName": "Muted Ink",
-        "canonical": "#9AA3B2",
-        "tonalRamp": ["#15171B", "#272A30", "#3E424A", "#575D67", "#747B87", "#9AA3B2", "#C3C8D0", "#EEF0F3"]
-      },
-      "faint": {
-        "role": "neutral",
-        "displayName": "Faint Ink",
-        "canonical": "#8992A1",
-        "tonalRamp": ["#14161A", "#25282E", "#3A3E46", "#525761", "#6D7480", "#8992A1", "#BCC2CB", "#ECEEF2"]
-      },
-      "success": {
-        "role": "semantic-success",
-        "displayName": "Verified Green",
-        "canonical": "#4ADE80",
-        "tonalRamp": ["#052E16", "#14532D", "#15803D", "#22C55E", "#4ADE80", "#86EFAC", "#BBF7D0", "#F0FDF4"]
-      },
-      "success-fill": {
-        "role": "semantic-success",
-        "displayName": "Success Fill",
-        "canonical": "#22C55E",
-        "tonalRamp": ["#052E16", "#14532D", "#15803D", "#22C55E", "#4ADE80", "#86EFAC", "#BBF7D0", "#F0FDF4"]
-      },
-      "success-soft": {
-        "role": "semantic-success",
-        "displayName": "Success Wash",
-        "canonical": "rgba(34, 197, 94, 0.12)",
-        "tonalRamp": ["#052E16", "#14532D", "#15803D", "#22C55E", "#4ADE80", "#86EFAC", "#BBF7D0", "#F0FDF4"]
-      },
-      "warning": {
-        "role": "semantic-warning",
-        "displayName": "Attention Yellow",
-        "canonical": "#FACC15",
-        "tonalRamp": ["#422006", "#713F12", "#A16207", "#EAB308", "#FACC15", "#FDE047", "#FEF08A", "#FEFCE8"]
-      },
-      "warning-fill": {
-        "role": "semantic-warning",
-        "displayName": "Warning Fill",
-        "canonical": "#EAB308",
-        "tonalRamp": ["#422006", "#713F12", "#A16207", "#EAB308", "#FACC15", "#FDE047", "#FEF08A", "#FEFCE8"]
-      },
-      "warning-soft": {
-        "role": "semantic-warning",
-        "displayName": "Warning Wash",
-        "canonical": "rgba(234, 179, 8, 0.12)",
-        "tonalRamp": ["#422006", "#713F12", "#A16207", "#EAB308", "#FACC15", "#FDE047", "#FEF08A", "#FEFCE8"]
-      },
-      "danger": {
-        "role": "semantic-danger",
-        "displayName": "Failure Red",
-        "canonical": "#F87171",
-        "tonalRamp": ["#450A0A", "#7F1D1D", "#B91C1C", "#EF4444", "#F87171", "#FCA5A5", "#FECACA", "#FEF2F2"]
-      },
-      "danger-fill": {
-        "role": "semantic-danger",
-        "displayName": "Danger Fill",
-        "canonical": "#EF4444",
-        "tonalRamp": ["#450A0A", "#7F1D1D", "#B91C1C", "#EF4444", "#F87171", "#FCA5A5", "#FECACA", "#FEF2F2"]
-      },
-      "danger-soft": {
-        "role": "semantic-danger",
-        "displayName": "Danger Wash",
-        "canonical": "rgba(239, 68, 68, 0.12)",
-        "tonalRamp": ["#450A0A", "#7F1D1D", "#B91C1C", "#EF4444", "#F87171", "#FCA5A5", "#FECACA", "#FEF2F2"]
-      },
-      "info": {
-        "role": "semantic-info",
-        "displayName": "Running Blue",
-        "canonical": "#93C5FD",
-        "tonalRamp": ["#172554", "#1E3A8A", "#1D4ED8", "#3B82F6", "#60A5FA", "#93C5FD", "#BFDBFE", "#EFF6FF"]
-      },
-      "info-fill": {
-        "role": "semantic-info",
-        "displayName": "Info Fill",
-        "canonical": "#3B82F6",
-        "tonalRamp": ["#172554", "#1E3A8A", "#1D4ED8", "#3B82F6", "#60A5FA", "#93C5FD", "#BFDBFE", "#EFF6FF"]
-      },
-      "info-soft": {
-        "role": "semantic-info",
-        "displayName": "Info Wash",
-        "canonical": "rgba(59, 130, 246, 0.12)",
-        "tonalRamp": ["#172554", "#1E3A8A", "#1D4ED8", "#3B82F6", "#60A5FA", "#93C5FD", "#BFDBFE", "#EFF6FF"]
+      "graphite-bad": {
+        "role": "state",
+        "displayName": "Graphite Failure Red",
+        "canonical": "#f37575",
+        "cssVar": "--bad",
+        "theme": "dark",
+        "tonalRamp": [
+          "#4d1010",
+          "#851d1d",
+          "#c42b2b",
+          "#dd4a4a",
+          "#f37575",
+          "#f69c9c",
+          "#fac4c4",
+          "#fdeaea"
+        ]
       }
     },
     "typographyMeta": {
       "display": {
-        "displayName": "Public Display",
-        "purpose": "Rare, high-impact public-page statements and the About hero."
+        "displayName": "Display",
+        "purpose": "Public landing hero only."
       },
       "headline": {
-        "displayName": "Primary Headline",
-        "purpose": "Landing thesis, dashboard greeting, project identity, and primary route statements."
+        "displayName": "Headline",
+        "purpose": "Page titles."
+      },
+      "state": {
+        "displayName": "State",
+        "purpose": "The state statement, dialog titles, monitoring headline values."
       },
       "title": {
-        "displayName": "Operational Title",
-        "purpose": "Page headers and administration titles."
+        "displayName": "Title",
+        "purpose": "Section headings and the Overview public URL."
       },
       "body": {
-        "displayName": "Interface Body",
-        "purpose": "Instructions, explanations, and supporting operational context."
+        "displayName": "Body",
+        "purpose": "Sentences, capped at 68 to 72ch."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Buttons, tabs, fields, table cells, secondary copy."
       },
       "label": {
-        "displayName": "Evidence Label",
-        "purpose": "Eyebrows, metric keys, table headings, boundaries, and compact metadata."
+        "displayName": "Label",
+        "purpose": "Meta, table headers, fact labels, timestamps, hints."
+      },
+      "identifier": {
+        "displayName": "Identifier (Geist Mono)",
+        "purpose": "Commits, digests, run IDs, resource names, paths, logs. Nothing else."
       }
     },
     "shadows": [
       {
-        "name": "anchoring",
-        "value": "0 1px 2px rgba(0, 0, 0, 0.24)",
-        "purpose": "Quiet anchoring for resting cards and panels."
+        "name": "pop-paper",
+        "value": "0 12px 32px rgba(20,21,24,0.14), 0 2px 6px rgba(20,21,24,0.08)",
+        "purpose": "Floating layers (menu, dialog, drawer, toast) in light."
       },
       {
-        "name": "raised",
-        "value": "0 12px 28px -18px rgba(0, 0, 0, 0.72)",
-        "purpose": "Floating or raised layers that must separate from dense workspaces."
+        "name": "pop-graphite",
+        "value": "0 12px 32px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.35)",
+        "purpose": "Floating layers in dark."
       },
       {
-        "name": "artifact",
-        "value": "0 28px 60px -28px rgba(0, 0, 0, 0.88)",
-        "purpose": "The landing architecture frame and major modal artifacts only."
+        "name": "field-focus",
+        "value": "0 0 0 3px var(--accent-soft)",
+        "purpose": "Focused input ring, with accent border."
+      },
+      {
+        "name": "status-halo",
+        "value": "0 0 0 3px color-mix(in srgb, var(--tone) 20%, transparent)",
+        "purpose": "Halo around the status dot; pulses when active."
       }
     ],
     "motion": [
       {
-        "name": "ease-standard",
-        "value": "cubic-bezier(0.2, 0.7, 0.2, 1)",
-        "purpose": "Default easing for direct control-state changes."
+        "name": "ease-out",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Default easing for every transition and entrance."
       },
       {
-        "name": "control",
-        "value": "140ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-        "purpose": "Button, field, border, color, and compact hover transitions."
+        "name": "t-fast",
+        "value": "120ms",
+        "purpose": "Hover, colour and press transitions."
       },
       {
-        "name": "loading-shimmer",
-        "value": "1.5s ease-in-out infinite",
-        "purpose": "Neutral skeleton loading only; route-entry animation remains disabled."
+        "name": "t",
+        "value": "180ms",
+        "purpose": "Menu/dialog pop-in, drawer slide-in, disclosure chevron."
+      },
+      {
+        "name": "pulse",
+        "value": "1.6s infinite",
+        "purpose": "In-progress status dot halo and running phase-rail sweep."
       },
       {
         "name": "reduced-motion",
         "value": "0.01ms",
-        "purpose": "Near-instant fallback for all animation and transition durations when reduced motion is requested."
+        "purpose": "All animation and transition collapses under prefers-reduced-motion."
       }
     ],
     "breakpoints": [
       {
-        "name": "wide-collapse",
-        "value": "1080px"
-      },
-      {
-        "name": "shell-drawer",
-        "value": "900px"
+        "name": "phone",
+        "value": "560px"
       },
       {
         "name": "compact",
-        "value": "760px"
+        "value": "640px"
+      },
+      {
+        "name": "tablet",
+        "value": "720px"
+      },
+      {
+        "name": "narrow-desktop",
+        "value": "900px"
+      },
+      {
+        "name": "topology-stack",
+        "value": "1080px"
       }
-    ]
+    ],
+    "theming": {
+      "attribute": "data-theme on <html>",
+      "values": [
+        "system",
+        "light",
+        "dark"
+      ],
+      "default": "system (follows prefers-color-scheme)",
+      "override": "System / Light / Dark switch in the account menu"
+    }
   },
   "components": [
     {
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The decisive action within a local control group.",
-      "html": "<button class=\"ds-doc-btn-primary\" type=\"button\">Deploy release</button>",
-      "css": ".ds-doc-btn-primary { align-items:center; background:var(--dg-primary, #F97316); border:1px solid var(--dg-primary, #F97316); border-radius:var(--dg-radius-sm, 8px); box-shadow:0 1px 2px rgba(0,0,0,.3); color:var(--dg-on-primary, #160A02); cursor:pointer; display:inline-flex; font-family:var(--dg-font, Geist, sans-serif); font-size:.875rem; font-weight:560; justify-content:center; min-height:38px; padding:8px 14px; transition:background 140ms cubic-bezier(.2,.7,.2,1), border-color 140ms cubic-bezier(.2,.7,.2,1), box-shadow 140ms cubic-bezier(.2,.7,.2,1); } .ds-doc-btn-primary:hover { background:var(--dg-primary-hover, #FB8A3C); border-color:var(--dg-primary-hover, #FB8A3C); box-shadow:0 6px 16px -10px rgba(249,115,22,.7); } .ds-doc-btn-primary:focus-visible { outline:2px solid #F97316; outline-offset:3px; } .ds-doc-btn-primary:active { transform:translateY(1px); }"
+      "description": "Inverted ink; the single next action on a view.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Redeploy</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:0 16px;border-radius:8px;border:1px solid var(--line-strong,#cbcbc5);background:var(--surface-2,#f3f3f0);color:var(--text,#151618);font-family:var(--font-sans,Geist,sans-serif);font-size:14px;font-weight:550;line-height:1;cursor:pointer;transition:background-color 120ms cubic-bezier(.22,1,.36,1),border-color 120ms,transform 120ms}.ds-btn:hover{background:var(--surface-hover,#ecece8)}.ds-btn:active{transform:translateY(1px)}.ds-btn:focus-visible{outline:2px solid var(--accent,#1d63d8);outline-offset:2px}.ds-btn-primary{background:var(--primary,#151618);color:var(--on-primary,#fff);border-color:var(--primary,#151618)}.ds-btn-primary:hover{background:var(--primary-hover,#000)}"
     },
     {
       "name": "Secondary Button",
       "kind": "button",
       "refersTo": "button-secondary",
-      "description": "A quiet alternative or supporting action beside a primary control.",
-      "html": "<button class=\"ds-doc-btn-secondary\" type=\"button\">View evidence</button>",
-      "css": ".ds-doc-btn-secondary { align-items:center; background:transparent; border:1px solid var(--dg-line-strong, rgba(255,255,255,.14)); border-radius:var(--dg-radius-sm, 8px); color:var(--dg-ink-2, #B6BDC9); cursor:pointer; display:inline-flex; font-family:var(--dg-font, Geist, sans-serif); font-size:.875rem; font-weight:560; justify-content:center; min-height:38px; padding:8px 14px; transition:background 140ms cubic-bezier(.2,.7,.2,1), color 140ms cubic-bezier(.2,.7,.2,1); } .ds-doc-btn-secondary:hover { background:var(--dg-surface-2, #1A1E27); color:var(--dg-ink, #EDEFF3); } .ds-doc-btn-secondary:focus-visible { outline:2px solid #F97316; outline-offset:3px; } .ds-doc-btn-secondary:active { background:var(--dg-surface-3, #202530); }"
+      "description": "Default button for every other action.",
+      "html": "<button class=\"ds-btn\">Open app</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:0 16px;border-radius:8px;border:1px solid var(--line-strong,#cbcbc5);background:var(--surface-2,#f3f3f0);color:var(--text,#151618);font-family:var(--font-sans,Geist,sans-serif);font-size:14px;font-weight:550;line-height:1;cursor:pointer;transition:background-color 120ms cubic-bezier(.22,1,.36,1),border-color 120ms,transform 120ms}.ds-btn:hover{background:var(--surface-hover,#ecece8)}.ds-btn:active{transform:translateY(1px)}.ds-btn:focus-visible{outline:2px solid var(--accent,#1d63d8);outline-offset:2px}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Outlined red; opens a confirmation, never acts directly.",
+      "html": "<button class=\"ds-btn ds-btn-danger\">Destroy infrastructure</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:0 16px;border-radius:8px;border:1px solid var(--line-strong,#cbcbc5);background:var(--surface-2,#f3f3f0);color:var(--text,#151618);font-family:var(--font-sans,Geist,sans-serif);font-size:14px;font-weight:550;line-height:1;cursor:pointer;transition:background-color 120ms cubic-bezier(.22,1,.36,1),border-color 120ms,transform 120ms}.ds-btn:hover{background:var(--surface-hover,#ecece8)}.ds-btn:active{transform:translateY(1px)}.ds-btn:focus-visible{outline:2px solid var(--accent,#1d63d8);outline-offset:2px}.ds-btn-danger{background:transparent;color:var(--bad,#c42b2b);border-color:color-mix(in srgb,var(--bad,#c42b2b) 45%,transparent)}.ds-btn-danger:hover{background:var(--bad-soft,rgba(196,43,43,.09))}"
+    },
+    {
+      "name": "Status",
+      "kind": "chip",
+      "refersTo": "status",
+      "description": "Dot plus a word; the only state signal.",
+      "html": "<span class=\"ds-status ds-ok\">Live</span> <span class=\"ds-status ds-info ds-active\">Deploying</span> <span class=\"ds-status ds-bad\">Failed</span> <span class=\"ds-status\">Ready</span>",
+      "css": ".ds-status{--tone:var(--neutral,#686c73);display:inline-flex;align-items:center;gap:7px;margin-right:16px;font-family:var(--font-sans,Geist,sans-serif);font-size:14px;font-weight:550;color:var(--text,#151618)}.ds-status::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--tone);box-shadow:0 0 0 3px color-mix(in srgb,var(--tone) 20%,transparent)}.ds-ok{--tone:var(--ok,#157a42)}.ds-info{--tone:var(--info,#1d63d8)}.ds-bad{--tone:var(--bad,#c42b2b)}.ds-active::before{animation:ds-pulse 1.6s cubic-bezier(.22,1,.36,1) infinite}@keyframes ds-pulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--tone) 6%,transparent)}}"
     },
     {
       "name": "Text Field",
       "kind": "input",
       "refersTo": "input",
-      "description": "A compact recessed field for configuration and evidence filters.",
-      "html": "<label class=\"ds-doc-field\"><span>Source revision</span><input type=\"text\" value=\"a1b2c3d4e5f6\" /></label>",
-      "css": ".ds-doc-field { color:var(--dg-ink-2, #B6BDC9); display:grid; font-family:var(--dg-font, Geist, sans-serif); font-size:.82rem; font-weight:560; gap:6px; } .ds-doc-field input { background:var(--au-field, #0F1117); border:1px solid var(--dg-line-strong, rgba(255,255,255,.14)); border-radius:var(--dg-radius-sm, 8px); box-shadow:none; color:var(--dg-ink, #EDEFF3); font:inherit; font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.84rem; min-height:38px; padding:8px 12px; transition:border-color 140ms cubic-bezier(.2,.7,.2,1), box-shadow 140ms cubic-bezier(.2,.7,.2,1); width:280px; } .ds-doc-field input:hover { border-color:rgba(255,255,255,.22); } .ds-doc-field input:focus { border-color:#F97316; box-shadow:0 0 0 3px rgba(249,115,22,.18); outline:0; }"
+      "description": "Sunken well, accent border and soft ring on focus.",
+      "html": "<label class=\"ds-field\"><span>Branch</span><input class=\"ds-input\" value=\"main\"></label>",
+      "css": ".ds-field{display:grid;gap:6px;font-family:var(--font-sans,Geist,sans-serif);font-size:14px;font-weight:550;color:var(--text,#151618);max-width:320px}.ds-input{min-height:36px;padding:7px 11px;border-radius:8px;border:1px solid var(--line-strong,#cbcbc5);background:var(--bg-sunken,#efefec);color:var(--text,#151618);font:inherit;font-weight:400;transition:border-color 120ms,box-shadow 120ms}.ds-input:hover{border-color:var(--text-3,#686c73)}.ds-input:focus-visible{outline:none;border-color:var(--accent,#1d63d8);box-shadow:0 0 0 3px var(--accent-soft,rgba(29,99,216,.1))}"
     },
     {
-      "name": "Active Navigation Item",
+      "name": "Header Tabs",
       "kind": "nav",
-      "description": "The selected control-plane destination in the authenticated shell.",
-      "html": "<nav class=\"ds-doc-nav\" aria-label=\"Project navigation preview\"><a class=\"ds-doc-nav-item\" href=\"#\" aria-current=\"page\"><span class=\"ds-doc-nav-mark\" aria-hidden=\"true\"></span>Infrastructure</a></nav>",
-      "css": ".ds-doc-nav { background:var(--au-1, #0F1117); border:1px solid var(--dg-line, rgba(255,255,255,.08)); border-radius:var(--dg-radius, 12px); font-family:var(--dg-font, Geist, sans-serif); padding:8px; width:220px; } .ds-doc-nav-item { align-items:center; background:rgba(249,115,22,.12); border:1px solid rgba(249,115,22,.28); border-radius:8px; color:var(--dg-ink, #EDEFF3); display:flex; font-size:.9rem; font-weight:560; gap:10px; min-height:40px; padding:8px 10px; text-decoration:none; } .ds-doc-nav-mark { background:#F97316; border-radius:2px; height:16px; width:3px; } .ds-doc-nav-item:hover { background:rgba(249,115,22,.16); } .ds-doc-nav-item:focus-visible { outline:2px solid #F97316; outline-offset:3px; }"
+      "refersTo": "header-tab",
+      "description": "Project tab row; ink underline on the active tab, red dot flags a failure.",
+      "html": "<nav class=\"ds-tabs\"><a class=\"ds-tab is-active\">Overview</a><a class=\"ds-tab\">Deployments</a><a class=\"ds-tab\">Infrastructure</a><a class=\"ds-tab\">Monitoring</a><a class=\"ds-tab\">Troubleshoot <i class=\"ds-tab-dot\"></i></a><a class=\"ds-tab\">Settings</a></nav>",
+      "css": ".ds-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line,#e2e2dd);font-family:var(--font-sans,Geist,sans-serif)}.ds-tab{position:relative;display:inline-flex;align-items:center;gap:6px;padding:10px 12px 12px;color:var(--text-3,#686c73);font-size:14px;font-weight:500;cursor:pointer;transition:color 120ms}.ds-tab:hover,.ds-tab.is-active{color:var(--text,#151618)}.ds-tab.is-active::after{content:'';position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:2px;background:var(--text,#151618)}.ds-tab-dot{width:6px;height:6px;border-radius:50%;background:var(--bad,#c42b2b)}"
     },
     {
-      "name": "Semantic Status Chips",
-      "kind": "chip",
-      "refersTo": "status-success",
-      "description": "Compact verified-state labels; semantic hues never act as page decoration.",
-      "html": "<div class=\"ds-doc-status-set\"><span class=\"ds-doc-chip ds-doc-chip-success\"><i></i>Healthy</span><span class=\"ds-doc-chip ds-doc-chip-warning\"><i></i>Attention</span><span class=\"ds-doc-chip ds-doc-chip-danger\"><i></i>Failed</span><span class=\"ds-doc-chip ds-doc-chip-info\"><i></i>Deploying</span></div>",
-      "css": ".ds-doc-status-set { display:flex; flex-wrap:wrap; gap:8px; } .ds-doc-chip { align-items:center; border:1px solid; border-radius:999px; display:inline-flex; font-family:var(--dg-font, Geist, sans-serif); font-size:.72rem; font-weight:560; gap:6px; line-height:1; padding:4px 9px 4px 8px; } .ds-doc-chip i { background:currentColor; border-radius:50%; height:6px; width:6px; } .ds-doc-chip-success { background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.28); color:#4ADE80; } .ds-doc-chip-warning { background:rgba(234,179,8,.12); border-color:rgba(234,179,8,.28); color:#FACC15; } .ds-doc-chip-danger { background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.28); color:#F87171; } .ds-doc-chip-info { background:rgba(59,130,246,.12); border-color:rgba(59,130,246,.28); color:#93C5FD; }"
-    },
-    {
-      "name": "Operational Card",
+      "name": "Ruled Section with Facts",
       "kind": "card",
-      "refersTo": "card",
-      "description": "A flat content surface where state and evidence carry the hierarchy.",
-      "html": "<section class=\"ds-doc-card\"><p class=\"ds-doc-eyebrow\">Release evidence</p><h3>Immutable runtime identity</h3><dl><div><dt>Source</dt><dd>a1b2c3d4e5f6</dd></div><div><dt>Stage</dt><dd>Verify</dd></div></dl></section>",
-      "css": ".ds-doc-card { background:var(--dg-surface, #12151C); border:1px solid var(--dg-line, rgba(255,255,255,.08)); border-radius:var(--dg-radius, 12px); box-shadow:0 1px 2px rgba(0,0,0,.24); color:var(--dg-ink, #EDEFF3); font-family:var(--dg-font, Geist, sans-serif); padding:20px; width:320px; } .ds-doc-eyebrow { color:var(--dg-primary-ink, #FB923C); font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.68rem; font-weight:500; letter-spacing:.06em; margin:0 0 8px; text-transform:uppercase; } .ds-doc-card h3 { font-size:1.05rem; letter-spacing:-.025em; margin:0 0 16px; } .ds-doc-card dl { display:grid; gap:8px; margin:0; } .ds-doc-card dl div { border-top:1px solid var(--dg-line, rgba(255,255,255,.08)); display:grid; gap:12px; grid-template-columns:80px 1fr; padding-top:8px; } .ds-doc-card dt { color:var(--dg-muted, #9AA3B2); font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.68rem; text-transform:uppercase; } .ds-doc-card dd { color:var(--dg-ink-2, #B6BDC9); font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.8rem; margin:0; }"
+      "refersTo": "section",
+      "description": "Top-hairline section with label/value rows; the ledger, not a card.",
+      "html": "<section class=\"ds-section\"><h2>Current release</h2><dl class=\"ds-facts\"><div><dt>Release</dt><dd>14</dd></div><div><dt>Commit</dt><dd class=\"ds-id\">a41f9c2a41f9</dd></div><div><dt>Verified</dt><dd>2 hours ago</dd></div></dl></section>",
+      "css": ".ds-section{display:grid;gap:16px;font-family:var(--font-sans,Geist,sans-serif);color:var(--text,#151618)}.ds-section h2{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em}.ds-facts{margin:0;border-top:1px solid var(--line,#e2e2dd)}.ds-facts>div{display:grid;grid-template-columns:200px 1fr;gap:16px;padding:12px 0;border-bottom:1px solid var(--line,#e2e2dd);font-size:14px}.ds-facts dt{color:var(--text-3,#686c73)}.ds-facts dd{margin:0}.ds-id{font-family:var(--font-mono,'Geist Mono',monospace);font-size:13px;color:var(--text-2,#464a50)}"
     },
     {
-      "name": "Evidence Table",
+      "name": "Typed-Phrase Confirmation",
       "kind": "custom",
-      "description": "A dense, scan-friendly record of deployment fields and their authoritative values.",
-      "html": "<div class=\"ds-doc-table-wrap\"><table class=\"ds-doc-table\"><thead><tr><th>Field</th><th>Value</th><th>Status</th></tr></thead><tbody><tr><td>Source SHA</td><td>a1b2c3d4e5f6</td><td>Resolved</td></tr><tr><td>Runtime owner</td><td>DeployGuard / ECS</td><td>Verified</td></tr></tbody></table></div>",
-      "css": ".ds-doc-table-wrap { background:var(--dg-surface, #12151C); border:1px solid var(--dg-line, rgba(255,255,255,.08)); border-radius:var(--dg-radius, 12px); overflow:hidden; } .ds-doc-table { border-collapse:collapse; color:var(--dg-ink, #EDEFF3); font-family:var(--dg-font, Geist, sans-serif); min-width:520px; width:100%; } .ds-doc-table th { background:var(--au-1, #0F1117); color:var(--dg-muted, #9AA3B2); font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.66rem; font-weight:500; letter-spacing:.06em; padding:10px 14px; text-align:left; text-transform:uppercase; } .ds-doc-table td { border-top:1px solid var(--dg-line, rgba(255,255,255,.08)); color:var(--dg-ink-2, #B6BDC9); font-size:.88rem; padding:11px 14px; } .ds-doc-table td:nth-child(2) { color:var(--dg-ink, #EDEFF3); font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.8rem; } .ds-doc-table tbody tr:hover { background:rgba(255,255,255,.025); } .ds-doc-table :focus-visible { outline:2px solid #F97316; outline-offset:-2px; }"
-    },
-    {
-      "name": "Control Path Artifact",
-      "kind": "custom",
-      "description": "The evidence-first architecture pattern used to explain ownership and runtime progression.",
-      "html": "<figure class=\"ds-doc-architecture\"><figcaption>Deployment control path</figcaption><ol><li><span>01</span><strong>Build</strong><small>Railpack</small></li><li><span>02</span><strong>Ensure</strong><small>Terraform</small></li><li><span>03</span><strong>Run</strong><small>ECS</small></li><li><span>04</span><strong>Verify</strong><small>DeployGuard</small></li></ol></figure>",
-      "css": ".ds-doc-architecture { background:var(--au-1, #0F1117); border:1px solid var(--dg-line-strong, rgba(255,255,255,.14)); border-radius:16px; box-shadow:0 28px 60px -28px rgba(0,0,0,.88); color:var(--dg-ink, #EDEFF3); font-family:var(--dg-font, Geist, sans-serif); margin:0; padding:16px; } .ds-doc-architecture figcaption { color:var(--dg-primary-ink, #FB923C); font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.68rem; letter-spacing:.08em; margin-bottom:14px; text-transform:uppercase; } .ds-doc-architecture ol { display:grid; gap:8px; grid-template-columns:repeat(4, minmax(100px, 1fr)); list-style:none; margin:0; padding:0; } .ds-doc-architecture li { background:var(--dg-surface, #12151C); border:1px solid var(--dg-line, rgba(255,255,255,.08)); border-radius:12px; display:grid; gap:4px; min-height:92px; padding:12px; position:relative; } .ds-doc-architecture li:not(:last-child)::after { background:#F97316; content:\"\"; height:1px; position:absolute; right:-9px; top:50%; width:9px; } .ds-doc-architecture span { color:var(--dg-primary-ink, #FB923C); font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.64rem; } .ds-doc-architecture strong { font-size:.9rem; } .ds-doc-architecture small { color:var(--dg-muted, #9AA3B2); font-family:var(--dg-mono, \"Geist Mono\", monospace); font-size:.68rem; } .ds-doc-architecture li:hover { background:var(--dg-surface-2, #1A1E27); border-color:rgba(249,115,22,.32); }"
+      "refersTo": "dialog",
+      "description": "ConfirmPhraseDialog: the confirm stays disabled until the exact phrase is typed.",
+      "html": "<section class=\"ds-dialog\"><h2>Destroy infrastructure?</h2><p>Every AWS resource for this project is deleted. This cannot be undone.</p><label class=\"ds-confirm\"><span>Type <code>destroy rentmate</code> to confirm</span><input></label><div class=\"ds-actions\"><button class=\"ds-ghost\">Cancel</button><button class=\"ds-solid\" disabled>Destroy infrastructure</button></div></section>",
+      "css": ".ds-dialog{width:min(520px,100%);display:grid;gap:16px;padding:24px;border-radius:12px;background:var(--surface,#fff);border:1px solid var(--line-strong,#cbcbc5);box-shadow:var(--shadow-pop,0 12px 32px rgba(20,21,24,.14),0 2px 6px rgba(20,21,24,.08));font-family:var(--font-sans,Geist,sans-serif);color:var(--text,#151618)}.ds-dialog h2{margin:0;font-size:22px;font-weight:650}.ds-dialog p{margin:0;font-size:14px;color:var(--text-2,#464a50)}.ds-confirm{display:grid;gap:6px;font-size:14px;font-weight:550}.ds-confirm code{font-family:var(--font-mono,'Geist Mono',monospace)}.ds-confirm input{min-height:36px;padding:7px 11px;border-radius:8px;border:1px solid var(--line-strong,#cbcbc5);background:var(--bg-sunken,#efefec);font:inherit}.ds-confirm input:focus-visible{outline:none;border-color:var(--accent,#1d63d8);box-shadow:0 0 0 3px var(--accent-soft,rgba(29,99,216,.1))}.ds-actions{display:flex;justify-content:flex-end;gap:8px}.ds-ghost,.ds-solid{min-height:36px;padding:0 16px;border-radius:8px;font:inherit;font-size:14px;font-weight:550;cursor:pointer}.ds-ghost{background:transparent;border:1px solid transparent;color:var(--text-2,#464a50)}.ds-ghost:hover{background:var(--surface-2,#f3f3f0)}.ds-solid{background:var(--bad,#c42b2b);border:1px solid var(--bad,#c42b2b);color:#fff}.ds-solid:disabled{opacity:.45;cursor:not-allowed}"
     }
   ],
   "narrative": {
-    "northStar": "The Quiet Control Plane",
-    "overview": "DeployGuard is a calm, dense operational interface built from graphite surfaces, restrained borders, and one orange product signal. The visual system should feel like a dependable control room: exact without becoming sterile, technical without turning into a wall of terminal chrome, and confident without visual noise.\n\nArchitecture, deployment state, runtime health, and immutable evidence carry the hierarchy. Marketing language supports those artifacts rather than competing with them. Orange identifies product actions, selection, focus, and the active path; green, yellow, red, and blue appear only when the interface is communicating status.\n\nThe system is flat by default. Depth comes from tonal separation, fine hairlines, compact grouping, and a single shared atmospheric glow rather than glass, blur, or decorative gradients. Motion confirms state change; route entry and static surfaces remain immediate.",
+    "northStar": "The Release Ledger",
+    "overview": "**Creative North Star: \"The Release Ledger\"**\n\nEvery screen opens with one plain-language state sentence and anchors it to exact evidence one disclosure deeper: the commit, the image, the run. The page reads like a ledger, not a dashboard. Content sits directly on a neutral ground (paper in light, graphite in dark) in sections divided by a single hairline at the top, with grouped rows beneath. The card-grid dashboard and the status-chip confetti common to deployment tools are refused.\n\nThe ground follows the operating-system preference by default; the account menu carries a three-way theme override (System, Light, Dark) that sets `data-theme` on the root. Both themes are defined token for token, so nothing is styled for one theme only. Density is calm-operational: 15px body, 36px controls, 32px between sections, generous whitespace around one state statement per page.\n\nColour is spent on state and nothing else. One blue signal marks focus, links and work in progress; green, amber and red appear only for verified state. The primary action is inverted ink (black on paper, near-white on graphite), so the strongest object on the page is the next action, not a brand colour.\n\nThis direction was chosen by the designer and recorded in the surface brief (`.impeccable/surfaces/frontend-src.md`). The Impeccable concept-seed roll was not run for this redesign (seed key: none): the product owner forbade option rounds.",
     "keyCharacteristics": [
-      "Neutral graphite environment across public, authenticated, project, and administration routes.",
-      "One orange product accent, reserved for actions, focus, active navigation, and control-path emphasis.",
-      "Semantic color appears only where success, warning, danger, or in-progress information is being communicated.",
-      "Modern sans hierarchy for human-facing content; compact mono type for evidence, labels, identifiers, and numeric data.",
-      "Dense but calm layouts that elevate architecture and operational proof above promotional copy.",
-      "Accessible contrast, visible focus, restrained motion, and responsive evidence views."
+      "Hairline-ruled sections (top rule only) instead of boxes.",
+      "Boxes only for genuine containment: dialogs, drawers, the topology diagram, the log viewer, code, the danger zone and repeated service editors.",
+      "Colour carries state only (ok, warn, bad, info, neutral); blue for focus, links and in-progress.",
+      "Inverted-ink primary button; 8px control radius.",
+      "Geist for reading; Geist Mono only for identifiers.",
+      "Status is a dot plus a word.",
+      "Irreversible destructive actions sit behind a typed-phrase confirmation."
     ],
     "rules": [
       {
-        "name": "The One Signal Rule",
-        "body": "Orange is the only non-semantic accent and should remain visually scarce enough to identify the action or active path immediately.",
+        "name": "The State-Only Colour Rule",
+        "body": "Hue appears only to say ok, warn, bad, info or neutral. If a coloured element does not report state, focus, a link or progress, it is grey.",
         "section": "colors"
       },
       {
-        "name": "The Status Means Status Rule",
-        "body": "Green, yellow, red, and blue are not page themes or decoration; they communicate verified state only.",
+        "name": "The Unverified Is Grey Rule",
+        "body": "Green, amber and red are reserved for verified state. Anything the system cannot confirm renders in the neutral tone with the word that says so.",
         "section": "colors"
       },
       {
-        "name": "The Shared Atmosphere Rule",
-        "body": "Every route uses the same subtle orange radial glow at the top-left edge of the graphite canvas; do not introduce route-specific color worlds.",
+        "name": "The Inverted Ink Rule",
+        "body": "The primary button is ink on ground, inverted (ink fill, ground-coloured text). Blue never fills a primary button.",
         "section": "colors"
       },
       {
-        "name": "The Two Voices Rule",
-        "body": "Sans explains and directs; mono identifies and proves. Do not set ordinary body copy or major headings in monospace.",
+        "name": "The Identifier Rule",
+        "body": "Geist Mono is for identifiers only: commits, digests, run IDs, resource names, paths and logs. Labels, numbers in prose, and headings are never mono.",
         "section": "typography"
       },
       {
-        "name": "The Consistent Eyebrow Rule",
-        "body": "Eyebrows use the compact mono label treatment and orange signal ink unless a neutral evidence context explicitly requires muted ink.",
+        "name": "The Sentence First Rule",
+        "body": "Every page leads with a plain-language state sentence at reading size; evidence (IDs, codes) sits below it or one disclosure deeper.",
         "section": "typography"
       },
       {
-        "name": "The Evidence-First Rule",
-        "body": "When architecture or runtime evidence and promotional copy share a surface, allocate more space and stronger grouping to the evidence.",
+        "name": "The Top Rule Rule",
+        "body": "A ruled section draws only its top hairline (1px line), so adjacent sections never double up. Rows inside a group are separated by the same hairline.",
         "section": "layout"
       },
       {
-        "name": "The Flat-by-Default Rule",
-        "body": "If a border and tonal shift establish the hierarchy, do not add another shadow.",
+        "name": "The One Owner Rule",
+        "body": "Each fact has exactly one page that owns it; other pages link to it rather than restating it.",
+        "section": "layout"
+      },
+      {
+        "name": "The Floating Only Rule",
+        "body": "Only things that float above the page cast a shadow. Nothing resting on the ground is lifted.",
         "section": "elevation"
       },
       {
-        "name": "The One Atmosphere Rule",
-        "body": "The shared radial orange glow belongs to the canvas, never to individual cards or decorative blobs.",
-        "section": "elevation"
+        "name": "The Earned Box Rule",
+        "body": "A bordered box exists only for genuine containment: dialogs, drawers, the topology diagram, the log viewer, code, the danger zone and repeated service editors. Everything else is a ruled section on the ground.",
+        "section": "shapes"
       }
     ],
     "dos": [
-      "Do keep every route on the Graphite Canvas with the shared subtle orange atmosphere.",
-      "Do reserve Control Orange for primary actions, focus, active navigation, selection, and control-path emphasis.",
-      "Do use semantic colors only when presenting verified status or runtime state.",
-      "Do use Geist Mono for evidence, identifiers, labels, timestamps, boundaries, and tabular values.",
-      "Do make architecture, lifecycle state, diagnostics, and immutable evidence more prominent than explanatory or promotional copy.",
-      "Do retain visible keyboard focus, readable contrast, 44px mobile targets, and reduced-motion behavior."
+      "**Do** open every page with one plain-language state sentence, then put the commit, image and run one disclosure deeper.",
+      "**Do** rule sections with a single top hairline (1px line) and keep content on the ground.",
+      "**Do** render every status as a dot plus a word from the shared state vocabulary.",
+      "**Do** use the inverted-ink primary button for the single next action on a view.",
+      "**Do** set commits, digests, run IDs, resource names, paths and logs in Geist Mono, and everything else in Geist.",
+      "**Do** put irreversible destructive actions behind `ConfirmPhraseDialog`, and keep Destroy only in the Settings danger zone.",
+      "**Do** define every new colour in both the paper and graphite themes in `tokens.css`; components use tokens, never raw values.",
+      "**Do** show unverified state in the neutral tone with words that say it is unverified."
     ],
     "donts": [
-      "Don't introduce route-specific accent palettes, decorative multicolor gradients, or colored atmosphere fields.",
-      "Don't use green, yellow, red, or blue as generic decoration or branding.",
-      "Don't add glass blur, glossy highlights, or elevated shadows to ordinary content surfaces.",
-      "Don't turn all technical content into monospace; keep headings and explanations in Geist.",
-      "Don't hide operational evidence behind marketing spectacle, oversized copy, or ornamental motion.",
-      "Don't use pills for primary buttons, ordinary cards, or top-level navigation."
+      "**Don't** build card-grid dashboards or box content that is not genuinely contained.",
+      "**Don't** use status chips as the state signal; a pill label is for a role or plan name, not for state.",
+      "**Don't** use green, amber or red for anything other than verified state, or blue for anything other than focus, links and in-progress.",
+      "**Don't** fill a primary button with blue or any state colour.",
+      "**Don't** use Geist Mono for labels, headings or numbers in prose.",
+      "**Don't** cast shadows on anything resting on the page; the pop shadow is for floating layers.",
+      "**Don't** repeat a fact on a page that does not own it; link to its owner."
     ]
   }
 }

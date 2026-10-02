@@ -33,7 +33,7 @@ function Harness() {
     <button id="open-navigation" onClick={() => setNavigationOpen(true)} type="button">Open navigation</button>
     <aside aria-modal={navigationOpen ? "true" : undefined} hidden={!navigationOpen} id="mobile-navigation" ref={navigationRef} role={navigationOpen ? "dialog" : undefined} tabIndex={navigationOpen ? -1 : undefined}><button id="navigation-first" type="button">First navigation item</button><button id="navigation-last" type="button">Last navigation item</button></aside>
     <main id="obscured-content" inert={navigationOpen ? "" : undefined}><button id="obscured-action" type="button">Obscured action</button></main>
-    <section id="transformed-surface" style={{ height: 420, marginLeft: 170, overflow: "hidden", width: 690 }}>
+    <section id="transformed-surface" style={{ height: 420, marginLeft: 170, overflow: "hidden", transform: "translateZ(0)", width: 690 }}>
       <button id="open-destroy" onClick={() => setOverlay("destroy")} type="button">Open destroy</button>
       <button id="open-rollback" onClick={() => setOverlay("rollback")} type="button">Open rollback</button>
       <button id="open-drawer" onClick={() => setOverlay("drawer")} type="button">Open drawer</button>
@@ -78,8 +78,8 @@ try {
     plugins: [react()],
     resolve: { alias: {
       "@design-system": resolve(frontendRoot, "src/components/common/DesignSystem.jsx"),
-      "@styles": resolve(frontendRoot, "src/styles.css"),
-      "@enterprise": resolve(frontendRoot, "src/design-system.css"),
+      "@styles": resolve(frontendRoot, "src/styles/app.css"),
+      "@enterprise": resolve(frontendRoot, "src/styles/tokens.css"),
     } },
     build: { outDir: outputRoot, emptyOutDir: true },
   });
@@ -135,7 +135,7 @@ try {
   async function closeWithEscape() {
     await command("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
     await command("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
-    await waitFor(() => evaluate("!document.querySelector('.ds-modal-backdrop,.ds-drawer-backdrop')"), "Escape did not close the shared overlay.");
+    await waitFor(() => evaluate("!document.querySelector('.overlay')"), "Escape did not close the shared overlay.");
   }
 
   await command("Runtime.enable");
@@ -150,8 +150,8 @@ try {
   ];
   for (const viewport of viewports) {
     await command("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
-    await open("#open-destroy", ".ds-modal-backdrop");
-    const geometry = await evaluate(`(() => { const backdrop=document.querySelector('.ds-modal-backdrop'); const modal=document.querySelector('.ds-modal'); const confirm=document.querySelector('#confirm-destroy'); const bounds=backdrop.getBoundingClientRect(); const modalBounds=modal.getBoundingClientRect(); modal.scrollTop=modal.scrollHeight; const actionBounds=confirm.getBoundingClientRect(); return { parentIsBody:backdrop.parentElement===document.body, bounds:{top:bounds.top,left:bounds.left,right:bounds.right,bottom:bounds.bottom,width:bounds.width,height:bounds.height}, modalBounds:{top:modalBounds.top,bottom:modalBounds.bottom}, actionBounds:{top:actionBounds.top,bottom:actionBounds.bottom}, viewport:{width:document.documentElement.clientWidth,height:document.documentElement.clientHeight}, bodyOverflow:getComputedStyle(document.body).overflow, modalOverflow:getComputedStyle(modal).overflowY, scrollable:modal.scrollHeight>modal.clientHeight, activeId:document.activeElement?.id }; })()`);
+    await open("#open-destroy", ".overlay:not(.overlay-drawer)");
+    const geometry = await evaluate(`(() => { const backdrop=document.querySelector('.overlay:not(.overlay-drawer)'); const modal=document.querySelector('.dialog'); const confirm=document.querySelector('#confirm-destroy'); const bounds=backdrop.getBoundingClientRect(); const modalBounds=modal.getBoundingClientRect(); modal.scrollTop=modal.scrollHeight; const actionBounds=confirm.getBoundingClientRect(); return { parentIsBody:backdrop.parentElement===document.body, bounds:{top:bounds.top,left:bounds.left,right:bounds.right,bottom:bounds.bottom,width:bounds.width,height:bounds.height}, modalBounds:{top:modalBounds.top,bottom:modalBounds.bottom}, actionBounds:{top:actionBounds.top,bottom:actionBounds.bottom}, viewport:{width:document.documentElement.clientWidth,height:document.documentElement.clientHeight}, bodyOverflow:getComputedStyle(document.body).overflow, modalOverflow:getComputedStyle(modal).overflowY, scrollable:modal.scrollHeight>modal.clientHeight, activeId:document.activeElement?.id }; })()`);
     assert.equal(geometry.parentIsBody, true, `${viewport.name}: modal was not portalled to document.body`);
     assert.deepEqual(geometry.bounds, { top: 0, left: 0, right: geometry.viewport.width, bottom: geometry.viewport.height, width: geometry.viewport.width, height: geometry.viewport.height }, `${viewport.name}: backdrop does not equal the browser layout viewport`);
     assert.equal(geometry.bodyOverflow, "hidden", `${viewport.name}: background body remained scrollable`);
@@ -169,16 +169,16 @@ try {
     await waitFor(() => evaluate("document.activeElement?.id === 'open-destroy'"), `${viewport.name}: focus was not restored to the opener`);
   }
 
-  await open("#open-destroy", ".ds-modal-backdrop");
-  await evaluate("document.querySelector('.ds-modal-backdrop').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))");
-  await waitFor(() => evaluate("!document.querySelector('.ds-modal-backdrop')"), "Backdrop interaction did not close the modal.");
+  await open("#open-destroy", ".overlay:not(.overlay-drawer)");
+  await evaluate("document.querySelector('.overlay:not(.overlay-drawer)').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}))");
+  await waitFor(() => evaluate("!document.querySelector('.overlay:not(.overlay-drawer)')"), "Backdrop interaction did not close the modal.");
 
-  await open("#open-rollback", ".ds-modal-backdrop");
-  assert.equal(await evaluate("document.querySelector('.ds-modal-backdrop').parentElement===document.body && Boolean(document.querySelector('#confirm-rollback'))"), true, "Rollback did not use the viewport-level shared modal.");
+  await open("#open-rollback", ".overlay:not(.overlay-drawer)");
+  assert.equal(await evaluate("document.querySelector('.overlay:not(.overlay-drawer)').parentElement===document.body && Boolean(document.querySelector('#confirm-rollback'))"), true, "Rollback did not use the viewport-level shared modal.");
   await closeWithEscape();
 
-  await open("#open-drawer", ".ds-drawer-backdrop");
-  assert.equal(await evaluate("document.querySelector('.ds-drawer-backdrop').parentElement===document.body"), true, "Shared drawer remained trapped by the transformed page ancestor.");
+  await open("#open-drawer", ".overlay-drawer");
+  assert.equal(await evaluate("document.querySelector('.overlay-drawer').parentElement===document.body"), true, "Shared drawer remained trapped by the transformed page ancestor.");
   await closeWithEscape();
 
   await open("#open-navigation", "#mobile-navigation:not([hidden])");

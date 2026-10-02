@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import AppIcon from "../common/AppIcon.jsx";
-import { StatusChip } from "../common/DesignSystem.jsx";
 import { DEVELOPER_DEPLOYMENT_PHASES, DEVELOPER_DESTROY_PHASES, PIPELINE_PHASE_STAGE_KEYS } from "../../utils/developerDeploymentPresentation.js";
 import { pipelineStageDisplayStatus } from "../../utils/pipelineStageTiming.js";
 import { productText } from "../../utils/productTerms.js";
@@ -12,6 +11,7 @@ function tone(status) {
   if (["completed", "passed", "success", "succeeded"].includes(status)) return "done";
   if (status === "failed") return "failed";
   if (status === "running") return "running";
+  if (status === "skipped") return "skipped";
   return "idle";
 }
 
@@ -24,21 +24,23 @@ function phaseStatus(entries) {
   return "idle";
 }
 
-function StageIcon({ status }) {
-  const value = tone(status);
-  if (value === "done") return <AppIcon name="check" size={12} />;
-  if (value === "failed") return <AppIcon name="close" size={12} />;
+const STATUS_TEXT = { done: "Done", failed: "Failed", running: "Running", partial: "Partly done", idle: "Not run", skipped: "Skipped" };
+
+function StepIcon({ value }) {
+  if (value === "done") return <AppIcon name="check" size={13} />;
+  if (value === "failed") return <AppIcon name="close" size={13} />;
+  if (value === "running") return <span className="inline-spinner" />;
   return null;
 }
 
 /**
- * Execution graph: the GitHub Actions stages of one operation grouped into
- * lifecycle phases (columns) joined by connectors. Selecting a stage opens its
- * recorded evidence. Presentation only — stage data is used as returned.
+ * Stage list: the GitHub Actions steps of one operation grouped into
+ * lifecycle phases. Phases with a failure or a running step open by default.
+ * Presentation only — stage data is used as returned.
  */
-export default function PipelineGraph({ durationLabel, formatDate, operation, stages }) {
+export default function PipelineGraph({ durationLabel, operation, stages }) {
   const destroy = operation?.deploymentAction === "destroy";
-  const columns = useMemo(() => {
+  const phases = useMemo(() => {
     const order = destroy ? DESTROY_ORDER : DEPLOY_ORDER;
     const labels = Object.fromEntries((destroy ? DEVELOPER_DESTROY_PHASES : DEVELOPER_DEPLOYMENT_PHASES).map((phase) => [phase.key, phase.label]));
     const groups = [];
@@ -53,54 +55,32 @@ export default function PipelineGraph({ durationLabel, formatDate, operation, st
     });
     return groups.map((group) => ({ ...group, status: phaseStatus(group.entries) }));
   }, [destroy, operation, stages]);
+  const [toggled, setToggled] = useState(() => new Set());
+  const isOpen = (phase) => toggled.has(phase.key) !== ["failed", "running"].includes(phase.status);
 
-  const defaultIndex = useMemo(() => {
-    const all = columns.flatMap((column) => column.entries);
-    return (all.find((entry) => entry.displayStatus === "failed")
-      || all.find((entry) => entry.displayStatus === "running")
-      || [...all].reverse().find((entry) => tone(entry.displayStatus) === "done")
-      || all[0])?.index ?? null;
-  }, [columns]);
-  const [selectedIndex, setSelectedIndex] = useState(defaultIndex);
-  useEffect(() => { setSelectedIndex(defaultIndex); }, [defaultIndex, operation?.id]);
-  const selected = columns.flatMap((column) => column.entries).find((entry) => entry.index === selectedIndex) || null;
-  // Completion pop: only for stages observed changing to done, never on a fresh load.
-  const previousTones = useRef(null);
-  const [justCompleted, setJustCompleted] = useState(() => new Set());
-  useEffect(() => {
-    const tones = new Map(columns.flatMap((column) => column.entries).map((entry) => [`${entry.stage.key}-${entry.index}`, tone(entry.displayStatus)]));
-    const before = previousTones.current;
-    previousTones.current = tones;
-    if (!before) return undefined;
-    const done = [...tones].filter(([key, value]) => value === "done" && before.has(key) && before.get(key) !== "done").map(([key]) => key);
-    if (!done.length) return undefined;
-    setJustCompleted(new Set(done));
-    const timer = window.setTimeout(() => setJustCompleted(new Set()), 450);
-    return () => window.clearTimeout(timer);
-  }, [columns]);
-
-  return <div className="pipeline-graph">
-    <ol aria-label="Execution graph" className="pg-columns dg-dark">
-      {columns.map((column) => <li className={`pg-column is-${column.status}`} key={column.key}>
-        <div className="pg-column-head"><span aria-hidden="true" className="pg-phase-dot" /><strong>{column.label}</strong><small>{column.entries.length} step{column.entries.length === 1 ? "" : "s"}</small></div>
-        <ul className="pg-nodes">{column.entries.map(({ stage, index, displayStatus }) => <li key={`${stage.key}-${index}`}>
-          <button aria-pressed={selectedIndex === index} className={`pg-node is-${tone(displayStatus)}${justCompleted.has(`${stage.key}-${index}`) ? " just-completed" : ""}`} onClick={() => setSelectedIndex(index)} type="button">
-            <span aria-hidden="true" className="pg-node-icon"><StageIcon status={displayStatus} /></span>
-            <span className="pg-node-copy"><strong>{productText(stage.label)}</strong><small>{durationLabel(stage)}</small></span>
-          </button>
-        </li>)}</ul>
-      </li>)}
-    </ol>
-    {selected ? <section aria-live="polite" aria-label="Selected stage evidence" className="pg-detail">
-      <header><div><p className="eyebrow">Stage evidence</p><h3>{productText(selected.stage.label)}</h3></div><StatusChip status={selected.displayStatus} /></header>
-      <dl>
-        <div><dt>Duration</dt><dd>{durationLabel(selected.stage)}</dd></div>
-        <div><dt>Started</dt><dd>{formatDate(selected.stage.startedAt)}</dd></div>
-        <div><dt>Completed</dt><dd>{formatDate(selected.stage.completedAt)}</dd></div>
-        <div><dt>Source</dt><dd>GitHub Actions workflow job</dd></div>
-      </dl>
-      {selected.stage.failureReason ? <p className="pg-failure">{productText(selected.stage.failureReason)}</p> : null}
-      {selected.stage.jobUrl ? <a className="pg-job-link" href={selected.stage.jobUrl} rel="noreferrer" target="_blank">Open GitHub Actions job <AppIcon name="arrow" size={14} /></a> : null}
-    </section> : null}
-  </div>;
+  return <ol aria-label="Deployment stages" className="stage-list">
+    {phases.map((phase) => {
+      const open = isOpen(phase);
+      return <li className={`stage-phase is-${phase.status}`} key={phase.key}>
+        <button aria-expanded={open} className="stage-phase-head" onClick={() => setToggled((current) => { const next = new Set(current); if (next.has(phase.key)) next.delete(phase.key); else next.add(phase.key); return next; })} type="button">
+          <span aria-hidden="true" className="stage-icon"><StepIcon value={phase.status === "partial" ? "idle" : phase.status} /></span>
+          <strong>{phase.label}</strong>
+          <span className="stage-phase-meta">{STATUS_TEXT[phase.status]} · {phase.entries.length} step{phase.entries.length === 1 ? "" : "s"}</span>
+          <AppIcon className="stage-chevron" name="chevron-down" size={16} />
+        </button>
+        {open ? <ol className="stage-steps">
+          {phase.entries.map(({ stage, index, displayStatus }) => {
+            const value = tone(displayStatus);
+            return <li className={`stage-step is-${value}`} key={`${stage.key}-${index}`}>
+              <span aria-hidden="true" className="stage-icon is-small"><StepIcon value={value} /></span>
+              <span className="stage-step-label">{productText(stage.label)}<span className="sr-only"> — {STATUS_TEXT[value]}</span></span>
+              <span className="stage-step-time">{durationLabel(stage)}</span>
+              {stage.jobUrl ? <a aria-label={`Open the GitHub Actions job for ${productText(stage.label)}`} className="stage-step-link" href={stage.jobUrl} rel="noreferrer" target="_blank"><AppIcon name="external" size={14} /></a> : <span />}
+              {stage.failureReason ? <pre className="code stage-failure">{productText(stage.failureReason)}</pre> : null}
+            </li>;
+          })}
+        </ol> : null}
+      </li>;
+    })}
+  </ol>;
 }

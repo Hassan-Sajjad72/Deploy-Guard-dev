@@ -1,304 +1,368 @@
 ---
 name: DeployGuard
-description: A quiet graphite control plane for deployment architecture and operational evidence.
+description: The release ledger. Is it live, what changed, whose problem it is, and the one next action.
 colors:
-  primary: "#F97316"
-  primary-hover: "#FB8A3C"
-  primary-ink: "#FB923C"
-  primary-soft: "rgba(249, 115, 22, 0.12)"
-  primary-line: "rgba(249, 115, 22, 0.32)"
-  on-primary: "#160A02"
-  canvas: "#0B0D12"
-  recessed: "#0F1117"
-  surface: "#12151C"
-  raised: "#171A22"
-  surface-strong: "#1A1E27"
-  surface-hover: "#202530"
-  line: "rgba(255, 255, 255, 0.08)"
-  line-strong: "rgba(255, 255, 255, 0.14)"
-  ink: "#EDEFF3"
-  ink-secondary: "#B6BDC9"
-  muted: "#9AA3B2"
-  faint: "#8992A1"
-  success: "#4ADE80"
-  success-fill: "#22C55E"
-  success-soft: "rgba(34, 197, 94, 0.12)"
-  warning: "#FACC15"
-  warning-fill: "#EAB308"
-  warning-soft: "rgba(234, 179, 8, 0.12)"
-  danger: "#F87171"
-  danger-fill: "#EF4444"
-  danger-soft: "rgba(239, 68, 68, 0.12)"
-  info: "#93C5FD"
-  info-fill: "#3B82F6"
-  info-soft: "rgba(59, 130, 246, 0.12)"
+  paper-ground: "#f6f6f4"
+  paper-sunken: "#efefec"
+  paper-surface: "#ffffff"
+  paper-surface-2: "#f3f3f0"
+  paper-surface-hover: "#ecece8"
+  paper-line: "#e2e2dd"
+  paper-line-strong: "#cbcbc5"
+  paper-ink: "#151618"
+  paper-ink-2: "#464a50"
+  paper-ink-3: "#686c73"
+  paper-signal-blue: "#1d63d8"
+  paper-ok: "#157a42"
+  paper-warn: "#9a5b00"
+  paper-bad: "#c42b2b"
+  graphite-ground: "#0e0f11"
+  graphite-sunken: "#0a0b0c"
+  graphite-surface: "#15171a"
+  graphite-surface-2: "#1b1e22"
+  graphite-surface-hover: "#22252a"
+  graphite-line: "#262a30"
+  graphite-line-strong: "#363b42"
+  graphite-ink: "#edeef0"
+  graphite-ink-2: "#b6bac1"
+  graphite-ink-3: "#8d929b"
+  graphite-signal-blue: "#6aa5ff"
+  graphite-ok: "#4ad386"
+  graphite-warn: "#f0bd4f"
+  graphite-bad: "#f37575"
 typography:
   display:
     fontFamily: "Geist, Inter, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.8rem, 5.5vw, 5rem)"
-    fontWeight: 650
-    lineHeight: 0.98
+    fontSize: "clamp(2.5rem, 5.2vw, 4.25rem)"
+    fontWeight: 700
+    lineHeight: 1.02
     letterSpacing: "-0.035em"
   headline:
     fontFamily: "Geist, Inter, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.25rem, 4vw, 3.45rem)"
+    fontSize: "1.75rem"
     fontWeight: 650
-    lineHeight: 1.02
-    letterSpacing: "-0.035em"
+    lineHeight: 1.25
+    letterSpacing: "-0.02em"
+  state:
+    fontFamily: "Geist, Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.375rem"
+    fontWeight: 650
+    lineHeight: 1.25
+    letterSpacing: "-0.015em"
   title:
     fontFamily: "Geist, Inter, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(1.7rem, 2.6vw, 2.2rem)"
-    fontWeight: 650
-    lineHeight: 1.1
-    letterSpacing: "-0.035em"
+    fontSize: "1.0625rem"
+    fontWeight: 600
+    lineHeight: 1.25
+    letterSpacing: "-0.01em"
   body:
     fontFamily: "Geist, Inter, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "15px"
+    fontSize: "0.9375rem"
     fontWeight: 400
     lineHeight: 1.55
-    letterSpacing: "-0.003em"
+    fontFeature: "\"ss01\", \"cv11\""
+  control:
+    fontFamily: "Geist, Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 550
+    lineHeight: 1
   label:
+    fontFamily: "Geist, Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.8125rem"
+    fontWeight: 550
+    lineHeight: 1.55
+  identifier:
     fontFamily: "Geist Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-    fontSize: "0.68rem"
-    fontWeight: 500
-    lineHeight: 1.4
-    letterSpacing: "0.06em"
+    fontSize: "0.8125rem"
+    fontWeight: 400
+    lineHeight: 1.65
 rounded:
-  xs: "6px"
-  sm: "8px"
-  tabs: "10px"
-  md: "12px"
-  lg: "16px"
+  sm: "6px"
+  md: "8px"
+  lg: "12px"
   pill: "999px"
 spacing:
-  "1": "4px"
-  "2": "8px"
-  "3": "12px"
-  "4": "16px"
-  "5": "24px"
-  "6": "32px"
-  "7": "40px"
-  "8": "56px"
-  "9": "64px"
+  s-1: "4px"
+  s-2: "8px"
+  s-3: "12px"
+  s-4: "16px"
+  s-5: "20px"
+  s-6: "24px"
+  s-8: "32px"
+  s-10: "40px"
+  s-12: "48px"
+  s-16: "64px"
+  gutter: "24px"
+  content-max: "1200px"
 components:
   button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.on-primary}"
-    rounded: "{rounded.sm}"
-    padding: "8px 14px"
-    height: "38px"
-  button-primary-hover:
-    backgroundColor: "{colors.primary-hover}"
-    textColor: "{colors.on-primary}"
-    rounded: "{rounded.sm}"
-    padding: "8px 14px"
-    height: "38px"
-  button-secondary:
-    backgroundColor: "transparent"
-    textColor: "{colors.ink-secondary}"
-    rounded: "{rounded.sm}"
-    padding: "8px 14px"
-    height: "38px"
-  card:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.paper-ink}"
+    textColor: "{colors.paper-surface}"
+    typography: "{typography.control}"
     rounded: "{rounded.md}"
-    padding: "20px"
+    padding: "0 16px"
+    height: "36px"
+  button-primary-dark:
+    backgroundColor: "{colors.graphite-ink}"
+    textColor: "{colors.graphite-ground}"
+    typography: "{typography.control}"
+    rounded: "{rounded.md}"
+    padding: "0 16px"
+    height: "36px"
+  button-secondary:
+    backgroundColor: "{colors.paper-surface-2}"
+    textColor: "{colors.paper-ink}"
+    typography: "{typography.control}"
+    rounded: "{rounded.md}"
+    padding: "0 16px"
+    height: "36px"
+  button-secondary-hover:
+    backgroundColor: "{colors.paper-surface-hover}"
+  button-ghost:
+    textColor: "{colors.paper-ink-2}"
+    typography: "{typography.control}"
+    rounded: "{rounded.md}"
+    padding: "0 16px"
+    height: "36px"
+  button-danger:
+    textColor: "{colors.paper-bad}"
+    typography: "{typography.control}"
+    rounded: "{rounded.md}"
+    padding: "0 16px"
+    height: "36px"
+  button-danger-solid:
+    backgroundColor: "{colors.paper-bad}"
+    textColor: "{colors.paper-surface}"
+    typography: "{typography.control}"
+    rounded: "{rounded.md}"
+    padding: "0 16px"
+    height: "36px"
+  button-sm:
+    typography: "{typography.label}"
+    padding: "0 12px"
+    height: "30px"
   input:
-    backgroundColor: "{colors.recessed}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
-    padding: "8px 12px"
-    height: "38px"
-  status-success:
-    backgroundColor: "{colors.success-soft}"
-    textColor: "{colors.success}"
-    rounded: "{rounded.pill}"
-    padding: "4px 9px 4px 8px"
-  status-warning:
-    backgroundColor: "{colors.warning-soft}"
-    textColor: "{colors.warning}"
-    rounded: "{rounded.pill}"
-    padding: "4px 9px 4px 8px"
-  status-danger:
-    backgroundColor: "{colors.danger-soft}"
-    textColor: "{colors.danger}"
-    rounded: "{rounded.pill}"
-    padding: "4px 9px 4px 8px"
-  status-info:
-    backgroundColor: "{colors.info-soft}"
-    textColor: "{colors.info}"
-    rounded: "{rounded.pill}"
-    padding: "4px 9px 4px 8px"
+    backgroundColor: "{colors.paper-sunken}"
+    textColor: "{colors.paper-ink}"
+    typography: "{typography.control}"
+    rounded: "{rounded.md}"
+    padding: "7px 11px"
+    height: "36px"
+  dialog:
+    backgroundColor: "{colors.paper-surface}"
+    rounded: "{rounded.lg}"
+    padding: "24px"
+    width: "520px"
+  drawer:
+    backgroundColor: "{colors.paper-surface}"
+    width: "520px"
+  code-block:
+    backgroundColor: "{colors.paper-surface-2}"
+    textColor: "{colors.paper-ink-2}"
+    typography: "{typography.identifier}"
+    rounded: "{rounded.md}"
+    padding: "12px 16px"
+  header-tab:
+    textColor: "{colors.paper-ink-3}"
+    typography: "{typography.control}"
+    padding: "10px 12px 12px"
+  header-tab-active:
+    textColor: "{colors.paper-ink}"
 ---
 
 # Design System: DeployGuard
 
 ## Overview
 
-**Creative North Star: "The Quiet Control Plane"**
+**Creative North Star: "The Release Ledger"**
 
-DeployGuard is a calm, dense operational interface built from graphite surfaces, restrained borders, and one orange product signal. The visual system should feel like a dependable control room: exact without becoming sterile, technical without turning into a wall of terminal chrome, and confident without visual noise.
+Every screen opens with one plain-language state sentence and anchors it to exact evidence one disclosure deeper: the commit, the image, the run. The page reads like a ledger, not a dashboard. Content sits directly on a neutral ground (paper in light, graphite in dark) in sections divided by a single hairline at the top, with grouped rows beneath. The card-grid dashboard and the status-chip confetti common to deployment tools are refused.
 
-Architecture, deployment state, runtime health, and immutable evidence carry the hierarchy. Marketing language supports those artifacts rather than competing with them. Orange identifies product actions, selection, focus, and the active path; green, yellow, red, and blue appear only when the interface is communicating status.
+The ground follows the operating-system preference by default; the account menu carries a three-way theme override (System, Light, Dark) that sets `data-theme` on the root. Both themes are defined token for token, so nothing is styled for one theme only. Density is calm-operational: 15px body, 36px controls, 32px between sections, generous whitespace around one state statement per page.
 
-The system is flat by default. Depth comes from tonal separation, fine hairlines, compact grouping, and a single shared atmospheric glow rather than glass, blur, or decorative gradients. Motion confirms state change; route entry and static surfaces remain immediate.
+Colour is spent on state and nothing else. One blue signal marks focus, links and work in progress; green, amber and red appear only for verified state. The primary action is inverted ink (black on paper, near-white on graphite), so the strongest object on the page is the next action, not a brand colour.
+
+This direction was chosen by the designer and recorded in the surface brief (`.impeccable/surfaces/frontend-src.md`). The Impeccable concept-seed roll was not run for this redesign (seed key: none): the product owner forbade option rounds.
 
 **Key Characteristics:**
-
-- Neutral graphite environment across public, authenticated, project, and administration routes.
-- One orange product accent, reserved for actions, focus, active navigation, and control-path emphasis.
-- Semantic color appears only where success, warning, danger, or in-progress information is being communicated.
-- Modern sans hierarchy for human-facing content; compact mono type for evidence, labels, identifiers, and numeric data.
-- Dense but calm layouts that elevate architecture and operational proof above promotional copy.
-- Accessible contrast, visible focus, restrained motion, and responsive evidence views.
+- Hairline-ruled sections (top rule only) instead of boxes.
+- Boxes only for genuine containment: dialogs, drawers, the topology diagram, the log viewer, code, the danger zone and repeated service editors.
+- Colour carries state only (ok, warn, bad, info, neutral); blue for focus, links and in-progress.
+- Inverted-ink primary button; 8px control radius.
+- Geist for reading; Geist Mono only for identifiers.
+- Status is a dot plus a word.
+- Irreversible destructive actions sit behind a typed-phrase confirmation.
 
 ## Colors
 
-The palette is a graphite instrument panel punctuated by a single warm orange signal and tightly scoped semantic state colors.
+Two neutral grounds, one blue signal, three state colours, and no decorative hue.
 
 ### Primary
-
-- **Control Orange:** The only product accent. Use it for primary actions, focus, links, active navigation, selected filters, and the active control path.
-- **Signal Orange:** The brighter text treatment for eyebrows, active icons, and links on dark surfaces.
-- **Ember Wash:** The soft orange fill for selected or active states; it must remain subordinate to content.
+- **Signal Blue** (paper-signal-blue / graphite-signal-blue): focus rings, inline links, in-progress state ("Deploying", running phase rail, progress meters), chart lines, selected caret. Doubles as the `info` tone. Never a fill for a primary button and never decoration.
 
 ### Neutral
+- **Paper Ground / Graphite Ground** (paper-ground / graphite-ground): the page itself. Content sits here directly.
+- **Sunken** (paper-sunken / graphite-sunken): input wells and code backgrounds in dark; the recessed tier.
+- **Surface** (paper-surface / graphite-surface): the inside of real containers only (dialogs, drawers, menus, toasts, topology, contained boxes).
+- **Surface 2 / Surface Hover** (paper-surface-2, paper-surface-hover and graphite equivalents): row hover, segmented-control track, secondary button fill, inline code chip.
+- **Line / Line Strong** (paper-line, paper-line-strong and graphite equivalents): the hairline that rules every section and row (line); control borders, dialog borders, scrollbars (line strong).
+- **Ink, Ink 2, Ink 3** (paper-ink / -2 / -3, graphite-ink / -2 / -3): primary text and the primary button fill; secondary copy and sentences; labels, meta, timestamps, inactive tabs.
 
-- **Graphite Canvas:** The uninterrupted application ground shared by every route.
-- **Recessed Graphite:** Inputs, toolbars, table heads, and shell chrome that sit behind primary content.
-- **Control Surface:** The default card, panel, modal, and evidence-container fill.
-- **Raised Graphite:** Reserved for genuinely raised or modal material.
-- **Instrument Tile:** Nested metrics, metadata blocks, and quiet grouped content.
-- **Hover Graphite:** Hover, avatar, and compact glyph surfaces.
-- **Primary Ink:** Headings, decisive values, and high-priority evidence.
-- **Secondary Ink:** Body copy and supporting operational context.
-- **Muted Ink:** Labels, metadata, timestamps, and subordinate explanations.
-- **Hairline / Strong Hairline:** Low-contrast structural boundaries; use the stronger line only when a control or region needs clearer separation.
+### State tones
+Each state tone has a matching soft tint at 9 to 16 percent opacity (`--ok-soft`, `--warn-soft`, `--bad-soft`, `--info-soft`, `--neutral-soft`) used for callout fills and danger-button hover.
+- **Verified Green** (paper-ok / graphite-ok): Live, Succeeded, passed phases.
+- **Caution Amber** (paper-warn / graphite-warn): attention needed while still serving (for example a failed latest attempt on a live release).
+- **Failure Red** (paper-bad / graphite-bad): Failed, destructive buttons, the danger-zone border, field errors, the tab dot that flags a failure.
+- **Neutral** (the ink-3 value): Ready, Destroyed, Unknown, and anything unverified.
+- An AWS orange (`--aws`: #b86e00 paper, #f5a524 graphite) exists for provider attribution only.
 
 ### Named Rules
+**The State-Only Colour Rule.** Hue appears only to say ok, warn, bad, info or neutral. If a coloured element does not report state, focus, a link or progress, it is grey.
 
-**The One Signal Rule.** Orange is the only non-semantic accent and should remain visually scarce enough to identify the action or active path immediately.
+**The Unverified Is Grey Rule.** Green, amber and red are reserved for verified state. Anything the system cannot confirm renders in the neutral tone with the word that says so.
 
-**The Status Means Status Rule.** Green, yellow, red, and blue are not page themes or decoration; they communicate verified state only.
-
-**The Shared Atmosphere Rule.** Every route uses the same subtle orange radial glow at the top-left edge of the graphite canvas; do not introduce route-specific color worlds.
+**The Inverted Ink Rule.** The primary button is ink on ground, inverted (ink fill, ground-coloured text). Blue never fills a primary button.
 
 ## Typography
 
-**Display Font:** Geist (with Inter, system sans-serif fallback)
-**Body Font:** Geist (with Inter, system sans-serif fallback)
-**Label/Mono Font:** Geist Mono (with system monospace fallback)
+**Body Font:** Geist (with Inter, system-ui fallback), loaded at weights 300 to 800, with stylistic sets `ss01` and `cv11` on.
+**Identifier Font:** Geist Mono (with ui-monospace, SFMono-Regular, Menlo fallback), weights 400 to 600.
 
-**Character:** Geist keeps the interface contemporary, compact, and highly legible across public and operational surfaces. Geist Mono separates machine evidence from human explanation without making the whole product feel like a terminal.
+**Character:** A single humanist-grotesk family carries every word a person reads; the mono appears only where an exact machine value must be copied or compared.
 
 ### Hierarchy
+- **Display** (700, clamp(2.5rem, 5.2vw, 4.25rem), 1.02, -0.035em): public landing hero only. About and section heads on public pages step down through clamp(1.6rem to 3.6rem).
+- **Headline** (650, 1.75rem / 28px, -0.02em): page titles (project name, "Projects", sign-in heading).
+- **State** (650, 1.375rem / 22px, -0.015em): the state statement ("Live", "Failed"), dialog titles, monitoring headline values.
+- **Title** (600, 1.0625rem / 17px): section headings such as "Current release" and "Services"; the public URL on Overview.
+- **Body** (400, 0.9375rem / 15px, 1.55): sentences; capped at 68 to 72ch.
+- **Control** (550, 0.875rem / 14px): buttons, tabs, fields, table cells, secondary copy.
+- **Label** (550 or 400, 0.8125rem / 13px): meta, table headers, fact labels, timestamps, hints.
+- **Identifier** (Geist Mono, 0.8125rem / ~0.9em inline): commits, digests, run IDs, resource names, directories, log lines, the confirmation phrase.
 
-- **Display** (650, responsive display scale, 0.98 line-height): Rare public-page statements and the About hero only.
-- **Headline** (650, responsive headline scale, approximately 1.0 line-height): Landing architecture thesis, dashboard greeting, project names, and primary route statements.
-- **Title** (650, responsive page-title scale, 1.1 line-height): Operational page headers and administration titles.
-- **Body** (400, 15px, 1.55 line-height): Explanations, instructions, and supporting context; keep long prose near 70 characters per line where layouts permit.
-- **Label** (500, compact mono scale, 0.06em tracking, uppercase): Eyebrows, metric labels, boundary tags, table headings, evidence keys, and compact status metadata.
-- **Evidence** (400–600, compact mono): SHAs, identifiers, commands, timestamps, logs, and tabular numeric values.
+Numbers in tables, times and `.num` cells use tabular numerals.
 
 ### Named Rules
+**The Identifier Rule.** Geist Mono is for identifiers only: commits, digests, run IDs, resource names, paths and logs. Labels, numbers in prose, and headings are never mono.
 
-**The Two Voices Rule.** Sans explains and directs; mono identifies and proves. Do not set ordinary body copy or major headings in monospace.
-
-**The Consistent Eyebrow Rule.** Eyebrows use the compact mono label treatment and orange signal ink unless a neutral evidence context explicitly requires muted ink.
+**The Sentence First Rule.** Every page leads with a plain-language state sentence at reading size; evidence (IDs, codes) sits below it or one disclosure deeper.
 
 ## Layout
 
-Authenticated pages use a persistent 248px navigation rail with a sticky 66px top bar and a flexible content region. Operational workspaces cap at 1320px; administration may expand to 1500px for dense tables and fleet-wide evidence. Public navigation aligns to the same broad content frame rather than floating as a decorative pill.
+A single centred column, max 1200px (880px for narrow pages), with a 24px gutter that drops to 16px under 720px. Pages stack sections with 32px between them and 64px of bottom padding; sections use a 16px internal gap. Spacing runs on a 4px grid (4, 8, 12, 16, 20, 24, 32, 40, 48, 64).
 
-Spacing follows a 4px base rhythm, with 8–16px inside controls, 16–24px inside compact cards, and 24–64px between major regions. Dense operational screens should gain clarity through alignment, grouping, and labels—not oversized whitespace. Prefer grids that preserve evidence relationships; collapse them progressively at 1080px and 760px, and transform wide tables into labeled records where the existing responsive table pattern is available.
+The shell is one sticky header: a 56px bar with the breadcrumb scope (brand / Projects / project, with a status word) and the account avatar, and the tab row beneath it. The header ground is 88 percent ground with a 10px backdrop blur and a bottom hairline.
 
-Architecture diagrams, pipeline graphs, lifecycle rails, and evidence panels are primary content, not embellishment. Give them the larger or earlier grid area when they compete with explanatory copy. On the landing hero, the architecture artifact owns two-thirds of the desktop grid; the copy supports it.
+Information architecture, one owner per fact:
+- **Projects**: an attention-first list; one row per project (status word, identity, inline reason only when attention is needed, time, chevron).
+- **Overview**: current state (status line, sentence, public URL, primary action), then a two-column ledger of current release and services, then a one-line pointer to the latest attempt.
+- **Deployments** (route `/pipeline`): the attempts record; stages, history and raw run evidence. Links to Troubleshoot rather than repeating diagnosis.
+- **Troubleshoot**: diagnosis, ownership, fix steps, recovery action, AI analysis and evidence.
+- **Infrastructure**: topology with an inspector, cost estimate and identifiers.
+- **Monitoring**: stat row, charts whose current value sits in the chart heading, and the live log viewer.
+- **Settings**: a 200px section list beside one section at a time (configuration), with the danger zone last. Settings is the only place Destroy lives.
+- **Admin**: overview, users, projects, audit and cloud cleanup as header tabs.
 
-**The Evidence-First Rule.** When architecture or runtime evidence and promotional copy share a surface, allocate more space and stronger grouping to the evidence.
+Responsive: under 900px Settings' side list becomes a tab row and project rows collapse to identity, state and chevron with the reason beneath; under 720px tables stack into labelled rows and the monitoring stat row becomes 2 by 2; under 640px the header tab row scrolls with a fade mask and the brand word hides.
+
+### Named Rules
+**The Top Rule Rule.** A ruled section draws only its top hairline (1px line), so adjacent sections never double up. Rows inside a group are separated by the same hairline.
+
+**The One Owner Rule.** Each fact has exactly one page that owns it; other pages link to it rather than restating it.
 
 ## Elevation & Depth
 
-The system is flat by default. Canvas, recessed chrome, surfaces, and nested tiles create depth through tone and hairline borders. Resting content uses only a one-pixel anchoring shadow or none at all. Medium and large shadows are reserved for modals, drawers, and the primary architecture artifact; blur and backdrop-filter are disabled in the final cohesion layer.
+Flat by default. Depth on the page is carried by hairlines and the ground/surface tonal step, not shadows. A single pop shadow (`--shadow-pop`) is reserved for floating layers: menus, dialogs, drawers, toasts and the landing hero window. Overlays dim the page with a scrim (66 percent graphite / 40 percent ink) and a 2px blur. Small functional rings exist: the status dot's 3px tinted halo, the 3px accent-soft focus ring on fields, and the 1px line ring on the selected segment.
 
 ### Shadow Vocabulary
+- **Pop, paper** (`box-shadow: 0 12px 32px rgba(20,21,24,0.14), 0 2px 6px rgba(20,21,24,0.08)`): floating layers in light.
+- **Pop, graphite** (`box-shadow: 0 12px 32px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.35)`): floating layers in dark.
+- **Field focus** (`box-shadow: 0 0 0 3px var(--accent-soft)` with accent border): focused inputs.
 
-- **Anchoring Shadow** (`0 1px 2px rgba(0, 0, 0, 0.24)`): Default card and panel anchoring; visually subordinate to the border.
-- **Raised Shadow** (`0 12px 28px -18px rgba(0, 0, 0, 0.72)`): Floating or raised layers that must separate from a dense workspace.
-- **Artifact Shadow** (`0 28px 60px -28px rgba(0, 0, 0, 0.88)`): The landing architecture frame and major modal artifacts only.
-
-**The Flat-by-Default Rule.** If a border and tonal shift establish the hierarchy, do not add another shadow.
-
-**The One Atmosphere Rule.** The shared radial orange glow belongs to the canvas, never to individual cards or decorative blobs.
+### Named Rules
+**The Floating Only Rule.** Only things that float above the page cast a shadow. Nothing resting on the ground is lifted.
 
 ## Shapes
 
-Corners are gently rounded, compact, and functional. Controls use an 8px radius; cards and panels use 12px; major artifacts and modals may use 16px. Ten-pixel groupings are used for compact tab containers. Pills are reserved for status chips and tightly bounded metadata—not general buttons or navigation chrome.
+Gently rounded and consistent: 6px for small chips, focus outlines and tab corners; 8px for every control, callout, code block and hoverable row; 12px for containers (dialogs, menus, topology, log viewer, danger zone, empty states). Pills (999px) are reserved for meters, scroll thumbs and the few tone labels. Status dots and avatars are circles. Borders are 1px; the only dashed borders mark empty or not-yet-provisioned areas.
 
-Borders are one-pixel translucent hairlines. A stronger hairline marks interactive controls and major boundaries. Circular forms are limited to status dots, small sequence markers, lifecycle nodes, and avatars. Do not use exaggerated rounding to make ordinary surfaces feel friendly.
+### Named Rules
+**The Earned Box Rule.** A bordered box exists only for genuine containment: dialogs, drawers, the topology diagram, the log viewer, code, the danger zone and repeated service editors. Everything else is a ruled section on the ground.
 
 ## Components
 
 ### Buttons
+Quiet, compact, one strong action per view.
+- **Shape:** gently rounded (8px), 36px tall, 16px horizontal padding; small variant 30px and 13px text.
+- **Primary:** inverted ink fill with ground-coloured text; hover deepens to pure black (paper) or white (graphite).
+- **Secondary (default):** surface-2 fill, line-strong border, ink text; hover to surface-hover.
+- **Ghost:** transparent, ink-2 text; hover to surface-2.
+- **Danger:** transparent with red text and a 45 percent red border; hover tints bad-soft. **Danger solid:** red fill, white text, used only as the confirm button of a destructive dialog.
+- **Link:** accent text, no padding, underline on hover.
+- **States:** 1px press-down on active; disabled at 45 percent opacity; busy state replaces the label with a 14px spinner in the button's own text colour. Transitions are 120ms on a `cubic-bezier(0.22, 1, 0.36, 1)` ease-out.
 
-- **Shape:** Compact rounded rectangle (8px radius), 38px minimum height, 8px × 14px internal padding.
-- **Primary:** Solid Control Orange with near-black text; use for the single decisive action in a local action group.
-- **Hover / Focus:** Hover brightens to the orange hover tone and may add a restrained low orange shadow. Keyboard focus uses a visible orange outline or three-pixel orange ring.
-- **Secondary / Ghost:** Transparent with a strong graphite hairline and secondary ink. Hover uses Hover Graphite and primary ink.
-- **Danger:** Red is reserved for genuinely destructive actions and always requires explicit destructive context.
+### Status
+The product's state signature.
+- **Style:** an 8px dot in the tone colour with a 3px tinted halo, followed by the word in ink at 14px/550 ("Live", "Deploying", "Failed", "Ready", "Destroyed", "Blocked", "Unknown").
+- **Active:** in-progress statuses pulse the halo every 1.6s.
+- **Large:** the Overview state statement uses a 10px dot and 22px/650 text.
+- The word comes from one shared vocabulary (`projectStateLabel`); failure ownership and retry language come from the shared failure presentation.
 
-### Chips
-
-- **Style:** Compact 999px status capsule with a 6px state dot, soft semantic fill, matching semantic text, and low-contrast semantic border.
-- **State:** Green is success, yellow is attention, red is failure, blue is running or informational, and graphite is neutral. Do not recolor chips by route.
-
-### Cards / Containers
-
-- **Corner Style:** Gently rounded (12px), increasing to 16px only for major artifacts or modals.
-- **Background:** Control Surface with a translucent hairline; nested metrics use Instrument Tile or Recessed Graphite.
-- **Shadow Strategy:** Flat or Anchoring Shadow at rest; larger shadows only for layers that physically float.
-- **Internal Padding:** 16–20px for dense operational content and up to 24px for broader explanatory regions.
+### Ruled sections and rows
+- **Section:** title row (17px heading, optional count in ink-3, right-aligned link or action), then content under a top hairline.
+- **Rows:** grouped lists with hairlines above and below and between items; hoverable rows bleed 12px left and right with an 8px-radius surface-2 hover.
+- **Facts:** label/value pairs, labels in ink-3 at 13px, values in ink; the list form is a 200px label column with hairlines between rows.
 
 ### Inputs / Fields
-
-- **Style:** Recessed Graphite fill, strong hairline border, 8px radius, 38px minimum height, and 8px × 12px internal padding.
-- **Focus:** Orange border plus a restrained three-pixel soft-orange ring; never rely on color alone when the field also carries an error.
-- **Error / Disabled:** Errors use semantic red messaging and boundaries. Disabled fields retain readable muted contrast and remove elevation.
+- **Style:** sunken fill, 1px line-strong border, 8px radius, 36px tall, 14px text; label above at 14px/550, hint and error at 13px below.
+- **Focus:** border turns accent with a 3px accent-soft ring.
+- **Error / Disabled:** error text in red; disabled at 60 percent opacity. Textareas are mono for config values.
 
 ### Navigation
+- **Header tabs:** 14px/500 ink-3 labels; hover and active go to ink; the active tab carries a 2px ink underline sitting on the header hairline. A 6px red dot flags a tab whose page holds a failure.
+- **In-page tabs:** the same treatment over a bottom hairline. Settings uses a vertical variant with a surface-2 selected fill, and its last item (Danger zone) in red.
+- **Segmented control:** surface-2 track with 1px line, 3px inset; the selected segment lifts to surface with a line ring; counts in ink-3.
+- **Account menu:** avatar trigger opening a 12px-radius floating menu with identity, the System/Light/Dark theme switch, and links.
 
-- **Style:** Flat graphite shell with compact sans labels and restrained icons. Default links use muted ink.
-- **Hover / Active:** Hover moves to a darker tile. Active navigation uses an Ember Wash, Primary Ink, and Signal Orange icon or indicator.
-- **Mobile:** The sidebar becomes a focus-contained drawer with a backdrop and 44px minimum targets; wide evidence navigation scrolls horizontally rather than compressing labels beyond recognition.
+### Callouts
+Tone-soft fill, 22 percent tone border, 8px radius, icon in the tone colour, title in ink and body in ink-2. Used for a state that needs explanation in place, never as decoration.
 
-### Data Tables
+### Dialogs and drawers
+- **Dialog:** 520px (640px wide) surface box, 12px radius, line-strong border, pop shadow, 24px padding, 22px title, actions right-aligned. Enters with a 180ms pop-in.
+- **Drawer:** 520px right-hand panel, full height, sticky header with a hairline, slides in 24px.
 
-- **Style:** Control Surface container, Recessed Graphite heading row, mono uppercase column labels, hairline row divisions, and tabular numeric values.
-- **Responsive:** Preserve field names by converting each row into a labeled record at narrow widths rather than forcing illegible horizontal compression.
-- **Interaction:** Row hover is a small neutral tonal shift; selection or status must be expressed independently.
+### Typed-phrase confirmation (signature)
+`ConfirmPhraseDialog` guards every irreversible destructive action (destroy infrastructure, admin cloud cleanup). The dialog states the consequence, asks the user to type an exact phrase shown in Geist Mono, and keeps the danger-solid confirm button disabled until the phrase matches. Cancel is a ghost button to its left. Reversible actions such as Archive use a plain confirm dialog with the same ghost Cancel and danger-solid confirm.
 
-### Architecture & Evidence Artifacts
+### Danger zone
+The last section of Settings: a 12px-radius box with a red-tinted border (35 percent red into line), holding one row per destructive action (title, consequence sentence, danger button). Destroy infrastructure lives here and nowhere else.
 
-- **Style:** Use the darkest recessed surface, a strong neutral boundary, compact mono labels, and clear directional links. Orange marks DeployGuard control; semantic colors mark verified runtime state.
-- **Priority:** Artifacts should remain larger and more visually explicit than the copy that introduces them.
-- **Motion:** Animate only state transitions or signal movement. Respect reduced-motion preferences and never delay comprehension behind an entrance animation.
+### Evidence surfaces
+- **Code block:** code background, 1px line, 8px radius, Geist Mono 13px at 1.65 leading, scrolls past 360px.
+- **Log viewer:** a 12px-radius contained box on the code background, mono 13px lines at 1.7 leading, 160 to 460px tall.
+- **Copy value:** a mono, ellipsised identifier with a small "Copy" text button.
+- **Topology:** a contained 12px-radius diagram of nodes (8px radius, line-strong border) with a status dot; the selected node gains an ink ring and opens the inspector.
+
+### Phase rail and meters
+The deploy phase rail is a row of 3px bars: line-strong pending, green passed, red failed, amber attention, and an animated blue sweep on the running phase. Meters are 6px pills on surface-2.
 
 ## Do's and Don'ts
 
 ### Do:
-
-- **Do** keep every route on the Graphite Canvas with the shared subtle orange atmosphere.
-- **Do** reserve Control Orange for primary actions, focus, active navigation, selection, and control-path emphasis.
-- **Do** use semantic colors only when presenting verified status or runtime state.
-- **Do** use Geist Mono for evidence, identifiers, labels, timestamps, boundaries, and tabular values.
-- **Do** make architecture, lifecycle state, diagnostics, and immutable evidence more prominent than explanatory or promotional copy.
-- **Do** retain visible keyboard focus, readable contrast, 44px mobile targets, and reduced-motion behavior.
+- **Do** open every page with one plain-language state sentence, then put the commit, image and run one disclosure deeper.
+- **Do** rule sections with a single top hairline (1px line) and keep content on the ground.
+- **Do** render every status as a dot plus a word from the shared state vocabulary.
+- **Do** use the inverted-ink primary button for the single next action on a view.
+- **Do** set commits, digests, run IDs, resource names, paths and logs in Geist Mono, and everything else in Geist.
+- **Do** put irreversible destructive actions behind `ConfirmPhraseDialog`, and keep Destroy only in the Settings danger zone.
+- **Do** define every new colour in both the paper and graphite themes in `tokens.css`; components use tokens, never raw values.
+- **Do** show unverified state in the neutral tone with words that say it is unverified.
 
 ### Don't:
-
-- **Don't** introduce route-specific accent palettes, decorative multicolor gradients, or colored atmosphere fields.
-- **Don't** use green, yellow, red, or blue as generic decoration or branding.
-- **Don't** add glass blur, glossy highlights, or elevated shadows to ordinary content surfaces.
-- **Don't** turn all technical content into monospace; keep headings and explanations in Geist.
-- **Don't** hide operational evidence behind marketing spectacle, oversized copy, or ornamental motion.
-- **Don't** use pills for primary buttons, ordinary cards, or top-level navigation.
+- **Don't** build card-grid dashboards or box content that is not genuinely contained.
+- **Don't** use status chips as the state signal; a pill label is for a role or plan name, not for state.
+- **Don't** use green, amber or red for anything other than verified state, or blue for anything other than focus, links and in-progress.
+- **Don't** fill a primary button with blue or any state colour.
+- **Don't** use Geist Mono for labels, headings or numbers in prose.
+- **Don't** cast shadows on anything resting on the page; the pop shadow is for floating layers.
+- **Don't** repeat a fact on a page that does not own it; link to its owner.

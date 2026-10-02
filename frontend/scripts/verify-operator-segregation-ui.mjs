@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { existsSync, readFileSync } from "node:fs";
 
 const routes = readFileSync(new URL("../src/routes/AppRoutes.jsx", import.meta.url), "utf8");
-const sidebar = readFileSync(new URL("../src/components/layout/Sidebar.jsx", import.meta.url), "utf8");
+const sidebar = readFileSync(new URL("../src/components/layout/AppHeader.jsx", import.meta.url), "utf8");
 const projectApi = readFileSync(new URL("../src/api/projectApi.js", import.meta.url), "utf8");
 const adminApi = readFileSync(new URL("../src/api/adminApi.js", import.meta.url), "utf8");
 const adminPage = readFileSync(new URL("../src/pages/AdminUsers.jsx", import.meta.url), "utf8");
@@ -26,8 +26,9 @@ assert.match(deploymentBlock, /NewProject[\s\S]*path="\/deploy"/);
 assert.doesNotMatch(deploymentBlock, /ProjectTroubleshooting|ProjectSettings|ProjectDetection/);
 assert.match(adminBlock, /AdminUsers/);
 assert.match(adminBlock, /path="\/admin"/);
-assert.match(adminBlock, /Navigate replace to="\/admin".*path="\/activity"/);
-assert.match(adminBlock, /Navigate replace to="\/admin".*path="\/audit-logs"/);
+assert.match(adminBlock, /Navigate replace to="\/admin\?section=audit".*path="\/activity"/);
+assert.match(adminBlock, /Navigate replace to="\/admin\?section=audit".*path="\/audit-logs"/);
+assert.match(adminBlock, /AdminCloudCleanup[\s\S]*path="\/admin\/cleanup"/);
 
 assert.doesNotMatch(sidebar, /to="\/admin"|>Admin</);
 assert.doesNotMatch(sidebar.match(/const projectNavigation = \[[\s\S]*?\];/)?.[0] || "", /Environment|Detection|Pre-flight/);

@@ -32,6 +32,18 @@ export function AuthProvider({ children }) {
     refreshUser();
   }, [refreshUser]);
 
+  useEffect(() => {
+    function refreshOnReturn() {
+      if (document.visibilityState === "visible") void refreshUser();
+    }
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    return () => {
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+    };
+  }, [refreshUser]);
+
   const logout = useCallback(async () => {
     try {
       await logoutUser();

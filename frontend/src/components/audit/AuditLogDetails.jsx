@@ -8,6 +8,7 @@ const SENSITIVE_KEYS = [
   "authorization",
   "cookie",
 ];
+const HIDDEN_IDENTIFIER_KEYS = new Set(["actoruserid", "projectid"]);
 
 function maskMetadata(value) {
   if (Array.isArray(value)) {
@@ -17,6 +18,7 @@ function maskMetadata(value) {
   if (value && typeof value === "object") {
     return Object.entries(value).reduce((masked, [key, nestedValue]) => {
       const normalizedKey = key.toLowerCase();
+      if (HIDDEN_IDENTIFIER_KEYS.has(normalizedKey)) return masked;
       const isSensitive = SENSITIVE_KEYS.some((sensitiveKey) =>
         normalizedKey.includes(sensitiveKey.toLowerCase())
       );
@@ -35,7 +37,7 @@ export default function AuditLogDetails({ metadata }) {
   }
 
   return (
-    <pre className="metadata admin-audit-evidence" tabIndex="0" title="Sanitized technical audit evidence">
+    <pre className="code admin-audit-evidence" tabIndex="0" title="Sanitized technical audit evidence">
       {JSON.stringify(maskMetadata(metadata), null, 2)}
     </pre>
   );

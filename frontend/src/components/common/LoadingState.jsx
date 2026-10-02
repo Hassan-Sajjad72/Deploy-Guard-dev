@@ -1,5 +1,7 @@
 import { Skeleton } from "./DesignSystem.jsx";
 
-export default function LoadingState({ message = "Loading..." }) {
-  return <div aria-live="polite" className="state loading-state"><span className="loading-indicator" aria-hidden="true" /><div className="loading-copy"><strong>Loading</strong><p>{message}</p><Skeleton label={message} lines={3} /></div></div>;
+/** Page-shaped placeholder; the label is announced, the shimmer is decorative. */
+export default function LoadingState({ message = "Loading…", inline = false }) {
+  const skeleton = <Skeleton label={message} lines={4} />;
+  return inline ? skeleton : <div className="page">{skeleton}</div>;
 }

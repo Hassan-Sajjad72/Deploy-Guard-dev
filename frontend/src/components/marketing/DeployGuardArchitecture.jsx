@@ -37,7 +37,7 @@ function Boundary({ x, y, w, h, label, tone }) {
   const tagged = tone !== "az";
   return <g className={`dg-arch-boundary is-${tone}`}>
     <rect className="dg-arch-boundary-area" height={h} rx="16" width={w} x={x} y={y} />
-    {tagged ? <rect className="dg-arch-boundary-tag" height="20" rx="5" width={label.length * 7.5 + 20} x={x + 16} y={y - 10} /> : null}
+    {tagged ? <rect className="dg-arch-boundary-tag" height="20" rx="5" width={label.length * 7.2 + 24} x={x + 16} y={y - 10} /> : null}
     <text x={tagged ? x + 26 : x + 16} y={tagged ? y + 4 : y + 22}>{label}</text>
   </g>;
 }
@@ -116,30 +116,4 @@ export default function DeployGuardArchitecture() {
       <li><span>Supporting</span><strong>CloudWatch · Terraform state · Infracost cost visibility</strong></li>
     </ol>
   </div>;
-}
-
-const stages = [
-  { label: "Repository", detail: "GitHub source and exact commit" },
-  { label: "Build image", detail: "GitHub Actions · OCI image" },
-  { label: "Publish", detail: "ECR immutable digest" },
-  { label: "Provision", detail: "Terraform · VPC, ALB, ECS" },
-  { label: "Run & verify", detail: "ALB routing · ECS health" },
-];
-
-export function DeliveryPath() {
-  return <section aria-labelledby="delivery-path-title" className="dg-delivery dg-dark" id="delivery-path">
-    <div className="dg-delivery-intro">
-      <p className="dg-kicker">How DeployGuard works</p>
-      <h2 id="delivery-path-title">From repository to running infrastructure.</h2>
-      <p>DeployGuard builds the selected source, publishes an immutable image, and operates it on AWS.</p>
-    </div>
-    <ol className="dg-delivery-steps">
-      {stages.map((stage, index) => <li key={stage.label}>
-        <span className="dg-delivery-index">{String(index + 1).padStart(2, "0")}</span>
-        <strong>{stage.label}</strong>
-        <small>{stage.detail}</small>
-      </li>)}
-    </ol>
-    <p className="dg-delivery-outcome"><span aria-hidden="true"><AppIcon name="check" size={14} /></span><strong>Verified live application</strong> Immutable image, runtime identity, routing, and health evidence must agree before promotion.</p>
-  </section>;
 }

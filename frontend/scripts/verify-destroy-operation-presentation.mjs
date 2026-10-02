@@ -30,34 +30,40 @@ const destroyed = deploymentPhasePresentation({ developerState: "destroyed", pro
 assert.ok(destroyed.every((phase) => phase.status === "passed"));
 
 const pipeline = readFileSync(join(import.meta.dirname, "../src/components/projects/PipelineExecution.jsx"), "utf8");
-const recovery = readFileSync(join(import.meta.dirname, "../src/components/projects/PipelineRecoveryPanel.jsx"), "utf8");
+const presentation = readFileSync(join(import.meta.dirname, "../src/utils/failurePresentation.js"), "utf8");
 const overview = readFileSync(join(import.meta.dirname, "../src/components/projects/ProjectOverviewLifecycle.jsx"), "utf8");
+const destroyControl = readFileSync(join(import.meta.dirname, "../src/components/projects/DestroyInfrastructure.jsx"), "utf8");
+const settings = readFileSync(join(import.meta.dirname, "../src/pages/ProjectSettings.jsx"), "utf8");
+const primitives = readFileSync(join(import.meta.dirname, "../src/components/common/DesignSystem.jsx"), "utf8");
 const infrastructure = readFileSync(join(import.meta.dirname, "../src/pages/ProjectInfrastructure.jsx"), "utf8");
 const projects = readFileSync(join(import.meta.dirname, "../src/pages/Projects.jsx"), "utf8");
 const admin = readFileSync(join(import.meta.dirname, "../src/pages/AdminUsers.jsx"), "utf8");
 const adminCleanup = readFileSync(join(import.meta.dirname, "../src/pages/AdminCloudCleanup.jsx"), "utf8");
 assert.match(pipeline, /const stages = latest\?\.workflowStages \|\| \[\]/, "destroy stage evidence remains in the technical timeline");
-assert.match(pipeline, /details\.stageLabel/);
+assert.match(pipeline, /details\.failedStageLabel \|\| details\.stageLabel/);
 assert.match(pipeline, /destroyVerificationStatus === "pending"/);
-assert.match(pipeline, /Verification pending/);
+assert.match(presentation, /destroyVerificationStatus === "pending"\) return \{ label: "Verifying deletion"/, "a destroy is not called finished while deletion is still being verified");
 assert.match(pipeline, /destroyVerificationUnresolved/);
-assert.match(pipeline, /Retry failed \$\{operationType\(latest\)\.toLowerCase\(\)\}/, "pipeline retry wording must preserve the failed operation type");
-assert.match(recovery, /operation\.stageLabel/);
-assert.doesNotMatch(recovery, /aiAnalysisEligible|AI troubleshooting|Analyze failure|Ask AI/, "Pipeline recovery must remain deterministic and AI-free");
 assert.match(overview, /deploymentPhasePresentation/);
 assert.equal(DESTROY_CONFIRMATION_PHRASE, "DESTROY");
-assert.match(overview, /destroyGithubActionsDeployment\(projectId, destroyPhrase\)/, "Overview uses the existing project-scoped destroy API");
-assert.match(overview, /destroyPhrase !== DESTROY_CONFIRMATION_PHRASE/, "Overview requires the exact destructive confirmation phrase");
-assert.match(overview, /command === "destroy"[\s\S]*setDestroyOpen\(true\)/, "LIVE Overview renders its Destroy action through the guarded modal");
-assert.match(infrastructure, />Retry Failed Destroy</, "Infrastructure links failed Destroy recovery to the canonical Pipeline");
-assert.match(infrastructure, />View Destroy progress</, "Infrastructure links an active Destroy to canonical progress evidence");
+
+// Destroy lives in the Settings danger zone behind the shared typed confirmation.
+assert.match(settings, /<DestroyInfrastructure canManage=\{canManage\} currentState=\{currentState\}/);
+assert.match(destroyControl, /destroyGithubActionsDeployment\(projectId, phrase\)/, "the existing project-scoped destroy API is used");
+assert.match(destroyControl, /phrase !== DESTROY_CONFIRMATION_PHRASE/, "the exact destructive confirmation phrase is required");
+assert.match(destroyControl, /overviewLifecycleActions\(currentState, canManage\)\.some\(\(action\) => action\.command === "destroy"\)/, "destroy is offered exactly when the canonical presenter offers it");
+assert.match(primitives, /disabled=\{busy \|\| !matches\}/, "the confirm button stays disabled until the phrase matches exactly");
+assert.match(overview, /command === "destroy"\) \{ menu\.push\(\{ icon: "trash", label: "Destroy infrastructure…", to: `\/projects\/\$\{projectId\}\/settings\?section=danger`/, "Overview points to the single destroy location");
+assert.doesNotMatch(overview, /destroyGithubActionsDeployment/, "Overview does not start a destroy itself");
+assert.match(infrastructure, />Go to overview to retry</, "a failed destroy points to the canonical retry");
+assert.match(infrastructure, />Follow progress</, "an active destroy links to its progress");
 assert.match(projects, /\["DESTROYED", "Destroyed"\]/, "Projects exposes the Destroyed lifecycle filter");
 assert.match(admin, /\["ALL", "LIVE", "DEPLOYING", "FAILED", "DESTROYED"\]/, "Admin exposes the Destroyed lifecycle filter");
 assert.match(adminCleanup, /createEmergencyCleanupChallenge|executeEmergencyCleanup|retryCentralProjectDestroy|requestDestroy/, "Admin cleanup uses only the pre-existing destroy and emergency cleanup APIs");
-assert.match(adminCleanup, />Retry destroy<|>Retry Terraform destroy<|>Destroy all DeployGuard testing\/preview resources</, "Admin cleanup restores its prior Destroy controls");
-assert.match(adminCleanup, /destroyPhrase !== "DESTROY"/, "Admin failed-Destroy retry keeps its exact confirmation gate");
-assert.match(adminCleanup, /emergencyPhrase !== "DESTROY ALL DEPLOYGUARD TEST RESOURCES"/, "Emergency cleanup keeps its stronger exact confirmation gate");
-assert.match(adminCleanup, /Production and shared resources are structurally excluded/, "Emergency cleanup retains protected-resource exclusions");
+assert.match(adminCleanup, /label: "Retry destroy…"/);
+assert.match(adminCleanup, /phrase !== "DESTROY"\) return/, "Admin failed-Destroy retry keeps its exact confirmation gate");
+assert.match(adminCleanup, /phrase !== "DESTROY ALL DEPLOYGUARD TEST RESOURCES"\) return/, "Emergency cleanup keeps its stronger exact confirmation gate");
+assert.match(adminCleanup, /Production and shared resources are excluded by design/, "Emergency cleanup retains protected-resource exclusions");
 assert.equal(failureRecoveryCommand({ operationType: "destroy", diagnosis: { retryDecision: "SAFE_NOW" } }, true), "retry", "Eligible failed Destroy operations use the existing generic retry path");
 
-console.log("Destroy UI presentation checks passed: guarded Overview, recovery, Infrastructure, project visibility, and Admin controls are restored.");
+console.log("Destroy UI presentation checks passed: one guarded destroy location, honest deletion verification, recovery links and admin controls.");

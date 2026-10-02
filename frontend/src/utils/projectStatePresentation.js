@@ -53,3 +53,29 @@ export function projectStateTone(state) {
   if (state === "BLOCKED") return "warning";
   return "neutral";
 }
+
+const STATE_LABELS = {
+  READY: "Ready",
+  DEPLOYING: "Deploying",
+  FAILED: "Failed",
+  LIVE: "Live",
+  DESTROYING: "Destroying",
+  DESTROYED: "Destroyed",
+  BLOCKED: "Blocked",
+};
+
+/** The one user-facing word for each authoritative state. */
+export function projectStateLabel(state) {
+  return STATE_LABELS[state] || "Unknown";
+}
+
+/**
+ * True when the runtime is still serving a verified release but the most
+ * recent operation failed. The state stays LIVE; the failure is secondary.
+ */
+export function liveWithFailedLatest(currentState) {
+  const authority = currentState?.stateAuthority;
+  return authority?.state === "LIVE"
+    && !authority?.activeOperation
+    && authority?.latestCompletedOperation?.outcome === "failed";
+}

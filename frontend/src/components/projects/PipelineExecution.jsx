@@ -1,36 +1,12 @@
-import { useRef, useState } from "react";
-import AppIcon from "../common/AppIcon.jsx";
-import {
-  Button,
-  Card,
-  ChartCard,
-  DataTable,
-  DetailsDrawer,
-  StatusChip,
-} from "../common/DesignSystem.jsx";
-import ErrorState from "../common/ErrorState.jsx";
-import { deployGithubActionsDeployment, retryGithubActionsDeployment } from "../../api/projectApi.js";
-import { useToast } from "../../hooks/useToast.js";
-import { failureRecoveryCommand } from "../../utils/overviewLifecyclePresentation.js";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { Button, Callout, DataTable, DetailsDrawer, Disclosure, EmptyState, Status } from "../common/DesignSystem.jsx";
+import Time from "../common/Time.jsx";
 import { pipelineStageDisplayStatus, pipelineStageDurationEnd } from "../../utils/pipelineStageTiming.js";
+import { operationResult, operationTypeLabel } from "../../utils/failurePresentation.js";
 import { productText } from "../../utils/productTerms.js";
+import { formatDateTime, formatElapsed } from "../../utils/time.js";
 import PipelineGraph from "./PipelineGraph.jsx";
-
-function date(value) {
-  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Unavailable";
-}
-
-function compactDate(value) {
-  return value ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)).replace(",", " ·") : "Unavailable";
-}
-
-function duration(startedAt, endedAt) {
-  if (!startedAt || !endedAt) return "Unavailable";
-  const milliseconds = Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
-  if (milliseconds < 1_000) return "Under 1 second";
-  const seconds = Math.round(milliseconds / 1_000);
-  return seconds < 60 ? `${seconds} seconds` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
 
 function operationEnd(operation) {
   return operation?.completedAt || operation?.failedAt || null;
@@ -38,132 +14,107 @@ function operationEnd(operation) {
 
 function stageDurationLabel(stage, operation) {
   const displayStatus = pipelineStageDisplayStatus(stage, operation);
-  return displayStatus === "unavailable" ? "Unavailable" : stage.status === "skipped" ? "Not run" : stage.status === "pending" ? "Not started" : duration(stage.startedAt, pipelineStageDurationEnd(stage, operation));
+  if (displayStatus === "unavailable") return "Not recorded";
+  if (stage.status === "skipped") return "Skipped";
+  if (stage.status === "pending") return "Waiting";
+  return formatElapsed(stage.startedAt, pipelineStageDurationEnd(stage, operation)) || "—";
 }
 
-function resultLabel(operation) {
-  if (operation?.deploymentAction === "destroy" && operation?.destroyVerificationStatus === "pending") return "Verification pending";
-  const value = String(operation?.status || "").toLowerCase();
-  if (value === "completed") return "Succeeded";
-  if (value === "failed") return "Failed";
-  if (value === "dispatch_failed") return "Dispatch failed";
-  if (value === "running") return "Running";
-  if (value === "queued") return "Queued";
-  return operation?.status ? String(operation.status).replaceAll("_", " ") : "Unavailable";
+function shortSha(value) {
+  return value ? String(value).slice(0, 7) : "—";
 }
 
-function stageIcon(stage) {
-  if (/aws|oidc/i.test(stage?.key)) return "shield";
-  if (/checkout|release/i.test(stage?.key)) return "github";
-  if (/image|docker|ecr/i.test(stage?.key)) return "box";
-  if (/terraform|destroy/i.test(stage?.key)) return "infrastructure";
-  if (/health|result/i.test(stage?.key)) return "activity";
-  return "pipeline";
-}
-
-function compactCommit(value) {
-  return value ? String(value).slice(0, 12) : "Unavailable";
-}
-
-function operationType(operation) {
-  if (operation?.deploymentAction === "destroy") return "Destroy";
-  if (operation?.deploymentAction === "rollback") return "Rollback";
-  return "Deploy";
+function isFailed(operation) {
+  return ["failed", "dispatch_failed"].includes(operation?.status);
 }
 
 /**
- * Technical execution belongs here, not on Overview. Its stage list is the
- * read-only GitHub Actions job evidence returned for each operation.
+ * Deployment attempts and their stage evidence. Diagnosis and recovery live on
+ * Troubleshoot and Overview; this view records what ran and links there.
  */
-export default function PipelineExecution({ canManage = false, currentState, onRefresh, operations = [], projectId }) {
-  const { notify } = useToast();
-  const retrying = useRef(false);
-  const [retryBusy, setRetryBusy] = useState(false);
-  const [error, setError] = useState("");
+export default function PipelineExecution({ currentState, operations = [], projectId }) {
   const [details, setDetails] = useState(null);
   const latest = operations[0] || null;
   const stages = latest?.workflowStages || [];
-  const timedStages = stages.filter((stage) => stage.status !== "skipped" && Number.isFinite(stage.durationMs) && stage.durationMs > 0);
-  const longestStage = Math.max(1, ...timedStages.map((stage) => stage.durationMs));
-  // Waterfall geometry: each bar is placed on the run's own time axis when start timestamps exist.
-  const stageStarts = timedStages.map((stage) => Date.parse(stage.startedAt)).filter(Number.isFinite);
-  const waterfallStart = stageStarts.length ? Math.min(...stageStarts) : null;
-  const waterfallSpan = waterfallStart === null ? longestStage : Math.max(1, ...timedStages.map((stage) => (Date.parse(stage.startedAt) || waterfallStart) + stage.durationMs - waterfallStart));
-  const waterfallOffset = (stage) => waterfallStart === null || !Number.isFinite(Date.parse(stage.startedAt)) ? 0 : ((Date.parse(stage.startedAt) - waterfallStart) / waterfallSpan) * 100;
-  const latestFailed = latest?.status === "failed";
-  const recoveryCommand = latestFailed ? failureRecoveryCommand(latest, currentState.canRetry) : null;
 
-  async function retry() {
-    if (!canManage || recoveryCommand !== "retry" || retrying.current) return;
-    retrying.current = true;
-    setRetryBusy(true);
-    setError("");
-    try {
-      const response = await retryGithubActionsDeployment(projectId);
-      await onRefresh();
-      const rejected = response.deployment?.state === "rejected";
-      if (rejected) setError(response.deployment?.message || "Retry was recorded but not dispatched.");
-      notify(response.deployment?.message || "Retry dispatched to GitHub Actions.", rejected ? "danger" : "success");
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      retrying.current = false;
-      setRetryBusy(false);
-    }
+  // Before the first request there is no run, graph, or history to show: one empty state replaces three.
+  if (!latest) {
+    return <EmptyState icon="pipeline" message="Every deployment, rollback and destroy appears here with its stages and logs once it starts." title="No deployments yet" action={<Button to={`/projects/${projectId}`}>Go to overview</Button>} />;
   }
 
-  async function deployFixedCommit() {
-    if (!canManage || recoveryCommand !== "deploy_fixed" || retrying.current) return;
-    retrying.current = true;
-    setRetryBusy(true);
-    setError("");
-    try {
-      const response = await deployGithubActionsDeployment(projectId);
-      await onRefresh();
-      const rejected = response.deployment?.state === "rejected";
-      if (rejected) setError(response.deployment?.message || "The fixed commit deployment was recorded but not dispatched.");
-      notify(response.deployment?.message || "Fixed commit deployment submitted.", rejected ? "danger" : "success");
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      retrying.current = false;
-      setRetryBusy(false);
-    }
-  }
+  const result = operationResult(latest);
+  const running = ["running", "queued"].includes(String(latest.status).toLowerCase());
+  const elapsed = formatElapsed(latest.createdAt, operationEnd(latest) || (running ? new Date().toISOString() : null));
 
-  return <div className="pipeline-execution" data-pipeline-execution="true">
-    <Card className="pipeline-identity-card" data-ground="night" aria-label="Deployment execution summary"><div><p className="eyebrow">Latest deployment</p><h2>{latest ? `Attempt ${latest.attempt}` : "Not started"}</h2><p>{latest ? `${compactCommit(latest.commitSha || currentState.commit)} · ${currentState.branch || "Branch unavailable"}` : "No deployment request has been made."}</p></div><StatusChip status={latest?.destroyVerificationStatus === "pending" ? "warning" : latest?.status}>{resultLabel(latest)}</StatusChip>{latest ? <dl><div><dt>Operation</dt><dd>{operationType(latest)}</dd></div><div><dt>Duration</dt><dd>{duration(latest.createdAt, operationEnd(latest))}</dd></div><div><dt>Completed</dt><dd>{compactDate(operationEnd(latest) || latest.createdAt)}</dd></div></dl> : null}</Card>
+  return <div className="deployments" data-pipeline-execution="true">
+    <section aria-labelledby="latest-attempt-title" className="panel latest-run">
+      <header className="latest-run-head">
+        <div className="latest-run-title">
+          <Status active={running} className="status-lg" tone={result.tone}>{result.label}</Status>
+          <h2 className="sr-only" id="latest-attempt-title">Latest attempt</h2>
+          <p className="latest-run-identity">{operationTypeLabel(latest)} · attempt {latest.attempt} · <span className="mono">{shortSha(latest.commitSha || currentState?.commit)}</span>{currentState?.branch ? <> · {currentState.branch}</> : null}</p>
+          <p className="muted latest-run-time">Started <Time value={latest.createdAt} />{elapsed ? <> · {running ? "running for" : "took"} {elapsed}</> : null}</p>
+        </div>
+        {latest.workflowUrl ? <Button external href={latest.workflowUrl} size="sm">View run on GitHub</Button> : null}
+      </header>
 
-    {error ? <ErrorState message={error} onRetry={() => void (recoveryCommand === "deploy_fixed" ? deployFixedCommit() : retry())} /> : null}
+      {isFailed(latest) ? <p className="latest-run-note"><strong>{latest.dispatchFailure ? "The run never started." : `Failed during ${productText(latest.failedStageLabel || latest.stageLabel) || "a stage"}.`}</strong><Link className="link" to={`/projects/${projectId}/troubleshooting?operation=${latest.id}`}>See what went wrong</Link></p> : null}
 
-    {latest?.securityScan ? <Card className="pipeline-security-card" data-trivy-status={latest.securityScan.status}><div className="pipeline-section-heading"><div><p className="eyebrow">Container security</p><h2>Trivy scan</h2><p>{latest.securityScan.enforced ? "Enforcement was enabled for this immutable release." : "Advisory scan; findings did not block deployment."}</p></div><StatusChip status={latest.securityScan.status}>{String(latest.securityScan.status).replaceAll("_", " ")}</StatusChip></div><div className="billing-usage-grid"><UsageCount label="Critical" value={latest.securityScan.counts?.critical} /><UsageCount label="High" value={latest.securityScan.counts?.high} /><UsageCount label="Medium" value={latest.securityScan.counts?.medium} /><UsageCount label="Total" value={latest.securityScan.counts?.total} /></div><details><summary>Finding evidence</summary>{latest.securityScan.evidence?.length ? <ul>{latest.securityScan.evidence.slice(0, 25).map((finding) => <li key={`${finding.serviceId}-${finding.vulnerabilityId}-${finding.packageName}`}><strong>{finding.vulnerabilityId}</strong> · {finding.severity} · {finding.packageName} {finding.installedVersion || ""}{finding.fixedVersion ? ` → ${finding.fixedVersion}` : ""}</li>)}</ul> : <p>No vulnerabilities were reported.</p>}</details></Card> : null}
+      <div className="latest-run-stages">
+        {latest.dispatchFailure ? <p className="muted">GitHub Actions did not create a run, so there are no stages to show.</p>
+          : stages.length ? <PipelineGraph durationLabel={(stage) => stageDurationLabel(stage, latest)} operation={latest} stages={stages} />
+            : <p className="muted">{latest.workflowStagesUnavailable ? "Step details are temporarily unavailable from GitHub Actions. The result and run link above are still accurate." : "Step details appear once GitHub Actions reports them."}</p>}
+      </div>
 
-    <div className={timedStages.length ? "pipeline-console has-durations" : "pipeline-console"}>
-    <Card className="pipeline-timeline-card">
-      <div className="pipeline-section-heading"><div><p className="eyebrow">GitHub Actions execution</p><h2>Execution graph</h2><p>Only stages returned by the selected GitHub Actions run are shown. Select a stage for its recorded evidence.</p></div>{latest?.workflowUrl ? <Button href={latest.workflowUrl} rel="noreferrer" target="_blank" tone="secondary">Open GitHub Actions</Button> : null}</div>
-      {latest?.dispatchFailure ? <p className="pipeline-unavailable"><strong>GitHub Actions run was not created.</strong> DeployGuard stopped during dispatch: {latest.errorMessage || "The persisted dispatch failure has no additional safe detail."}</p> : stages.length ? <><PipelineGraph durationLabel={(stage) => stageDurationLabel(stage, latest)} formatDate={date} operation={latest} stages={stages} /><details className="pipeline-stage-log"><summary>All stages · {stages.length}</summary><ol aria-label="GitHub Actions workflow stages" className="pipeline-stage-timeline">
-        {stages.map((stage) => { const displayStatus = pipelineStageDisplayStatus(stage, latest); return <li className={`pipeline-stage-row is-${displayStatus}`} key={`${stage.key}-${stage.startedAt || "pending"}`}>
-          <span aria-hidden="true" className="pipeline-stage-icon"><AppIcon name={stageIcon(stage)} size={18} /></span>
-          <div className="pipeline-stage-main"><div className="pipeline-stage-title"><strong>{productText(stage.label)}</strong><StatusChip status={displayStatus} /></div><p>{stageDurationLabel(stage, latest)}</p></div>
-          <div className="pipeline-stage-times"><span>Started {date(stage.startedAt)}</span><span>Completed {date(stage.completedAt)}</span></div>
-          <details className="pipeline-stage-evidence"><summary>Evidence</summary><p>Source: GitHub Actions workflow job.</p>{stage.jobUrl ? <a href={stage.jobUrl} rel="noreferrer" target="_blank">Open GitHub Actions job</a> : null}{stage.failureReason ? <p className="pipeline-stage-failure">{productText(stage.failureReason)}</p> : null}</details>
-        </li>; })}
-      </ol></details></> : <p className="pipeline-unavailable">{latest?.workflowStagesUnavailable ? "Unavailable — GitHub Actions final step metadata is temporarily unavailable. The terminal operation status and run link remain available." : latest ? "GitHub Actions step metadata has not been collected yet. The operation status and run link remain available." : "No deployment request has been made yet."}</p>}
-      {latest ? <details className="pipeline-advanced"><summary>Advanced run details</summary><dl><div><dt>GitHub Actions run</dt><dd>{latest.workflowRunId || "Unavailable"}</dd></div><div><dt>Workflow status</dt><dd>{latest.workflowStatus || "Unavailable"}</dd></div><div><dt>Operation identifier</dt><dd>{latest.id}</dd></div></dl></details> : null}
-      {latestFailed && canManage && recoveryCommand ? <div className="pipeline-retry-action"><Button disabled={retryBusy} onClick={() => void (recoveryCommand === "deploy_fixed" ? deployFixedCommit() : retry())}>{retryBusy ? (recoveryCommand === "deploy_fixed" ? "Deploying…" : "Retrying…") : recoveryCommand === "deploy_fixed" ? "Deploy Fixed Commit" : `Retry failed ${operationType(latest).toLowerCase()}`}</Button></div> : null}
-    </Card>
+      <div className="latest-run-advanced">
+        <Disclosure summary="Run identifiers">
+          <dl className="facts">
+            <div><dt>GitHub Actions run</dt><dd className="mono">{latest.workflowRunId || "Not created"}</dd></div>
+            <div><dt>Workflow status</dt><dd>{latest.workflowStatus || "—"}</dd></div>
+            <div><dt>Operation</dt><dd className="mono">{latest.id}</dd></div>
+            <div><dt>Generation</dt><dd className="mono">{latest.generationId || "Not created"}</dd></div>
+          </dl>
+        </Disclosure>
+      </div>
+    </section>
 
-    {timedStages.length ? <ChartCard description="Stage duration from GitHub Actions timestamps." hasData title="Where deployment time was spent">
-      <ol aria-label="GitHub Actions stage durations" className="pipeline-duration-chart">{timedStages.map((stage) => <li key={`${stage.key}-${stage.startedAt || "timing"}`}><div><span>{productText(stage.label)}</span><strong>{duration(stage.startedAt, stage.completedAt)}</strong></div><span className="pipeline-duration-bar"><i style={{ marginLeft: `${waterfallOffset(stage)}%`, width: `${Math.min(100 - waterfallOffset(stage), Math.max(1.5, (stage.durationMs / waterfallSpan) * 100))}%` }} /></span></li>)}</ol>
-    </ChartCard> : null}
-    </div>
+    <section aria-labelledby="deployment-history" className="section">
+      <div className="section-head"><h2 id="deployment-history">History<span className="count">{operations.length}</span></h2><p>Every attempt is kept, including retries and runs that never started.</p></div>
+      <DataTable caption="Deployment history" label="Deployment history">
+        <thead><tr><th>Result</th><th>Type</th><th>Attempt</th><th>Commit</th><th>Started</th><th>Duration</th><th><span className="sr-only">Details</span></th></tr></thead>
+        <tbody>{operations.map((operation) => {
+          const row = operationResult(operation);
+          return <tr key={operation.id}>
+            <td data-label="Result"><Status active={row.tone === "info"} tone={row.tone}>{row.label}</Status></td>
+            <td data-label="Type">{operationTypeLabel(operation)}{operation.retryOfOperationId ? <span className="cell-sub">Retry</span> : null}</td>
+            <td data-label="Attempt" className="num">{operation.attempt}</td>
+            <td data-label="Commit"><span className="mono" title={operation.commitSha || ""}>{shortSha(operation.commitSha)}</span></td>
+            <td data-label="Started"><Time value={operation.createdAt} /></td>
+            <td data-label="Duration" className="num">{formatElapsed(operation.createdAt, operationEnd(operation)) || "—"}</td>
+            <td className="cell-end" data-label=""><Button onClick={() => setDetails(operation)} size="sm" tone="ghost">Details</Button></td>
+          </tr>;
+        })}</tbody>
+      </DataTable>
+    </section>
 
-    <Card className="pipeline-history-card"><div className="pipeline-section-heading"><div><p className="eyebrow">Attempt history</p><h2>Deployment attempts</h2><p>Each row is a persisted DeployGuard operation. Retry lineage is retained, including failures before GitHub creates a run.</p></div></div>
-      <DataTable caption="Deployment attempt history" className="responsive-record-table" label="Deployment attempt history"><thead><tr><th>Attempt</th><th>Generation</th><th>Type</th><th>Result</th><th>Commit</th><th>Duration</th><th>Time</th><th aria-label="Details" /></tr></thead><tbody>{operations.map((operation) => <tr key={operation.id}><td data-label="Attempt">Attempt {operation.attempt}{operation.retryOfOperationId ? <small className="pipeline-retry-lineage">Retry</small> : null}</td><td data-label="Generation" title={operation.generationId || ""}>{compactCommit(operation.generationId)}</td><td data-label="Type">{operationType(operation)}</td><td data-label="Result"><StatusChip status={operation.destroyVerificationStatus === "pending" ? "warning" : operation.status}>{resultLabel(operation)}</StatusChip></td><td data-label="Commit" title={operation.commitSha || ""}>{compactCommit(operation.commitSha)}</td><td data-label="Duration">{duration(operation.createdAt, operationEnd(operation))}</td><td data-label="Time">{date(operation.createdAt)}</td><td data-label="Details"><Button onClick={() => setDetails(operation)} tone="ghost">Details</Button></td></tr>)}{!operations.length ? <tr><td colSpan="8">No deployment request has been made yet.</td></tr> : null}</tbody></DataTable>
-    </Card>
-
-    {details ? <DetailsDrawer labelledBy="pipeline-attempt-details" onClose={() => setDetails(null)} title={`Attempt ${details.attempt} details`}><dl className="pipeline-attempt-details"><div><dt>Generation</dt><dd>{details.generationId || "Not created — deployment failed before runtime generation."}</dd></div><div><dt>Type</dt><dd>{operationType(details)}</dd></div><div><dt>Result</dt><dd>{resultLabel(details)}</dd></div><div><dt>Stage</dt><dd>{productText(details.stageLabel) || "Unavailable"}</dd></div>{details.dispatchFailure ? <div><dt>GitHub Actions run</dt><dd>Not created</dd></div> : null}{details.errorMessage ? <div><dt>Safe failure reason</dt><dd>{productText(details.errorMessage)}</dd></div> : null}{details.destroyVerificationStatus === "pending" ? <div><dt>Destroy verification</dt><dd>{details.destroyVerificationUnresolved?.length ? `Unresolved: ${details.destroyVerificationUnresolved.join(", ")}` : "Read-only verification is pending."}</dd></div> : null}<div><dt>Requested</dt><dd>{date(details.createdAt || details.startedAt || details.failedAt)}</dd></div><div><dt>Completed</dt><dd>{date(operationEnd(details))}</dd></div><div><dt>Commit</dt><dd>{details.commitSha || "Unavailable"}</dd></div>{!details.dispatchFailure ? <div><dt>GitHub Actions run</dt><dd>{details.workflowRunId || "Unavailable"}</dd></div> : null}{details.workflowUrl ? <div><dt>Evidence</dt><dd><a href={details.workflowUrl} rel="noreferrer" target="_blank">Open GitHub Actions run</a></dd></div> : null}</dl></DetailsDrawer> : null}
+    {details ? <DetailsDrawer labelledBy="pipeline-attempt-details" onClose={() => setDetails(null)} title={`Attempt ${details.attempt}`}>
+      <Status tone={operationResult(details).tone}>{operationResult(details).label}</Status>
+      <dl className="facts-list">
+        <div><dt>Type</dt><dd>{operationTypeLabel(details)}</dd></div>
+        <div><dt>Stage reached</dt><dd>{productText(details.failedStageLabel || details.stageLabel) || "—"}</dd></div>
+        <div><dt>Requested</dt><dd>{formatDateTime(details.createdAt || details.startedAt || details.failedAt)}</dd></div>
+        <div><dt>Finished</dt><dd>{formatDateTime(operationEnd(details))}</dd></div>
+        <div><dt>Commit</dt><dd className="mono">{details.commitSha || "—"}</dd></div>
+        <div><dt>Generation</dt><dd className="mono">{details.generationId || "Not created — the attempt stopped before runtime"}</dd></div>
+        <div><dt>GitHub Actions run</dt><dd className="mono">{details.dispatchFailure ? "Not created" : details.workflowRunId || "—"}</dd></div>
+        {details.destroyVerificationStatus === "pending" ? <div><dt>Deletion check</dt><dd>{details.destroyVerificationUnresolved?.length ? `Still present: ${details.destroyVerificationUnresolved.join(", ")}` : "Verifying that every resource is gone."}</dd></div> : null}
+      </dl>
+      {details.errorMessage ? <Callout title="Failure reason" tone="danger"><p>{productText(details.errorMessage)}</p></Callout> : null}
+      {details.safeLog ? <Disclosure summary="Failure log (sanitized)"><pre className="code">{details.safeLog}</pre></Disclosure> : null}
+      <div className="actions">
+        {isFailed(details) ? <Button to={`/projects/${projectId}/troubleshooting?operation=${details.id}`}>See what went wrong</Button> : null}
+        {details.workflowUrl ? <Button external href={details.workflowUrl} tone="ghost">View run on GitHub</Button> : null}
+      </div>
+    </DetailsDrawer> : null}
   </div>;
 }
-
-function UsageCount({ label, value }) { return <div><span>{label}</span><strong>{value ?? 0}</strong></div>; }

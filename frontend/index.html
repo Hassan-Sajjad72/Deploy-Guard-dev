@@ -4,10 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/deployguard-mark.svg" />
-    <meta name="theme-color" content="#0B0D12" />
+    <meta name="theme-color" content="#0e0f11" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      (function () {
+        var pref = "system";
+        try { pref = localStorage.getItem("deployguard-theme") || "system"; } catch (error) {}
+        var light = pref === "light" || (pref === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+        document.documentElement.dataset.theme = light ? "light" : "dark";
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..800&family=Geist+Mono:wght@400..600&display=swap" />
+    <meta name="description" content="Deploy a GitHub repository to AWS and know, at any moment, exactly what is running." />
     <title>DeployGuard</title>
   </head>
   <body>

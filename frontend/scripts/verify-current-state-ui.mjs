@@ -5,7 +5,7 @@ import { PROJECT_DELETION_NOTICE, redirectDeletedProject } from "../src/utils/pr
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const projects = read("../src/pages/Projects.jsx");
-const dashboard = read("../src/pages/Dashboard.jsx");
+const dashboard = read("../src/pages/Projects.jsx");
 const overview = read("../src/pages/ProjectDetails.jsx");
 const pipeline = read("../src/pages/ProjectPipeline.jsx");
 const infrastructure = read("../src/pages/ProjectInfrastructure.jsx");
@@ -37,7 +37,7 @@ assert.match(overview, /ProjectOverviewLifecycle/);
 assert.match(pipeline, /getProjectCurrentState/);
 assert.match(pipeline, /PipelineExecution/);
 assert.match(lifecycle, /overviewLifecycleActions\(currentState, canManage\)/);
-assert.match(execution, /currentState\.canRetry/);
+assert.match(troubleshooting, /currentState\?\.canRetry/, "retry admission uses the canonical current state");
 assert.match(troubleshooting, /failedStageLabel/);
 assert.match(api, /current-state[\s\S]*cache:\s*"no-store"/);
 assert.match(api, /detailedCurrentStateRequests/);
@@ -52,7 +52,8 @@ for (const source of [overview, pipeline, infrastructure, monitoring, settings, 
   assert.match(source, /redirectDeletedProject\(caught, navigate\)/);
 }
 assert.match(projects, /location\.state\?\.notice/);
-assert.match(execution, /retryGithubActionsDeployment\(projectId\)[\s\S]{0,240}await onRefresh\(\)/);
+assert.match(lifecycle, /retryGithubActionsDeployment\(projectId\)[\s\S]{0,240}await onRefresh\(\)/, "Overview refreshes canonical state after a retry");
+assert.doesNotMatch(execution, /retryGithubActionsDeployment/, "Deployments does not start operations");
 
 const active = deploymentPhasePresentation({ developerState: "deploying", progress: { phase: "deploy" } });
 assert.equal(active.filter(({ status }) => status === "running").length, 1);

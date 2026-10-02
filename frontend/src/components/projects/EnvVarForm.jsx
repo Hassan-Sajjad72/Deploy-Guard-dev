@@ -7,51 +7,15 @@ export default function EnvVarForm({
   submitLabel = "Add variable",
 }) {
   return (
-    <form className="form-stack panel" onSubmit={onSubmit}>
-      <div className="field">
-        <label htmlFor="envKey">Key</label>
-        <input
-          id="envKey"
-          autoComplete="off"
-          name="key"
-          onChange={onChange}
-          placeholder="APP_BASE_URL"
-          required
-          value={form.key}
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="envValue">Value</label>
-        <input
-          id="envValue"
-          autoComplete="new-password"
-          name="value"
-          onChange={onChange}
-          required={!form.id}
-          type={form.isSecret ? "password" : "text"}
-          value={form.value}
-        />
-      </div>
-      <label>
-        <input
-          checked={form.isSecret}
-          name="isSecret"
-          onChange={onChange}
-          type="checkbox"
-        />{" "}
-        Secret
-      </label>
-      <label className="field"><span>Scope</span><select name="scope" onChange={onChange} value={form.scope}><option value="build">Build</option><option value="runtime">Runtime</option><option value="both">Build and runtime</option></select></label>
-      <p className="muted">Custom variables are optional. Database connection aliases may be supplied here when no conflicting managed database is attached.</p>
-      <div className="quick-actions">
-        <button className="button" disabled={isSubmitting} type="submit">
-          {isSubmitting ? "Saving…" : submitLabel}
-        </button>
-        {onCancel ? (
-          <button className="secondary-button" onClick={onCancel} type="button">
-            Cancel
-          </button>
-        ) : null}
+    <form className="env-form" onSubmit={onSubmit}>
+      <label className="field"><span>Name</span><input autoComplete="off" className="mono" id="envKey" name="key" onChange={onChange} placeholder="APP_BASE_URL" required spellCheck={false} value={form.key} /></label>
+      <label className="field"><span>Value</span><input autoComplete="new-password" id="envValue" name="value" onChange={onChange} placeholder={form.id ? "Leave blank to keep the current value" : ""} required={!form.id} spellCheck={false} type={form.isSecret ? "password" : "text"} value={form.value} /></label>
+      <label className="field"><span>Available during</span><select name="scope" onChange={onChange} value={form.scope}><option value="runtime">Runtime</option><option value="build">Build</option><option value="both">Build and runtime</option></select></label>
+      <label className="check"><input checked={form.isSecret} name="isSecret" onChange={onChange} type="checkbox" /><span>Secret<small>Hidden after saving and never shown again.</small></span></label>
+      <p className="field-hint">Database connection aliases may be supplied here when no conflicting managed database is attached.</p>
+      <div className="dialog-actions">
+        {onCancel ? <button className="btn btn-ghost" onClick={onCancel} type="button">Cancel</button> : null}
+        <button aria-busy={isSubmitting || undefined} className="btn btn-primary" disabled={isSubmitting} type="submit">{isSubmitting ? "Saving…" : submitLabel}</button>
       </div>
     </form>
   );

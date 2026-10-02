@@ -1,0 +1,60 @@
+/* Deploy a repository: four numbered steps in one column. */
+.np-flow { display: grid; gap: var(--s-4); }
+.np-journey { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-bottom: var(--s-2); }
+.np-journey li { display: inline-flex; align-items: center; gap: var(--s-2); padding: 4px 10px 4px 4px; border-radius: 999px; background: var(--surface-2); color: var(--text-3); font-size: var(--text-xs); }
+.np-journey li > span { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line-strong); font-weight: 600; font-size: 0.7rem; }
+.np-journey li strong { font-weight: 550; }
+.np-journey .is-current, .np-journey .is-ready { color: var(--text); }
+.np-journey .is-complete { color: var(--text-2); }
+.np-journey .is-complete > span { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+.np-journey .is-ready > span { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+
+.np-step { padding: var(--s-6) 0; display: grid; gap: var(--s-5); border-bottom: 0; }
+.np-step + .np-step { border-top: 1px solid var(--line); }
+.np-step-head { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: var(--s-3); align-items: start; }
+.np-step-head h2 { font-size: var(--text-lg); }
+.np-step-head p { color: var(--text-3); font-size: var(--text-sm); margin-top: 2px; }
+.np-step-mark { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--line-strong); color: var(--text-2); font-size: var(--text-xs); font-weight: 650; }
+.np-step-mark.is-current, .np-step-mark.is-ready { border-color: var(--text); color: var(--text); }
+.np-step-mark.is-complete { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+.np-step-head + * { margin-left: 40px; }
+.np-step > *:not(.np-step-head) { margin-left: 40px; }
+@media (max-width: 640px) {
+  .np-step { padding: var(--s-5) 0; }
+  .np-step > *:not(.np-step-head), .np-step-head + * { margin-left: 0; }
+  .np-step-head { grid-template-columns: 28px minmax(0, 1fr); }
+  .np-step-head > :nth-child(3) { grid-column: 1 / -1; justify-self: start; }
+}
+
+.np-service { display: grid; gap: var(--s-3); padding: var(--s-4); border: 1px solid var(--line); border-radius: var(--radius); }
+.np-service-head { display: flex; justify-content: space-between; align-items: center; font-size: var(--text-sm); }
+.np-service .disclosure { border-top: 1px solid var(--line); }
+.np-public { max-width: 420px; }
+.np-actions { padding-top: var(--s-2); }
+.np-connect { display: grid; gap: var(--s-4); justify-items: start; }
+.np-connect h2 { font-size: var(--text-lg); margin-bottom: var(--s-1); }
+.np-connect p { color: var(--text-2); font-size: var(--text-sm); max-width: 60ch; }
+
+/* Directory picker: a searchable tree of repository folders. */
+.service-directory-combobox { position: relative; }
+.service-directory-tree {
+  position: absolute;
+  z-index: var(--z-menu);
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: var(--s-1);
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop);
+}
+.service-directory-tree ul[role="group"] { padding-left: 14px; }
+.service-directory-tree-row { display: flex; align-items: center; gap: 2px; }
+.service-directory-tree-toggle, .service-directory-tree-spacer { width: 24px; height: 28px; display: grid; place-items: center; flex-shrink: 0; color: var(--text-3); border-radius: 5px; }
+.service-directory-tree-toggle:hover { background: var(--surface-2); color: var(--text); }
+.service-directory-tree-directory { flex: 1; text-align: left; padding: 5px 8px; border-radius: 5px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.service-directory-tree-directory:hover { background: var(--surface-2); color: var(--text); }
+.service-directory-tree-item[aria-selected="true"] > .service-directory-tree-row .service-directory-tree-directory { background: var(--accent-soft); color: var(--text); }

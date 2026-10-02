@@ -7,7 +7,7 @@ import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPre
 const overview = readFileSync(new URL("../src/pages/ProjectDetails.jsx", import.meta.url), "utf8");
 const lifecycle = readFileSync(new URL("../src/components/projects/ProjectOverviewLifecycle.jsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../src/api/projectApi.js", import.meta.url), "utf8");
-const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../src/styles/pages/overview.css", import.meta.url), "utf8") + readFileSync(new URL("../src/styles/components.css", import.meta.url), "utf8");
 const designSystem = readFileSync(new URL("../src/components/common/DesignSystem.jsx", import.meta.url), "utf8");
 
 const actions = (state, canManage = true) => overviewLifecycleActions({ stateAuthority: { state }, canRetry: true, stableUrl: "https://example.test" }, canManage);
@@ -37,23 +37,25 @@ assert.equal(projectStatePresentation(stableRuntimeWithActiveRollback).state, "D
 assert.equal(overviewLifecycleCopy(stableRuntimeWithActiveRollback).title, "Rollback in progress");
 assert.deepEqual(overviewLifecycleActions(stableRuntimeWithActiveRollback, true), [{ kind: "link", target: "pipeline", label: "View progress" }]);
 assert.deepEqual(actions("FAILED"), [
-  { kind: "link", target: "pipeline", label: "View Pipeline" },
-  { kind: "command", command: "retry", label: "Retry Failed Deployment" },
+  { kind: "link", target: "pipeline", label: "View deployments" },
+  { kind: "command", command: "retry", label: "Retry deployment" },
 ]);
 const failedDeploy = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy" } }, latestAttempt: { operationType: "deploy", workflowRunId: "123" }, canRetry: true };
 const failedDestroy = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "destroy" } }, latestAttempt: { operationType: "destroy" }, canRetry: true };
 const failedRollback = { stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "rollback" } }, latestAttempt: { operationType: "rollback" }, canRetry: true };
 assert.equal(overviewLifecycleCopy(failedDeploy).title, "Deployment failed");
-assert.equal(overviewLifecycleActions(failedDeploy, true)[1].label, "Retry Failed Deployment");
+assert.equal(overviewLifecycleActions(failedDeploy, true)[1].label, "Retry deployment");
 assert.equal(overviewLifecycleCopy(failedDestroy).title, "Destroy failed");
-assert.equal(overviewLifecycleActions(failedDestroy, true)[1].label, "Retry Failed Destroy");
+assert.equal(overviewLifecycleActions(failedDestroy, true)[1].label, "Retry destroy");
 assert.equal(overviewLifecycleCopy(failedRollback).title, "Rollback failed");
-assert.equal(overviewLifecycleActions(failedRollback, true)[1].label, "Retry Failed Rollback");
+assert.equal(overviewLifecycleActions(failedRollback, true)[1].label, "Retry rollback");
 assert.equal(overviewFailureOwnershipLabel({ ...failedDeploy, latestAttempt: { ...failedDeploy.latestAttempt, failureOwner: "REPOSITORY_APPLICATION" } }), "Repository failure");
 for (const failureOwner of ["DEPLOYGUARD_PLATFORM", "EXTERNAL_PROVIDER", "UNVERIFIED", null, undefined]) {
   assert.equal(overviewFailureOwnershipLabel({ ...failedDeploy, latestAttempt: { ...failedDeploy.latestAttempt, failureOwner } }), null, `${failureOwner || "missing"} ownership must not add an Overview label`);
 }
-assert.match(lifecycle, /failureOwnershipLabel \? <StatusChip[^>]*>\{failureOwnershipLabel\}<\/StatusChip> : null/, "Overview renders only the authoritative repository-failure label");
+assert.match(lifecycle, /failureOwnershipLabel \? <span className="sr-only"> \(\{failureOwnershipLabel\}\)<\/span> : null/, "Overview renders only the authoritative repository-failure label");
+assert.match(lifecycle, /state === "FAILED" \? <div className="actions"><Button icon="wrench" to=\{troubleshootPath\}>See what went wrong<\/Button>/, "a failed Overview links once to its diagnosis");
+assert.doesNotMatch(lifecycle, /remediationSteps|failureOwnerLabel|Next step:/, "the diagnosis is owned by Troubleshoot and not repeated on Overview");
 assert.doesNotMatch(lifecycle, /DeployGuard failure/, "Overview does not add a DeployGuard ownership label");
 const setupFailureRail = deploymentPhasePresentation({
   developerState: "failed_application",
@@ -74,11 +76,11 @@ assert.deepEqual(
 assert.equal(overviewLifecycleCopy({
   developerState: "failed_application", progress: { phase: "build" }, latestAttempt: { workflowRunId: "33212514809" },
   stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } },
-}).title, "Build Application failed");
+}).title, "Build failed");
 assert.equal(overviewLifecycleCopy({
   developerState: "failed_application", progress: { phase: "finalize" }, latestAttempt: { workflowRunId: "33464002814" },
   stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } },
-}).title, "Finalize Release failed");
+}).title, "Release could not be finalized");
 const failedDestroyWithStableRuntime = {
   developerState: "live",
   developerMessage: "The latest destroy operation failed. The verified stable release remains live.",
@@ -97,23 +99,23 @@ assert.equal(projectStatePresentation(failedDestroyWithStableRuntime).active, fa
 assert.equal(overviewLifecycleCopy(failedDestroyWithStableRuntime).title, "Destroy failed");
 assert.match(overviewLifecycleCopy(failedDestroyWithStableRuntime).message, /remains live/i);
 assert.deepEqual(overviewLifecycleActions(failedDestroyWithStableRuntime, true), [
-  { kind: "link", target: "pipeline", label: "View Pipeline" },
-  { kind: "command", command: "retry", label: "Retry Failed Destroy" },
+  { kind: "link", target: "pipeline", label: "View deployments" },
+  { kind: "command", command: "retry", label: "Retry destroy" },
 ]);
 assert.deepEqual(actions("LIVE"), [
-  { kind: "external", href: "https://example.test", label: "Open Application" },
+  { kind: "external", href: "https://example.test", label: "Open app" },
   { kind: "command", command: "redeploy", label: "Redeploy" },
-  { kind: "disabled", command: "rollback", label: "Rollback application", reason: "No previous successful release is available." },
-  { kind: "command", command: "destroy", label: "Destroy Infrastructure" },
+  { kind: "disabled", command: "rollback", label: "Roll back", reason: "No previous successful release is available." },
+  { kind: "command", command: "destroy", label: "Destroy infrastructure" },
 ]);
 assert.deepEqual(
   overviewLifecycleActions({ stateAuthority: { state: "LIVE" }, stableUrl: "https://example.test", stableRelease: { rollbackAvailable: true } }, true)[2],
-  { kind: "command", command: "rollback", label: "Rollback application" },
+  { kind: "command", command: "rollback", label: "Roll back" },
   "an immutable previous release activates rollback from Overview",
 );
 assert.deepEqual(actions("DESTROYING"), [{ kind: "link", target: "pipeline", label: "View progress" }]);
-assert.deepEqual(actions("DESTROYED"), [{ kind: "command", command: "deploy", label: "Deploy Again" }]);
-assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED" }, canRetry: false }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }]);
+assert.deepEqual(actions("DESTROYED"), [{ kind: "command", command: "deploy", label: "Deploy again" }]);
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED" }, canRetry: false }, true), [{ kind: "link", target: "pipeline", label: "View deployments" }]);
 const safeNowFailure = { operationType: "deploy", diagnosis: { failureOwner: "EXTERNAL_PROVIDER", retryDecision: "SAFE_NOW" } };
 const publicReachabilityFailure = { operationType: "deploy", commit: "d".repeat(40), diagnosis: { terminalFailureCode: "DG_PUBLIC_REACHABILITY_FAILED", rootCauseCode: "DG_PUBLIC_REACHABILITY_FAILED", failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", retryDecision: "SAFE_NOW" } };
 const applicationBindingFailure = { operationType: "deploy", commit: "e".repeat(40), diagnosis: { terminalFailureCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED", rootCauseCode: "DG_APPLICATION_EXTERNAL_BINDING_FAILED", failureOwner: "REPOSITORY_APPLICATION", externalProvider: null, retryDecision: "SAFE_AFTER_FIX", recommendedAction: "Bind to 0.0.0.0 and deploy the corrected commit." } };
@@ -126,13 +128,11 @@ assert.equal(failureRecoveryCommand(safeAfterFixFailure, false), "deploy_fixed")
 assert.equal(failureRecoveryCommand(notSafeFailure, false), null);
 assert.equal(failureRecoveryCommand({ ...safeAfterFixFailure, operationType: "rollback" }, false), null, "rollback never becomes a fresh source deployment");
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: safeAfterFixFailure, canRetry: false }, true), [
-  { kind: "link", target: "pipeline", label: "View Pipeline" },
-  { kind: "command", command: "deploy_fixed", label: "Deploy Fixed Commit" },
+  { kind: "link", target: "pipeline", label: "View deployments" },
+  { kind: "command", command: "deploy_fixed", label: "Deploy fixed commit" },
 ]);
-assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: applicationBindingFailure, canRetry: false }, true).at(-1), { kind: "command", command: "deploy_fixed", label: "Deploy Fixed Commit" });
-assert.match(lifecycle, /latest\.diagnosis\.rootCauseCode/);
-assert.match(lifecycle, /latest\.diagnosis\.recommendedAction/);
-assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: notSafeFailure, canRetry: true }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }], "NOT_SAFE_YET suppresses unsafe actions even if canRetry is inconsistent");
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: applicationBindingFailure, canRetry: false }, true).at(-1), { kind: "command", command: "deploy_fixed", label: "Deploy fixed commit" });
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED", latestCompletedOperation: { type: "deploy", outcome: "failed" } }, latestAttempt: notSafeFailure, canRetry: true }, true), [{ kind: "link", target: "pipeline", label: "View deployments" }], "NOT_SAFE_YET suppresses unsafe actions even if canRetry is inconsistent");
 assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "READY" } }, false), []);
 assert.doesNotMatch(lifecycle, /getGithubActionsDeploymentHistory|developerAction|estimatedCost|terraform/i);
 assert.match(lifecycle, /acceptedOperation/);
@@ -147,33 +147,25 @@ assert.match(lifecycle, /getGithubActionsRollbackCandidates/);
 assert.match(lifecycle, /rollbackGithubActionsDeployment/);
 assert.match(lifecycle, /No previous successful release is available/);
 assert.match(lifecycle, /rollbackError/);
-assert.match(lifecycle, /Repository code will not be rebuilt/);
-assert.match(lifecycle, /<MetricCard/g);
-assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 3, "Overview has exactly three summary cards");
-assert.match(lifecycle, /<MetricCard detail=\{copy\.message\} label="Current state"/, "Current State retains its verified-release message");
-assert.match(lifecycle, /<MetricCard label="Latest operation"[^>]*value=\{latest \? `Attempt \$\{latest\.attempt \|\| "—"\}`/, "Latest Operation contains the attempt only");
-assert.match(lifecycle, /<MetricCard label="Last deployment duration" value=\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/, "Last Deployment Duration contains no secondary timestamp detail");
+assert.match(lifecycle, /Nothing is rebuilt from source/);
+assert.doesNotMatch(lifecycle, /MetricCard|overview-summary-grid/, "Overview owns one lifecycle state rather than a duplicate deployment record.");
 assert.doesNotMatch(lifecycle, /label="Application health"/, "Overview does not present runtime health");
 assert.doesNotMatch(lifecycle, /applicationHealth|health\.observedAt|health\.source/, "Overview does not consume detailed runtime health data");
 assert.doesNotMatch(lifecycle, /detail=\{`Commit \$\{shortCommit\(latest/, "Overview does not show a commit beneath Latest Operation");
 assert.doesNotMatch(lifecycle, /\$\{formatDate\(latest\.startedAt\)\} to \$\{formatDate\(latest\.completedAt\)\}/, "Overview does not show a verbose deployment timestamp range");
-assert.match(styles, /\.overview-summary-grid\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/, "Overview summary layout has exactly three desktop cards");
-assert.match(styles, /\.overview-lifecycle-card \.ds-stage-rail\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/, "six deployment phases remain on the primary overview rail row");
+assert.match(styles, /\.phase-rail \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(0, 1fr\)\)/, "all deployment phases share one rail row on wide screens");
 assert.doesNotMatch(overview, /CanonicalDeploymentView|getProjectDetailedCurrentState/);
 assert.match(overview, /subscribeProjectStateChanged/);
-assert.match(lifecycle, /StageRail/);
-for (const state of ["ready", "deploying", "failed", "live", "destroying", "destroyed"]) {
-  assert.match(styles, new RegExp(`overview-state-${state}`), `responsive lifecycle styling covers ${state}`);
-}
-assert.doesNotMatch(styles, /overview-state-(?:deploying|destroying)[^}]*var\(--(?:cyan|amber)\)/);
-assert.match(styles, /@media\s*\(max-width:\s*560px\)[\s\S]*overview-summary-grid/);
-assert.match(styles, /\.ds-modal-backdrop\{[^}]*align-items:flex-start[^}]*overflow-y:auto[^}]*overscroll-behavior:contain/, "shared modal backdrop permits bounded viewport scrolling");
-assert.match(styles, /\.ds-modal\{[^}]*max-height:calc\(100dvh[^}]*overflow-y:auto[^}]*overscroll-behavior:contain/, "shared modal content scrolls within the dynamic viewport");
-assert.match(styles, /@media\(max-width:560px\),\(max-height:640px\)\{\.ds-modal-backdrop\{--modal-viewport-gutter:var\(--space-3\)/, "short and narrow viewports retain a reachable dialog gutter");
+assert.match(lifecycle, /<PhaseRail phases=\{phases\}/);
+assert.match(lifecycle, /state === "DEPLOYING" \|\| state === "DESTROYING" \? <PhaseRail/, "only an operation in progress shows the progress rail");
+assert.match(lifecycle, /className=\{`status-panel is-\$\{state\.toLowerCase\(\)\}`\}/, "the status panel is styled from the canonical state");
+assert.match(styles, /\.status-panel\.is-failed/);
+assert.match(styles, /\.overlay \{[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/, "the dialog backdrop permits bounded viewport scrolling");
+assert.match(styles, /\.dialog \{[^}]*max-height: calc\(100dvh - 32px\);[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/, "dialog content scrolls within the dynamic viewport");
 assert.match(designSystem, /document\.body\.style\.overflow = "hidden"[\s\S]*document\.body\.style\.overflow = bodyOverflow/, "modal preserves and restores body scroll locking");
 assert.match(designSystem, /event\.key === "Escape"[\s\S]*event\.key !== "Tab"/, "Escape close and keyboard focus trapping remain active");
 assert.match(designSystem, /event\.target === event\.currentTarget && onClose\?\.\(\)/, "backdrop close remains scoped to backdrop interaction");
 assert.match(designSystem, /aria-labelledby=\{labelledBy\} aria-modal="true"[\s\S]*role="dialog"/, "shared modal accessibility contract remains intact");
-assert.match(designSystem, /createPortal\(<div className="ds-modal-backdrop"[\s\S]*document\.body\)/, "shared modal escapes transformed page containing blocks through a body portal");
-assert.match(designSystem, /createPortal\(<div className="ds-drawer-backdrop"[\s\S]*document\.body\)/, "shared drawer escapes transformed page containing blocks through a body portal");
+assert.match(designSystem, /createPortal\(<div className="overlay"[\s\S]*document\.body\)/, "shared modal escapes transformed page containing blocks through a body portal");
+assert.match(designSystem, /createPortal\(<div className="overlay overlay-drawer"[\s\S]*document\.body\)/, "shared drawer escapes transformed page containing blocks through a body portal");
 console.log("Overview canonical lifecycle action and responsive presentation verification passed.");

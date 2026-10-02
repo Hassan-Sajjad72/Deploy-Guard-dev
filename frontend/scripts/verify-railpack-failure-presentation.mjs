@@ -47,8 +47,8 @@ assert.deepEqual(deploymentPhasePresentation(destroy).map(({ label, status }) =>
   ["Finalize Cleanup", "waiting"],
 ]);
 const overview = overviewLifecycleCopy(failure);
-assert.equal(overview.title, "Build Application failed");
-assert.equal(overview.message, "Build stopped before image publication. View Pipeline for technical evidence.");
+assert.equal(overview.title, "Build failed");
+assert.equal(overview.message, "Your app could not be built, so nothing was published.");
 assert.ok(overview.message.length < 320);
 const rawEvidence = "GitHub Actions job: release\nERRO BUILDKIT_HOST environment variable is not set.\nsecret-like-safe-log-payload";
 assert.doesNotMatch(conciseProjectSummary({ ...failure, developerMessage: rawEvidence }).replaceAll("\n", " "), /BUILDKIT_HOST|secret-like-safe-log-payload/);
@@ -56,15 +56,16 @@ const infrastructure = readFileSync(new URL("../src/pages/ProjectInfrastructure.
 const pipeline = readFileSync(new URL("../src/components/projects/PipelineExecution.jsx", import.meta.url), "utf8");
 const overviewComponent = readFileSync(new URL("../src/components/projects/ProjectOverviewLifecycle.jsx", import.meta.url), "utf8");
 const troubleshooting = readFileSync(new URL("../src/pages/ProjectTroubleshooting.jsx", import.meta.url), "utf8");
-const dashboard = readFileSync(new URL("../src/pages/Dashboard.jsx", import.meta.url), "utf8");
-assert.match(infrastructure, /Runtime infrastructure not provisioned/);
-assert.match(infrastructure, /Build Application/);
-assert.match(pipeline, /Not created — deployment failed before runtime generation\./);
+const dashboard = readFileSync(new URL("../src/pages/Projects.jsx", import.meta.url), "utf8");
+assert.match(infrastructure, /before any AWS resources were created/, "a build failure is not presented as missing infrastructure");
+assert.match(infrastructure, /state\?\.progress\?\.phase === "build" \? "the build"/);
+assert.match(pipeline, /Not created — the attempt stopped before runtime/);
 assert.match(pipeline, /details\.createdAt \|\| details\.startedAt \|\| details\.failedAt/);
-assert.match(overviewComponent, /detail=\{copy\.message\}/, "Overview must use the concise canonical message, never raw evidence.");
-assert.match(overviewComponent, /value=\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/);
+assert.match(overviewComponent, /productText\(diagnosis\?\.summary\) \|\| copy\.message/, "Overview uses the curated diagnosis summary or the concise canonical message, never raw evidence.");
+assert.doesNotMatch(overviewComponent, /developerMessage|safeLog/, "Overview never renders raw evidence.");
+assert.doesNotMatch(overviewComponent, /duration\(latest\?\.startedAt, latest\?\.completedAt\)/, "Overview leaves deployment timing to Pipeline history.");
 assert.doesNotMatch(overviewComponent, /label="Application health"|Runtime was not deployed\./, "Overview leaves runtime health to Infrastructure and Monitoring.");
-assert.match(troubleshooting, /Not created — deployment failed before runtime generation\./);
+assert.match(troubleshooting, /Not created — the attempt stopped before runtime/);
 assert.match(troubleshooting, /operationTimestamp\(operation\)/);
 assert.match(infrastructure, /subscribeProjectStateChanged/);
 assert.match(infrastructure, /window\.setInterval\(load, 5000\)/);

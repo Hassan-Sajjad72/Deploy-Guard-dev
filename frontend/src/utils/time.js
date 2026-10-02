@@ -30,3 +30,27 @@ export function formatDuration(durationMs) {
   const remaining = seconds % 60;
   return `${minutes}m ${remaining}s`;
 }
+
+/** "Oct 2, 2026, 3:18 PM" — the standard absolute timestamp across the product. */
+export function formatDateTime(value) {
+  const date = validDate(value);
+  return date ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date) : "—";
+}
+
+/** "Oct 2, 3:18 PM" — compact absolute timestamp for dense rows. */
+export function formatShortDateTime(value) {
+  const date = validDate(value);
+  return date ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date) : "—";
+}
+
+/** Elapsed time between two timestamps ("42s", "4m 05s", "1h 12m"); null when either is missing. */
+export function formatElapsed(start, end) {
+  const from = validDate(start);
+  const to = validDate(end);
+  if (!from || !to) return null;
+  const seconds = Math.max(0, Math.round((to.getTime() - from.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}

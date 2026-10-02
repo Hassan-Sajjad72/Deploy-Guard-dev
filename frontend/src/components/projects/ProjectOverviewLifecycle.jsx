@@ -1,49 +1,41 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
+  ActionMenu,
   Button,
-  Card,
-  MetricCard,
+  Callout,
   Modal,
-  StageRail,
-  StatusChip,
+  PageHeader,
+  Status,
 } from "../common/DesignSystem.jsx";
+import AppIcon from "../common/AppIcon.jsx";
 import ErrorState from "../common/ErrorState.jsx";
+import Time from "../common/Time.jsx";
 import { useToast } from "../../hooks/useToast.js";
 import {
   deployGithubActionsDeployment,
-  destroyGithubActionsDeployment,
   getGithubActionsRollbackCandidates,
   rollbackGithubActionsDeployment,
   retryGithubActionsDeployment,
 } from "../../api/projectApi.js";
-import { deploymentPhasePresentation, deploymentProgressPercentage } from "../../utils/developerDeploymentPresentation.js";
+import { deploymentPhasePresentation } from "../../utils/developerDeploymentPresentation.js";
 import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
-import { DESTROY_CONFIRMATION_PHRASE } from "../../utils/deploymentConfirmation.js";
+import { projectStateLabel, projectStateTone } from "../../utils/projectStatePresentation.js";
+import { formatDateTime } from "../../utils/time.js";
 import { productText } from "../../utils/productTerms.js";
 
-function formatDate(value) {
-  return value
-    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
-    : "Unavailable";
-}
-
 function shortCommit(value) {
-  return value ? String(value).slice(0, 12) : "Unavailable";
+  return value ? String(value).slice(0, 7) : null;
 }
 
-function duration(startedAt, completedAt) {
-  if (!startedAt || !completedAt) return "Unavailable";
-  const milliseconds = Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
-  if (milliseconds < 1_000) return "Under 1 second";
-  const seconds = Math.round(milliseconds / 1_000);
-  return seconds < 60 ? `${seconds} seconds` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
-function summaryTone(status) {
-  if (["LIVE", "READY", "DESTROYED"].includes(status)) return "success";
-  if (status === "FAILED") return "danger";
-  if (["DEPLOYING", "DESTROYING"].includes(status)) return "info";
-  return "warning";
+function PhaseRail({ phases }) {
+  return <ol aria-label="Deployment progress" className="phase-rail">
+    {phases.map((phase) => <li className={`is-${phase.status}`} data-phase={phase.key} data-status={phase.status} key={phase.key}>
+      <span aria-hidden="true" className="phase-mark">{phase.status === "passed" ? <AppIcon name="check" size={12} /> : phase.status === "failed" ? <AppIcon name="close" size={12} /> : null}</span>
+      <span className="phase-label">{phase.label}</span>
+      <span className="sr-only">{phase.status === "passed" ? "done" : phase.status === "running" ? "in progress" : phase.status === "failed" ? "failed" : "not started"}</span>
+    </li>)}
+  </ol>;
 }
 
 /**
@@ -51,13 +43,11 @@ function summaryTone(status) {
  * It never queries operation history or reconstructs actions from a URL,
  * workflow status, or a separate client-side lifecycle value.
  */
-export default function ProjectOverviewLifecycle({ canManage = false, currentState, onRefresh, projectId }) {
+export default function ProjectOverviewLifecycle({ canManage = false, currentState, onRefresh, project, projectId }) {
   const { notify } = useToast();
   const dispatching = useRef(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [destroyOpen, setDestroyOpen] = useState(false);
-  const [destroyPhrase, setDestroyPhrase] = useState("");
   const [acceptedOperation, setAcceptedOperation] = useState(null);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [rollbackCandidates, setRollbackCandidates] = useState([]);
@@ -66,16 +56,21 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   const state = canonicalOverviewState(currentState);
   const authority = currentState.stateAuthority || {};
   const copy = overviewLifecycleCopy(currentState);
-  const latestOperationFailed = authority.latestCompletedOperation?.outcome === "failed";
+  const latestOperationFailed = authority.latestCompletedOperation?.outcome === "failed" && !authority.activeOperation;
+  const runtimeLive = state === "LIVE";
   // The rail follows the same canonical authority as the card/actions. This
   // prevents an older failed attempt from rendering over a newer LIVE state.
   const phases = deploymentPhasePresentation({
     ...currentState,
     developerState: state === "FAILED" || latestOperationFailed ? "failed_application" : state.toLowerCase(),
   });
-  const progressPercentage = deploymentProgressPercentage(phases);
   const latest = currentState.latestAttempt;
+  const diagnosis = latest?.diagnosis || null;
   const failureOwnershipLabel = overviewFailureOwnershipLabel(currentState);
+  const release = currentState.stableRelease;
+  const repository = currentState.repository || project?.repositoryFullName;
+  const branch = currentState.branch || project?.targetBranch;
+  const troubleshootPath = `/projects/${projectId}/troubleshooting${latest?.operationId ? `?operation=${encodeURIComponent(latest.operationId)}` : ""}`;
 
   useEffect(() => {
     if (!acceptedOperation) return;
@@ -94,7 +89,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       const response = await deployGithubActionsDeployment(projectId);
       setAcceptedOperation(response.deployment?.operation || null);
       await onRefresh();
-      notify(response.deployment?.message || (state === "LIVE" ? "Redeployment submitted." : "Deployment submitted."), "success");
+      notify(response.deployment?.message || (state === "LIVE" ? "Redeployment started." : "Deployment started."), "success");
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -111,27 +106,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
     try {
       const response = await retryGithubActionsDeployment(projectId);
       await onRefresh();
-      notify(response.deployment?.message || "Retry submitted.", "success");
-    } catch (caught) {
-      setError(caught.message);
-    } finally {
-      dispatching.current = false;
-      setBusy("");
-    }
-  }
-
-  async function destroy() {
-    if (dispatching.current || !canManage || destroyPhrase !== DESTROY_CONFIRMATION_PHRASE) return;
-    dispatching.current = true;
-    setBusy("destroy");
-    setError("");
-    try {
-      const response = await destroyGithubActionsDeployment(projectId, destroyPhrase);
-      setAcceptedOperation(response.deployment?.operation || null);
-      setDestroyOpen(false);
-      setDestroyPhrase("");
-      await onRefresh();
-      notify(response.deployment?.message || "Infrastructure destruction submitted.", "success");
+      notify(response.deployment?.message || "Retry started.", "success");
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -168,7 +143,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       setAcceptedOperation(response.deployment?.operation || null);
       setRollbackOpen(false);
       await onRefresh();
-      notify(response.deployment?.message || "Rollback submitted.", "success");
+      notify(response.deployment?.message || "Rollback started.", "success");
     } catch (caught) {
       setRollbackError(caught.message);
     } finally {
@@ -177,58 +152,80 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
     }
   }
 
-  function actions() {
-    return overviewLifecycleActions(currentState, canManage).map((action) => {
-      if (action.kind === "link") return <Button key={action.label} to={`/projects/${projectId}/pipeline`} tone="secondary">{action.label}</Button>;
-      if (action.kind === "external") return <Button className="overview-action overview-action-open" href={action.href} key={action.label} rel="noreferrer" target="_blank">{action.label}</Button>;
-      if (action.kind === "disabled") return <Button className="overview-action overview-action-disabled" disabled key={action.label} title={action.reason}>{action.label}</Button>;
-      if (action.command === "destroy") return <Button className="overview-action overview-action-destroy" disabled={Boolean(busy)} key={action.label} onClick={() => setDestroyOpen(true)} tone="danger">{action.label}</Button>;
-      if (action.command === "retry") return <Button disabled={Boolean(busy)} key={action.label} onClick={() => void retry()}>{busy === "retry" ? "Retrying…" : action.label}</Button>;
-      if (action.command === "rollback") return <Button className="overview-action overview-action-rollback" disabled={Boolean(busy)} key={action.label} onClick={() => void openRollback()} tone="secondary">{action.label}</Button>;
-      const redeploying = action.command === "redeploy" && busy === "deploy";
-      const actionClass = action.command === "redeploy"
-        ? `overview-action overview-action-redeploy${redeploying ? " overview-action-in-progress" : ""}`
-        : "";
-      return <Button aria-busy={redeploying || undefined} className={actionClass} disabled={Boolean(busy)} key={action.label} onClick={() => void runDeploy()}>{busy === "deploy" ? (action.command === "redeploy" ? "Redeploying…" : "Deploying…") : action.label}</Button>;
-    });
+  // Lifecycle actions come from the canonical presenter; Overview decides only where each one sits.
+  const lifecycleActions = overviewLifecycleActions(currentState, canManage);
+  const primary = [];
+  const menu = [];
+  for (const action of lifecycleActions) {
+    if (action.kind === "external") continue;
+    if (action.kind === "link") { primary.push(<Button key={action.label} to={`/projects/${projectId}/pipeline`}>{action.label}</Button>); continue; }
+    if (action.command === "destroy") { menu.push({ icon: "trash", label: "Destroy infrastructure…", to: `/projects/${projectId}/settings?section=danger`, danger: true }); continue; }
+    if (action.kind === "disabled" || action.command === "rollback") {
+      menu.push({ icon: "rollback", label: "Roll back to previous release…", disabled: action.kind === "disabled" || Boolean(busy), title: action.reason, onSelect: () => void openRollback() });
+      continue;
+    }
+    if (action.command === "retry") { primary.push(<Button aria-busy={busy === "retry" || undefined} disabled={Boolean(busy)} key={action.label} onClick={() => void retry()} tone="primary">{busy === "retry" ? "Retrying…" : action.label}</Button>); continue; }
+    const redeploying = action.command === "redeploy" && busy === "deploy";
+    primary.push(<Button aria-busy={redeploying || undefined} disabled={Boolean(busy)} icon={action.command === "redeploy" ? "refresh" : "deploy"} key={action.label} onClick={() => void runDeploy()} tone="primary">{busy === "deploy" ? (action.command === "redeploy" ? "Redeploying…" : "Deploying…") : action.label}</Button>);
   }
 
-  return <div className="project-overview-lifecycle" data-canonical-overview="true" data-canonical-state={state}>
-    <Card className={`overview-lifecycle-card overview-state-${state.toLowerCase()}`}>
-      <div className="overview-lifecycle-heading">
-        <div><p className="eyebrow">Current lifecycle</p><h2>{copy.title}</h2>{failureOwnershipLabel ? <StatusChip status="failed" tone="danger">{failureOwnershipLabel}</StatusChip> : null}<p>{copy.message}</p></div>
-        <StatusChip status={state} tone={summaryTone(state)}>{state.replaceAll("_", " ")}</StatusChip>
-      </div>
-      <div aria-label={`Deployment progress ${progressPercentage}%`} className="deployment-progress-track"><span style={{ width: `${progressPercentage}%` }} /></div>
-      <StageRail phases={phases} />
-      {(state === "FAILED" || latestOperationFailed) && latest?.diagnosis ? <p className="state warning"><strong>{latest.diagnosis.rootCauseCode}</strong> — {productText(latest.diagnosis.recommendedAction)}</p> : null}
-      {error ? <ErrorState message={error} /> : null}
-      {acceptedOperation ? <p aria-live="polite" className="state success" role="status">Deployment request accepted {formatDate(acceptedOperation.requestedAt || acceptedOperation.createdAt)}. View Pipeline for progress.</p> : null}
-      <div aria-label="Canonical lifecycle actions" className="overview-actions" role="group">{actions()}</div>
-      {state === "LIVE" && !latestOperationFailed && canManage && !currentState.stableRelease?.rollbackAvailable ? <p className="muted">No previous successful release is available.</p> : null}
-    </Card>
+  const statusSentence = (() => {
+    if (state === "LIVE") return "The current release passed its health check and is serving traffic.";
+    if (state === "DEPLOYING") return <>{currentState.progress?.label || copy.message}{authority.activeOperation?.startedAt ? <> · started <Time value={authority.activeOperation.startedAt} /></> : null}</>;
+    if (state === "FAILED") return productText(diagnosis?.summary) || copy.message;
+    if (state === "READY") return `Nothing has been deployed yet. Deploying builds ${branch || "the selected branch"} and starts it on AWS.`;
+    if (state === "DESTROYED") return <>Infrastructure was removed{authority.latestCompletedOperation?.completedAt ? <> <Time value={authority.latestCompletedOperation.completedAt} /></> : null}. History is kept; deploy again to recreate it.</>;
+    return copy.message;
+  })();
 
-    <section aria-label="Deployment summary" className="overview-summary-grid">
-      <MetricCard detail={copy.message} label="Current state" tone={summaryTone(state)} value={state.replaceAll("_", " ")} />
-      <MetricCard label="Latest operation" tone={latest?.status === "failed_application" ? "danger" : "neutral"} value={latest ? `Attempt ${latest.attempt || "—"}` : "No deployment yet"} />
-      <MetricCard label="Last deployment duration" value={duration(latest?.startedAt, latest?.completedAt)} />
+  return <>
+    <PageHeader
+      actions={<>
+        {runtimeLive && currentState.stableUrl ? <Button external href={currentState.stableUrl}>Open app</Button> : null}
+        {primary}
+        <ActionMenu items={menu} label="More project actions" />
+      </>}
+      description={<span className="overview-source">
+        {repository ? <a className="overview-source-link" href={`https://github.com/${repository}`} rel="noreferrer" target="_blank" translate="no"><AppIcon name="github" size={14} />{repository}</a> : null}
+        {branch ? <span translate="no"><AppIcon name="branch" size={14} />{branch}</span> : null}
+      </span>}
+      title={<span translate="no">{project?.name || "Project"}</span>}
+    />
+
+    <section aria-label="Current state" className={`status-panel is-${state.toLowerCase()}`} data-canonical-overview="true" data-canonical-state={state}>
+      <div className="status-line">
+        <Status active={state === "DEPLOYING" || state === "DESTROYING"} className="status-lg" tone={state === "FAILED" ? "danger" : projectStateTone(state)}>{state === "FAILED" ? copy.title : projectStateLabel(state)}</Status>
+        <p className="status-sentence">{statusSentence}</p>
+      </div>
+
+      {runtimeLive && currentState.stableUrl ? <a className="status-url" href={currentState.stableUrl} rel="noreferrer" target="_blank"><AppIcon name="globe" size={16} /><span>{currentState.stableUrl.replace(/^https?:\/\//, "")}</span><AppIcon name="external" size={14} /></a> : null}
+
+      {state === "DEPLOYING" || state === "DESTROYING" ? <PhaseRail phases={phases} /> : null}
+
+      {state === "FAILED" ? <div className="actions"><Button icon="wrench" to={troubleshootPath}>See what went wrong</Button>{failureOwnershipLabel ? <span className="sr-only"> ({failureOwnershipLabel})</span> : null}</div> : null}
+
+      {runtimeLive && latestOperationFailed ? <Callout actions={<Button size="sm" to={troubleshootPath}>See what went wrong</Button>} title={copy.title} tone="warning">
+        <p>{productText(diagnosis?.summary) || "The latest deployment did not complete."} Your previous release is still serving traffic.</p>
+      </Callout> : null}
+
+      {error ? <ErrorState message={error} title="The action could not start" /> : null}
+      {acceptedOperation ? <p aria-live="polite" className="status-accepted" role="status">Request accepted at {formatDateTime(acceptedOperation.requestedAt || acceptedOperation.createdAt)}. <Link className="link" to={`/projects/${projectId}/pipeline`}>Follow progress</Link></p> : null}
+      {state === "LIVE" && !latestOperationFailed && canManage && !release?.rollbackAvailable ? <p className="muted status-note">No previous successful release is available to roll back to.</p> : null}
     </section>
 
-    {destroyOpen ? <Modal labelledBy="overview-destroy-title" onClose={() => { if (!busy) { setDestroyOpen(false); setDestroyPhrase(""); } }}>
-      <p className="eyebrow">Permanent project deletion</p><h2 id="overview-destroy-title">Delete this project and its owned resources?</h2>
-      <p>Each recorded generation and the separate project resources will be cleaned by exact identity. Shared platform networking, cluster and load balancer remain untouched. Type <strong>{DESTROY_CONFIRMATION_PHRASE}</strong> to confirm.</p>
-      <label className="field"><span>Confirmation</span><input autoComplete="off" autoFocus onChange={(event) => setDestroyPhrase(event.target.value)} value={destroyPhrase} /></label>
-      <div className="overview-modal-actions"><Button disabled={Boolean(busy)} onClick={() => { setDestroyOpen(false); setDestroyPhrase(""); }} tone="ghost">Cancel</Button><Button disabled={busy === "destroy" || destroyPhrase !== DESTROY_CONFIRMATION_PHRASE} onClick={() => void destroy()} tone="danger">{busy === "destroy" ? "Destroying…" : "Confirm destroy"}</Button></div>
-    </Modal> : null}
-
     {rollbackOpen ? <Modal labelledBy="overview-rollback-title" onClose={() => { if (!busy) setRollbackOpen(false); }}>
-      <p className="eyebrow">Application release</p><h2 id="overview-rollback-title">Rollback application?</h2>
-      {rollbackLoading ? <p>Loading the previous immutable release…</p> : null}
-      {rollbackError ? <ErrorState message={rollbackError} /> : null}
+      <h2 id="overview-rollback-title">Roll back to the previous release?</h2>
+      {rollbackLoading ? <p>Finding the previous release…</p> : null}
+      {rollbackError ? <ErrorState message={rollbackError} title="Rollback is not available" /> : null}
       {!rollbackLoading && !rollbackError && !rollbackCandidates.length ? <p>No previous successful release is available.</p> : null}
-      {rollbackCandidates[0] ? <div className="state"><strong>Release {rollbackCandidates[0].releaseRevision}</strong><p>Commit {shortCommit(rollbackCandidates[0].commitSha)} · {rollbackCandidates[0].services?.length || 0} immutable service image{rollbackCandidates[0].services?.length === 1 ? "" : "s"} · port {rollbackCandidates[0].appPort} · health {rollbackCandidates[0].healthCheckPath}</p></div> : null}
-      <p>The stored image digest, task definition, runtime configuration, port and health path will be reused. Repository code will not be rebuilt.</p>
-      <div className="overview-modal-actions"><Button disabled={Boolean(busy)} onClick={() => setRollbackOpen(false)} tone="ghost">Cancel</Button><Button disabled={rollbackLoading || Boolean(rollbackError) || !rollbackCandidates.length || busy === "rollback"} onClick={() => void rollback()} tone="danger">{busy === "rollback" ? "Rolling back…" : "Confirm rollback"}</Button></div>
+      {rollbackCandidates[0] ? <dl className="facts-list rollback-target">
+        <div><dt>Release</dt><dd>{rollbackCandidates[0].releaseRevision}</dd></div>
+        <div><dt>Commit</dt><dd className="mono">{shortCommit(rollbackCandidates[0].commitSha) || "Not recorded"}</dd></div>
+        <div><dt>Services</dt><dd>{rollbackCandidates[0].services?.length || 0} immutable image{rollbackCandidates[0].services?.length === 1 ? "" : "s"}</dd></div>
+        <div><dt>Port and health check</dt><dd><span className="mono">{rollbackCandidates[0].appPort}</span> · <span className="mono">{rollbackCandidates[0].healthCheckPath}</span></dd></div>
+      </dl> : null}
+      <p>The exact stored images, task definition, runtime configuration, port and health path are reused. Nothing is rebuilt from source.</p>
+      <div className="dialog-actions"><Button disabled={Boolean(busy)} onClick={() => setRollbackOpen(false)} tone="ghost">Cancel</Button><Button aria-busy={busy === "rollback" || undefined} disabled={rollbackLoading || Boolean(rollbackError) || !rollbackCandidates.length || busy === "rollback"} onClick={() => void rollback()} tone="primary">{busy === "rollback" ? "Rolling back…" : "Roll back"}</Button></div>
     </Modal> : null}
-  </div>;
+  </>;
 }

@@ -1,16 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { getProject, getProjectCurrentState } from "../api/projectApi.js";
+import AppIcon from "../components/common/AppIcon.jsx";
+import { Status } from "../components/common/DesignSystem.jsx";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
-import { StatusChip } from "../components/common/DesignSystem.jsx";
-import AppIcon from "../components/common/AppIcon.jsx";
+import Time from "../components/common/Time.jsx";
 import ProjectOverviewLifecycle from "../components/projects/ProjectOverviewLifecycle.jsx";
 import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
-import { projectStatePresentation, projectStateTone } from "../utils/projectStatePresentation.js";
+import { projectStatePresentation } from "../utils/projectStatePresentation.js";
 import { useSerializedProjectRefresh } from "../hooks/useSerializedProjectRefresh.js";
-import { formatRelativeTime } from "../utils/time.js";
-import "../styles/pages/overview.css";
+import { formatElapsed } from "../utils/time.js";
+
+const ACTIVE_ATTEMPT = new Set(["preparing", "queued", "building", "deploying", "verifying", "destroying"]);
+const IN_PROGRESS_LABEL = { deploy: "Deploying", rollback: "Rolling back", destroy: "Destroying" };
+
+/** Result wording for the latest attempt; an in-progress attempt is named by what it is doing. */
+function attemptResult(latest) {
+  if (ACTIVE_ATTEMPT.has(latest?.status)) return [latest.status === "queued" ? "Queued" : IN_PROGRESS_LABEL[latest.operationType] || "Deploying", "info"];
+  if (latest?.status === "destroyed") return ["Destroyed", "neutral"];
+  if (latest?.status === "failed_application") return ["Failed", "danger"];
+  if (latest?.status === "platform_attention") return ["Needs attention", "warning"];
+  if (latest?.status === "live" || latest?.outcome === "completed") return ["Succeeded", "success"];
+  return ["Recorded", "neutral"];
+}
 
 export default function ProjectDetails() {
   const { projectId } = useParams();
@@ -45,53 +58,55 @@ export default function ProjectDetails() {
   }, [currentState?.stateAuthority?.activeOperation?.id, currentState?.stateAuthority?.activeOperation?.status, load, projectId]);
 
   if (!project || !currentState) {
-    return <div className="workspace-page">{error ? <ErrorState message={error} onRetry={load} /> : <LoadingState message="Loading project…" />}</div>;
+    return error ? <div className="page"><ErrorState message={error} onRetry={load} title="This project could not be loaded" /></div> : <LoadingState message="Loading project…" />;
   }
 
-  const state = projectStatePresentation(currentState);
   const repository = currentState.repository || project.repositoryFullName;
-  const branch = currentState.branch || project.targetBranch;
-  const releaseCommit = currentState.stableRelease?.commit ? currentState.stableRelease.commit.slice(0, 12) : null;
+  const release = currentState.stableRelease;
   const services = project.services || [];
+  const entrypointId = project.applicationEntryPointServiceId || (services.length === 1 ? services[0].id : null);
+  const latest = currentState.latestAttempt;
+  const [latestLabel, latestTone] = attemptResult(latest);
+  const latestActive = latestTone === "info";
+  const latestDuration = latestActive ? null : formatElapsed(latest?.startedAt, latest?.completedAt);
+  const latestTime = latestActive ? latest?.startedAt || latest?.occurredAt : latest?.completedAt || latest?.occurredAt;
+  const operationName = latest?.operationType === "destroy" ? "Destroy" : latest?.operationType === "rollback" ? "Rollback" : "Deploy";
 
+  return <div className="page overview-page" data-authoritative-state={projectStatePresentation(currentState).state}>
+    {error ? <ErrorState message={error} onRetry={load} title="Showing the last known state" /> : null}
+    <ProjectOverviewLifecycle canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} project={project} projectId={projectId} />
 
-  return <div className="workspace-page project-overview-page dg-overview" data-authoritative-state={projectStatePresentation(currentState).state}>
-    <header className="dg-ov-head">
-      <div className="dg-ov-identity">
-        <div className="dg-ov-title">
-          <p className="dg-ov-kicker">Release control{project.environmentName ? <span className="dg-ov-env">{project.environmentName}</span> : null}</p>
-          <div className="dg-ov-title-row"><h1>{project.name}</h1><StatusChip status={state.state} tone={projectStateTone(state.state)} /></div>
-          <p className="dg-ov-source">
-            {repository ? <span><AppIcon name="github" size={14} />{repository}</span> : null}
-            {branch ? <span className="is-mono"><AppIcon name="branch" size={14} />{branch}</span> : null}
-          </p>
-        </div>
-        <div className={currentState.stableUrl ? "dg-ov-domain is-live" : "dg-ov-domain"}>
-          <span aria-hidden="true" className="dg-ov-window"><span className="dg-ov-window-bar"><i /><i /><i /><b>{currentState.stableUrl ? currentState.stableUrl.replace(/^https?:\/\//, "") : "no release"}</b></span><span className="dg-ov-window-body"><em /><u /><u /><u /><s /><s /><s /></span></span>
-          <span className="dg-ov-domain-label">Live URL</span>
-          {currentState.stableUrl ? <a href={currentState.stableUrl} rel="noreferrer" target="_blank"><span aria-hidden="true" className="dg-ov-domain-dot" />{currentState.stableUrl.replace(/^https?:\/\//, "")}<span aria-hidden="true"> ↗</span></a> : <strong>Not available</strong>}
-        </div>
-      </div>
-      <dl className="dg-ov-meta" aria-label="Release metadata">
-        {project.environmentName ? <div><dt>Environment</dt><dd>{project.environmentName}</dd></div> : null}
-        <div><dt>Release</dt><dd className="is-mono">{releaseCommit || "No verified release"}</dd></div>
-        {currentState.stableRelease?.verifiedAt ? <div><dt>Verified</dt><dd title={currentState.stableRelease.verifiedAt}>{formatRelativeTime(currentState.stableRelease.verifiedAt)}</dd></div> : null}
-        {currentState.latestAttempt?.workflowRunId ? <div><dt>Workflow run</dt><dd className="is-mono">#{currentState.latestAttempt.workflowRunId}</dd></div> : null}
-        <div><dt>Services</dt><dd>{services.length || "—"}</dd></div>
-      </dl>
-    </header>
-    {error ? <ErrorState message={error} onRetry={load} /> : null}
-    <ProjectOverviewLifecycle canManage={Boolean(project.canManage)} currentState={currentState} onRefresh={load} projectId={projectId} />
-    {services.length ? <section aria-labelledby="overview-services" className="dg-ov-services">
-      <header><div><p className="dg-ov-kicker">Runtime</p><h2 id="overview-services">Configured services</h2></div><span>{services.length} service{services.length === 1 ? "" : "s"}</span></header>
-      <div className="dg-ov-roster" role="list">
-        <div aria-hidden="true" className="dg-ov-roster-head"><span>Service</span><span>Directory</span><span>Open Application</span></div>
-        {services.map((service) => <div className="dg-ov-roster-row" key={service.id} role="listitem">
-          <span className="dg-ov-service-name"><span aria-hidden="true" className="dg-ov-service-mark"><AppIcon name="box" size={14} /></span><strong>{service.name}</strong></span>
-          <span className="dg-ov-service-dir">{service.serviceDirectory === "." ? "Repository root" : service.serviceDirectory}</span>
-          <span>{project.applicationEntryPointServiceId === service.id || services.length === 1 ? <span className="dg-ov-entry">Open Application target</span> : <span className="dg-ov-internal">—</span>}</span>
-        </div>)}
-      </div>
+    <div className="overview-grid">
+      {release ? <section aria-labelledby="overview-release" className="section">
+        <div className="section-head"><h2 id="overview-release">Current release</h2></div>
+        <dl className="panel panel-pad facts-list overview-release">
+          <div><dt>Release</dt><dd>{release.revision}</dd></div>
+          <div><dt>Commit</dt><dd>{repository ? <a className="link mono" href={`https://github.com/${repository}/commit/${release.commit}`} rel="noreferrer" target="_blank" title={release.commit}>{release.commit.slice(0, 12)}</a> : <span className="mono">{release.commit.slice(0, 12)}</span>}</dd></div>
+          <div><dt>Verified</dt><dd><Time value={release.verifiedAt || release.promotedAt} /></dd></div>
+          <div><dt>Rollback</dt><dd>{release.rollbackAvailable ? "Previous release available" : "No previous release"}</dd></div>
+        </dl>
+      </section> : null}
+
+      <section aria-labelledby="overview-services" className="section">
+        <div className="section-head"><h2 id="overview-services">Services<span className="count">{services.length}</span></h2><Link className="link section-link" to={`/projects/${projectId}/settings?section=services`}>Configure</Link></div>
+        {services.length ? <ul className="rows overview-services">
+          {services.map((service) => <li key={service.id}>
+            <span className="service-name"><AppIcon name="box" size={16} /><strong translate="no">{service.name}</strong>{service.id === entrypointId && services.length > 1 ? <span className="badge tone-neutral">Public</span> : null}</span>
+            <span className={service.serviceDirectory === "." ? "service-dir is-root" : "service-dir mono"} title={service.serviceDirectory}>{service.serviceDirectory === "." ? "Repository root" : service.serviceDirectory}</span>
+            <span className="service-port muted num">{service.servicePort ? `Port ${service.servicePort}` : "Port detected at deploy"}</span>
+          </li>)}
+        </ul> : <p className="muted">No services are configured. <Link className="link" to={`/projects/${projectId}/settings?section=services`}>Add a service</Link></p>}
+      </section>
+    </div>
+
+    {latest ? <section aria-labelledby="overview-latest" className="section">
+      <div className="section-head"><h2 id="overview-latest">Latest deployment</h2><Link className="link section-link" to={`/projects/${projectId}/pipeline`}>All deployments</Link></div>
+      <Link className="panel latest-attempt" to={`/projects/${projectId}/pipeline`}>
+        <Status active={latestTone === "info"} tone={latestTone}>{latestLabel}</Status>
+        <span className="latest-attempt-main">{operationName}{latest.attempt ? <> · attempt {latest.attempt}</> : null}{latest.commit ? <> · <span className="mono">{String(latest.commit).slice(0, 7)}</span></> : null}</span>
+        <span className="latest-attempt-meta muted">{latestActive ? "Started " : latestDuration ? `Took ${latestDuration} · ` : ""}<Time value={latestTime} /></span>
+        <AppIcon className="muted" name="chevron" size={16} />
+      </Link>
     </section> : null}
   </div>;
 }
