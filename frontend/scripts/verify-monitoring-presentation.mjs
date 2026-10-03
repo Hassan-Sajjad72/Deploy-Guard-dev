@@ -34,7 +34,7 @@ assert.match(page, /runtimeCharts = metricDefinitions\.filter/);
 for (const metric of ["cpu", "memory", "httpLatency", "healthyHosts", "unhealthyHosts", "runtimeAvailability"]) assert.match(page, new RegExp(`key: "${metric}"`));
 assert.match(page, /points\.length > 0/);
 assert.match(page, /<polyline fill="none" points=\{coordinates\}/, "numeric samples use a time-series line");
-assert.match(page, /<text x="2" y="20">\{formatMetric\(maximum, unit\)\}<\/text>/, "time-series charts expose observed Y-axis bounds and units");
+assert.match(page, /<div aria-hidden="true" className="chart-y num"><span>\{formatMetric\(maximum, unit\)\}<\/span><span>\{formatMetric\(minimum, unit\)\}<\/span><\/div>/, "time-series charts expose observed Y-axis bounds and units");
 assert.match(page, /function formatMetric\(value, unit = ""\)/, "metric values are rounded for display instead of printing raw CloudWatch floats");
 assert.match(page, /<svg aria-hidden="true"/, "the visual chart is hidden from assistive technology when an equivalent data table is present");
 assert.match(page, /<table className="sr-only"><caption>\{title\} timestamp and value series<\/caption>/, "each visual chart exposes an accessible timestamp/value table");

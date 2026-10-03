@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { adminSignOut } from "../../api/adminAuthApi.js";
 import { ThemeSwitch } from "./AppHeader.jsx";
+import { BrandMark } from "../common/BrandLogo.jsx";
 
 export const adminNavigation = [
   { label: "Overview", to: "/admin", section: "overview" },
@@ -45,7 +46,7 @@ export default function AdminLayout() {
     <header className="header">
       <div className="header-bar">
         <nav aria-label="Scope" className="scope">
-          <Link aria-label="DeployGuard administration" className="brand" to="/admin"><img alt="" height="24" src="/deployguard-mark.svg" width="24" /><span>DeployGuard</span></Link>
+          <Link aria-label="DeployGuard administration" className="brand" to="/admin"><BrandMark /><span>DeployGuard</span></Link>
           <span aria-hidden="true" className="scope-sep">/</span>
           <span aria-current="page" className="scope-current">Administration</span>
         </nav>

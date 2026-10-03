@@ -19,7 +19,7 @@
 
 .scope { display: flex; align-items: center; gap: var(--s-2); min-width: 0; font-size: var(--text-sm); }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 650; font-size: 0.975rem; letter-spacing: -0.01em; color: var(--text); flex-shrink: 0; border-radius: var(--radius-sm); }
-.brand img { width: 24px; height: 24px; }
+.brand img, .brand-mark { width: 24px; height: 24px; color: var(--text); }
 .scope-sep { color: var(--line-strong); font-size: 1.1rem; user-select: none; }
 .scope a.scope-link { color: var(--text-3); border-radius: 4px; }
 .scope a.scope-link:hover { color: var(--text); }

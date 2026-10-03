@@ -48,13 +48,13 @@
 .how-steps li:first-child { border-top-color: var(--text); }
 .how-index { color: var(--text-3); font-size: var(--text-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
 .how-steps h3 { font-size: var(--text-lg); }
-.how-steps p { color: var(--text-2); font-size: var(--text-sm); }
+.how-steps p { color: var(--text-2); font-size: var(--text-md); }
 
 .guarantees { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-8) var(--s-12); }
 .guarantees li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: var(--s-4); }
 .guarantees svg { color: var(--accent); margin-top: 2px; }
 .guarantees h3 { font-size: var(--text-lg); margin-bottom: var(--s-1); }
-.guarantees p { color: var(--text-2); font-size: var(--text-sm); max-width: 52ch; }
+.guarantees p { color: var(--text-2); font-size: var(--text-md); max-width: 52ch; }
 
 .architecture-frame { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-sunken); padding: var(--s-6); }
 .public-closing { padding: var(--s-16) 0 var(--s-16); border-top: 1px solid var(--line); display: grid; justify-items: start; gap: var(--s-6); }

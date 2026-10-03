@@ -25,9 +25,8 @@
 .ts-ai-grid p + p, .ts-ai-grid p + ol { margin-top: var(--s-2); }
 .ts-ai-foot { font-size: var(--text-xs); padding-top: var(--s-4); border-top: 1px solid var(--line); }
 
-.troubleshooting-chat { display: grid; }
-.troubleshooting-chat > * { padding: var(--s-4) 0; }
-.troubleshooting-chat > * + * { border-top: 1px solid var(--line); }
+/* One conversation block: the log, suggestions and the composer read as a single group. */
+.troubleshooting-chat { display: grid; gap: var(--s-4); padding: var(--s-5) 0 var(--s-2); }
 .ts-chat-log { display: grid; gap: var(--s-3); max-height: 420px; overflow: auto; }
 .ts-chat-log article { display: grid; gap: 2px; font-size: var(--text-sm); }
 .ts-chat-log article strong { font-size: var(--text-xs); color: var(--text-3); font-weight: 550; }

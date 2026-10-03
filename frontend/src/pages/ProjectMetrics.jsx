@@ -41,13 +41,23 @@ function MetricChart({ metric, metricKey, title, unit, note }) {
   const minimum = Math.min(...values, 0);
   const maximum = Math.max(...values, unit === "%" ? 1 : 0.001) * (unit === "" ? 1 : 1.15);
   const span = Math.max(Number.EPSILON, maximum - minimum);
-  const coordinates = points.map((point, index) => `${48 + (index / Math.max(1, points.length - 1)) * 548},${16 + ((maximum - Number(point.value)) / span) * 128}`).join(" ");
+  // Plot space is 600×160 with 8px headroom; the SVG stretches to the column width,
+  // so text and the end marker live in HTML where they keep their proportions.
+  const plotted = points.map((point, index) => [(index / Math.max(1, points.length - 1)) * 600, 8 + ((maximum - Number(point.value)) / span) * 144]);
+  const coordinates = plotted.map(([x, y]) => `${x},${y}`).join(" ");
   const latest = points.at(-1);
-  const lastPoint = coordinates.split(" ").at(-1)?.split(",");
+  const lastPoint = plotted.at(-1);
+  const fillId = `chart-fill-${metricKey}`;
   return <figure className="chart">
     <figcaption className="chart-head"><span>{title}</span><span><strong className="num">{latest ? formatMetric(latest.value, unit) : "—"}</strong>{note ? <small>{note}</small> : null}</span></figcaption>
     {points.length > 0 ? <div className={`chart-body metric-${metricKey}`}>
-      <svg aria-hidden="true" className="chart-svg" preserveAspectRatio="none" viewBox="0 0 600 160"><text x="2" y="20">{formatMetric(maximum, unit)}</text><text x="2" y="148">{formatMetric(minimum, unit)}</text><line x1="48" x2="596" y1="16" y2="16" /><line x1="48" x2="596" y1="80" y2="80" /><line x1="48" x2="596" y1="144" y2="144" />{points.length > 1 ? <polygon className="chart-area" points={`48,144 ${coordinates} 596,144`} /> : null}<polyline fill="none" points={coordinates} vectorEffect="non-scaling-stroke" />{lastPoint ? <circle cx={lastPoint[0]} cy={lastPoint[1]} r="3" /> : null}</svg>
+      <div className="chart-plot">
+        <div aria-hidden="true" className="chart-y num"><span>{formatMetric(maximum, unit)}</span><span>{formatMetric(minimum, unit)}</span></div>
+        <div className="chart-canvas">
+          <svg aria-hidden="true" className="chart-svg" preserveAspectRatio="none" viewBox="0 0 600 160"><defs><linearGradient id={fillId} x1="0" x2="0" y1="0" y2="1"><stop className="chart-fill-top" offset="0" /><stop className="chart-fill-bottom" offset="1" /></linearGradient></defs><line x1="0" x2="600" y1="8" y2="8" /><line x1="0" x2="600" y1="80" y2="80" /><line x1="0" x2="600" y1="152" y2="152" />{points.length > 1 ? <polygon className="chart-area" fill={`url(#${fillId})`} points={`0,152 ${coordinates} 600,152`} /> : null}<polyline fill="none" points={coordinates} vectorEffect="non-scaling-stroke" /></svg>
+          {lastPoint ? <i aria-hidden="true" className="chart-dot" style={{ left: `${(lastPoint[0] / 600) * 100}%`, top: `${(lastPoint[1] / 160) * 100}%` }} /> : null}
+        </div>
+      </div>
       <div className="chart-axis"><span>{formatShortDateTime(points[0]?.timestamp)}</span><span>{formatShortDateTime(latest?.timestamp)}</span></div>
       <table className="sr-only"><caption>{title} timestamp and value series</caption><thead><tr><th>Timestamp</th><th>Value{unit ? ` (${unit})` : ""}</th></tr></thead><tbody>{points.map((point, index) => <tr key={`accessible-${point.timestamp}-${index}`}><td>{formatDateTime(point.timestamp)}</td><td>{formatMetric(point.value, unit)}</td></tr>)}</tbody></table>
     </div> : <p className="chart-empty muted">No samples in this range.</p>}

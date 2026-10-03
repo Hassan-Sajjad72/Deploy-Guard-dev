@@ -110,7 +110,7 @@ components:
     padding: "0 16px"
     height: "36px"
   button-secondary:
-    backgroundColor: "{colors.paper-surface-2}"
+    backgroundColor: "{colors.paper-surface}"
     textColor: "{colors.paper-ink}"
     typography: "{typography.control}"
     rounded: "{rounded.md}"
@@ -142,7 +142,7 @@ components:
     padding: "0 12px"
     height: "30px"
   input:
-    backgroundColor: "{colors.paper-sunken}"
+    backgroundColor: "{colors.paper-surface}"
     textColor: "{colors.paper-ink}"
     typography: "{typography.control}"
     rounded: "{rounded.md}"
@@ -202,7 +202,8 @@ Two neutral grounds, one blue signal, three state colours, and no decorative hue
 
 ### Neutral
 - **Paper Ground / Graphite Ground** (paper-ground / graphite-ground): the page itself. Content sits here directly.
-- **Sunken** (paper-sunken / graphite-sunken): input wells and code backgrounds in dark; the recessed tier.
+- **Sunken** (paper-sunken / graphite-sunken): input wells in dark and the recessed tier.
+- **Control and field fills** (`--control-bg`, `--field-bg`): secondary buttons and inputs are white on paper so they read crisp against the ground; in graphite, buttons sit on surface-2 and inputs in the sunken well.
 - **Surface** (paper-surface / graphite-surface): the inside of real containers only (dialogs, drawers, menus, toasts, topology, contained boxes).
 - **Surface 2 / Surface Hover** (paper-surface-2, paper-surface-hover and graphite equivalents): row hover, segmented-control track, secondary button fill, inline code chip.
 - **Line / Line Strong** (paper-line, paper-line-strong and graphite equivalents): the hairline that rules every section and row (line); control borders, dialog borders, scrollbars (line strong).
@@ -295,7 +296,7 @@ Gently rounded and consistent: 6px for small chips, focus outlines and tab corne
 Quiet, compact, one strong action per view.
 - **Shape:** gently rounded (8px), 36px tall, 16px horizontal padding; small variant 30px and 13px text.
 - **Primary:** inverted ink fill with ground-coloured text; hover deepens to pure black (paper) or white (graphite).
-- **Secondary (default):** surface-2 fill, line-strong border, ink text; hover to surface-hover.
+- **Secondary (default):** control fill (white on paper, surface-2 on graphite), line-strong border, ink text; hover to surface-hover.
 - **Ghost:** transparent, ink-2 text; hover to surface-2.
 - **Danger:** transparent with red text and a 45 percent red border; hover tints bad-soft. **Danger solid:** red fill, white text, used only as the confirm button of a destructive dialog.
 - **Link:** accent text, no padding, underline on hover.
@@ -314,7 +315,7 @@ The product's state signature.
 - **Facts:** label/value pairs, labels in ink-3 at 13px, values in ink; the list form is a 200px label column with hairlines between rows.
 
 ### Inputs / Fields
-- **Style:** sunken fill, 1px line-strong border, 8px radius, 36px tall, 14px text; label above at 14px/550, hint and error at 13px below.
+- **Style:** field fill (white on paper, sunken on graphite), 1px line-strong border, 8px radius, 36px tall, 14px text; label above at 14px/550, hint and error at 13px below.
 - **Focus:** border turns accent with a 3px accent-soft ring.
 - **Error / Disabled:** error text in red; disabled at 60 percent opacity. Textareas are mono for config values.
 
@@ -342,6 +343,15 @@ The last section of Settings: a 12px-radius box with a red-tinted border (35 per
 - **Log viewer:** a 12px-radius contained box on the code background, mono 13px lines at 1.7 leading, 160 to 460px tall.
 - **Copy value:** a mono, ellipsised identifier with a small "Copy" text button.
 - **Topology:** a contained 12px-radius diagram of nodes (8px radius, line-strong border) with a status dot; the selected node gains an ink ring and opens the inspector.
+
+### Brand mark
+An ink shield with a deploy arrow cut through it (`BrandMark`), drawn inline in `currentColor` so it follows the theme; the favicon carries the same drawing with a colour-scheme media query. No brand hue: the mark is ink like the primary button.
+
+### Charts
+Y bounds are HTML labels beside a stretched SVG plot, so text and the current-value dot never distort. The line is the one chart colour; the area under it fades from 16 percent to nothing. The current value lives in the chart heading.
+
+### Attention reasons
+In the Projects list a reason sentence reads in ink-2 with a small alert icon in the tone colour. The sentence stays readable; colour marks only the state.
 
 ### Phase rail and meters
 The deploy phase rail is a row of 3px bars: line-strong pending, green passed, red failed, amber attention, and an animated blue sweep on the running phase. Meters are 6px pills on surface-2.

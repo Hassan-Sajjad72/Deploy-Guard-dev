@@ -137,7 +137,7 @@ export default function Projects() {
                 <span className="project-source" translate="no">{repository ? <span className="truncate" title={repository}>{repository}</span> : null}{branch ? <span className="project-branch truncate" title={branch}><AppIcon name="branch" size={13} /><span>{branch}</span></span> : null}</span>
               </span>
               <span className="project-detail">
-                {attention ? <span className={degraded ? "project-reason is-warn" : "project-reason is-bad"}>{attentionReason(currentState)}</span> : null}
+                {attention ? <span className={degraded ? "project-reason is-warn" : "project-reason is-bad"}><AppIcon name="alert" size={14} /><span>{attentionReason(currentState)}</span></span> : null}
                 {release ? <span className="project-progress"><span aria-hidden="true" className="meter tone-info"><i style={{ width: `${release.progress ?? 0}%` }} /></span><span>{currentState?.progress?.label || "Preparing"}</span></span> : null}
               </span>
               <span className="project-time muted"><Time value={activity} /></span>

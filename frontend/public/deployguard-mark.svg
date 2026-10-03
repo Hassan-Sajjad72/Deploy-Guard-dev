@@ -1,10 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
-  <title id="title">DeployGuard mark</title>
-  <desc id="desc">A shield containing a connected deployment path</desc>
-  <path fill="#e8eef8" d="M32 3 56 12v17c0 15.8-8.8 26.2-24 32C16.8 55.2 8 44.8 8 29V12L32 3Z"/>
-  <path fill="#3b82f6" d="M32 9.5 49.5 16v13c0 11.7-6 19.8-17.5 25-11.5-5.2-17.5-13.3-17.5-25V16L32 9.5Z"/>
-  <path fill="none" stroke="#0a1020" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.5" d="M22 23h10c5.5 0 10 4.5 10 10v1"/>
-  <path fill="none" stroke="#0a1020" stroke-linecap="round" stroke-width="3.5" d="M22 41h20"/>
-  <circle cx="21" cy="23" r="4.5" fill="#fff" stroke="#0a1020" stroke-width="3"/>
-  <circle cx="42" cy="41" r="4.5" fill="#fff" stroke="#0a1020" stroke-width="3"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="title">
+  <title id="title">DeployGuard</title>
+  <style>.ink{fill:#151618}@media (prefers-color-scheme:dark){.ink{fill:#edeef0}}</style>
+  <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+    <path d="M12 1.5 20.75 4.7v6.45c0 5.5-3.45 9.35-8.75 11.35-5.3-2-8.75-5.85-8.75-11.35V4.7L12 1.5Z" fill="#fff"/>
+    <path d="M12 16.75V7.9M8.25 11.4 12 7.65l3.75 3.75" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.25" fill="none"/>
+  </mask>
+  <rect class="ink" width="24" height="24" mask="url(#cut)"/>
 </svg>

@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { getProject } from "../../api/projectApi.js";
 import { useAuth } from "../../hooks/useAuth.js";
 import { useTheme } from "../../hooks/useTheme.js";
+import { BrandMark } from "../common/BrandLogo.jsx";
 
 /*
  * One header for the authenticated product. The scope (workspace or a single
@@ -82,14 +83,14 @@ export default function AppHeader({ projectId = null }) {
   const { pathname } = useLocation();
   const tabsRef = useRef(null);
   // On narrow screens the tab row scrolls; keep the current tab in view.
-  useEffect(() => { tabsRef.current?.querySelector(".is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [pathname]);
+  useEffect(() => { tabsRef.current?.querySelector(".is-active")?.scrollIntoView({ block: "nearest", inline: "center" }); }, [pathname]);
   const tabs = projectId
     ? projectNavigation.map((tab) => ({ label: tab.label, to: tab.path ? `/projects/${projectId}/${tab.path}` : `/projects/${projectId}`, end: !tab.path }))
     : workspaceNavigation;
   return <header className="header">
     <div className="header-bar">
       <nav aria-label="Scope" className="scope">
-        <Link aria-label="DeployGuard projects" className="brand" to="/projects"><img alt="" height="24" src="/deployguard-mark.svg" width="24" /><span>DeployGuard</span></Link>
+        <Link aria-label="DeployGuard projects" className="brand" to="/projects"><BrandMark /><span>DeployGuard</span></Link>
         {projectId ? <>
           <span aria-hidden="true" className="scope-sep">/</span>
           <Link className="scope-link" to="/projects">Projects</Link>

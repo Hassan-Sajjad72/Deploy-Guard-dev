@@ -101,12 +101,12 @@ export default function ProjectDetails() {
 
     {latest ? <section aria-labelledby="overview-latest" className="section">
       <div className="section-head"><h2 id="overview-latest">Latest deployment</h2><Link className="link section-link" to={`/projects/${projectId}/pipeline`}>All deployments</Link></div>
-      <Link className="panel latest-attempt" to={`/projects/${projectId}/pipeline`}>
+      <div className="rows"><Link className="latest-attempt" to={`/projects/${projectId}/pipeline`}>
         <Status active={latestTone === "info"} tone={latestTone}>{latestLabel}</Status>
         <span className="latest-attempt-main">{operationName}{latest.attempt ? <> · attempt {latest.attempt}</> : null}{latest.commit ? <> · <span className="mono">{String(latest.commit).slice(0, 7)}</span></> : null}</span>
         <span className="latest-attempt-meta muted">{latestActive ? "Started " : latestDuration ? `Took ${latestDuration} · ` : ""}<Time value={latestTime} /></span>
         <AppIcon className="muted" name="chevron" size={16} />
-      </Link>
+      </Link></div>
     </section> : null}
   </div>;
 }

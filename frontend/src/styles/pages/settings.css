@@ -11,6 +11,7 @@
 .settings-panel { display: grid; gap: var(--s-4); outline: none; }
 .settings-form { display: grid; gap: var(--s-5); max-width: 100%; }
 .settings-form .field { max-width: 560px; }
+.settings-panel > .actions-end { max-width: 560px; }
 .settings-service-picker { max-width: 320px; }
 
 .settings-services > li { padding: 0; }

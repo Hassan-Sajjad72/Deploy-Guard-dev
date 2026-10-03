@@ -57,7 +57,7 @@
 .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: var(--s-8) var(--s-6); align-items: start; }
 .section-link { font-size: var(--text-sm); text-decoration: none; }
 .section-link:hover { text-decoration: underline; }
-.overview-release { padding: 0; }
+.overview-release { padding: 0; border-bottom: 1px solid var(--line); }
 .overview-release > div { padding: var(--s-3) 0; }
 .overview-services li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px var(--s-4); padding: var(--s-3) 0; align-items: center; }
 .service-name { display: inline-flex; align-items: center; gap: var(--s-2); min-width: 0; }
@@ -73,7 +73,6 @@
   gap: var(--s-4);
   padding: var(--s-4) var(--s-3);
   margin: 0 calc(var(--s-3) * -1);
-  border: 0;
   border-radius: var(--radius);
   transition: background-color var(--t-fast);
   font-size: var(--text-sm);

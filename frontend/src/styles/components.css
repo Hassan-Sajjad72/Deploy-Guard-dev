@@ -14,10 +14,11 @@
   min-width: 0;
 }
 .page-narrow { --content-max: 880px; }
+.app-main > .page { animation: fade-in 200ms var(--ease-out); }
 
 .page-head {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--s-4) var(--s-6);
   flex-wrap: wrap;
@@ -28,7 +29,7 @@
 .page-actions { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
 
 .section { display: grid; gap: var(--s-4); min-width: 0; }
-.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+.section-head { display: flex; align-items: center; min-height: 28px; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
 .section-head h2 { font-size: var(--text-lg); }
 .section-head p, .section-note { color: var(--text-3); font-size: var(--text-sm); }
 .section-head .count { color: var(--text-3); font-weight: 500; margin-left: var(--s-1); }
@@ -54,7 +55,7 @@
 
 /* ---------- Buttons ---------- */
 .btn {
-  --btn-bg: var(--surface-2);
+  --btn-bg: var(--control-bg);
   --btn-fg: var(--text);
   --btn-line: var(--line-strong);
   display: inline-flex;
@@ -181,7 +182,7 @@
   padding: 7px 11px;
   border-radius: var(--radius);
   border: 1px solid var(--line-strong);
-  background: var(--bg-sunken);
+  background: var(--field-bg);
   color: var(--text);
   font-size: var(--text-sm);
   transition: border-color var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
@@ -275,6 +276,9 @@
 }
 .table td { padding: 12px var(--s-4) 12px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .table tbody tr:last-child td { border-bottom: 0; }
+.table th:last-child, .table td:last-child { padding-right: 0; }
+.table .cell-end > .btn-ghost:last-child, .table .cell-end .actions > .btn-ghost:last-child { margin-right: calc(var(--s-3) * -1); }
+.table .cell-end .actions { gap: 0; }
 .table tbody tr { transition: background-color var(--t-fast); }
 .table tbody tr:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
 .table .cell-sub { display: block; color: var(--text-3); font-size: var(--text-xs); margin-top: 2px; }
@@ -368,10 +372,9 @@
 
 .skeleton { display: grid; gap: var(--s-3); }
 .skeleton span { height: 14px; border-radius: 6px; background: linear-gradient(90deg, var(--surface-2), var(--surface-hover), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
-.skeleton span:nth-child(1) { width: 38%; height: 26px; }
-.skeleton span:nth-child(2) { width: 72%; }
-.skeleton span:nth-child(3) { width: 58%; }
-.skeleton span:nth-child(4) { width: 100%; height: 120px; border-radius: var(--radius-lg); }
+.skeleton span:nth-child(1) { width: 32%; height: 28px; }
+.skeleton span:nth-child(2) { width: 56%; margin-bottom: var(--s-6); }
+.skeleton span:nth-child(n + 3) { width: 100%; height: 44px; border-radius: var(--radius); opacity: 0.7; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 .inline-spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--text-3); border-right-color: transparent; animation: spin 0.7s linear infinite; display: inline-block; }
@@ -522,6 +525,9 @@
 
 /* Flex children that scroll horizontally must be allowed to shrink. */
 .segmented { min-width: 0; flex-shrink: 1; }
+@media (max-width: 640px) {
+  .projects-toolbar .segmented { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); padding-right: 24px; }
+}
 .page-head h1 .badge { margin-left: var(--s-3); vertical-align: middle; }
 .page-meta { margin-top: var(--s-2); }
 .page > *, .section > * { min-width: 0; }

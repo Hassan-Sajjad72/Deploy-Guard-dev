@@ -54,6 +54,8 @@
   --surface: #15171a;
   --surface-2: #1b1e22;
   --surface-hover: #22252a;
+  --control-bg: #1b1e22;
+  --field-bg: #0a0b0c;
   --line: #262a30;
   --line-strong: #363b42;
   --text: #edeef0;
@@ -92,6 +94,8 @@
   --surface: #ffffff;
   --surface-2: #f3f3f0;
   --surface-hover: #ecece8;
+  --control-bg: #ffffff;
+  --field-bg: #ffffff;
   --line: #e2e2dd;
   --line-strong: #cbcbc5;
   --text: #151618;

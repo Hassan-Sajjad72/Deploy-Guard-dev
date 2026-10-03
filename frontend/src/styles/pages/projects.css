@@ -25,9 +25,11 @@
 .project-branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .project-source > span:first-child { flex-shrink: 1; }
 .project-detail { min-width: 0; font-size: var(--text-sm); }
-.project-reason { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.project-reason.is-bad { color: var(--bad); }
-.project-reason.is-warn { color: var(--warn); }
+.project-reason { display: flex; align-items: flex-start; gap: var(--s-2); color: var(--text-2); }
+.project-reason > svg { margin-top: 3px; }
+.project-reason > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.project-reason.is-bad > svg { color: var(--bad); }
+.project-reason.is-warn > svg { color: var(--warn); }
 .project-progress { display: flex; align-items: center; gap: var(--s-3); color: var(--text-2); }
 .project-progress .meter { width: 96px; flex-shrink: 0; }
 .project-time { font-size: var(--text-xs); text-align: right; white-space: nowrap; }

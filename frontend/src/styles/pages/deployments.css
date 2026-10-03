@@ -40,7 +40,7 @@
   color: var(--text-3);
 }
 .stage-icon.is-small { width: 18px; height: 18px; }
-.is-done > .stage-phase-head .stage-icon, .stage-step.is-done .stage-icon { border-color: transparent; background: var(--ok-soft); color: var(--ok); }
+.is-done > .stage-phase-head .stage-icon, .stage-step.is-done .stage-icon { border-color: color-mix(in srgb, var(--ok) 30%, transparent); background: var(--ok-soft); color: var(--ok); }
 .is-failed > .stage-phase-head .stage-icon, .stage-step.is-failed .stage-icon { border-color: transparent; background: var(--bad); color: var(--on-solid); }
 .is-running > .stage-phase-head .stage-icon, .stage-step.is-running .stage-icon { border-color: var(--info); color: var(--info); }
 .is-failed > .stage-phase-head strong { color: var(--bad); }
