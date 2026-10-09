@@ -23,6 +23,7 @@
     "test:live-runtime-canonical-authority": "ts-node scripts/verify-live-runtime-canonical-authority.ts",
     "test:destroy-confirmation-contract": "ts-node scripts/verify-destroy-confirmation-contract.ts",
     "test:destroy-lifecycle-authority": "ts-node scripts/verify-destroy-lifecycle-authority.ts",
+    "test:independent-aws-deletion": "node scripts/verify-independent-aws-deletion.mjs",
     "test:product-maturity-certification": "ts-node scripts/verify-product-maturity-certification.ts",
     "test:deployable-services": "ts-node scripts/verify-deployable-services.ts",
     "test:service-port-resolution": "ts-node scripts/verify-service-port-resolution.ts",

@@ -84,3 +84,107 @@ Release/configuration checks initially failed when the immutable workflow pin wa
 M0.2: repair the three verified test-consumer drift failures against the current supported stylesheet/pipeline/Projects surfaces, retaining their original admission, ownership, failure and destruction guarantees; rerun the complete local suites in a disposable local DB environment. Then take a separate M0 slice for independent exact-scope destroy absence evidence, provider-denial and eventual-consistency fixtures. Keep AWS execution gated and do not begin Harness or multi-client implementation.
 
 SAFE_TO_CONTINUE: YES for bounded local M0 stabilization; NO for product expansion or live AWS writes without their prerequisites.
+
+## M0.2 — requested consumer repair and next deletion-observer slice (2026-10-10)
+
+Baseline: local `2edbd38f0f9bef93c47b3e6c0ef354f976da5a90` on
+`codex/m0-workflow-identity-20261010`; fetched `origin/version1` remained
+`3ac3d951f9a339a177a627acd306fc54bc6b8ac1`. The original workspace and its
+pre-existing changes remain untouched. Work is local; no push, merge, live AWS
+execution, or product milestone expansion was performed.
+
+### Consumer repair — PASS for the three requested checks
+
+- `verify-deployable-services.ts` follows the active application/deployment CSS
+  import graph, checks bounded vertical scrolling on the actual tree selector,
+  and checks the real add-service handler/fresh UUID and canonical public-service
+  selection. Exact-SHA, service admission, port, and all other safety assertions
+  remain intact. No frontend behavior was modified.
+- `verify-failure-ownership.ts` follows latest/historical operation-correlated
+  links from PipelineExecution to Troubleshoot and verifies owner/code/service
+  rendering from authoritative diagnosis/history. Every classifier and AI
+  no-override assertion remains intact.
+- `verify-destroy-operation-presentation.mjs` checks destroyed rows in the active
+  All view and canonical presenter rather than a retired dedicated filter. It
+  additionally verifies authoritative DESTROYED beats stale LIVE fallback and
+  workflow completion still displays "Verifying deletion" until verified. The
+  guarded confirmation, duplicate-control, retry, and Admin filter checks remain.
+
+### Rerun evidence — not an all-green certification
+
+Commands ran against disposable local PostgreSQL containers only. AWS credentials
+were not populated. Temporary `.env` fixtures were confined to this worktree.
+
+- Backend/frontend builds: PASS.
+- All 44 non-wrapper backend `test:*` scripts were attempted independently, with
+  no fail-fast hiding downstream checks: 41 initially passed; billing migration
+  initially failed because the fixture database was empty, then PASS after the
+  full migration chain and its required 32+ character fixture session secret were
+  supplied. **Final distinct result: 42 PASS, 2 CONFIRMED DEFECT.** The raw initial
+  run honestly retains `FAILED_CHECKS=3`; the successful billing rerun is separate.
+- Frontend full local certification: all 24 checks PASS; extra session-refresh
+  and billing/Trivy checks also PASS. Browser modal tests are local, not AWS E2E.
+- Workflow actionlint/ShellCheck: PASS. Terraform fmt/validate and mocked matrix:
+  PASS, 7 tests. Root canonical environment and live-app runner fixture checks:
+  PASS. Cost-evidence and Infracost CLI checks were also run separately because
+  their containing developer-runtime chain failed before reaching them: PASS.
+- Direct ECS redeploy/rollback, workflow identity, lifecycle properties,
+  architecture, admission, release identity, ownership, failure diagnostics,
+  destroy-authority and local multi-user/schema checks: PASS (mocked/local).
+- Docker fallback executable build initially hit Docker Hub auth HTTP 504; its
+  independent retry PASS, including non-root execution and secret-history checks.
+  No Docker/security assertion was disabled.
+- Full-stack runner started real local Nest/React/PostgreSQL and applied migrations
+  from zero, but **all 7 Playwright tests failed**. Five wait on retired
+  `.new-project-fields select` selectors, one expects removed general project
+  configuration in Settings, and one expects the retired "Connect GitHub App"
+  heading. Screenshots and traces exist; post-browser persistence certification
+  was not reached and is UNVERIFIED. The runner prints a hardcoded migration
+  count of 101; the separately migrated fixture contains 111 recorded migrations.
+- Remaining backend failures: `test:developer-runtime-experience` assumes the old
+  inline Source/Build/ECR/ECS/ALB/Application presentation;
+  `test:product-maturity-certification` reads the removed Sidebar component.
+  These were not silently repaired, skipped, or used to justify an all-green claim.
+
+Evidence retained locally: `/tmp/deployguard-m0-all-backend.log`,
+`/tmp/deployguard-m0-pre-final.log`, `/tmp/deployguard-m0-frontend.log`,
+`/tmp/deployguard-m0-full-stack.log`, `/tmp/deployguard-m0-migrations.log`,
+`/tmp/deployguard-m0-fixture-runner.log`, and this worktree's
+`frontend/test-results/` (screenshots, video, trace, error contexts).
+
+### Next bounded slice executed — independent read-only observer
+
+Used `aws-infrastructure-auditor` to constrain verification to exact retained
+ownership evidence, not inventory discovery or deletion. Added the standalone
+`observe-deletion.mjs` component and `test:independent-aws-deletion`; no dependency,
+Terraform resource, database semantics, or dispatch workflow changed.
+
+Local fixtures PASS for all current Terraform managed resource types, 17 observed
+resource kinds, state/lock objects, shared-parent exclusions, secret redaction,
+lingering resources, bounded convergence, typed provider errors, account mismatch,
+malformed/truncated responses, and exact ECS identity. ECS service IDs follow the
+current AWS provider's `id` ARN, not a nonexistent `arn` attribute. A deleted-cluster
+exception only proves service absence after that exact cluster independently
+passes absence observation.
+
+**CONFIRMED DEFECT remains in the existing destroy workflow:** its v2 success
+booleans still are not derived from this independent observer. This slice does
+not wire it into finalization or claim a complete owned-resource manifest. See
+`docs/M0_DELETION_OBSERVER.md` for ownership coverage and the gated integration.
+Existing nine dispatched executable fingerprints and configured immutable
+workflow bytes remain unchanged; the standalone observer is not yet in that
+certified executable set.
+
+AWS_E2E_STATUS: UNVERIFIED. No AWS calls or AWS mutations were executed.
+M0 completion, Harness, and multi-client readiness remain UNVERIFIED. Their
+previous prerequisites still apply: green supported-consumer checks; durable,
+complete generation/release/resource evidence; tenant authorization and immutable
+identity; exact-SHA real deploy/redeploy/rollback/destroy proof; and explicit
+approval before cloud mutations. No product features were started.
+
+NEXT_BOUNDED_STEP: repair the newly exposed two backend and seven browser consumer
+mismatches against the current supported surfaces, retaining behavioral/security
+assertions. Then separately persist complete pre-destroy ownership evidence across
+partial failures/retries and gate workflow finalization on independent absence
+observations. Publication, SHA-256 certification refresh, exact fixture caller pin,
+and approved AWS execution follow only after local contracts pass.
