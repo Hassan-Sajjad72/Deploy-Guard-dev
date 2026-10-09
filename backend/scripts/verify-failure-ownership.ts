@@ -55,12 +55,15 @@ assert.equal(classifyStructuredFailure("workflow_dispatch", "provider unavailabl
 assert.equal(classifyStructuredFailure("railpack_build", "Railpack said something ambiguous").failureOwner, "UNVERIFIED");
 const root = join(__dirname, "..", "..");
 const ai = readFileSync(join(root, "backend/src/ai-troubleshooting/ai-evidence-preprocessor.service.ts"), "utf8");
-const pipeline = readFileSync(join(root, "frontend/src/components/projects/PipelineRecoveryPanel.jsx"), "utf8");
+const pipeline = readFileSync(join(root, "frontend/src/components/projects/PipelineExecution.jsx"), "utf8");
 const troubleshooting = readFileSync(join(root, "frontend/src/pages/ProjectTroubleshooting.jsx"), "utf8");
 assert.match(ai, /failureOwner[\s\S]{0,200}authoritative[\s\S]{0,200}never replace/i);
-for (const ui of [pipeline, troubleshooting]) {
-  assert.match(ui, /failureOwner/);
-  assert.match(ui, /failureCode/);
-  assert.match(ui, /failureService/);
-}
+assert.match(pipeline, /to=\{`\/projects\/\$\{projectId\}\/troubleshooting\?operation=\$\{latest\.id\}`\}/, "latest failure links to its exact operation's diagnosis");
+assert.match(pipeline, /to=\{`\/projects\/\$\{projectId\}\/troubleshooting\?operation=\$\{details\.id\}`\}/, "historical failure links preserve the selected operation identity");
+assert.match(troubleshooting, /failureOwner:\s*selectedHistoryOperation\.failureOwner/, "history supplies the recorded owner");
+assert.match(troubleshooting, /failureCode:\s*selectedHistoryOperation\.failureCode/, "history supplies the recorded failure code");
+assert.match(troubleshooting, /failureServiceName:\s*selectedHistoryOperation\.failureServiceName/, "history supplies the affected service");
+assert.match(troubleshooting, /<dt>Owner<\/dt>[\s\S]*?operation\.diagnosis\?\.failureOwner \|\| operation\.failureOwner/, "the diagnosis consumer visibly preserves authoritative ownership");
+assert.match(troubleshooting, /<dt>Failure code<\/dt>[\s\S]*?operation\.diagnosis\?\.terminalFailureCode \|\| operation\.failureCode/, "the diagnosis consumer visibly preserves the terminal code");
+assert.match(troubleshooting, /<dt>Service<\/dt>[\s\S]*?operation\.diagnosis\?\.serviceName \|\| operation\.failureServiceName/, "the diagnosis consumer visibly preserves service attribution");
 console.log("FAILURE_OWNERSHIP=PASS DETERMINISTIC=1 UNVERIFIED_SUPPORTED=1 AI_OVERRIDE=0");

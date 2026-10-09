@@ -7,6 +7,8 @@ import {
 } from "../src/utils/developerDeploymentPresentation.js";
 import { DESTROY_CONFIRMATION_PHRASE } from "../src/utils/deploymentConfirmation.js";
 import { failureRecoveryCommand } from "../src/utils/overviewLifecyclePresentation.js";
+import { projectStateLabel, projectStatePresentation, projectStateTone } from "../src/utils/projectStatePresentation.js";
+import { operationResult } from "../src/utils/failurePresentation.js";
 
 const destroy = deploymentPhasePresentation({
   developerState: "destroying",
@@ -56,7 +58,18 @@ assert.match(overview, /command === "destroy"\) \{ menu\.push\(\{ icon: "trash",
 assert.doesNotMatch(overview, /destroyGithubActionsDeployment/, "Overview does not start a destroy itself");
 assert.match(infrastructure, />Go to overview to retry</, "a failed destroy points to the canonical retry");
 assert.match(infrastructure, />Follow progress</, "an active destroy links to its progress");
-assert.match(projects, /\["DESTROYED", "Destroyed"\]/, "Projects exposes the Destroyed lifecycle filter");
+assert.match(projects, /summaries\.map\(\(summary\) => \{[\s\S]*?projectStatePresentation\(summary\.currentState\)/, "the project list retains every backend-provided lifecycle row");
+assert.match(projects, /stateFilter === "ALL"/, "the default All view includes destroyed projects");
+assert.match(projects, /projectStateLabel\(presentation\.state\)/, "Projects displays the canonical Destroyed label");
+assert.match(projects, /projectStateTone\(presentation\.state\)/, "Projects uses the canonical neutral destroyed tone");
+const destroyedProject = projectStatePresentation({ stateAuthority: { state: "DESTROYED", activeOperation: null, runtime: { state: "removed" } }, developerState: "live" });
+assert.equal(destroyedProject.state, "DESTROYED", "historical LIVE fallback must not override authoritative deletion");
+assert.equal(destroyedProject.active, false);
+assert.equal(projectStateLabel(destroyedProject.state), "Destroyed");
+assert.equal(projectStateTone(destroyedProject.state), "neutral", "absence cannot imply a healthy live runtime");
+const pendingDestroy = { deploymentAction: "destroy", status: "completed", destroyVerificationStatus: "pending" };
+assert.deepEqual(operationResult(pendingDestroy), { label: "Verifying deletion", tone: "warning" }, "workflow completion cannot report Destroyed before absence verification");
+assert.deepEqual(operationResult({ ...pendingDestroy, destroyVerificationStatus: "verified" }), { label: "Destroyed", tone: "neutral" });
 assert.match(admin, /\["ALL", "LIVE", "DEPLOYING", "FAILED", "DESTROYED"\]/, "Admin exposes the Destroyed lifecycle filter");
 assert.equal(failureRecoveryCommand({ operationType: "destroy", diagnosis: { retryDecision: "SAFE_NOW" } }, true), "retry", "Eligible failed Destroy operations use the existing generic retry path");
 
