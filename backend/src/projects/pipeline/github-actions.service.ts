@@ -165,6 +165,9 @@ export class GithubActionsService {
     const dispatchInputs = githubWorkflowDispatchInputs(input.inputs) || {};
     const inputNames = Object.keys(dispatchInputs).sort();
     const operationId = input.inputs?.deployment_operation_id || null;
+    if (!operationId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId)) {
+      throw new GithubActionsDispatchError("invalid_workflow_inputs", "Dispatch requires a valid immutable deployment operation ID.");
+    }
     if (input.inputs && (input.repositoryFullName !== input.inputs.repository_full_name || input.targetBranch !== input.inputs.repository_branch)) {
       const detail = "Dispatch repository and ref do not match the immutable deployment snapshot.";
       throw new GithubActionsDispatchError("invalid_workflow_inputs", detail, this.failureEvidence("invalid_workflow_inputs", null, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch));
@@ -206,55 +209,28 @@ export class GithubActionsService {
       throw new GithubActionsDispatchError(diagnosticCode, detail, this.failureEvidence(diagnosticCode, response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch));
     }
 
-    const dispatchResult = await response.json().catch(() => null) as { workflow_run_id?: number | string; html_url?: string } | null;
-    let workflowRunId = String(dispatchResult?.workflow_run_id || "").trim();
-    let correctedStaleRunIdentity = false;
-    if (!/^\d+$/.test(workflowRunId) && operationId) {
-      for (let attempt = 0; attempt < 10 && !/^\d+$/.test(workflowRunId); attempt += 1) {
-        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
-        workflowRunId = String(await this.findWorkflowRunForOperation(
-          input.repositoryFullName,
-          input.workflowRegistrationBranch,
-          operationId,
-          dispatchedAt,
-          token,
-        ) || "");
-      }
-      correctedStaleRunIdentity = /^\d+$/.test(workflowRunId);
+    // A numeric receipt alone does not prove which operation owns the run.
+    // Use the same exact-operation lookup for dispatch and interrupted recovery.
+    let workflowRunId: string | null = null;
+    for (let attempt = 0; attempt < 10 && !workflowRunId; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
+      workflowRunId = await this.findWorkflowRunForOperation(
+        input.repositoryFullName,
+        input.workflowRegistrationBranch,
+        operationId,
+        dispatchedAt,
+        token,
+        input.excludedWorkflowRunIds,
+      );
     }
-    if (!/^\d+$/.test(workflowRunId)) {
-      const detail = "GitHub accepted the workflow request without returning an immutable workflow run identity.";
+    if (!workflowRunId) {
+      const detail = "GitHub accepted the workflow request without exposing a unique run for the immutable deployment operation.";
       throw new GithubActionsDispatchError(
         "workflow_run_identity_missing",
         detail,
         this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch),
         true,
       );
-    }
-    const excludedRunIds = new Set(input.excludedWorkflowRunIds || []);
-    if (excludedRunIds.has(workflowRunId)) {
-      let discoveredRunId: string | null = null;
-      for (let attempt = 0; attempt < 10 && !discoveredRunId; attempt += 1) {
-        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
-        discoveredRunId = await this.findWorkflowRunAfter(
-          input.repositoryFullName,
-          input.workflowRegistrationBranch,
-          dispatchedAt,
-          token,
-          [...excludedRunIds],
-        );
-      }
-      if (!discoveredRunId) {
-        const detail = "GitHub returned a stale workflow run identity and did not expose the newly accepted run within the bounded discovery window.";
-        throw new GithubActionsDispatchError(
-          "workflow_run_identity_missing",
-          detail,
-          this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch),
-          true,
-        );
-      }
-      workflowRunId = discoveredRunId;
-      correctedStaleRunIdentity = true;
     }
     return {
       status: "dispatch_accepted",
@@ -270,9 +246,7 @@ export class GithubActionsService {
         apiVersion: "2026-03-10",
         authentication: "Bearer installation token",
         workflowRunId,
-        workflowRunUrl: correctedStaleRunIdentity
-          ? `https://github.com/${input.repositoryFullName}/actions/runs/${workflowRunId}`
-          : typeof dispatchResult?.html_url === "string" ? dispatchResult.html_url : null,
+        workflowRunUrl: `https://github.com/${input.repositoryFullName}/actions/runs/${workflowRunId}`,
       },
     };
   }
@@ -333,34 +307,48 @@ export class GithubActionsService {
     return response.json() as Promise<Record<string, unknown>>;
   }
 
-  async findWorkflowRunAfter(repository: string, branch: string, dispatchedAt: Date, token: string, excludedIds: string[] = []) {
+  async findWorkflowRunForOperation(repository: string, branch: string, operationId: string, dispatchedAt: Date, token: string, excludedIds: string[] = []) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId) || !Number.isFinite(dispatchedAt.getTime())) return null;
     const workflowFile = this.config.get<string>("GITHUB_ACTIONS_WORKFLOW_FILE", "deployguard.yml");
-    const response = await fetch(`https://api.github.com/repos/${repository}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?event=workflow_dispatch&branch=${encodeURIComponent(branch)}&per_page=30`, { headers: this.headers(token) });
-    if (!response.ok) return null;
-    const body = await response.json() as { workflow_runs?: Array<{ id?: number; created_at?: string }> };
-    const floor = dispatchedAt.getTime() - 5_000;
-    const excluded = new Set(excludedIds);
-    const match = (body.workflow_runs || []).find((run) => run.id && !excluded.has(String(run.id)) && Date.parse(String(run.created_at || "")) >= floor);
-    return match?.id ? String(match.id) : null;
-  }
-
-  async findWorkflowRunForOperation(repository: string, branch: string, operationId: string, dispatchedAt: Date, token: string) {
-    if (!/^[0-9a-f-]{36}$/i.test(operationId)) return null;
-    const workflowFile = this.config.get<string>("GITHUB_ACTIONS_WORKFLOW_FILE", "deployguard.yml");
-    const response = await fetch(`https://api.github.com/repos/${repository}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?event=workflow_dispatch&branch=${encodeURIComponent(branch)}&per_page=30`, { headers: this.headers(token) });
-    if (!response.ok) {
-      throw new GithubActionsDispatchError(
-        "unknown_github_error",
-        "GitHub workflow-run identity reconciliation is temporarily unavailable.",
-        null,
-        true,
-      );
-    }
-    const body = await response.json() as { workflow_runs?: Array<{ id?: number; created_at?: string; display_title?: string }> };
     const floor = dispatchedAt.getTime() - 5_000;
     const expectedTitle = `DeployGuard ${operationId}`;
-    const match = (body.workflow_runs || []).find((run) => run.id && run.display_title === expectedTitle && Date.parse(String(run.created_at || "")) >= floor);
-    return match?.id ? String(match.id) : null;
+    const excluded = new Set(excludedIds);
+    const matches = new Set<string>();
+    const fail = (detail: string) => new GithubActionsDispatchError("workflow_run_identity_missing", detail,
+      this.failureEvidence("workflow_run_identity_missing", null, detail, workflowFile, repository, branch, [], operationId), true);
+    // Inspect every returned page before accepting uniqueness. A busy workflow
+    // or duplicate dispatch must never make page-one's first match authoritative.
+    for (let page = 1; page <= 10; page += 1) {
+      let response: Response;
+      try {
+        response = await fetch(`https://api.github.com/repos/${repository}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?event=workflow_dispatch&branch=${encodeURIComponent(branch)}&per_page=100&page=${page}&created=${encodeURIComponent(`>=${new Date(floor).toISOString()}`)}`, { headers: this.headers(token) });
+      } catch {
+        throw new GithubActionsDispatchError("unknown_github_error", "GitHub workflow-run identity reconciliation is temporarily unavailable.", null, true);
+      }
+      if (!response.ok) {
+        throw new GithubActionsDispatchError("unknown_github_error", "GitHub workflow-run identity reconciliation is temporarily unavailable.", null, true);
+      }
+      let body: { total_count?: number; workflow_runs?: Array<{ id?: number | string; created_at?: string; display_title?: string; event?: string; head_branch?: string }> };
+      try {
+        body = await response.json();
+      } catch {
+        throw fail("GitHub did not return a valid workflow-run identity listing.");
+      }
+      if (!Array.isArray(body?.workflow_runs)) throw fail("GitHub did not return a valid workflow-run identity listing.");
+      // GitHub caps filtered searches at 1,000 results, even when there are more.
+      if (Number(body.total_count) >= 1_000) throw fail("GitHub workflow-run discovery reached the search result limit; unique operation identity is unverified.");
+      for (const run of body.workflow_runs) {
+        if (!run || typeof run !== "object") throw fail("GitHub did not return a valid workflow-run identity listing.");
+        const id = String(run.id || "");
+        if (/^[1-9]\d*$/.test(id) && !excluded.has(id) && run.display_title === expectedTitle
+          && Date.parse(String(run.created_at || "")) >= floor
+          && (run.event === undefined || run.event === "workflow_dispatch")
+          && (run.head_branch === undefined || run.head_branch === branch)) matches.add(id);
+      }
+      if (matches.size > 1) throw fail("Multiple GitHub workflow runs match the immutable deployment operation; run identity is ambiguous.");
+      if (!/<[^>]+>;\s*rel="next"/.test(response.headers.get("link") || "")) return [...matches][0] || null;
+    }
+    throw fail("GitHub workflow-run discovery exceeded the bounded page limit; unique operation identity is unverified.");
   }
 
   async getWorkflowJobs(repository: string, workflowRunId: string, token: string) {
