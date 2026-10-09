@@ -353,6 +353,22 @@ assert.equal(currentRecovery?.retryDecision, "SAFE_AFTER_FIX", "current recovery
 assert.equal(currentRecovery?.rootCauseCode, "DG_APPLICATION_EXTERNAL_BINDING_FAILED");
 assert.equal(JSON.stringify(historicalMetadata.failureDiagnostic), immutableAuditSnapshot, "historical persisted diagnosis remains byte-for-byte unchanged");
 
+const repairedHistoricalRecovery = currentFailureDiagnostic({
+  id: unknown.operationId,
+  commitSha: "f".repeat(40),
+  currentStage: "railpack_build",
+  failedAt: now,
+  failureCode: "DG_RAILPACK_BUILD_FAILED",
+  failureServiceId: serviceId,
+  metadata: {
+    failedStage: "railpack_build",
+    safeLog: "GitHub summary was truncated before the failure marker.",
+    failureEvent: { safeEvidence: "ERR_PNPM_OUTDATED_LOCKFILE pnpm-lock.yaml is not up to date" },
+  },
+});
+assert.equal(repairedHistoricalRecovery?.failureOwner, "REPOSITORY_APPLICATION", "current recovery must consume persisted operation-correlated failure-event evidence");
+assert.equal(repairedHistoricalRecovery?.rootCauseCode, "DG_REPOSITORY_LOCKFILE_OUTDATED");
+
 const retainedOwner = diagnose("ambiguous detail", { failureOwner: "DEPLOYGUARD_PLATFORM", terminalFailureCode: "DG_FAILURE_UNVERIFIED" });
 assert.equal(retainedOwner.failureOwner, "DEPLOYGUARD_PLATFORM", "unknown cause must retain proven owner");
 
@@ -392,6 +408,7 @@ async function verifyCentralPersistenceAndApi() {
   });
   assert.equal(saves, 1, "central intake persists exactly once");
   assert.equal(operation.metadata.failureDiagnostic.rootCauseCode, "DG_REPOSITORY_LOCKFILE_OUTDATED");
+  assert.equal(operation.failureOwner, "REPOSITORY_APPLICATION", "deterministic terminal evidence must replace the marker-only UNVERIFIED owner");
   const api = deployment.presentOperation(operation);
   assert.equal(api.diagnosis.rootCauseCode, "DG_REPOSITORY_LOCKFILE_OUTDATED", "deployment details API exposes structured diagnosis");
 

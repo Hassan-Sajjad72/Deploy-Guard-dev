@@ -166,8 +166,10 @@ export class AiTroubleshootingService {
     try { output = await this.provider.analyze(this.preprocessor.buildPrompt(context, collected.evidence, followUp || undefined, questionType), { evidence: collected.evidence, facts: context }); }
     catch (error) {
       session.lastError = this.fallbackReason(error);
+      const fallback = this.preprocessor.validate(this.preprocessor.fallback(context, collected.evidence), collected.evidence, context);
+      if (!fallback) throw new BadRequestException("Troubleshooting fallback requires at least one operation-correlated evidence reference.");
       output = {
-        value: this.preprocessor.fallback(context, collected.evidence),
+        value: fallback,
         mode: "evidence_only",
         provider: "local_evidence",
         model: null,
@@ -197,17 +199,24 @@ export class AiTroubleshootingService {
   private async collectedForSession(session: AiAnalysisSession, run: ProjectPipelineRun, user: User) {
     const snapshot = session.initialContext?.evidenceSnapshot as Awaited<ReturnType<AiEvidenceService["collect"]>> | undefined;
     if (snapshot?.context?.pipelineRunId === run.id && Array.isArray(snapshot.evidence) && snapshot.groups && typeof snapshot.groups === "object") {
+      if (run.status === PipelineRunStatus.FAILED) {
+        const serviceId = typeof session.initialContext?.requestedServiceId === "string" ? session.initialContext.requestedServiceId : undefined;
+        return this.withCurrentFailureContract(await this.evidenceService.collect(session.projectId, run.id, user, serviceId), run, true);
+      }
       return this.withCurrentFailureContract(snapshot, run);
     }
     const serviceId = typeof session.initialContext?.requestedServiceId === "string" ? session.initialContext.requestedServiceId : undefined;
     const collected = await this.evidenceService.collect(session.projectId, run.id, user, serviceId);
     session.initialContext = { ...(session.initialContext || {}), requestedServiceId: serviceId || null, evidenceSnapshot: collected };
     await this.sessions.save(session);
-    return this.withCurrentFailureContract(collected, run);
+    return this.withCurrentFailureContract(collected, run, run.status === PipelineRunStatus.FAILED);
   }
 
-  private withCurrentFailureContract(collected: Awaited<ReturnType<AiEvidenceService["collect"]>>, run: ProjectPipelineRun) {
-    const diagnosis = currentFailureDiagnostic(run);
+  private withCurrentFailureContract(collected: Awaited<ReturnType<AiEvidenceService["collect"]>>, run: ProjectPipelineRun, preferCollectedDiagnosis = false) {
+    const collectedDiagnosis = preferCollectedDiagnosis && collected.context.failureDiagnostic && typeof collected.context.failureDiagnostic === "object"
+      ? collected.context.failureDiagnostic
+      : null;
+    const diagnosis = collectedDiagnosis || currentFailureDiagnostic(run);
     if (!diagnosis) return collected;
     // Preserve the persisted evidence snapshot as immutable audit history. Only
     // the response-time recovery projection follows the current deterministic

@@ -55,7 +55,7 @@ function assertDeveloperRead(controller: ControllerClass, method: string) {
 
 const classProtected: Array<[ControllerClass, string]> = [[AuditLogController, "listAuditLogs"]];
 
-for (const method of ["overview", "listProjects", "listAuditLogs", "listUsers", "updateUserRole", "updateUserAccess"]) {
+for (const method of ["overview", "listProjects", "listAuditLogs", "listUsers", "updateUserRole"]) {
   assertAdminOnly(AdminController, method);
 }
 
@@ -73,4 +73,31 @@ for (const method of ["list", "get", "start", "regenerate", "followUp", "close"]
 
 authorize(ProjectsController, "getCurrentState", UserRole.READONLY);
 
-console.log("Operator/admin backend authorization segregation verification passed.");
+assert.equal(typeof (AdminController.prototype as unknown as Record<string, unknown>).enableUser, "undefined");
+
+async function verifyOverviewCountsOnlyActiveProjects() {
+  const queries: string[] = [];
+  const controller = new AdminController(
+    {} as never,
+    { record: async () => undefined } as never,
+    { get: () => undefined } as never,
+    { query: async (sql: string) => {
+      queries.push(sql);
+      if (sql.includes('FROM "projects"')) return [{ count: 0 }];
+      if (sql.includes('FROM "project_pipeline_runs"')) return [{ active: 0, failed: 0, destroying: 0 }];
+      return [];
+    } } as never,
+    {} as never,
+    {} as never,
+  );
+  const overview = await controller.overview({ user: { id: 1, role: UserRole.ADMIN } } as never);
+  const operationQuery = queries.find((sql) => sql.includes('FROM "project_pipeline_runs"'));
+  assert.ok(operationQuery, "the overview must query operation counts");
+  assert.match(operationQuery, /JOIN "projects"/i, "operation counts must be correlated to projects");
+  assert.match(operationQuery, /\bproject\."status"\s*!=\s*'archived'/i, "archived projects must not create current attention");
+  assert.equal(overview.counts.failedOperations, 0);
+}
+
+verifyOverviewCountsOnlyActiveProjects()
+  .then(() => console.log("Operator/admin backend authorization segregation verification passed."))
+  .catch((error) => { console.error(error); process.exitCode = 1; });

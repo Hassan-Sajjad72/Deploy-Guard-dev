@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "3e5b88c9-ae09-4739-b080-51a34a3d1033",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/database-overview.json",
+  "output": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/database-overview.html",
+  "specification": {
+    "sha256": "8aaef256e4a9f94cc2369e6198b2d2d7e05cbfbf9ba108f0d49df0f9318488ab",
+    "bytes": 3226
+  },
+  "artifact": {
+    "sha256": "40e982bd909f680d5ee3abb150ffbc50e3c68870b887c3832dd517ecb23c82d8",
+    "bytes": 757717
+  }
+}

@@ -26,12 +26,30 @@ function Usage({ label, used, limit, over }) {
 
 export default function Billing() {
   const { user } = useAuth();
+  const returned = new URLSearchParams(window.location.search).get("checkout") === "returned";
   const [summary, setSummary] = useState(null);
   const [invoice, setInvoice] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
-  const load = useCallback(async () => { try { setSummary(await getBillingSummary()); setError(""); } catch (caught) { setError(caught.message || "Subscription details are unavailable."); } }, []);
+  const [checkingReturn, setCheckingReturn] = useState(returned);
+  const load = useCallback(async () => { try { const next = await getBillingSummary(); setSummary(next); setError(""); return next; } catch (caught) { setError(caught.message || "Subscription details are unavailable."); return null; } }, []);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!returned) return;
+    let attempts = 0;
+    let inFlight = false;
+    const interval = window.setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
+      const next = await load();
+      inFlight = false;
+      if ((next?.plan && next.plan !== "free") || ++attempts >= 20) {
+        window.clearInterval(interval);
+        setCheckingReturn(false);
+      }
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [returned, load]);
 
   async function upgrade(plan) {
     setBusy(plan); setError("");
@@ -50,7 +68,6 @@ export default function Billing() {
   const usage = summary.workspaceUsage || {};
   const limits = usage.limits || {};
   const canUpgrade = ["admin", "developer"].includes(user?.role);
-  const returned = new URLSearchParams(window.location.search).get("checkout") === "returned";
   const overLimit = usage.overLimit?.currentProjects || usage.overLimit?.liveProjects;
   const stripeConfigured = Boolean(summary.provider?.configured);
   const checkoutAllowed = canUpgrade && summary.billing?.enabled && !summary.providerSubscriptionId && stripeConfigured;
@@ -62,7 +79,7 @@ export default function Billing() {
     <PageHeader description="Your plan, what you are using, and your invoices." title="Plan & usage" />
     {error ? <ErrorState message={error} onRetry={load} title="The billing action did not complete" /> : null}
     {!summary.billing?.enabled ? <Callout title="Billing is off" tone="info"><p>Projects and deployments are not limited by plan in this environment.</p></Callout> : null}
-    {returned ? <Callout actions={<Button onClick={() => void load()} size="sm">Refresh</Button>} title="Checking your plan" tone="info"><p>Stripe is confirming the change. Refresh in a moment to see your new plan.</p></Callout> : null}
+    {returned && summary.plan === "free" ? <Callout actions={<Button onClick={() => void load()} size="sm">Refresh</Button>} title="Payment verification pending" tone="info"><p>{checkingReturn ? "Checking for Stripe confirmation automatically…" : "The plan has not updated yet. Refresh again or contact support if the payment completed."}</p></Callout> : null}
     {overLimit ? <Callout title="Over your plan's limit" tone="danger"><p>Existing projects keep running. {summary.enforcement?.enabled ? "New projects and deployments are blocked until usage is back within the limit or you upgrade." : "New deployments are still allowed while limits are only being observed."}</p></Callout> : null}
 
     <section aria-label="Current plan and usage" className="panel billing-current">

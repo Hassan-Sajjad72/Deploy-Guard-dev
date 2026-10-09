@@ -238,16 +238,6 @@ export class UsersService {
     return this.userRepository.save(user);
   }
 
-  async updateAccess(id: number, enabled: boolean, actorUserId?: number): Promise<User> {
-    const user = await this.findById(id);
-    if (!user) throw new NotFoundException("User not found");
-    if (actorUserId === user.id && !enabled) {
-      throw new BadRequestException("Administrators cannot disable their own account");
-    }
-    user.disabledAt = enabled ? null : new Date();
-    return this.userRepository.save(user);
-  }
-
   async markLoggedIn(user: User): Promise<User> {
     user.lastLoginAt = new Date();
 

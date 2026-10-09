@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { getWorkspaceSummary } from "../api/projectApi.js";
 import AppIcon from "../components/common/AppIcon.jsx";
 import { Button, Callout, EmptyState, PageHeader, Status } from "../components/common/DesignSystem.jsx";
@@ -17,7 +17,6 @@ const filters = [
   ["ATTENTION", "Needs attention"],
   ["DEPLOYING", "Deploying"],
   ["LIVE", "Live"],
-  ["DESTROYED", "Destroyed"],
 ];
 
 /** One short line that explains why a project needs attention. */
@@ -35,6 +34,7 @@ function attentionReason(currentState) {
 export default function Projects() {
   const { role } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [summaries, setSummaries] = useState([]);
   const [attentionIds, setAttentionIds] = useState(() => new Set());
   const [error, setError] = useState("");
@@ -65,6 +65,12 @@ export default function Projects() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [load]);
+
+  useEffect(() => {
+    if (!location.state?.notice) return undefined;
+    const timer = window.setTimeout(() => navigate(location.pathname, { replace: true, state: null }), 4200);
+    return () => window.clearTimeout(timer);
+  }, [location.pathname, location.state?.notice, navigate]);
 
   const rows = useMemo(() => summaries.map((summary) => {
     const presentation = projectStatePresentation(summary.currentState);

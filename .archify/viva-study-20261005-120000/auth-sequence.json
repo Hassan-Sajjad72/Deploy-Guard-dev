@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {"title":"Authentication and RBAC Sequence","output":".archify/viva-study-20261005-120000/auth-sequence.html","locale":"en","quality_profile":"showcase","column_fit":"spread","viewBox":[1300,800],"repository":{"url":"https://github.com/Hassan-Sajjad72/Deploy-Guard-dev.git","provider":"github","link_mode":"web","revision":"a571c14e9afc45bedf22ec1e4d22e136e8e3005e"}},
+  "participants": [
+    {"id":"user","type":"external","label":"Developer","sources":[{"path":"frontend/src/pages/GithubConnecting.jsx"}]},
+    {"id":"ui","type":"frontend","label":"React UI","sources":[{"path":"frontend/src/context/AuthContext.jsx"}]},
+    {"id":"auth","type":"backend","label":"AuthController/Service","sources":[{"path":"backend/src/auth/auth.controller.ts"},{"path":"backend/src/auth/auth.service.ts"}]},
+    {"id":"github","type":"external","label":"GitHub OAuth","sources":[{"path":"backend/src/auth/auth.service.ts"}]},
+    {"id":"db","type":"database","label":"Users + audit_logs","sources":[{"path":"backend/src/users/user.entity.ts"},{"path":"backend/src/audit-log/audit-log.entity.ts"}]},
+    {"id":"guard","type":"security","label":"Middleware + role guard","sources":[{"path":"backend/src/common/middleware/authenticated-user.middleware.ts"},{"path":"backend/src/common/rbac/require-role.guard.ts"}]}
+  ],
+  "segments": [{"from":150,"to":385,"label":"OAuth login"},{"from":400,"to":630,"label":"Authenticated API"}],
+  "messages": [
+    {"from":"user","to":"ui","y":160,"label":"choose Connect GitHub"},
+    {"from":"ui","to":"auth","y":190,"label":"GET /api/auth/github","variant":"emphasis"},
+    {"from":"auth","to":"db","y":220,"label":"audit OAuth started","variant":"dashed"},
+    {"from":"auth","to":"user","y":250,"label":"redirect with random state cookie","variant":"security"},
+    {"from":"user","to":"github","y":280,"label":"authorize OAuth app","variant":"security"},
+    {"from":"github","to":"auth","y":310,"label":"callback code + state","variant":"security"},
+    {"from":"auth","to":"github","y":340,"label":"exchange token; fetch profile/emails","variant":"security"},
+    {"from":"auth","to":"db","y":370,"label":"find/create user; store encrypted access token; audit","variant":"emphasis"},
+    {"from":"auth","to":"user","y":390,"label":"set signed HttpOnly developer session cookie","variant":"security"},
+    {"from":"ui","to":"auth","y":440,"label":"GET /api/auth/me; credentials included","variant":"emphasis"},
+    {"from":"auth","to":"guard","y":470,"label":"verify HMAC session + audience","variant":"security"},
+    {"from":"guard","to":"db","y":500,"label":"load user; reject disabled"},
+    {"from":"guard","to":"auth","y":530,"label":"attach req.user","variant":"return"},
+    {"from":"auth","to":"ui","y":560,"label":"user + role","variant":"return"},
+    {"from":"ui","to":"guard","y":590,"label":"protected action"},
+    {"from":"guard","to":"ui","y":620,"label":"allow admin/developer/read-only or 401/403","variant":"return"}
+  ],
+  "cards":[{"dot":"rose","title":"Role split","items":["Developer OAuth sessions are only valid for GitHub users that are not admins.","Admin login uses a distinct 8-hour admin cookie; developer sessions last 7 days.","Read-only users can view protected project data but mutation endpoints additionally require admin/developer."]}]
+}

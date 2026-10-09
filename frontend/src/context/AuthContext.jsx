@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { getCurrentUser, logoutUser } from "../api/authApi.js";
@@ -12,24 +13,35 @@ export const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const refreshInFlight = useRef(null);
+  const authStateGeneration = useRef(0);
 
-  const refreshUser = useCallback(async () => {
-    setIsLoading(true);
+  const refreshUser = useCallback(() => {
+    if (refreshInFlight.current) return refreshInFlight.current;
 
-    try {
-      const response = await getCurrentUser();
-      setUser(response?.user || null);
-      return response?.user || null;
-    } catch {
-      setUser(null);
-      return null;
-    } finally {
-      setIsLoading(false);
-    }
+    const generation = ++authStateGeneration.current;
+    let request;
+    request = getCurrentUser()
+      .then((response) => {
+        if (generation !== authStateGeneration.current) return null;
+        const nextUser = response?.user || null;
+        setUser(nextUser);
+        return nextUser;
+      })
+      .catch(() => {
+        if (generation === authStateGeneration.current) setUser(null);
+        return null;
+      })
+      .finally(() => {
+        if (generation === authStateGeneration.current) setIsLoading(false);
+        if (refreshInFlight.current === request) refreshInFlight.current = null;
+      });
+    refreshInFlight.current = request;
+    return request;
   }, []);
 
   useEffect(() => {
-    refreshUser();
+    void refreshUser();
   }, [refreshUser]);
 
   useEffect(() => {
@@ -45,10 +57,13 @@ export function AuthProvider({ children }) {
   }, [refreshUser]);
 
   const logout = useCallback(async () => {
+    authStateGeneration.current += 1;
+    refreshInFlight.current = null;
     try {
       await logoutUser();
     } finally {
       setUser(null);
+      setIsLoading(false);
     }
   }, []);
 

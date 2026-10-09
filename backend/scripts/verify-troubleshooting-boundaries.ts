@@ -63,8 +63,19 @@ function verifyPreprocessingAndValidation() {
   assert.equal(preprocessor.validate(validModelResult(evidence, { remediationSteps: [{ unsafe: true }] }), evidence, context), null, "non-string remediation is rejected");
   const referencesFiltered = preprocessor.validate(validModelResult(evidence, { evidenceReferences: [reference(evidence[0]), { source: "invented", eventId: "none", stage: "fake" }] }), evidence, context);
   assert.deepEqual(referencesFiltered?.evidenceReferences, [{ ...reference(evidence[0]), lineReference: null }], "unsupported optional references are removed while the valid response is retained");
-  assert.deepEqual(preprocessor.validate(validModelResult(evidence, { evidenceReferences: [{ source: "invented", eventId: "none", stage: "fake" }] }), evidence, context)?.evidenceReferences, [], "hallucinated evidence references are never accepted");
-  assert.deepEqual(preprocessor.validate(validModelResult(evidence, { completedStages: [] }), [], context)?.evidenceReferences, [], "references are removed when no evidence was supplied");
+  assert.equal(preprocessor.validate(validModelResult(evidence, { evidenceReferences: [{ source: "invented", eventId: "none", stage: "fake" }] }), evidence, context), null, "AI results without a valid evidence reference are rejected");
+  assert.equal(preprocessor.validate(validModelResult(evidence, { completedStages: [] }), [], context), null, "AI results without supplied evidence are rejected");
+  assert.equal(preprocessor.validate(validModelResult(evidence, { rootCauseCode: "DG_AI_INVENTED" }), evidence, context), null, "AI root-cause codes must use the approved failure vocabulary");
+  assert.equal(preprocessor.validate(validModelResult(evidence, { retryRecommendation: { decision: "SAFE_NOW", reason: "The AI cannot authorize retry without deterministic ownership." } }), evidence, context), null, "UNVERIFIED ownership cannot receive an AI SAFE_NOW retry recommendation");
+  const terraformOnly = preprocessor.preprocess([{ source: "terraform", stage: "terraform_plan", eventId: "operation-1", text: "Error: Unsupported argument" }]);
+  const deterministicFallback = preprocessor.fallback({
+    failureOwner: "DEPLOYGUARD_PLATFORM",
+    rootCauseCode: "DG_TERRAFORM_PLAN_FAILED",
+    retryDecision: "NOT_SAFE_YET",
+    failureDiagnostic: { rootCauseCode: "DG_TERRAFORM_PLAN_FAILED", summary: "Terraform plan failed.", technicalReason: "Terraform reported an unsupported argument.", remediationSteps: ["Correct the Terraform configuration."], affectedComponent: "Terraform", retryDecision: "NOT_SAFE_YET", failureOwner: "DEPLOYGUARD_PLATFORM" },
+  }, terraformOnly);
+  assert.equal(deterministicFallback.evidenceReferences.length, 1, "deterministic fallback must retain Terraform-only evidence references");
+  assert.ok(preprocessor.validate(deterministicFallback, terraformOnly, { failureOwner: "DEPLOYGUARD_PLATFORM", rootCauseCode: "DG_TERRAFORM_PLAN_FAILED", retryDecision: "NOT_SAFE_YET" }), "deterministic fallback must satisfy the same evidence validation as live AI");
   assert.equal(preprocessor.validate(validModelResult(evidence), evidence, { failureOwner: "DEPLOYGUARD_PLATFORM", problemType: "LIVE_RUNTIME_ISSUE" }), null, "AI cannot contradict deterministic ownership");
   for (const question of TROUBLESHOOTING_QUESTIONS) {
     const prompt = preprocessor.buildPrompt(context, evidence, question.label, question.type);
@@ -121,6 +132,40 @@ async function verifyCorrelatedLiveEvidence() {
   assert.match(JSON.stringify(collected.evidence), /TemplateNotFound: index\.html/); assert.doesNotMatch(JSON.stringify(collected.evidence), new RegExp(secret));
   assert.equal(await service.sanitizeUserInput(projectId, `please inspect ${secret}`), "please inspect [REDACTED_ENV_VALUE]", "protected ENV values are redacted before conversation persistence or display");
   return { collected, run };
+}
+
+async function verifyLaterCorrelatedFailureEvidence() {
+  const failedAt = new Date("2026-09-03T00:00:00.000Z");
+  const terminalDiagnosis = { terminalFailureCode: "DG_RAILPACK_BUILD_FAILED", rootCauseCode: "DG_RAILPACK_BUILD_FAILED", failureOwner: "UNVERIFIED", retryDecision: "INSUFFICIENT_EVIDENCE" };
+  const run: any = {
+    id: runId, projectId, status: PipelineRunStatus.FAILED, generationId: null, commitSha: "d".repeat(40), githubWorkflowRunId: "789", currentStage: "railpack_build", failedAt, updatedAt: failedAt,
+    failureOwner: "UNVERIFIED", externalProvider: null, failureCode: "DG_RAILPACK_BUILD_FAILED", failureServiceId: null, errorMessage: "Railpack build failed", metadata: { deploymentAction: "deploy", failedStage: "railpack_build", safeLog: "Railpack build failed without a unique signature.", failureDiagnostic: terminalDiagnosis },
+  };
+  const immutableTerminalDiagnosis = JSON.stringify(run.metadata.failureDiagnostic);
+  const service = new AiEvidenceService(
+    { findOne: async () => run } as any,
+    { find: async () => [
+      { id: "correlated-event", projectId, pipelineRunId: runId, stage: "railpack_build", status: "failed", message: "ERR_PNPM_OUTDATED_LOCKFILE pnpm-lock.yaml is not up to date", source: "github_actions", occurredAt: failedAt },
+      { id: "unrelated-event", projectId: "other-project", pipelineRunId: "other-run", stage: "railpack_build", status: "failed", message: "TemplateNotFound: unrelated.html", source: "github_actions", occurredAt: failedAt },
+    ] } as any,
+    { find: async () => [{ id: "unrelated-runtime", projectId: "other-project", pipelineRunId: "other-run", eventType: "application_runtime", status: "failed", message: "HTTP 500 unrelated", createdAt: failedAt }] } as any,
+    { createQueryBuilder: () => ({ addSelect() { return this; }, where() { return this; }, andWhere() { return this; }, getMany: async () => [] }) } as any,
+    preprocessor, { decrypt: (value: string) => value } as any,
+    { getRecentLogs: async () => { throw new Error("failed deployments must not query current LIVE CloudWatch logs"); } } as any,
+  );
+  const collected = await service.collect(projectId, runId, user);
+  assert.equal(collected.context.failureOwner, "REPOSITORY_APPLICATION", "later operation-correlated evidence improves only the read-time diagnosis");
+  assert.equal(collected.context.rootCauseCode, "DG_REPOSITORY_LOCKFILE_OUTDATED");
+  assert.equal(JSON.stringify(run.metadata.failureDiagnostic), immutableTerminalDiagnosis, "later evidence never overwrites the terminal audit diagnosis");
+  assert.ok(collected.evidence.some((row) => row.eventId === "correlated-event"));
+  assert.ok(collected.evidence.every((row) => row.eventId !== "unrelated-event" && row.eventId !== "unrelated-runtime"), "unrelated project/run evidence cannot affect a deployment");
+
+  const session: any = { projectId, pipelineRunId: runId, initialContext: { evidenceSnapshot: { context: { pipelineRunId: runId }, evidence: [], groups: {} } } };
+  const troubleshooting = Object.create(AiTroubleshootingService.prototype) as any;
+  troubleshooting.evidenceService = { collect: async () => collected };
+  const current = await troubleshooting.collectedForSession(session, run, user);
+  assert.equal(current.context.rootCauseCode, "DG_REPOSITORY_LOCKFILE_OUTDATED", "failed-session reads refresh current correlated evidence without replacing the snapshot");
+  assert.deepEqual(session.initialContext.evidenceSnapshot.evidence, [], "original session evidence snapshot remains immutable");
 }
 
 async function verifyServiceBoundaries(collected: any, run: any) {
@@ -210,7 +255,7 @@ async function verifySessionOperationTimestamps() {
 }
 
 void (async () => {
-  await verifyMalformedUuidStopsAtBoundary(); const evidence = verifyPreprocessingAndValidation(); await verifyPersistedOperationEvidence(); const live = await verifyCorrelatedLiveEvidence();
+  await verifyMalformedUuidStopsAtBoundary(); const evidence = verifyPreprocessingAndValidation(); await verifyPersistedOperationEvidence(); await verifyLaterCorrelatedFailureEvidence(); const live = await verifyCorrelatedLiveEvidence();
   await verifyServiceBoundaries(live.collected, live.run); verifyQuestionSpecificAnswers(evidence); await verifyGeminiStructuredSchema(); await verifyProviderFallbackAndStateAuthority(evidence); await verifySessionOperationTimestamps();
   console.log("TROUBLESHOOTING_BOUNDARIES=PASS MULTI_SOURCE_CORRELATED=1 NOISE_REDUCED=1 SECRETS_REDACTED=1 QUESTION_CONTRACTS=10 MALFORMED_REJECTED=1 HALLUCINATED_REFERENCES_REJECTED=1 AUTHORITY_PRESERVED=1 UNVERIFIED_AI_LIKELIHOOD=1 SNAPSHOT_BOUNDED_FOLLOWUP=1 PROVIDER_FALLBACK=1 FAILED_DEPLOYMENT=1 LIVE_RUNTIME_EVIDENCE_GATED=1 AI_STATE_MUTATIONS=0");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
+import { isApprovedRootCauseCode } from "../projects/failure-diagnostics/failure-contract.catalog";
 import { AI_LIKELY_RESPONSIBILITIES, AI_PROBLEM_TYPES, AI_RETRY_DECISIONS, troubleshootingQuestion } from "./ai-troubleshooting-contract";
 
 export type RawEvidence = { source: string; stage?: string | null; eventId?: string | null; timestamp?: Date | string | null; text: string; lineReference?: string | null };
@@ -74,7 +75,7 @@ export class AiEvidencePreprocessorService {
         remediationSteps: Array.isArray(diagnostic.remediationSteps) ? diagnostic.remediationSteps.map(String) : [String(diagnostic.recommendedAction || "Review the persisted diagnosis.")],
         confidence: diagnostic.confidence === "DETERMINISTIC" ? 1 : diagnostic.confidence === "HIGH" ? 0.85 : 0.4,
         limitations: "This evidence-only explanation preserves DeployGuard's persisted deterministic diagnosis and does not add unverified facts.",
-        evidenceReferences: evidence.filter((item) => item.source === "deployguard_diagnosis" || item.source === "railpack_build" || item.source === "github_actions").slice(0, 8).map((item) => this.reference(item)),
+        evidenceReferences: evidence.slice(0, 8).map((item) => this.reference(item)),
         likelyResponsibility: diagnostic.failureOwner === "UNVERIFIED" ? "INSUFFICIENT_EVIDENCE" : diagnostic.failureOwner,
         affectedComponent: String(diagnostic.affectedComponent || "deployment operation"),
         completedStages: (Array.isArray(diagnostic.completedStages) ? diagnostic.completedStages : []).flatMap((stage) => {
@@ -130,6 +131,7 @@ export class AiEvidencePreprocessorService {
     if (authoritativeRootCause && item.rootCauseCode !== authoritativeRootCause) return null;
     const authoritativeRetry = typeof context.retryDecision === "string" && context.retryDecision ? context.retryDecision : null;
     if (authoritativeRetry && retry.decision !== authoritativeRetry) return null;
+    if (authoritativeOwner === "UNVERIFIED" && retry.decision === "SAFE_NOW") return null;
     if (context.problemType && item.problemType !== context.problemType) return null;
     if (!item.remediationSteps.length || item.remediationSteps.length > 8 || item.remediationSteps.some((step) => typeof step !== "string" || !step.trim() || step.length > 1000)) return null;
     const allowed = new Map(allowedEvidence.map((row) => [`${row.source}|${row.eventId || ""}|${row.stage || ""}`, row]));
@@ -138,6 +140,7 @@ export class AiEvidencePreprocessorService {
       const row = allowed.get(this.referenceKey(reference));
       return { source: String(reference.source || ""), eventId: reference.eventId ? String(reference.eventId) : null, stage: reference.stage ? String(reference.stage) : null, lineReference: row?.lineReference || null };
     });
+    if (!references.length) return null;
     const completedStages = (item.completedStages as Array<Record<string, unknown>>).slice(0, 12).map((stage) => {
       if (typeof stage.stage !== "string" || !stage.stage.trim() || stage.stage.length > 300 || !stage.evidenceReference || typeof stage.evidenceReference !== "object") return null;
       const row = allowed.get(this.referenceKey(stage.evidenceReference as Record<string, unknown>));
@@ -148,7 +151,9 @@ export class AiEvidencePreprocessorService {
     const bounded = (field: unknown, maximum: number) => typeof field === "string" && field.trim() && field.length <= maximum ? field.trim() : null;
     const summary = bounded(item.summary, 2000); const rootCause = bounded(item.rootCause, 4000); const technicalDetails = bounded(item.technicalDetails, 8000); const limitations = bounded(item.limitations, 3000); const affectedComponent = bounded(item.affectedComponent, 500); const recommendedAction = bounded(item.recommendedAction, 4000);
     if (!summary || !rootCause || !technicalDetails || !limitations || !affectedComponent || !recommendedAction) return null;
-    return { summary, rootCause, rootCauseCode: typeof item.rootCauseCode === "string" ? item.rootCauseCode : "DG_FAILURE_CAUSE_UNVERIFIED", technicalDetails, remediationSteps: item.remediationSteps as string[], confidence, limitations, evidenceReferences: references, likelyResponsibility: item.likelyResponsibility, affectedComponent, completedStages, recommendedAction, retryRecommendation: { decision: retry.decision, reason: retry.reason.trim() }, problemType: item.problemType };
+    const rootCauseCode = typeof item.rootCauseCode === "string" ? item.rootCauseCode : "DG_FAILURE_CAUSE_UNVERIFIED";
+    if (!isApprovedRootCauseCode(rootCauseCode)) return null;
+    return { summary, rootCause, rootCauseCode, technicalDetails, remediationSteps: item.remediationSteps as string[], confidence, limitations, evidenceReferences: references, likelyResponsibility: item.likelyResponsibility, affectedComponent, completedStages, recommendedAction, retryRecommendation: { decision: retry.decision, reason: retry.reason.trim() }, problemType: item.problemType };
   }
 
   private clean(value: string) { return String(value || "").replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").replace(/\r/g, ""); }

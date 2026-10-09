@@ -29,6 +29,11 @@ export default function NotificationSettingsPanel({ projectId, canManage }) {
     } catch (caught) { setError(caught.message); }
   }, [projectId]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = window.setTimeout(() => setNotice(""), 4200);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   async function action(work, success) {
     setBusy(true); setError(""); setNotice("");

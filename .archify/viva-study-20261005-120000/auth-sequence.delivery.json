@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "2f69d3e3-a828-407b-b3e0-e5314b6eab6f",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/auth-sequence.json",
+  "output": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/auth-sequence.html",
+  "specification": {
+    "sha256": "8aaca1003da99742650a2d2cf05f32b0241a59a5822d3a17e78d132d66b2efeb",
+    "bytes": 3369
+  },
+  "artifact": {
+    "sha256": "612a53f4e951f309377f1b5311d3d5a97014980e3993111e444a6e9c89c7a6da",
+    "bytes": 760666
+  }
+}

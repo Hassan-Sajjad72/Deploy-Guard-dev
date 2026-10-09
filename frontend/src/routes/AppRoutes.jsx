@@ -10,7 +10,6 @@ import AdminLayout from "../components/layout/AdminLayout.jsx";
 const About = lazy(() => import("../pages/About.jsx"));
 const AdminLogin = lazy(() => import("../pages/AdminLogin.jsx"));
 const AdminUsers = lazy(() => import("../pages/AdminUsers.jsx"));
-const AdminCloudCleanup = lazy(() => import("../pages/AdminCloudCleanup.jsx"));
 const Forbidden = lazy(() => import("../pages/Forbidden.jsx"));
 const GithubConnecting = lazy(() => import("../pages/GithubConnecting.jsx"));
 const Landing = lazy(() => import("../pages/Landing.jsx"));
@@ -45,8 +44,8 @@ export default function AppRoutes() {
           <Route element={<ProjectInfrastructure />} path="/projects/:projectId/infrastructure" />
           <Route element={<ProjectMetrics />} path="/projects/:projectId/monitoring" />
           {/* Historical bookmarks resolve to the current owning surface. */}
-          <Route element={<LegacyProjectRedirect section="/settings" />} path="/projects/:projectId/environment" />
-          <Route element={<LegacyProjectRedirect section="/settings" />} path="/projects/:projectId/env" />
+          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/environment" />
+          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/env" />
           <Route element={<ProjectSettings />} path="/projects/:projectId/settings" />
           <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/costs" />
           <Route element={<ProjectTroubleshooting />} path="/projects/:projectId/troubleshooting" />
@@ -55,7 +54,7 @@ export default function AppRoutes() {
           <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/orchestration" />
           <Route element={<LegacyProjectRedirect section="/pipeline" />} path="/projects/:projectId/rollback" />
           <Route element={<LegacyProjectRedirect section="/pipeline" />} path="/projects/:projectId/releases" />
-          <Route element={<LegacyProjectRedirect section="/settings" />} path="/projects/:projectId/requirements/*" />
+          <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/requirements/*" />
           <Route element={<LegacyProjectRedirect section="/pipeline" />} path="/projects/:projectId/logs/*" />
           <Route element={<LegacyProjectRedirect section="/monitoring" />} path="/projects/:projectId/observability/*" />
           <Route element={<LegacyProjectRedirect section="/pipeline" />} path="/projects/:projectId/orchestration/*" />
@@ -75,7 +74,6 @@ export default function AppRoutes() {
           <Route element={<Navigate replace to="/admin?section=users" />} path="/admin/users" />
           <Route element={<Navigate replace to="/admin?section=projects" />} path="/admin/projects" />
           <Route element={<Navigate replace to="/admin?section=audit" />} path="/admin/audit" />
-          <Route element={<AdminCloudCleanup />} path="/admin/cleanup" />
           <Route element={<Navigate replace to="/admin?section=audit" />} path="/activity" />
           <Route element={<Navigate replace to="/admin?section=audit" />} path="/audit-logs" />
         </Route>

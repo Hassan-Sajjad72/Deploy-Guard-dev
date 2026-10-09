@@ -170,6 +170,10 @@ export class AuthService {
       login: profile.login || "",
     });
 
+    if (user.disabledAt) {
+      throw new UnauthorizedException("GitHub account is disabled");
+    }
+
     if (user.role === UserRole.ADMIN) {
       throw new UnauthorizedException("Administrator accounts must use the separate admin login.");
     }

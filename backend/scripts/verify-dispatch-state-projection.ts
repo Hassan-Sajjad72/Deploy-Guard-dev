@@ -934,6 +934,19 @@ async function verifyPersistedBuilderFailureArtifactIsConsumed() {
   assert.deepEqual(evidence?.failureEvent, failureEvent);
   assert.match(evidence?.rawEvidence || "", /DG_DOCKER_FALLBACK_UNSUPPORTED/);
   assert.match(evidence?.rawEvidence || "", new RegExp(serviceId));
+
+  const terminal = Object.create(RailpackDeploymentService.prototype) as any;
+  terminal.sanitizer = new LogSanitizerService();
+  terminal.actions = {
+    getTerminalFailureEvidence: async () => ({
+      ...evidence,
+      rawEvidence: `${"GitHub wrapper output\\n".repeat(2_000)}DG_FAILURE serviceId=${serviceId} code=DG_RAILPACK_BUILD_FAILED stage=railpack_build`,
+      failureEvent: { ...failureEvent, code: "DG_RAILPACK_BUILD_FAILED", stage: "railpack_build", safeEvidence: "ERR_PNPM_OUTDATED_LOCKFILE pnpm-lock.yaml is not up to date" },
+    }),
+  };
+  const normalized = await terminal.terminalFailureEvidence("example/application", "123", operationId, "ignored", "deploy");
+  assert.match(normalized.safeLog, /DG_RAILPACK_BUILD_FAILED/, "validated failure-event marker must survive a large GitHub summary");
+  assert.match(normalized.safeLog, /ERR_PNPM_OUTDATED_LOCKFILE/, "validated failure-event causal evidence must survive a large GitHub summary");
 }
 
 async function verifyActiveGithubStagesPersistWithoutPipeline() {
@@ -1209,7 +1222,7 @@ void (async () => {
   assert.match(workflow, /name: Clean up Railpack BuildKit daemon[\s\S]*?if: always\(\)/);
   assert.match(overviewPage, /getProjectCurrentState/);
   assert.match(pipelinePage, /getProjectCurrentState/);
-  assert.match(infrastructurePage, /Provisioning failed/);
+  assert.match(infrastructurePage, /Provisioning did not complete/);
   assert.doesNotMatch(infrastructurePage, /attempt\?\.message/);
   assert.equal(githubActionsWorkflowStepPresentation("Post Checkout"), null);
   assert.equal(githubActionsWorkflowStepPresentation("Materialize release runtime")?.key, "materialize_release_runtime");

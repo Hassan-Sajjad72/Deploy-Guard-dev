@@ -28,7 +28,7 @@ assert.match(adminBlock, /AdminUsers/);
 assert.match(adminBlock, /path="\/admin"/);
 assert.match(adminBlock, /Navigate replace to="\/admin\?section=audit".*path="\/activity"/);
 assert.match(adminBlock, /Navigate replace to="\/admin\?section=audit".*path="\/audit-logs"/);
-assert.match(adminBlock, /AdminCloudCleanup[\s\S]*path="\/admin\/cleanup"/);
+assert.doesNotMatch(adminBlock, /AdminCloudCleanup|\/admin\/cleanup/);
 
 assert.doesNotMatch(sidebar, /to="\/admin"|>Admin</);
 assert.doesNotMatch(sidebar.match(/const projectNavigation = \[[\s\S]*?\];/)?.[0] || "", /Environment|Detection|Pre-flight/);

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "sequence",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/auth-sequence.json",
+    "sha256": "8aaca1003da99742650a2d2cf05f32b0241a59a5822d3a17e78d132d66b2efeb",
+    "bytes": 3369
+  },
+  "artifact": {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/auth-sequence.html",
+    "sha256": "612a53f4e951f309377f1b5311d3d5a97014980e3993111e444a6e9c89c7a6da",
+    "bytes": 760666
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/auth-sequence.finalize.json",
+    "summaryReceipt": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/auth-sequence.finalize-summary.json",
+    "browserCheckReceipt": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/auth-sequence.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.0.1",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-05T05:31:23.981Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 1895
+}

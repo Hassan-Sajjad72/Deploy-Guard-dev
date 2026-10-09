@@ -61,7 +61,18 @@ export class AiEvidenceService {
     const run = await this.runs.findOne({ where: { id: pipelineRunId, projectId } });
     const stage = typeof run?.metadata?.failedStage === "string" ? run.metadata.failedStage : run?.currentStage;
     const rows: RawEvidence[] = [];
-    const diagnosis = run ? currentFailureDiagnostic(run) : null;
+    const [pipelineEvents, runtimeEvents] = run ? await Promise.all([
+      this.pipelineEvents.find({ where: { projectId, pipelineRunId }, order: { sequenceNumber: "ASC", occurredAt: "ASC" }, take: 200 }),
+      this.observabilityEvents.find({ where: { projectId, pipelineRunId }, order: { createdAt: "ASC" }, take: 100 }),
+    ]) : [[], []];
+    // Re-check the identifiers after retrieval. The supplemental facts are
+    // advisory only, but must never cross a project/operation boundary.
+    const correlatedPipelineEvents = pipelineEvents.filter((event) => event.projectId === projectId && event.pipelineRunId === pipelineRunId);
+    const correlatedRuntimeEvents = runtimeEvents.filter((event) => event.projectId === projectId && event.pipelineRunId === pipelineRunId);
+    const diagnosis = run ? currentFailureDiagnostic(run, [
+      ...correlatedPipelineEvents.map((event) => `[${event.status}] ${event.message}`),
+      ...correlatedRuntimeEvents.map((event) => `[${event.status}] ${event.message}`),
+    ]) : null;
     const buildContext = run ? immutableFailureBuildContext(run) : null;
     const artifact = run ? correlatedArtifact(run) : null;
     let runtimeServiceId: string | null = null;
@@ -77,17 +88,13 @@ export class AiEvidenceService {
     if (run && securityScan) rows.push({ source: "security_scan", stage: "trivy_scan", eventId: run.id, timestamp: run.failedAt || run.completedAt || run.updatedAt, text: JSON.stringify(securityScan) });
     if (run) rows.push({ source: "deployguard_lifecycle", stage, eventId: run.id, timestamp: run.updatedAt, text: JSON.stringify({ operationId: run.id, generationId: run.generationId, commitSha: run.commitSha, deploymentAction: run.metadata?.deploymentAction, failedStage: run.metadata?.failedStage, status: run.status, failureOwner: run.failureOwner, externalProvider: run.externalProvider, failureCode: run.failureCode, failureServiceId: run.failureServiceId }) });
     if (run) {
-      const [events, runtimeEvents] = await Promise.all([
-        this.pipelineEvents.find({ where: { projectId, pipelineRunId }, order: { sequenceNumber: "ASC", occurredAt: "ASC" }, take: 200 }),
-        this.observabilityEvents.find({ where: { projectId, pipelineRunId }, order: { createdAt: "ASC" }, take: 100 }),
-      ]);
-      for (const event of events) {
+      for (const event of correlatedPipelineEvents) {
         const source = event.stage.includes("terraform") ? "terraform"
           : event.source === "github_actions" ? "github_actions"
             : "deployguard_lifecycle";
         rows.push({ source, stage: event.stage, eventId: event.id, timestamp: event.occurredAt, text: `[${event.status}] ${event.message}` });
       }
-      for (const event of runtimeEvents) rows.push({ source: "ecs_cloudwatch_runtime", stage: event.eventType, eventId: event.id, timestamp: event.createdAt, text: `[${event.status}] ${event.message}` });
+      for (const event of correlatedRuntimeEvents) rows.push({ source: "ecs_cloudwatch_runtime", stage: event.eventType, eventId: event.id, timestamp: event.createdAt, text: `[${event.status}] ${event.message}` });
       for (const [index, workflowStage] of (Array.isArray(run.metadata?.workflowStages) ? run.metadata.workflowStages : []).entries()) {
         if (!workflowStage || typeof workflowStage !== "object") continue;
         const item = workflowStage as Record<string, unknown>;

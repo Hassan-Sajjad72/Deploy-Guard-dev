@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Callout, DataTable, DetailsDrawer, Disclosure, EmptyState, Status } from "../common/DesignSystem.jsx";
 import Time from "../common/Time.jsx";
@@ -26,6 +26,63 @@ function shortSha(value) {
 
 function isFailed(operation) {
   return ["failed", "dispatch_failed"].includes(operation?.status);
+}
+
+function scanCount(scan, severity) {
+  const value = scan?.counts?.[severity];
+  return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function scanFindings(scan) {
+  return Array.isArray(scan?.evidence) ? scan.evidence.filter((finding) => finding && typeof finding === "object") : [];
+}
+
+function scanStatusLabel(status) {
+  return String(status || "unavailable").replaceAll("_", " ");
+}
+
+function scanStatusTone(status) {
+  if (status === "passed") return "success";
+  if (status === "advisory") return "warning";
+  if (["blocked", "error"].includes(status)) return "danger";
+  return "neutral";
+}
+
+function TrivyFindings({ scan }) {
+  const titleId = useId();
+  const findings = scanFindings(scan);
+  const total = scanCount(scan, "total");
+
+  return <section aria-labelledby={titleId} className="latest-run-advanced">
+    <div className="section-head">
+      <div>
+        <h3 id={titleId}>Trivy security scan</h3>
+        <p>{scan?.enforced ? "Enforcement was enabled for this immutable release." : "Advisory findings did not block this deployment."}</p>
+      </div>
+      <Status tone={scanStatusTone(scan?.status)}>{scanStatusLabel(scan?.status)}</Status>
+    </div>
+    <dl className="facts">
+      <div><dt>Critical</dt><dd>{scanCount(scan, "critical")}</dd></div>
+      <div><dt>High</dt><dd>{scanCount(scan, "high")}</dd></div>
+      <div><dt>Medium</dt><dd>{scanCount(scan, "medium")}</dd></div>
+      <div><dt>Low</dt><dd>{scanCount(scan, "low")}</dd></div>
+      <div><dt>Total</dt><dd>{total}</dd></div>
+      {scan?.blockingFindingCount !== undefined ? <div><dt>Policy-blocking</dt><dd>{Number.isFinite(Number(scan.blockingFindingCount)) ? Number(scan.blockingFindingCount) : 0}</dd></div> : null}
+    </dl>
+    <Disclosure summary={`Vulnerability evidence (${findings.length}${findings.length !== total ? ` of ${total}` : ""})`}>
+      {findings.length ? <DataTable caption="Trivy vulnerability evidence" label="Trivy vulnerability evidence">
+        <thead><tr><th>Vulnerability</th><th>Severity</th><th>Package</th><th>Installed</th><th>Fixed in</th><th>Service</th></tr></thead>
+        <tbody>{findings.map((finding, index) => <tr key={`${finding.serviceId || "service"}-${finding.vulnerabilityId || "unknown"}-${finding.packageName || "package"}-${index}`}>
+          <td data-label="Vulnerability" className="mono">{String(finding.vulnerabilityId || "Unknown")}</td>
+          <td data-label="Severity">{String(finding.severity || "Unknown")}</td>
+          <td data-label="Package">{String(finding.packageName || "Unknown")}</td>
+          <td data-label="Installed">{finding.installedVersion ? String(finding.installedVersion) : "—"}</td>
+          <td data-label="Fixed in">{finding.fixedVersion ? String(finding.fixedVersion) : "No fix reported"}</td>
+          <td data-label="Service">{String(finding.serviceId || "—")}</td>
+        </tr>)}</tbody>
+      </DataTable> : <p className="muted">No vulnerabilities were reported.</p>}
+    </Disclosure>
+  </section>;
 }
 
 /**
@@ -76,6 +133,7 @@ export default function PipelineExecution({ currentState, operations = [], proje
           </dl>
         </Disclosure>
       </div>
+      {latest.securityScan ? <TrivyFindings scan={latest.securityScan} /> : null}
     </section>
 
     <section aria-labelledby="deployment-history" className="section">
@@ -111,6 +169,7 @@ export default function PipelineExecution({ currentState, operations = [], proje
       </dl>
       {details.errorMessage ? <Callout title="Failure reason" tone="danger"><p>{productText(details.errorMessage)}</p></Callout> : null}
       {details.safeLog ? <Disclosure summary="Failure log (sanitized)"><pre className="code">{details.safeLog}</pre></Disclosure> : null}
+      {details.securityScan ? <TrivyFindings scan={details.securityScan} /> : null}
       <div className="actions">
         {isFailed(details) ? <Button to={`/projects/${projectId}/troubleshooting?operation=${details.id}`}>See what went wrong</Button> : null}
         {details.workflowUrl ? <Button external href={details.workflowUrl} tone="ghost">View run on GitHub</Button> : null}

@@ -88,14 +88,14 @@ export default function ProjectDetails() {
       </section> : null}
 
       <section aria-labelledby="overview-services" className="section">
-        <div className="section-head"><h2 id="overview-services">Services<span className="count">{services.length}</span></h2><Link className="link section-link" to={`/projects/${projectId}/settings?section=services`}>Configure</Link></div>
+        <div className="section-head"><h2 id="overview-services">Services<span className="count">{services.length}</span></h2></div>
         {services.length ? <ul className="rows overview-services">
           {services.map((service) => <li key={service.id}>
             <span className="service-name"><AppIcon name="box" size={16} /><strong translate="no">{service.name}</strong>{service.id === entrypointId && services.length > 1 ? <span className="badge tone-neutral">Public</span> : null}</span>
             <span className={service.serviceDirectory === "." ? "service-dir is-root" : "service-dir mono"} title={service.serviceDirectory}>{service.serviceDirectory === "." ? "Repository root" : service.serviceDirectory}</span>
             <span className="service-port muted num">{service.servicePort ? `Port ${service.servicePort}` : "Port detected at deploy"}</span>
           </li>)}
-        </ul> : <p className="muted">No services are configured. <Link className="link" to={`/projects/${projectId}/settings?section=services`}>Add a service</Link></p>}
+        </ul> : <p className="muted">No services are configured.</p>}
       </section>
     </div>
 

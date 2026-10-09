@@ -9,7 +9,6 @@ export const adminNavigation = [
   { label: "Users", to: "/admin?section=users", section: "users" },
   { label: "Projects", to: "/admin?section=projects", section: "projects" },
   { label: "Audit log", to: "/admin?section=audit", section: "audit" },
-  { label: "Cloud cleanup", to: "/admin/cleanup", section: "cleanup" },
 ];
 
 function AdminMenu({ onLogout }) {
@@ -39,7 +38,7 @@ function AdminMenu({ onLogout }) {
 export default function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const section = location.pathname === "/admin/cleanup" ? "cleanup" : new URLSearchParams(location.search).get("section") || "overview";
+  const section = new URLSearchParams(location.search).get("section") || "overview";
   async function logout() { await adminSignOut().catch(() => undefined); navigate("/admin/login", { replace: true }); }
   return <div className="app">
     <a className="skip-link" href="#admin-main-content">Skip to main content</a>

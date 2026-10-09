@@ -286,7 +286,7 @@ type PersistedFailureOperation = {
  * original metadata.failureDiagnostic remains untouched as historical audit
  * evidence and is only used for non-authoritative display context.
  */
-export function currentFailureDiagnostic(operation: PersistedFailureOperation): DeploymentFailureDiagnostic | null {
+export function currentFailureDiagnostic(operation: PersistedFailureOperation, correlatedEvidence: string[] = []): DeploymentFailureDiagnostic | null {
   const metadata = operation.metadata || {};
   const historical = metadata.failureDiagnostic && typeof metadata.failureDiagnostic === "object"
     ? metadata.failureDiagnostic as Partial<DeploymentFailureDiagnostic>
@@ -296,7 +296,20 @@ export function currentFailureDiagnostic(operation: PersistedFailureOperation): 
     : typeof historical?.terminalFailureCode === "string" ? historical.terminalFailureCode : null;
   if (!code) return null;
   const stage = typeof metadata.failedStage === "string" ? metadata.failedStage : operation.currentStage || "unknown";
-  const safeEvidence = typeof metadata.safeLog === "string" ? metadata.safeLog : operation.errorMessage || `DG_FAILURE code=${code} stage=${stage}`;
+  // Older terminal records may have persisted a GitHub summary that was
+  // truncated before the emitted failure marker. When present, the validated
+  // failure-event payload is the operation-correlated evidence and takes
+  // precedence for deterministic reclassification.
+  const failureEvent = metadata.failureEvent && typeof metadata.failureEvent === "object"
+    ? metadata.failureEvent as Record<string, unknown>
+    : null;
+  const eventSafeEvidence = typeof failureEvent?.safeEvidence === "string" ? failureEvent.safeEvidence : null;
+  const persistedEvidence = eventSafeEvidence || (typeof metadata.safeLog === "string" ? metadata.safeLog : operation.errorMessage || `DG_FAILURE code=${code} stage=${stage}`);
+  // Callers may supply only evidence already bound to this operation. This is
+  // a read-time projection: the original terminal diagnosis remains immutable.
+  const safeEvidence = [...correlatedEvidence.filter((value) => typeof value === "string" && value.trim()), persistedEvidence]
+    .join("\n")
+    .slice(0, 12_000);
   const ownership = classifyFailureCode(code, stage, safeEvidence, operation.failureServiceId || historical?.serviceId || null);
   const failedAtValue = operation.failedAt || operation.updatedAt || historical?.failedAt || new Date(0);
   const failedAt = failedAtValue instanceof Date ? failedAtValue : new Date(failedAtValue);

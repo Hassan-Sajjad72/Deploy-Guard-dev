@@ -209,6 +209,25 @@ async function verifyPublishMeansProviderAcceptance() {
   );
 }
 
+async function verifyProjectDestroyCleansOnlyOwnedSnsResources() {
+  const calls: string[] = [];
+  const adapter = new SnsNotificationAdapter({ get: (key: string, fallback?: string) => key === "NOTIFICATION_DELIVERY_ENABLED" ? "true" : key === "AWS_REGION" ? "us-east-1" : ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"].includes(key) ? "configured-for-test" : fallback } as never);
+  (adapter as any).client = () => ({ send: async (command: any) => {
+    calls.push(command.constructor.name);
+    if (command.constructor.name === "ListTagsForResourceCommand") return { Tags: [{ Key: "ManagedBy", Value: "DeployGuard" }, { Key: "DeployGuardProjectId", Value: "project-1" }] };
+    if (command.constructor.name === "GetTopicAttributesCommand") throw Object.assign(new Error("deleted"), { name: "NotFoundException" });
+    return {};
+  } });
+  await adapter.deleteProjectResources("project-1", [
+    { providerSubscriptionArn: "arn:aws:sns:us-east-1:123:topic:subscription-1", providerTopicArn: "arn:aws:sns:us-east-1:123:topic" },
+    { providerSubscriptionArn: "PendingConfirmation", providerTopicArn: "arn:aws:sns:us-east-1:123:topic" },
+  ]);
+  assert.deepEqual(calls, ["UnsubscribeCommand", "ListTagsForResourceCommand", "DeleteTopicCommand", "GetTopicAttributesCommand"], "destroy removes the deliverable subscription and verifies one project-owned topic is gone");
+
+  const unavailable = new SnsNotificationAdapter({ get: (_key: string, fallback?: string) => fallback } as never);
+  await assert.rejects(() => unavailable.deleteProjectResources("project-1", [{ providerSubscriptionArn: "arn:subscription", providerTopicArn: "arn:topic" }]), /SNS cleanup is not configured/, "destroy must keep the project for retry when subscribed SNS resources cannot be cleaned safely");
+}
+
 async function verifyLegacyDeliveryHistoryIsPresentedHonestly() {
   const user: any = { id: 7, role: UserRole.DEVELOPER };
   const publishedAt = new Date("2026-09-08T12:00:00.000Z");
@@ -323,6 +342,6 @@ async function verifyRailpackLifecyclePreferencesAndDeduplication() {
 
 verifyProviderGate();
 verifyIncompleteProviderIsUnavailable();
-Promise.all([verifyDisabledProviderEndpointsDoNotThrow(), verifyUnconfirmedIsNotSent(), verifyRetryAndDeduplication(), verifyConcurrentInsertCollisionFailsClosed(), verifyPendingConfirmationCanBecomeConfirmed(), verifySubscribeDoesNotAssumeEmailConfirmation(), verifyProviderPendingOverridesStaleConfirmedArn(), verifySettingsReconcilePrematureConfirmation(), verifySettingsClearMissingProviderSubscription(), verifyPublishMeansProviderAcceptance(), verifyLegacyDeliveryHistoryIsPresentedHonestly(), verifyRailpackLifecycleMappingAndBestEffortBoundary(), verifyRailpackLifecyclePreferencesAndDeduplication()])
+Promise.all([verifyDisabledProviderEndpointsDoNotThrow(), verifyUnconfirmedIsNotSent(), verifyRetryAndDeduplication(), verifyConcurrentInsertCollisionFailsClosed(), verifyPendingConfirmationCanBecomeConfirmed(), verifySubscribeDoesNotAssumeEmailConfirmation(), verifyProviderPendingOverridesStaleConfirmedArn(), verifySettingsReconcilePrematureConfirmation(), verifySettingsClearMissingProviderSubscription(), verifyPublishMeansProviderAcceptance(), verifyProjectDestroyCleansOnlyOwnedSnsResources(), verifyLegacyDeliveryHistoryIsPresentedHonestly(), verifyRailpackLifecycleMappingAndBestEffortBoundary(), verifyRailpackLifecyclePreferencesAndDeduplication()])
   .then(() => console.log("Notification provider gate, mapping, retry, and deduplication honesty passed"))
   .catch((error) => { console.error(error); process.exitCode = 1; });

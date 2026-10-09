@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "6c47e687-1077-4c11-9c63-f937d1eb8e15",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/failure-handling.json",
+  "output": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/failure-handling.html",
+  "specification": {
+    "sha256": "55b6485b4d82a35ee899bb7d2dd82227915aea0b08ebb142a589d1cc72b4dbc6",
+    "bytes": 2809
+  },
+  "artifact": {
+    "sha256": "a6cd2cc6c7fc32be82c81d590f4f3bc188fe9721a64e1ce6ab724a3374997e8f",
+    "bytes": 758986
+  }
+}

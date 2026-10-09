@@ -52,7 +52,7 @@ assert.match(authContext, /window\.addEventListener\("focus", refreshOnReturn\)/
 assert.match(authContext, /document\.addEventListener\("visibilitychange", refreshOnReturn\)/);
 assert.match(projects, /Search by name, repository or branch/);
 assert.match(projects, /stateFilter === "ALL" \|\| \(stateFilter === "ATTENTION"/);
-assert.match(projects, /\["DESTROYED", "Destroyed"\]/);
+assert.doesNotMatch(projects, /\["DESTROYED", "Destroyed"\]/, "there is no separate Destroyed project filter");
 assert.match(projects, /projects-list/);
 assert.doesNotMatch(projects, /Latest deployment|<span>Services<\/span>/, "Projects is a concise registry, not a deployment dashboard.");
 assert.match(projects, /<Time value=\{activity\} \/>/);

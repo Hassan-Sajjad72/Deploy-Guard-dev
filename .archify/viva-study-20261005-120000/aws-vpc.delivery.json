@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "485cc72b-fd9b-418a-84fd-7c13a7a2e7bb",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/aws-vpc.json",
+  "output": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/aws-vpc.html",
+  "specification": {
+    "sha256": "2a2ba72a622517c57fb791dc6e010893f844938732012f4e3c96e6f427570e3f",
+    "bytes": 3757
+  },
+  "artifact": {
+    "sha256": "a41bb495947a9fc37d81697adc78b20574d702237841d17685d20940b57fc8e2",
+    "bytes": 768123
+  }
+}

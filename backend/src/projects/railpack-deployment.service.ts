@@ -1008,7 +1008,7 @@ export class RailpackDeploymentService {
       safeLog: safeEvidence,
     };
     const serviceName = this.failureServiceName(metadata, failure.serviceId);
-    metadata.failureDiagnostic = diagnostics.diagnose({
+    const diagnostic = diagnostics.diagnose({
       operationId: operation.id,
       deploymentAction: (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy",
       sourceSha: operation.commitSha,
@@ -1026,6 +1026,16 @@ export class RailpackDeploymentService {
       workflowStages: metadata.workflowStages,
       managedDatabaseReconciliation: failure.managedDatabaseReconciliation,
     });
+    // The structural marker identifies the failed boundary. For boundary codes
+    // such as Railpack build failure, deterministic ownership is established
+    // only after the bounded terminal evidence is inspected above. Persist that
+    // proven owner rather than leaving the operation at the marker's initial
+    // UNVERIFIED fallback.
+    if (diagnostic.confidence === "DETERMINISTIC") {
+      operation.failureOwner = diagnostic.failureOwner;
+      operation.externalProvider = diagnostic.externalProvider;
+    }
+    metadata.failureDiagnostic = diagnostic;
     operation.metadata = metadata;
     await this.runs.save(operation);
     await this.dispatchLifecycleNotification(operation, "failed");
@@ -1459,7 +1469,24 @@ export class RailpackDeploymentService {
     try {
       const evidence = await this.actions.getTerminalFailureEvidence(repositoryFullName, workflowRunId, operationId, token, action);
       if (!evidence) return null;
-      const safeLog = this.sanitizer.sanitize(evidence.rawEvidence).replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 12_000);
+      const failureEvent = evidence.failureEvent;
+      const eventSafeEvidence = failureEvent && typeof failureEvent.safeEvidence === "string"
+        ? failureEvent.safeEvidence
+        : null;
+      // A validated failure event is the operation-bound source of build
+      // evidence. Preserve its marker and terminal log tail together: the
+      // generic GitHub summary can exceed the persistence bound and otherwise
+      // cut off both the emitted DG_FAILURE marker and the causal build error.
+      const eventMarker = eventSafeEvidence
+        && typeof failureEvent?.code === "string"
+        && typeof failureEvent.stage === "string"
+        ? `DG_FAILURE${typeof failureEvent.serviceId === "string" ? ` serviceId=${failureEvent.serviceId}` : ""} code=${failureEvent.code} stage=${failureEvent.stage}`
+        : null;
+      const eventEvidenceLimit = eventMarker ? Math.max(0, 12_000 - eventMarker.length - 1) : 0;
+      const rawEvidence = eventMarker && eventSafeEvidence
+        ? `${eventMarker}\n${eventSafeEvidence.slice(-eventEvidenceLimit)}`
+        : evidence.rawEvidence;
+      const safeLog = this.sanitizer.sanitize(rawEvidence).replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(-12_000);
       if (!safeLog) return null;
       return { ...evidence, safeLog };
     } catch {

@@ -10,6 +10,7 @@ import { UsersService } from "../src/users/users.service";
 import { AuthenticatedUserMiddleware } from "../src/common/middleware/authenticated-user.middleware";
 import { ADMIN_SESSION_COOKIE_NAME, SESSION_COOKIE_NAME } from "../src/auth/auth.service";
 import { requireRole } from "../src/common/rbac/require-role.guard";
+import { appendOAuthState, consumeOAuthState, parseOAuthStates } from "../src/auth/oauth-state";
 
 class InMemoryUsers {
   private user: User | null = null;
@@ -45,6 +46,7 @@ async function verify() {
   const config = new ConfigService({
     AUTH_SESSION_SECRET: "test-only-session-secret-with-at-least-32-characters",
     GITHUB_CLIENT_ID: "test-client-id",
+    GITHUB_CLIENT_SECRET: "test-client-secret",
     GITHUB_CALLBACK_URL: "http://localhost:5000/api/auth/github/callback",
   });
   const auth = new AuthService(users as unknown as UsersService, config);
@@ -58,6 +60,56 @@ async function verify() {
   const session = auth.createSessionToken(githubUser);
   assert.equal((await auth.getUserFromSessionToken(session))?.id, githubUser.id);
   assert.equal(await auth.getUserFromSessionToken(`${session}tampered`), null);
+
+  const readonlyGithubUser = Object.assign(new User(), {
+    id: 43, githubId: "readonly-github-user", githubLogin: "readonly-user", role: UserRole.READONLY, disabledAt: null,
+  });
+  (users as any).user = readonlyGithubUser;
+  assert.equal((await auth.getUserFromSessionToken(auth.createSessionToken(readonlyGithubUser)))?.id, readonlyGithubUser.id, "enabled Read-only GitHub users retain session access");
+  (users as any).user = githubUser;
+
+  const disabledGithubUser = Object.assign(new User(), {
+    id: 42, githubId: "disabled-github-user", githubLogin: "disabled-user", role: UserRole.READONLY, disabledAt: new Date(),
+  });
+  let accessTokenStored = false;
+  const disabledGithubUsers = {
+    findOrCreate: async () => ({ user: disabledGithubUser, isNewUser: false }),
+    storeGithubAccessToken: async () => { accessTokenStored = true; },
+  };
+  const disabledGithubAuth = new AuthService(disabledGithubUsers as unknown as UsersService, config);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url: string | URL | Request) => new Response(
+    JSON.stringify(String(url).includes("/emails") ? [] : { access_token: "test-token", id: "disabled-github-user", login: "disabled-user" }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+  try {
+    await assert.rejects(() => disabledGithubAuth.handleGitHubOAuthCallback("test-code"), /GitHub account is disabled/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(accessTokenStored, false, "disabled GitHub identities must not receive a stored access token");
+
+  const callbackCookies: string[] = [];
+  let callbackRedirect = "";
+  const disabledCallbackController = new AuthController({
+    handleGitHubOAuthCallback: async () => { throw new UnauthorizedException("GitHub account is disabled"); },
+  } as unknown as AuthService, {
+    record: async () => undefined,
+  } as never);
+  const callbackState = "d".repeat(48);
+  await disabledCallbackController.githubOAuthCallback(
+    "test-code",
+    callbackState,
+    { headers: { cookie: `deploy_guard_github_state=${callbackState}` } } as never,
+    {
+      cookie: (name: string) => { callbackCookies.push(name); },
+      clearCookie: (name: string) => { callbackCookies.push(name); },
+      redirect: (location: string) => { callbackRedirect = location; },
+    } as never,
+  );
+  assert.match(callbackRedirect, /error=github_oauth_account_disabled$/);
+  assert.doesNotMatch(callbackRedirect, /complete=1/);
+  assert.equal(callbackCookies.includes(SESSION_COOKIE_NAME), false, "disabled callbacks must not issue a session cookie");
 
   const middleware = new AuthenticatedUserMiddleware(users as unknown as UsersService, auth);
   const request = {
@@ -109,6 +161,7 @@ async function verify() {
   );
   const authControllerSource = readFileSync(resolve(__dirname, "../src/auth/auth.controller.ts"), "utf8");
   assert.doesNotMatch(authControllerSource, /@Post\("(?:signup|login)"\)/, "Email/password routes are retired");
+  assert.match(authControllerSource, /github_oauth_account_disabled/, "disabled GitHub sign-ins return a safe callback reason");
 
   const ApprovalRoleGuard = requireRole([UserRole.ADMIN, UserRole.DEVELOPER]);
   const guard = new ApprovalRoleGuard();
@@ -123,6 +176,13 @@ async function verify() {
   assert.equal(githubUrl.hostname, "github.com");
   assert.equal(githubUrl.searchParams.get("state"), "verified-state");
   assert.match(githubUrl.searchParams.get("scope") || "", /\brepo\b/);
+
+  const firstState = "a".repeat(48);
+  const secondState = "b".repeat(48);
+  const pendingStates = appendOAuthState(firstState, secondState);
+  assert.deepEqual(parseOAuthStates(pendingStates), [firstState, secondState]);
+  assert.deepEqual(consumeOAuthState(pendingStates, firstState), [secondState], "a second valid sign-in attempt must not invalidate the first callback");
+  assert.equal(consumeOAuthState(pendingStates, "c".repeat(48)), null, "an unissued OAuth state remains rejected");
 
   const legacyGithubAdmin = Object.assign(new User(), {
     id: 77,

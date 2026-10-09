@@ -1,0 +1,266 @@
+<svg viewBox="0 0 1372 612" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" data-reader-fit="intrinsic-height" data-reader-min-text="7.5" data-reader-primary-text="14">
+        <title id="archify-diagram-title">DeployGuard AWS Runtime and VPC Placement</title>
+        <desc id="archify-diagram-description">railpack-runtime uses an existing VPC and configured public subnets</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Boundaries (behind everything) -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Configured AWS VPC" x="233" y="96" width="1099" height="448" rx="12" class="c-region" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" data-composition-frame-label="App, DB and EFS security groups" x="836" y="126" width="488" height="378" rx="8" class="c-security-group" stroke-width="1"/>
+
+        <!-- Connection paths (before components for correct z-order) -->
+        <g data-graph-role="automatic-crossover" style="--step:0">
+          <path data-graph-role="automatic-crossover-underlay" d="M 155 270 L 255 270" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="internet" data-edge-to="igw" data-edge-label="HTTP" data-edge-key="0" data-composition-points="155,270;255,270" data-composition-crossover="halo" data-composition-independent="true" d="M 155 270 L 255 270" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:1">
+          <path data-graph-role="automatic-crossover-underlay" d="M 405 277 L 560 277" fill="none" stroke="var(--mask)" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="igw" data-edge-to="alb" data-edge-label="public route" data-edge-key="1" data-composition-points="405,277;560,277" data-composition-crossover="halo" data-composition-independent="true" d="M 405 277 L 560 277" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:2">
+          <path data-graph-role="automatic-crossover-underlay" d="M 720 277 L 777 277 Q 785 277 785 269 L 785 185 Q 785 177 793 177 L 850 177" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="alb" data-edge-to="app" data-edge-label="service and probe ports" data-edge-key="2" data-composition-points="720,277;785,277;785,177;850,177" data-composition-crossover="halo" data-composition-independent="true" d="M 720 277 L 777 277 Q 785 277 785 269 L 785 185 Q 785 177 793 177 L 850 177" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:3">
+          <path data-graph-role="automatic-crossover-underlay" d="M 947 204 L 947 410" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="app" data-edge-to="db" data-edge-label="attached DB port" data-edge-key="3" data-composition-points="947,204;947,410" data-composition-crossover="halo" data-composition-independent="true" d="M 947 204 L 947 410" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:4">
+          <path data-graph-role="automatic-crossover-underlay" d="M 1030 444 L 1046 444 Q 1054 444 1054 452 L 1054 465 Q 1054 473 1062 473 L 1128 473 Q 1136 473 1136 465 L 1136 465 Q 1136 457 1144 457 L 1160 457" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="db" data-edge-to="efs" data-edge-label="TLS mount" data-edge-key="4" data-composition-points="1030,444;1054,444;1054,473;1136,473;1136,457;1160,457" data-composition-crossover="halo" data-composition-independent="true" d="M 1030 444 L 1046 444 Q 1054 444 1054 452 L 1054 465 Q 1054 473 1062 473 L 1128 473 Q 1136 473 1136 465 L 1136 465 Q 1136 457 1144 457 L 1160 457" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:5">
+          <path data-graph-role="automatic-crossover-underlay" d="M 1030 430 L 1087 430 Q 1095 430 1095 422 L 1095 365 Q 1095 357 1103 357 L 1160 357" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="db" data-edge-to="cloudmap" data-edge-label="register" data-edge-key="5" data-composition-points="1030,430;1095,430;1095,357;1160,357" data-composition-crossover="halo" data-composition-independent="true" d="M 1030 430 L 1087 430 Q 1095 430 1095 422 L 1095 365 Q 1095 357 1103 357 L 1160 357" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:6">
+          <path data-graph-role="automatic-crossover-underlay" d="M 1030 170 L 1087 170 Q 1095 170 1095 162 L 1095 155 Q 1095 147 1103 147 L 1160 147" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="app" data-edge-to="ecr" data-edge-label="pull image" data-edge-key="6" data-composition-points="1030,170;1095,170;1095,147;1160,147" data-composition-crossover="halo" data-composition-independent="true" d="M 1030 170 L 1087 170 Q 1095 170 1095 162 L 1095 155 Q 1095 147 1103 147 L 1160 147" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:7">
+          <path data-graph-role="automatic-crossover-underlay" d="M 1030 184 L 1087 184 Q 1095 184 1095 192 L 1095 249 Q 1095 257 1103 257 L 1160 257" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="app" data-edge-to="cw" data-edge-label="logs / metrics" data-edge-key="7" data-composition-points="1030,184;1095,184;1095,257;1160,257" data-composition-crossover="halo" data-composition-independent="true" d="M 1030 184 L 1087 184 Q 1095 184 1095 192 L 1095 249 Q 1095 257 1103 257 L 1160 257" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:8">
+          <path data-graph-role="automatic-crossover-underlay" d="M 640 470 L 640 386.5 Q 640 378.5 648 378.5 L 836 378.5 Q 844 378.5 844 370.5 L 844 236 Q 844 228 852 228 L 925 228 Q 933 228 933 220 L 933 204" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="s3" data-edge-to="app" data-edge-label="Terraform provisions" data-edge-key="8" data-composition-points="640,470;640,378.5;844,378.5;844,228;933,228;933,204" data-composition-crossover="halo" data-composition-independent="true" d="M 640 470 L 640 386.5 Q 640 378.5 648 378.5 L 836 378.5 Q 844 378.5 844 370.5 L 844 236 Q 844 228 852 228 L 925 228 Q 933 228 933 220 L 933 204" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:9">
+          <path data-graph-role="automatic-crossover-underlay" d="M 255 497 L 213 497 Q 205 497 205 489 L 205 292 Q 205 284 197 284 L 155 284" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="nat" data-edge-to="internet" data-edge-label="private egress option" data-edge-key="9" data-composition-points="255,497;205,497;205,284;155,284" data-composition-crossover="halo" data-composition-independent="true" d="M 255 497 L 213 497 Q 205 497 205 489 L 205 292 Q 205 284 197 284 L 155 284" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+
+        <!-- Components -->
+        <g id="node-internet" data-node-id="internet" data-node-label="Internet clients" tabindex="0" role="button" aria-label="Focus Internet clients, Architecture component" aria-pressed="false" data-node-kind="external" data-node-context="Architecture component">
+          <title>Internet clients · Architecture component</title>
+          <rect x="20" y="250" width="135" height="54" rx="6" class="c-mask"/>
+          <rect x="20" y="250" width="135" height="54" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(26 256) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" x="87.5" y="281" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Internet clients</text>
+        </g>
+
+        <g id="node-igw" data-node-id="igw" data-node-label="Internet Gateway" tabindex="0" role="button" aria-label="Focus Internet Gateway, network foundation, Configured AWS VPC" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="network foundation" data-node-context="Configured AWS VPC">
+          <title>Internet Gateway · network foundation · Configured AWS VPC</title>
+          <rect x="255" y="250" width="150" height="54" rx="6" class="c-mask"/>
+          <rect x="255" y="250" width="150" height="54" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(261 256) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="330" y="275" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Internet Gateway</text>
+        <text data-detail="context" x="330" y="291" class="t-muted" font-size="9" text-anchor="middle">network foundation</text>
+        </g>
+
+        <g id="node-alb" data-node-id="alb" data-node-label="Public ALB" tabindex="0" role="button" aria-label="Focus Public ALB, per-service ingress, Configured AWS VPC" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="per-service ingress" data-node-context="Configured AWS VPC">
+          <title>Public ALB · per-service ingress · Configured AWS VPC</title>
+          <rect x="560" y="250" width="160" height="54" rx="6" class="c-mask"/>
+          <rect x="560" y="250" width="160" height="54" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(566 256) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="640" y="275" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Public ALB</text>
+        <text data-detail="context" x="640" y="291" class="t-muted" font-size="9" text-anchor="middle">per-service ingress</text>
+        </g>
+
+        <g id="node-app" data-node-id="app" data-node-label="ECS Fargate app" tabindex="0" role="button" aria-label="Focus ECS Fargate app, ALB-only security group, Configured AWS VPC › App, DB and EFS security groups" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="ALB-only security group" data-node-context="Configured AWS VPC › App, DB and EFS security groups">
+          <title>ECS Fargate app · ALB-only security group · Configured AWS VPC › App, DB and EFS security groups</title>
+          <rect x="850" y="150" width="180" height="54" rx="6" class="c-mask"/>
+          <rect x="850" y="150" width="180" height="54" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(856 156) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="940" y="175" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ECS Fargate app</text>
+        <text data-detail="context" x="940" y="191" class="t-muted" font-size="9" text-anchor="middle">ALB-only security group</text>
+        </g>
+
+        <g id="node-db" data-node-id="db" data-node-label="Managed DB ECS" tabindex="0" role="button" aria-label="Focus Managed DB ECS, optional private SG ingress, Configured AWS VPC › App, DB and EFS security groups" aria-pressed="false" data-node-kind="database" data-node-sublabel="optional private SG ingress" data-node-context="Configured AWS VPC › App, DB and EFS security groups">
+          <title>Managed DB ECS · optional private SG ingress · Configured AWS VPC › App, DB and EFS security groups</title>
+          <rect x="850" y="410" width="180" height="54" rx="6" class="c-mask"/>
+          <rect x="850" y="410" width="180" height="54" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(856 416) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="940" y="435" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Managed DB ECS</text>
+        <text data-detail="context" x="940" y="451" class="t-muted" font-size="9" text-anchor="middle">optional private SG ingress</text>
+        </g>
+
+        <g id="node-efs" data-node-id="efs" data-node-label="EFS" tabindex="0" role="button" aria-label="Focus EFS, encrypted DB volume, Configured AWS VPC › App, DB and EFS security groups" aria-pressed="false" data-node-kind="database" data-node-sublabel="encrypted DB volume" data-node-context="Configured AWS VPC › App, DB and EFS security groups">
+          <title>EFS · encrypted DB volume · Configured AWS VPC › App, DB and EFS security groups</title>
+          <rect x="1160" y="430" width="150" height="54" rx="6" class="c-mask"/>
+          <rect x="1160" y="430" width="150" height="54" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1166 436) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1235" y="455" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">EFS</text>
+        <text data-detail="context" x="1235" y="471" class="t-muted" font-size="9" text-anchor="middle">encrypted DB volume</text>
+        </g>
+
+        <g id="node-cloudmap" data-node-id="cloudmap" data-node-label="Cloud Map" tabindex="0" role="button" aria-label="Focus Cloud Map, private database DNS, Configured AWS VPC" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="private database DNS" data-node-context="Configured AWS VPC">
+          <title>Cloud Map · private database DNS · Configured AWS VPC</title>
+          <rect x="1160" y="330" width="150" height="54" rx="6" class="c-mask"/>
+          <rect x="1160" y="330" width="150" height="54" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1166 336) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1235" y="355" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Cloud Map</text>
+        <text data-detail="context" x="1235" y="371" class="t-muted" font-size="9" text-anchor="middle">private database DNS</text>
+        </g>
+
+        <g id="node-ecr" data-node-id="ecr" data-node-label="ECR" tabindex="0" role="button" aria-label="Focus ECR, immutable digests, Configured AWS VPC" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="immutable digests" data-node-context="Configured AWS VPC">
+          <title>ECR · immutable digests · Configured AWS VPC</title>
+          <rect x="1160" y="120" width="150" height="54" rx="6" class="c-mask"/>
+          <rect x="1160" y="120" width="150" height="54" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1166 126) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1235" y="145" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ECR</text>
+        <text data-detail="context" x="1235" y="161" class="t-muted" font-size="9" text-anchor="middle">immutable digests</text>
+        </g>
+
+        <g id="node-cw" data-node-id="cw" data-node-label="CloudWatch" tabindex="0" role="button" aria-label="Focus CloudWatch, logs and metrics, Configured AWS VPC" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="logs and metrics" data-node-context="Configured AWS VPC">
+          <title>CloudWatch · logs and metrics · Configured AWS VPC</title>
+          <rect x="1160" y="230" width="150" height="54" rx="6" class="c-mask"/>
+          <rect x="1160" y="230" width="150" height="54" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1166 236) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1235" y="255" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">CloudWatch</text>
+        <text data-detail="context" x="1235" y="271" class="t-muted" font-size="9" text-anchor="middle">logs and metrics</text>
+        </g>
+
+        <g id="node-s3" data-node-id="s3" data-node-label="S3 state bucket" tabindex="0" role="button" aria-label="Focus S3 state bucket, state + lockfile, Configured AWS VPC" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="state + lockfile" data-node-context="Configured AWS VPC">
+          <title>S3 state bucket · state + lockfile · Configured AWS VPC</title>
+          <rect x="560" y="470" width="160" height="54" rx="6" class="c-mask"/>
+          <rect x="560" y="470" width="160" height="54" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(566 476) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="640" y="495" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">S3 state bucket</text>
+        <text data-detail="context" x="640" y="511" class="t-muted" font-size="9" text-anchor="middle">state + lockfile</text>
+        </g>
+
+        <g id="node-nat" data-node-id="nat" data-node-label="NAT Gateway" tabindex="0" role="button" aria-label="Focus NAT Gateway, foundation private egress, Configured AWS VPC" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="foundation private egress" data-node-context="Configured AWS VPC">
+          <title>NAT Gateway · foundation private egress · Configured AWS VPC</title>
+          <rect x="255" y="470" width="150" height="54" rx="6" class="c-mask"/>
+          <rect x="255" y="470" width="150" height="54" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(261 476) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="330" y="495" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">NAT Gateway</text>
+        <text data-detail="context" x="330" y="511" class="t-muted" font-size="9" text-anchor="middle">foundation private egress</text>
+        </g>
+
+        <!-- Connection labels -->
+        <g data-detail="context" data-edge-from="internet" data-edge-to="igw" data-edge-label="HTTP" data-edge-key="0">
+          <rect x="190" y="250" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="205" y="260" class="t-edge-default" font-size="8" text-anchor="middle">HTTP</text>
+        </g>
+        <g data-detail="context" data-edge-from="igw" data-edge-to="alb" data-edge-label="public route" data-edge-key="1">
+          <rect x="448.7" y="257" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="482.5" y="267" class="t-edge-emphasis" font-size="8" text-anchor="middle">public route</text>
+        </g>
+        <g data-detail="context" data-edge-from="alb" data-edge-to="app" data-edge-label="service and probe ports" data-edge-key="2">
+          <rect x="724.8" y="207" width="120.39999999999999" height="14" rx="3" class="c-mask"/>
+          <text x="785" y="217" class="t-edge-security" font-size="8" text-anchor="middle">service and probe ports</text>
+        </g>
+        <g data-detail="context" data-edge-from="app" data-edge-to="db" data-edge-label="attached DB port" data-edge-key="3">
+          <rect x="854.2" y="300" width="86.8" height="14" rx="3" class="c-mask"/>
+          <text x="897.6" y="310" class="t-edge-security" font-size="8" text-anchor="middle">attached DB port</text>
+        </g>
+        <g data-detail="context" data-edge-from="db" data-edge-to="efs" data-edge-label="TLS mount" data-edge-key="4">
+          <rect x="1068.4" y="453" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="1095" y="463" class="t-edge-security" font-size="8" text-anchor="middle">TLS mount</text>
+        </g>
+        <g data-detail="context" data-edge-from="db" data-edge-to="cloudmap" data-edge-label="register" data-edge-key="5">
+          <rect x="1070.8" y="373.5" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="1095" y="383.5" class="t-edge-dashed" font-size="8" text-anchor="middle">register</text>
+        </g>
+        <g data-detail="context" data-edge-from="app" data-edge-to="ecr" data-edge-label="pull image" data-edge-key="6">
+          <rect x="1066" y="138.5" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="1095" y="148.5" class="t-edge-dashed" font-size="8" text-anchor="middle">pull image</text>
+        </g>
+        <g data-detail="context" data-edge-from="app" data-edge-to="cw" data-edge-label="logs / metrics" data-edge-key="7">
+          <rect x="1056.4" y="200.5" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="1095" y="210.5" class="t-edge-dashed" font-size="8" text-anchor="middle">logs / metrics</text>
+        </g>
+        <g data-detail="context" data-edge-from="s3" data-edge-to="app" data-edge-label="Terraform provisions" data-edge-key="8">
+          <rect x="689" y="358.5" width="106" height="14" rx="3" class="c-mask"/>
+          <text x="742" y="368.5" class="t-edge-dashed" font-size="8" text-anchor="middle">Terraform provisions</text>
+        </g>
+        <g data-detail="context" data-edge-from="nat" data-edge-to="internet" data-edge-label="private egress option" data-edge-key="9">
+          <rect x="149.6" y="370.5" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="205" y="380.5" class="t-edge-dashed" font-size="8" text-anchor="middle">private egress option</text>
+        </g>
+
+        <!-- Boundary labels (foreground masks keep routes out of titles) -->
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Configured AWS VPC">
+          <rect data-graph-role="structural-frame-label-mask" x="237" y="100" width="107.2" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="241" y="113" class="t-cloud" font-size="9" font-weight="600">Configured AWS VPC</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="security-group" data-composition-frame-label="App, DB and EFS security groups">
+          <rect data-graph-role="structural-frame-label-mask" x="840" y="130" width="177.4" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="844" y="143" class="t-security" font-size="9" font-weight="600">App, DB and EFS security groups</text>
+        </g>
+
+        <!-- Legend -->
+        <g data-legend="" data-legend-bridge="">
+          <text x="40" y="576" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="40" data-legend-baseline="596" data-legend-width="83">
+            <rect x="40" y="587" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
+            <text x="62" y="596" class="t-muted" font-size="10" font-weight="500">Database</text>
+          </g>
+          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="Cloud" data-legend-x="145" data-legend-baseline="596" data-legend-width="68">
+            <rect x="145" y="587" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
+            <text x="167" y="596" class="t-muted" font-size="10" font-weight="500">Cloud</text>
+          </g>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="235" data-legend-baseline="596" data-legend-width="83">
+            <rect x="235" y="587" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="257" y="596" class="t-muted" font-size="10" font-weight="500">External</text>
+          </g>
+        </g>
+      </svg>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { getAdminAuditLogs, getAdminOverview, getAdminProjects, getUsers, updateUserAccess, updateUserRole } from "../api/adminApi.js";
+import { getAdminAuditLogs, getAdminOverview, getAdminProjects, getUsers, updateUserRole } from "../api/adminApi.js";
 import AuditLogFilters from "../components/audit/AuditLogFilters.jsx";
 import AuditLogsTable from "../components/audit/AuditLogsTable.jsx";
 import UserTable from "../components/admin/UserTable.jsx";
@@ -101,6 +101,11 @@ export default function AdminUsers() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (activeTab === "audit") void loadAudit(); }, [activeTab, loadAudit]);
   useEffect(() => { setSuccess(""); }, [activeTab]);
+  useEffect(() => {
+    if (!success) return undefined;
+    const timer = window.setTimeout(() => setSuccess(""), 4200);
+    return () => window.clearTimeout(timer);
+  }, [success]);
 
   async function mutate(userId, request, message) {
     setSourceErrors((current) => ({ ...current, users: null })); setSuccess(""); setUpdatingUserId(userId);
@@ -141,7 +146,7 @@ export default function AdminUsers() {
     </section> : null}
 
     {!loading && activeTab === "users" ? <section className="admin-section" data-admin-section="users" id="admin-panel-users">
-      {sourceErrors.users ? <AdminSectionFailure failure={sourceErrors.users} onRetry={load} title="User access information unavailable" /> : users.length ? <UserTable onAccessChange={(id, enabled) => mutate(id, () => updateUserAccess(id, enabled), enabled ? "Access re-enabled." : "Access disabled.")} onRoleChange={(id, role) => mutate(id, () => updateUserRole(id, role), "Role updated.")} updatingUserId={updatingUserId} users={users} /> : <EmptyState compact message="Users appear here after they sign in with GitHub." title="No users yet" />}
+      {sourceErrors.users ? <AdminSectionFailure failure={sourceErrors.users} onRetry={load} title="User access information unavailable" /> : users.length ? <UserTable onRoleChange={(id, role) => mutate(id, () => updateUserRole(id, role), "Role updated.")} updatingUserId={updatingUserId} users={users} /> : <EmptyState compact message="Users appear here after they sign in with GitHub." title="No users yet" />}
     </section> : null}
 
     {!loading && activeTab === "projects" ? <section className="admin-section" data-admin-project-state-source="current-state" data-admin-section="projects" id="admin-panel-projects">

@@ -23,7 +23,7 @@ for (const route of [
 ]) assert.match(routes, new RegExp(route), `canonical route ${route} is reachable`);
 
 for (const retired of ["environment", "env", "requirements/*"]) {
-  assert.match(routes, new RegExp(`LegacyProjectRedirect section="/settings" \\/>} path="/projects/:projectId/${retired.replace("*", "\\*")}"`), `${retired} redirects to Settings`);
+  assert.match(routes, new RegExp(`LegacyProjectRedirect \\/>} path="/projects/:projectId/${retired.replace("*", "\\*")}"`), `${retired} redirects to the project overview`);
 }
 assert.doesNotMatch(routes, /ProjectLogs|ProjectEnvVars|ProjectDetection|ProjectPreflight|\/detection|\/preflight/);
 assert.match(sidebar, /Overview/, "canonical project navigation has Overview");
@@ -49,15 +49,14 @@ assert.match(monitoring, /const authority = state\?\.stateAuthority/);
 assert.match(monitoring, /authority\?\.monitoring\?\.available/);
 assert.match(monitoring, /How \{services\.length > 1 && selectedService/);
 assert.match(monitoring, /aria-label="Runtime service"/, "service selection remains available");
-for (const section of ["General", "Source", "Services", "Variables", "Database", "Notifications", "Danger zone"]) assert.match(settings, new RegExp(`label: "${section}"`));
-assert.match(settings, /updateProjectService[\s\S]*serviceDirectory: service\.serviceDirectory/, "service directories remain editable through the same API");
-assert.doesNotMatch(settings, /<span>Application port<\/span>|servicePort: Number/, "service ports are automatic and not user-editable");
-assert.match(settings, /EnvironmentVariablesPanel[\s\S]*serviceId=\{selectedService\.id\}/, "service-scoped ENV remains available");
-assert.match(settings, /updateProjectDatabaseTier/, "managed database controls remain available");
+for (const section of ["Notifications", "Danger zone"]) assert.match(settings, new RegExp(`label: "${section}"`));
+for (const section of ["General", "Source", "Services", "Variables", "Database"]) assert.doesNotMatch(settings, new RegExp(`label: "${section}"`));
+assert.doesNotMatch(settings, /EnvironmentVariablesPanel|updateProjectService|updateProjectDatabaseTier|updateProjectRepository|updateProjectBranch/, "untested configuration editing is absent from Settings");
 assert.match(settings, /NotificationSettingsPanel/, "notifications remain available in Settings");
 assert.match(settings, /Read-only access/);
-assert.match(settings, /Changing configuration and running deployments is limited to developers/);
+assert.match(settings, /Changing notification settings, archiving, and destroying infrastructure are limited to developers/);
 assert.match(settings, /<DestroyInfrastructure canManage=\{canManage\}/, "destroy lives in the Settings danger zone");
+assert.match(settings, /archiveProject\(projectId\)/, "archive remains in Settings");
 assert.match(notifications, /published: "Accepted for delivery"/, "notification history labels provider acceptance without claiming email delivery");
 assert.match(notifications, /delivery\.publishedAt \|\| delivery\.createdAt/, "notification history uses the provider-publication timestamp");
 assert.doesNotMatch(notifications, /sent: "Sent"|delivery\.sentAt/, "notification history does not expose misleading sent semantics");

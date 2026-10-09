@@ -16,6 +16,7 @@ import {
   GITHUB_STATE_COOKIE_NAME,
   SESSION_COOKIE_NAME,
 } from "./auth.service";
+import { appendOAuthState, consumeOAuthState } from "./oauth-state";
 
 /**
  * AuthController
@@ -72,10 +73,11 @@ export class AuthController {
   async github(@Req() request: Request, @Res() response: Response) {
     try {
       const state = this.authService.createOAuthState();
-      response.cookie(GITHUB_STATE_COOKIE_NAME, state, {
-        ...this.cookieOptions(),
-        maxAge: 10 * 60 * 1000,
-      });
+      response.cookie(
+        GITHUB_STATE_COOKIE_NAME,
+        appendOAuthState(this.getCookie(request, GITHUB_STATE_COOKIE_NAME), state),
+        this.oauthStateCookieOptions(),
+      );
 
       await this.auditLogService.record({
         action: "GITHUB_OAUTH_STARTED",
@@ -94,7 +96,6 @@ export class AuthController {
         metadata: { provider: "github", stage: "start" },
         req: request,
       });
-      response.clearCookie(GITHUB_STATE_COOKIE_NAME, this.cookieOptions());
       const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
       return response.redirect(`${frontendUrl.replace(/\/$/, "")}/auth/github?error=github_oauth_unavailable`);
     }
@@ -107,14 +108,16 @@ export class AuthController {
     @Req() request: Request,
     @Res() response: Response
   ) {
+    let remainingStates: string[] | null = null;
     try {
-      if (!code || !state || state !== this.getCookie(request, GITHUB_STATE_COOKIE_NAME)) {
+      remainingStates = consumeOAuthState(this.getCookie(request, GITHUB_STATE_COOKIE_NAME), state);
+      if (!code || !remainingStates) {
         throw new UnauthorizedException("Invalid GitHub OAuth state");
       }
 
       const user = await this.authService.handleGitHubOAuthCallback(code);
       this.setSessionCookie(response, this.authService.createSessionToken(user));
-      response.clearCookie(GITHUB_STATE_COOKIE_NAME, this.cookieOptions());
+      this.writeOAuthStates(response, remainingStates);
 
       await this.auditLogService.record({
         actorUser: user,
@@ -134,12 +137,12 @@ export class AuthController {
         action: "GITHUB_OAUTH_FAILED",
         resourceType: "auth",
         status: "failed",
-        metadata: { provider: "github", stage: "callback" },
+        metadata: { provider: "github", stage: "callback", reason: this.oauthFailureReason(error) },
         req: request,
       });
-      response.clearCookie(GITHUB_STATE_COOKIE_NAME, this.cookieOptions());
+      if (remainingStates) this.writeOAuthStates(response, remainingStates);
       const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-      return response.redirect(`${frontendUrl.replace(/\/$/, "")}/auth/github?error=github_oauth_failed`);
+      return response.redirect(`${frontendUrl.replace(/\/$/, "")}/auth/github?error=${this.oauthFailureReason(error)}`);
     }
   }
 
@@ -157,6 +160,24 @@ export class AuthController {
       secure: process.env.NODE_ENV === "production",
       path: "/",
     };
+  }
+
+  private oauthStateCookieOptions() {
+    return { ...this.cookieOptions(), maxAge: 10 * 60 * 1000 };
+  }
+
+  private writeOAuthStates(response: Response, states: string[]) {
+    if (states.length) {
+      response.cookie(GITHUB_STATE_COOKIE_NAME, states.join("."), this.oauthStateCookieOptions());
+      return;
+    }
+    response.clearCookie(GITHUB_STATE_COOKIE_NAME, this.cookieOptions());
+  }
+
+  private oauthFailureReason(error: unknown) {
+    if (error instanceof UnauthorizedException && error.message === "Invalid GitHub OAuth state") return "github_oauth_state_invalid";
+    if (error instanceof UnauthorizedException && error.message === "GitHub account is disabled") return "github_oauth_account_disabled";
+    return "github_oauth_callback_failed";
   }
 
   private getCookie(request: Request, name: string): string | undefined {

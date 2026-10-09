@@ -15,10 +15,6 @@ export function respondFor(url, options = {}) {
   if (path === "/admin/users") return [200, fx.admin.users];
   if (path === "/admin/projects") return [200, fx.admin.projects];
   if (path.startsWith("/admin/audit-logs")) return [200, fx.admin.audit];
-  if (path === "/admin/cloud-cleanup/summary") return [200, fx.cleanup.summary];
-  if (path.startsWith("/admin/cloud-cleanup/resources")) return [200, fx.cleanup.resources];
-  if (path === "/admin/cloud-cleanup/emergency/preview") return [200, fx.cleanup.emergency];
-  if (path === "/admin/cloud-cleanup/emergency/operations") return [200, []];
   if (projectMatch) {
     const [, id, rest = ""] = projectMatch;
     const project = fx.projects[id];
@@ -38,4 +34,3 @@ export function respondFor(url, options = {}) {
   }
   return [200, {}];
 }
-

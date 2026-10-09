@@ -38,7 +38,6 @@ const primitives = readFileSync(join(import.meta.dirname, "../src/components/com
 const infrastructure = readFileSync(join(import.meta.dirname, "../src/pages/ProjectInfrastructure.jsx"), "utf8");
 const projects = readFileSync(join(import.meta.dirname, "../src/pages/Projects.jsx"), "utf8");
 const admin = readFileSync(join(import.meta.dirname, "../src/pages/AdminUsers.jsx"), "utf8");
-const adminCleanup = readFileSync(join(import.meta.dirname, "../src/pages/AdminCloudCleanup.jsx"), "utf8");
 assert.match(pipeline, /const stages = latest\?\.workflowStages \|\| \[\]/, "destroy stage evidence remains in the technical timeline");
 assert.match(pipeline, /details\.failedStageLabel \|\| details\.stageLabel/);
 assert.match(pipeline, /destroyVerificationStatus === "pending"/);
@@ -59,11 +58,6 @@ assert.match(infrastructure, />Go to overview to retry</, "a failed destroy poin
 assert.match(infrastructure, />Follow progress</, "an active destroy links to its progress");
 assert.match(projects, /\["DESTROYED", "Destroyed"\]/, "Projects exposes the Destroyed lifecycle filter");
 assert.match(admin, /\["ALL", "LIVE", "DEPLOYING", "FAILED", "DESTROYED"\]/, "Admin exposes the Destroyed lifecycle filter");
-assert.match(adminCleanup, /createEmergencyCleanupChallenge|executeEmergencyCleanup|retryCentralProjectDestroy|requestDestroy/, "Admin cleanup uses only the pre-existing destroy and emergency cleanup APIs");
-assert.match(adminCleanup, /label: "Retry destroy…"/);
-assert.match(adminCleanup, /phrase !== "DESTROY"\) return/, "Admin failed-Destroy retry keeps its exact confirmation gate");
-assert.match(adminCleanup, /phrase !== "DESTROY ALL DEPLOYGUARD TEST RESOURCES"\) return/, "Emergency cleanup keeps its stronger exact confirmation gate");
-assert.match(adminCleanup, /Production and shared resources are excluded by design/, "Emergency cleanup retains protected-resource exclusions");
 assert.equal(failureRecoveryCommand({ operationType: "destroy", diagnosis: { retryDecision: "SAFE_NOW" } }, true), "retry", "Eligible failed Destroy operations use the existing generic retry path");
 
 console.log("Destroy UI presentation checks passed: one guarded destroy location, honest deletion verification, recovery links and admin controls.");

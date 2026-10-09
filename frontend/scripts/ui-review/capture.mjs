@@ -48,7 +48,6 @@ export const shots = [
   ["admin-users", "/admin?section=users", { admin: true }],
   ["admin-projects", "/admin?section=projects", { admin: true }],
   ["admin-audit", "/admin?section=audit", { admin: true }],
-  ["admin-cleanup", "/admin/cleanup", { admin: true }],
   ["admin-login", "/admin/login", { auth: false }],
 ];
 

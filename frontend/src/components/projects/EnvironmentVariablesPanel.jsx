@@ -41,6 +41,11 @@ export default function EnvironmentVariablesPanel({ projectId, serviceId, servic
   }
 
   useEffect(() => { void load(); }, [projectId, serviceId]);
+  useEffect(() => {
+    if (!success) return undefined;
+    const timer = window.setTimeout(() => setSuccess(""), 4200);
+    return () => window.clearTimeout(timer);
+  }, [success]);
 
   async function saveBulk(entries, clientIgnored = []) {
     if (!entries.length) return;

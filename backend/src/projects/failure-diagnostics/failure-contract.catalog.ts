@@ -99,6 +99,42 @@ export const FAILURE_CONTRACT = {
 
 export type AuthoritativeFailureCode = keyof typeof FAILURE_CONTRACT;
 
+/**
+ * Codes that may appear as a diagnosis root cause. This keeps advisory AI
+ * output inside the same vocabulary as deterministic failure diagnostics.
+ */
+const DIAGNOSTIC_ROOT_CAUSE_CODES = [
+  "DG_FAILURE_CAUSE_UNVERIFIED",
+  "DG_REPOSITORY_DEPENDENCY_RESOLUTION_FAILED",
+  "DG_REPOSITORY_LOCKFILE_OUTDATED",
+  "DG_PYTHON_DEPENDENCY_RESOLUTION_FAILED",
+  "DG_APPLICATION_COMPILATION_FAILED",
+  "DG_APPLICATION_MODULE_MISSING",
+  "DG_APPLICATION_BUILD_SCRIPT_FAILED",
+  "DG_STATIC_OUTPUT_MISSING",
+  "DG_APPLICATION_DATABASE_CONSUMPTION_FAILED",
+  "DG_RAILPACK_NATIVE_BUILD_CAPABILITY_MISSING",
+  "DG_RUNTIME_SHARED_LIBRARY_MISSING",
+  "DG_RAILPACK_RUNTIME_VERSION_INCOMPATIBLE",
+  "DG_PACKAGE_REGISTRY_PROVIDER_UNAVAILABLE",
+  "DG_ECS_SERVICE_STABILITY_FAILED",
+  "DG_DOCKER_FALLBACK_BUILD_FAILED",
+  "DG_MANAGED_DATABASE_STALE_METADATA",
+  "DG_MANAGED_DATABASE_RECOVERY_REQUIRED",
+  "DG_MANAGED_DATABASE_DATA_LOST_RESET_REQUIRED",
+  "DG_MANAGED_DATABASE_IDENTITY_MIGRATION_REQUIRED",
+] as const;
+
+export const APPROVED_ROOT_CAUSE_CODES = [...new Set([
+  ...Object.keys(FAILURE_CONTRACT),
+  ...Object.values(FAILURE_CONTRACT).map((contract) => contract.rootCauseCode),
+  ...DIAGNOSTIC_ROOT_CAUSE_CODES,
+])];
+
+export function isApprovedRootCauseCode(code: string) {
+  return APPROVED_ROOT_CAUSE_CODES.includes(code);
+}
+
 export function failureContractFor(code: string): FailureContractEntry | null {
   return Object.prototype.hasOwnProperty.call(FAILURE_CONTRACT, code)
     ? FAILURE_CONTRACT[code as AuthoritativeFailureCode]

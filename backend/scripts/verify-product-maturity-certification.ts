@@ -134,10 +134,12 @@ function repositoryPresentation() {
   assert.doesNotMatch(phases, /label: "Railpack/);
   assert.doesNotMatch(overview, /Operation \{acceptedOperation\.id\}|overview-generation-state|overview-evidence-line/);
   assert.doesNotMatch(projects, /abbreviated\(operation\)|Latest operation<\/span><strong title=\{operation/);
-  assert.match(settings, /EnvironmentVariablesPanel/);
-  assert.match(settings, /Managed database/);
+  assert.match(settings, /NotificationSettingsPanel/);
+  assert.match(settings, /DestroyInfrastructure/);
+  assert.match(settings, /archiveProject/);
+  assert.doesNotMatch(settings, /EnvironmentVariablesPanel|Managed database/);
   assert.doesNotMatch(settings, /\/requirements/);
-  assert.match(routes, /section="\/settings"[\s\S]*requirements/);
+  assert.match(routes, /LegacyProjectRedirect \/>} path="\/projects\/:projectId\/requirements\/\*"/);
   assert.doesNotMatch(sidebar, /setInterval|getProjectCurrentState/);
   assert.match(dashboard, /if \(!hasActiveOperation\) return undefined/);
   assert.match(api, /detailedCurrentStateRequests/);

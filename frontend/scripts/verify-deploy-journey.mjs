@@ -61,7 +61,7 @@ assert.doesNotMatch(page, /<span>Application port<\/span>|servicePort: Number\(s
 assert.match(page, /Detected automatically from each service/);
 assert.match(page, /existingProjectSettingsId = project\.id/, "the service mismatch preserves the existing project identity");
 assert.match(page, /Service name or directory changes must be made under Settings → Services\./, "the blocker identifies the existing service editor and editable fields");
-assert.match(page, /to=\{`\/projects\/\$\{readiness\.existingProjectSettingsId\}\/settings`\}>Open Project Settings<\/Link>/, "the blocker links directly to the existing project's Settings page");
+assert.match(page, /to=\{`\/projects\/\$\{readiness\.existingProjectSettingsId\}`\}>View existing project<\/Link>/, "the blocker links to the existing project without exposing removed Settings controls");
 assert.doesNotMatch(page, /updateProjectService/, "the deploy journey does not mutate existing service configuration");
 assert.match(page, /<option value="none">None — my app uses its own database<\/option>/, "the no-managed-database choice is named in plain terms");
 assert.match(page, /<option value="postgres">PostgreSQL \(managed\)<\/option>/);

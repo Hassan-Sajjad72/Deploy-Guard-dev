@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/database-overview.json",
+    "sha256": "8aaef256e4a9f94cc2369e6198b2d2d7e05cbfbf9ba108f0d49df0f9318488ab",
+    "bytes": 3226
+  },
+  "artifact": {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/database-overview.html",
+    "sha256": "40e982bd909f680d5ee3abb150ffbc50e3c68870b887c3832dd517ecb23c82d8",
+    "bytes": 757717
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/database-overview.finalize.json",
+    "summaryReceipt": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/database-overview.finalize-summary.json",
+    "browserCheckReceipt": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.archify/viva-study-20261005-120000/database-overview.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.0.1",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-05T05:31:23.981Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 1634,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "resolvedCrossovers": 1,
+      "routesOverSuggestedBends": 2
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [
+        {
+          "left": {
+            "from": "releases",
+            "to": "observability",
+            "label": "operation-correlated evidence",
+            "collectionIndex": 3,
+            "artifactIndex": 4
+          },
+          "right": {
+            "from": "projects",
+            "to": "commercial",
+            "label": "usage and notification scope",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "point": [
+            742.5,
+            437
+          ]
+        }
+      ],
+      "detours": [
+        {
+          "relationship": {
+            "from": "projects",
+            "to": "commercial",
+            "label": "usage and notification scope",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "bends": 4,
+          "stretch": 1
+        },
+        {
+          "relationship": {
+            "from": "releases",
+            "to": "commercial",
+            "label": "billing events / lifecycle delivery",
+            "collectionIndex": 5,
+            "artifactIndex": 6
+          },
+          "bends": 3,
+          "stretch": 1
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "releases → observability crosses projects → commercial: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "projects → commercial needs 4 bends: move node projects or commercial so they share a row or column with matching centers, or sit diagonally with a clear corner.",
+      "releases → commercial needs 3 bends: move node releases or commercial so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  },
+  "layoutReviewRecommendation": {
+    "action": "inspect-leading-space",
+    "evidence": {
+      "measured": true,
+      "emptyTopPx": 204,
+      "emptyTopRatio": 0.359,
+      "occupiedTop": 204,
+      "viewBoxTop": 0,
+      "canvasHeight": 568,
+      "typicalNodeHeight": 60,
+      "reviewSuggested": true
+    },
+    "reason": "Measured content, including routes and labels, leaves a large empty area above the diagram. This is a composition suggestion, not a failed gate.",
+    "repair": "Check whether that leading space is intentional. If not, reposition the connected scene nearer the canvas origin while retaining room for its actual boundaries, labels and return routes. Preserve all meaning and user-fixed geometry, then rerun finalize. No screenshot is required."
+  }
+}

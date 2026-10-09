@@ -1,4 +1,4 @@
-const roles = [["admin", "Admin"], ["developer", "Developer"], ["readonly", "Read-only"]];
+const roles = [["developer", "Developer"], ["readonly", "Read-only"]];
 
 export default function UserRoleSelect({ disabled, onChange, value }) {
   return <select aria-label="User role" className="select admin-role" disabled={disabled} onChange={(event) => onChange(event.target.value)} value={value}>

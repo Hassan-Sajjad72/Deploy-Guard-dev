@@ -21,7 +21,6 @@ import { ProjectsService } from "../projects/projects.service";
 import { UserRole } from "../users/user.entity";
 import { UsersService } from "../users/users.service";
 import { UpdateUserRoleDto } from "./dto/update-user-role.dto";
-import { UpdateUserAccessDto } from "./dto/update-user-access.dto";
 
 type ServiceAvailability = {
   status: "available" | "degraded" | "unavailable";
@@ -76,10 +75,12 @@ export class AdminController {
       const [projectRows, operationRows] = await Promise.all([
         this.dataSource.query(`SELECT COUNT(*)::int AS count FROM "projects" WHERE "status" != 'archived'`),
         this.dataSource.query(`SELECT
-          COUNT(*) FILTER (WHERE "status" IN ('queued', 'running'))::int AS active,
-          COUNT(*) FILTER (WHERE "status" = 'failed')::int AS failed,
-          COUNT(*) FILTER (WHERE "status" IN ('queued', 'running') AND "metadata" ->> 'deploymentAction' = 'destroy')::int AS destroying
-          FROM "project_pipeline_runs" WHERE "metadata" ->> 'executionEngine' = 'github_actions'`),
+          COUNT(*) FILTER (WHERE operation."status" IN ('queued', 'running'))::int AS active,
+          COUNT(*) FILTER (WHERE operation."status" = 'failed')::int AS failed,
+          COUNT(*) FILTER (WHERE operation."status" IN ('queued', 'running') AND operation."metadata" ->> 'deploymentAction' = 'destroy')::int AS destroying
+          FROM "project_pipeline_runs" operation
+          JOIN "projects" project ON project."id" = operation."project_id"
+          WHERE project."status" != 'archived' AND operation."metadata" ->> 'executionEngine' = 'github_actions'`),
       ]);
       projects = Number(projectRows[0]?.count || 0);
       activeOperations = Number(operationRows[0]?.active || 0);
@@ -181,30 +182,6 @@ export class AdminController {
         createdAt: user.createdAt,
       })),
     };
-  }
-
-  @Patch("users/:userId/access")
-  @UseGuards(requireRole([UserRole.ADMIN]))
-  async updateUserAccess(
-    @Param("userId", ParseIntPipe) userId: number,
-    @Body() dto: UpdateUserAccessDto,
-    @Req() req: Request
-  ) {
-    const updatedUser = await this.usersService.updateAccess(userId, dto.enabled, req.user?.id);
-    await this.auditLogService.record({
-      actorUser: req.user,
-      action: dto.enabled ? "USER_ENABLED" : "USER_DISABLED",
-      resourceType: "user",
-      resourceId: String(updatedUser.id),
-      status: "success",
-      req,
-    });
-    return { user: {
-      id: String(updatedUser.id), email: updatedUser.email, name: updatedUser.name,
-      role: updatedUser.role, provider: updatedUser.githubId ? "github" : null,
-      githubLogin: updatedUser.githubLogin, enabled: !updatedUser.disabledAt,
-      lastLoginAt: updatedUser.lastLoginAt, createdAt: updatedUser.createdAt,
-    } };
   }
 
   @Patch("users/:userId/role")

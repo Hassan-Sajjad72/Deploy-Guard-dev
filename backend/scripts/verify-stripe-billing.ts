@@ -54,7 +54,7 @@ async function main() {
   const frontend = readFileSync(join(__dirname, "../../frontend/src/pages/Billing.jsx"), "utf8");
   assert.match(controller, /@Post\("portal"\)/);
   assert.match(controller, /@Post\("webhook\/stripe"\) webhook/);
-  assert.match(frontend, /Manage Billing/);
+  assert.match(frontend, /Manage billing/i);
   assert.match(frontend, /Payment verification pending/);
   assert.doesNotMatch(frontend, /get\("session_id"\)/, "the success redirect session ID must not be used as entitlement authority");
 
