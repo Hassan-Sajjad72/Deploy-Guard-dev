@@ -7,12 +7,14 @@ import { PipelineRunStatus } from "../src/projects/project-pipeline-run.entity";
 import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
+import { destroyProofFixture } from "./fixtures/destroy-proof";
 
 const projectId = "122a34a1-5d28-4f39-bb51-28379671fdb4";
 const generationId = "7fcf0947-d66e-4d79-9cfc-9879d0022548";
 const operationId = "76bcb093-3928-44ce-a81e-a54caeedba4d";
 const project: any = { id: projectId, environmentName: "dev", ownerUserId: 7, repositoryFullName: "owner/repository", targetBranch: "main" };
 const observedAt = "2026-08-29T12:00:00.000Z";
+const proof = destroyProofFixture(projectId, operationId, [generationId], observedAt);
 
 function failed(action: "deploy" | "rollback" | "destroy") {
   return {
@@ -52,15 +54,12 @@ function activeDestroy() {
 }
 
 function destroyEvidence() {
-  return {
-    contractVersion: "deployguard.destroy-result/v2", deploymentOperationId: operationId, projectId, environmentName: "dev", generationIds: [generationId],
-    status: "project_delete_ready", generationResourcesRemoved: true, projectResourcesRemoved: true, terraformStateArtifactsRemoved: true, sharedPlatformUntouched: true, verifiedAt: observedAt,
-  };
+  return structuredClone(proof.evidence);
 }
 
 function destroyMetadata() {
-  return { executionEngine: "railpack", deploymentAction: "destroy", immutableDispatchInputs: { services_base64: servicesBase64({
-    schemaVersion: 3, projectId, environmentName: "dev", operationId, sourceSha: "a".repeat(40), projectDeletion: { generationIds: [generationId] },
+  return { executionEngine: "railpack", deploymentAction: "destroy", immutableDispatchInputs: { ...proof.inputs, services_base64: servicesBase64({
+    schemaVersion: 3, projectId, environmentName: "dev", operationId, sourceSha: "a".repeat(40), projectDeletion: { generationIds: [generationId], ownership: proof.ownership },
     services: [{ serviceId: "99999999-9999-4999-8999-999999999999", serviceName: "Web", serviceDirectory: ".", servicePort: 8080,
       runtimeConfigRevisionId: "88888888-8888-4888-8888-888888888888", buildEnvironment: {}, buildSecretReferences: {},
       environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] },
@@ -112,7 +111,7 @@ async function verifyCanonicalProjection() {
 async function verifyDestroyFinalizationAndRetry() {
   const saved: any[] = [];
   const ordering: string[] = [];
-  const operation: any = { id: operationId, projectId, generationId, commitSha: "a".repeat(40), status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: destroyMetadata() };
+  const operation: any = { id: operationId, projectId, generationId, commitSha: "a".repeat(40), startedAt: new Date(Date.parse(observedAt) - 1000), status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: destroyMetadata() };
   const service: any = Object.create(RailpackDeploymentService.prototype);
   service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; }, findOne: async () => operation };
   service.sanitizer = new LogSanitizerService();
@@ -151,7 +150,7 @@ async function verifyDestroyFinalizationAndRetry() {
 async function verifyReconcileUsesDestroyFinalizer() {
   const operation: any = {
     id: operationId, projectId, generationId, triggeredByUserId: 7, githubWorkflowRunId: "33252955775", commitSha: "a".repeat(40),
-    status: PipelineRunStatus.RUNNING, currentStage: "github_actions", metadata: destroyMetadata(),
+    status: PipelineRunStatus.RUNNING, startedAt: new Date(Date.parse(observedAt) - 1000), currentStage: "github_actions", metadata: destroyMetadata(),
   };
   const service: any = Object.create(RailpackDeploymentService.prototype);
   service.projects = { findOne: async () => project };

@@ -212,9 +212,11 @@ export async function observeDeletion(manifest, run, options = {}) {
     let providerCode = null;
     let observedAttempts = 0;
     let clusterAbsent = false;
+    let basis = null;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       observedAttempts = attempt;
       providerCode = null;
+      basis = null;
       let transient = false;
       try {
         const result = await invoke(commands[resource.type](resource));
@@ -222,6 +224,12 @@ export async function observeDeletion(manifest, run, options = {}) {
           const payload = JSON.parse(result.stdout);
           status = successfulObservation(resource, payload);
           clusterAbsent = resource.type === "aws_ecs_cluster" && status === "PASS" && payload.clusters.length === 0;
+          if (status === "PASS") {
+            basis = resource.type === "aws_ecs_task_definition" ? "inactive"
+              : resource.type === "aws_ecs_task" && payload.tasks.length ? "stopped"
+                : resource.type === "aws_ecs_cluster" && payload.clusters.length ? "inactive"
+                  : resource.type === "aws_ecs_service" && payload.services.length ? "inactive" : "absent";
+          }
         }
         else {
           // Match the structured AWS CLI error header, not arbitrary text that
@@ -233,13 +241,14 @@ export async function observeDeletion(manifest, run, options = {}) {
           // Accept this only with independent absence proof for that exact
           // cluster in the same pass, never on the exception alone.
           if (["aws_ecs_service", "aws_ecs_task"].includes(resource.type) && providerCode === "ClusterNotFoundException" && absentClusters.has(resource.parent)) status = "PASS";
+          if (status === "PASS") basis = "absent";
         }
       } catch { status = "UNVERIFIED"; }
       if ((status !== "CONFIRMED DEFECT" && !transient) || attempt === attempts) break;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
     if (clusterAbsent) absentClusters.add(resource.id);
-    observations.push({ ...resource, status, providerCode, attempts: observedAttempts });
+    observations.push({ ...resource, status, basis, providerCode, attempts: observedAttempts });
   }
   const status = observations.some((r) => r.status === "UNVERIFIED") ? "UNVERIFIED" : observations.every((r) => r.status === "PASS") ? "PASS" : "CONFIRMED DEFECT";
   return {

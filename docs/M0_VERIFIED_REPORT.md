@@ -1,7 +1,9 @@
 # M0 verified local report
 
 2026-10-10, Asia/Karachi. **M0 is not release-ready.** Local M0.1–M0.9 slices
-passed their checks; complete production destroy evidence is still unresolved.
+passed their checks; M0.10 also passed its final local gate. The owner approved the stricter v3 destroy contract and
+fail-closed historical deletion. M0.10 adds its backend guard; complete production
+ownership collection and workflow integration remain unresolved.
 Live AWS verification was explicitly deferred by the owner. No AWS API query or
 mutation, live workflow dispatch, push, merge or dependency upgrade was performed.
 
@@ -21,7 +23,7 @@ M0 maintenance, not unsigned future product milestones.
 | Terminal artifacts | Bounded HTTP/listing/archive reads and inflation; strict ZIP/identity checks; duplicate/malformed evidence fails closed. Missing evidence and retrieval outages converge through the existing bounded retry window, never release promotion. |
 | Deletion observer | Standalone exact-ID read-only observer for 18 resource types, typed absence/state checks, bounded convergence/transient retries, denial rejection, strict scope, immutable caller snapshot and safe CLI diagnostics. AWS calls are injected in tests. |
 | Manifest transport | Atomic, immutable, content-addressed local retention; exact receipt restoration/union; corrupt/missing/narrowed/conflicting/symlinked evidence fails closed. This is not production inventory persistence. |
-| Deletion scope | Shared parser/scope guard requires the complete frozen generation set and exact operation/project/environment/source identity. No non-string ID filtering or mutable-context reconstruction. |
+| Deletion scope | v3 requires complete frozen generation/receipt identity and matching per-resource observations. Historical v2 flags cannot authorize admission, cleanup, state projection or success notifications. No mutable-context reconstruction. |
 | Cleanup concurrency | Pending terminal cleanup blocks new lifecycle admission. Actual DB deletion holds configuration/operation locks, revalidates eligibility, and rejects active operations or generation drift before cascading project authority. |
 
 NestJS modular monolith, React/Vite, PostgreSQL and existing deployment contracts
@@ -36,7 +38,7 @@ transport is presented as a certified cloud workflow integration.
 | Check | Result / evidence type |
 | --- | --- |
 | Backend/front-end builds | PASS, local compilation/bundle |
-| Full pre-final gate after each final bounded slice | PASS; latest exit 0 in `/tmp/deployguard-m0-cleanup-concurrency-pre-final.log` |
+| Full pre-final gate after each final bounded slice | PASS; latest exit 0 in `/tmp/deployguard-m0-v3-eligibility-final-pre-final.log` |
 | Backend/full frontend regressions | PASS, current supported consumers and behavior |
 | PostgreSQL migrations/integration | PASS, 111 real migrations in disposable local DBs; isolation, constraints and cascades |
 | Cleanup DB contention | PASS, actual service/repositories and second PostgreSQL connection; shared admission lock and authority-row lock contention |
@@ -66,7 +68,7 @@ as a nonexistent lint result.
 | Deploy | Exact source/service/config identity; validated result required before stable promotion; prior healthy release retained on failure | Not run | PASS locally; AWS UNVERIFIED |
 | Redeploy | Exact immutable inputs and direct ECS revision fixtures; one correlated dispatch, no unsafe secret compensation | Mocked only | PASS locally; AWS UNVERIFIED |
 | Rollback | Complete historical image/runtime revision set, no rebuild/current-config substitution; verification precedes promotion | Mocked only | PASS locally; AWS UNVERIFIED |
-| Destroy | Confirmation/scope, strict frozen generations, retry and DB cleanup guards; observer/retention tests pass separately | Not run; producer not integrated with independent proof | CONFIRMED DEFECT in end-to-end proof contract; release blocked |
+| Destroy | Strict v3 receipt/observation guard; legacy v2 cannot authorize admission, retry cleanup, state or success notifications | Not run; complete production collector and producer integration absent | Backend fail-closed locally; end-to-end release remains blocked |
 
 ## Resource-specific cleanup evidence
 
@@ -93,10 +95,12 @@ The unchanged reusable workflow constructs destroy v2 success booleans after
 Terraform destroy and limited LIVE-service cleanup. Its state-head failure can
 be mistaken for absence, and it lacks complete retained Terraform/ECR/direct-ECS
 ownership/observation evidence across every successful, failed and historical
-attempt. The backend's strengthened identity guard still cannot turn these flags
-into independent proof. The current readiness fixture intentionally demonstrates
-that structurally valid flags with exact frozen identity are accepted; it does
-not certify resource absence.
+attempt. The backend now rejects these v2 flags rather than treating them as
+independent proof. The v3 guard consumes a frozen manifest and exact observer
+result, but no complete production Terraform/ECR/direct-ECS journal is emitted or
+ingested yet. Current historical runs therefore fail closed before destroy
+admission. Local positive fixtures simulate retained coverage; they do not certify
+that the production workflow collects every owned resource or contacts AWS.
 
 Required replacement: complete server-authoritative ownership coverage, durable
 pre-mutation receipts surviving partial failure/retry, exact restoration, and an
@@ -107,8 +111,9 @@ deletion authority, and no empty post-destroy state may erase history.
 
 Historical runs cannot acquire missing provenance merely by changing a JSON
 version. A stricter versioned contract must reject unprovable legacy destruction
-until approved ownership recovery. This compatibility-affecting decision has been
-submitted to the owner; no replacement/publication is assumed approved.
+until approved ownership recovery. This compatibility-affecting decision was
+approved by the owner on 2026-10-10. Local replacement work is authorized;
+publication and AWS execution still require separate approval.
 
 ## Prerequisites for later milestones
 

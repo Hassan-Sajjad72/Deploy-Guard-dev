@@ -4,6 +4,7 @@ import { isSupportedManagedDatabaseEngine, resolveManagedDatabaseUrlScheme } fro
 import { normalizeServiceDirectory } from "./deployable-service-path";
 import { CanonicalBuildTarget } from "./build-target";
 import { assertRailpackCapabilityDeclaration, railpackBuildCapabilities } from "./configuration-ownership";
+import { assertDestroyOwnership, DestroyOwnership } from "./aws-resource-ownership";
 
 export const RAILPACK_WORKFLOW_CONTRACT_VERSION = "deployguard.railpack/v5";
 export const RAILPACK_RESULT_CONTRACT_VERSION = "deployguard.release-result/v5";
@@ -28,7 +29,7 @@ export const RAILPACK_CALLER_INPUT_NAMES = RAILPACK_WORKFLOW_INPUTS.map(({ name 
 export const RAILPACK_OPTIONAL_CALLER_INPUT_NAMES = [] as const;
 
 export type RailpackServiceRuntimeConfiguration = { serviceId: string; serviceName: string; serviceDirectory: string; servicePort: number; runtimeConfigRevisionId: string; runtimeConfigFingerprint?: string; buildTargetRevisionId?: string; buildTarget?: CanonicalBuildTarget; buildEnvironment: Record<string, string>; railpackBuildCapabilityFingerprint?: string; buildSecretReferences: Record<string, string>; environment: Record<string, string>; secretReferences: Record<string, string>; databaseAttached: boolean; managedDatabase: { engine: "postgres" | "mysql" | "mongodb" | null; aliases: string[]; urlScheme?: string | null; secretVersionId?: string | null }; rollbackImage?: string; rollbackTaskDefinitionArn?: string };
-export type RailpackRuntimeConfiguration = { schemaVersion: 3; projectId: string; environmentName: string; operationId: string; sourceSha: string; services: RailpackServiceRuntimeConfiguration[]; projectDeletion?: { generationIds: string[] } };
+export type RailpackRuntimeConfiguration = { schemaVersion: 3; projectId: string; environmentName: string; operationId: string; sourceSha: string; services: RailpackServiceRuntimeConfiguration[]; projectDeletion?: { generationIds: string[]; ownership?: DestroyOwnership } };
 
 const SHA = /^[0-9a-f]{40}$/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -102,5 +103,11 @@ export function assertRailpackRuntimeConfiguration(value: RailpackRuntimeConfigu
     if (service.rollbackTaskDefinitionArn && !TASK_DEFINITION_ARN.test(service.rollbackTaskDefinitionArn)) throw new Error("Railpack rollback task definition is invalid.");
   }
   if (databaseAttachments > 1) throw new Error("Managed database may be attached to only one service.");
-  if (value.projectDeletion && (!Array.isArray(value.projectDeletion.generationIds) || !value.projectDeletion.generationIds.length || value.projectDeletion.generationIds.some((id) => !UUID.test(id)) || new Set(value.projectDeletion.generationIds).size !== value.projectDeletion.generationIds.length)) throw new Error("Railpack destroy generation identity is invalid.");
+  if (value.projectDeletion && (!Array.isArray(value.projectDeletion.generationIds) || !value.projectDeletion.generationIds.length || value.projectDeletion.generationIds.some((id) => typeof id !== "string" || !UUID.test(id)) || new Set(value.projectDeletion.generationIds).size !== value.projectDeletion.generationIds.length)) throw new Error("Railpack destroy generation identity is invalid.");
+  if (value.projectDeletion?.ownership !== undefined) {
+    assertDestroyOwnership(value.projectDeletion.ownership);
+    const scope = value.projectDeletion.ownership.manifest.scope;
+    if (scope.projectId !== value.projectId || scope.operationId !== value.operationId || scope.environmentName !== value.environmentName
+      || [...scope.generationIds].sort().join("\0") !== [...value.projectDeletion.generationIds].sort().join("\0")) throw new Error("Railpack destroy ownership scope is invalid.");
+  }
 }

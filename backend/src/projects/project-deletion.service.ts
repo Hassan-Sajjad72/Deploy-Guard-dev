@@ -5,7 +5,7 @@ import { NotificationSubscription } from "../notifications/notification-subscrip
 import { SnsNotificationAdapter } from "../notifications/sns-notification.adapter";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { GithubAppService } from "./github-app.service";
-import { githubActionsDestroyEvidenceFromValue, githubActionsDestroyEvidenceMatchesOperation } from "./github-actions-destroy-evidence";
+import { githubActionsDestroyEvidenceFromValue, githubActionsDestroyEvidenceMatchesOperation, hasValidatedDestroyCleanupStatus } from "./github-actions-destroy-evidence";
 import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
 import { ProjectDeploymentGeneration } from "./project-deployment-generation.entity";
 import { acquireProjectConfigurationAdvisoryLock } from "./project-configuration-lock";
@@ -87,15 +87,9 @@ export class ProjectDeletionService {
 
   private assertReady(project: Project, destroy: ProjectPipelineRun) {
     const evidence = githubActionsDestroyEvidenceFromValue(destroy.metadata?.destroyVerification);
-    const finalizationEligible = destroy.status === PipelineRunStatus.COMPLETED
-      || (destroy.status === PipelineRunStatus.FAILED
-        && destroy.currentStage === "project_delete_cleanup"
-        && destroy.metadata?.failureCategory === "project_delete_incomplete");
     if (
       destroy.projectId !== project.id
-      || !finalizationEligible
-      || destroy.metadata?.deploymentAction !== "destroy"
-      || destroy.metadata?.destroyEvidenceValidated !== true
+      || !hasValidatedDestroyCleanupStatus(destroy)
       || !evidence
       || !githubActionsDestroyEvidenceMatchesOperation(evidence, destroy, canonicalEnvironmentName(project))
     ) {

@@ -13,23 +13,24 @@ import { Project } from "../src/projects/project.entity";
 import { ProjectDeploymentGeneration } from "../src/projects/project-deployment-generation.entity";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
+import { destroyProofFixture } from "./fixtures/destroy-proof";
 
 const projectId = "10000000-0000-4000-8000-000000000001";
 const operationId = "20000000-0000-4000-8000-000000000002";
 const generationIds = ["30000000-0000-4000-8000-000000000003", "40000000-0000-4000-8000-000000000004"];
 const foreignGeneration = "50000000-0000-4000-8000-000000000005";
 const project: any = { id: projectId, environmentName: "dev", ownerUserId: 7, repositoryFullName: "fixture/repository" };
+const proof = destroyProofFixture(projectId, operationId, generationIds);
 const encoded = servicesBase64({
-  schemaVersion: 3, projectId, operationId, sourceSha: "a".repeat(40), environmentName: "dev", projectDeletion: { generationIds },
+  schemaVersion: 3, projectId, operationId, sourceSha: "a".repeat(40), environmentName: "dev", projectDeletion: { generationIds, ownership: proof.ownership },
   services: [{ serviceId: "60000000-0000-4000-8000-000000000006", serviceName: "Web", serviceDirectory: ".", servicePort: 8080,
     runtimeConfigRevisionId: "70000000-0000-4000-8000-000000000007", buildEnvironment: {}, buildSecretReferences: {},
     environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] },
     rollbackImage: `123456789012.dkr.ecr.us-east-1.amazonaws.com/fixture@sha256:${"b".repeat(64)}` }],
 });
-const evidence = () => ({ contractVersion: "deployguard.destroy-result/v2", deploymentOperationId: operationId, projectId, environmentName: "dev", generationIds: [...generationIds],
-  status: "project_delete_ready", generationResourcesRemoved: true, projectResourcesRemoved: true, terraformStateArtifactsRemoved: true, sharedPlatformUntouched: true, verifiedAt: new Date().toISOString() });
-const operation = () => ({ id: operationId, projectId, generationId: generationIds[0], commitSha: "a".repeat(40), status: PipelineRunStatus.COMPLETED, currentStage: "project_delete_cleanup",
-  metadata: { deploymentAction: "destroy", destroyEvidenceValidated: true, immutableDispatchInputs: { services_base64: encoded }, destroyVerification: evidence() } });
+const evidence = () => structuredClone(proof.evidence);
+const operation = () => ({ id: operationId, projectId, generationId: generationIds[0], commitSha: "a".repeat(40), startedAt: new Date(Date.parse(proof.evidence.verifiedAt) - 1000), status: PipelineRunStatus.COMPLETED, currentStage: "project_delete_cleanup",
+  metadata: { deploymentAction: "destroy", destroyEvidenceValidated: true, immutableDispatchInputs: { ...proof.inputs, services_base64: encoded }, destroyVerification: evidence() } });
 
 async function verify() {
   const admission: any = Object.create(RailpackDeploymentService.prototype);
@@ -130,7 +131,7 @@ async function verifyPostgresBoundary() {
     await database.query("INSERT INTO projects (id,owner_user_id,name,repository_url,repository_full_name,target_branch,status,visibility) VALUES ($1,$2,'Deletion fixture','https://github.com/fixture/repository','fixture/repository','main','configured','private')", [projectId, owner]);
     const addGeneration = (id: string, ordinal: number) => database!.query("INSERT INTO project_deployment_generations (id,project_id,environment_name,ordinal,status,terraform_state_key) VALUES ($1,$2,'dev',$3,'retired','fixture.tfstate')", [id, projectId, ordinal]);
     for (let index = 0; index < generationIds.length; index++) await addGeneration(generationIds[index], index + 1);
-    await database.query("INSERT INTO project_pipeline_runs (id,project_id,triggered_by_user_id,repository_url,repository_full_name,target_branch,status,current_stage,commit_sha,generation_id,metadata) VALUES ($1,$2,$3,'https://github.com/fixture/repository','fixture/repository','main','completed','project_delete_cleanup',$4,$5,$6::jsonb)", [operationId, projectId, owner, operation().commitSha, generationIds[0], JSON.stringify(operation().metadata)]);
+    await database.query("INSERT INTO project_pipeline_runs (id,project_id,triggered_by_user_id,repository_url,repository_full_name,target_branch,status,current_stage,commit_sha,generation_id,metadata,started_at) VALUES ($1,$2,$3,'https://github.com/fixture/repository','fixture/repository','main','completed','project_delete_cleanup',$4,$5,$6::jsonb,$7)", [operationId, projectId, owner, operation().commitSha, generationIds[0], JSON.stringify(operation().metadata), operation().startedAt]);
     const deletion = new ProjectDeletionService(database, database.getRepository(Project), database.getRepository(NotificationSubscription),
       { removeManagedWorkflow: async () => undefined } as any, { deleteProjectResources: async () => undefined } as any);
     const persistedProject: any = { ...project, ownerUserId: owner };

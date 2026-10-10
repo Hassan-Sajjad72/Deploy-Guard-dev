@@ -195,3 +195,21 @@ Before wiring or publishing a changed executable workflow:
 5. Obtain explicit approval for a scoped disposable AWS lifecycle exercise and
    collect exact-SHA deploy/redeploy/rollback/destroy evidence. Neither mocked
    tests nor local database migrations constitute AWS E2E proof.
+
+## M0.10 — approved v3 consumer boundary
+
+The owner approved stricter versioned destruction and fail-closed historical
+deletion. The backend now rejects v2 success flags as cleanup authority. V3 binds
+the exact frozen manifest and retained journal receipts to operation identity and
+to a complete per-resource observer report. The observer records explicit
+`absent`, `inactive` or `stopped` bases; denial, arbitrary provider codes, missing
+resources and narrowed reports cannot satisfy the consumer. State and `.tflock`
+must both be included. Cleanup eligibility is shared by finalization, retry,
+current-state projection and notifications.
+
+Local injected observer-to-consumer tests and the full release gate pass. Complete
+production Terraform/ECR/direct-ECS collection, durable receipt revalidation and
+the changed executable workflow are still pending. The existing dispatched
+workflow and certified fingerprints remain unchanged. Legacy records are not
+backfilled or granted authority by a JSON version change. No AWS execution or
+publication is authorized by this approval.

@@ -747,3 +747,40 @@ deletion for historical runs until ownership is recovered. Alternatively, retain
 the current contract and keep release blocked. This is a real legacy-compatibility
 decision, not a request to run AWS. No replacement, push or workflow dispatch was
 assumed authorized. All completed local safety fixes remain checkpointed.
+
+## M0.10 — approved strict destroy proof and fail-closed historical deletion
+
+The owner approved a stricter versioned destroy contract and fail-closed legacy
+deletion on 2026-10-10. This does not authorize publication or AWS execution.
+Backend admission now freezes complete operation-bound ownership receipts,
+including failed attempts, into immutable destroy context. Missing, duplicated,
+corrupt, incomplete or ambiguous historical journals block admission. State and
+lock identities remain exact project/environment keys; the shared bucket is not
+a deletion target. Stable hashing and normalized manifests survive JSONB key order.
+
+Destroy v3 requires exact frozen ownership and per-resource observer observations,
+scope, hashes, timestamps, typed absence or supported inactive/stopped states.
+Legacy v2 flags cannot authorize cleanup, retry, ancestor projection or success
+notifications. Eligibility still requires the validated terminal cleanup state;
+raw proof cannot revive a running or validation-failed operation. Validated
+cleanup failures retain the existing cleanup-only retry path.
+
+Initial new-code compilation failed on TypeScript narrowing and was corrected
+without suppression. The existing notifications consumer initially failed because
+its positive fixture supplied only a boolean marker; it now supplies the full
+simulated v3 context and retains every original assertion. A negative legacy
+notification assertion was added. Notifications now run in the aggregate gate.
+
+Final verification: `test:pre-final-certification` exited 0 against the final
+source, `/tmp/deployguard-m0-v3-eligibility-final-pre-final.log`. Focused v3,
+lifecycle, notification and real PostgreSQL scope/contention checks also passed.
+No assertions were weakened, dependencies added or deployment workflow/certified
+executable fingerprints changed. Architecture, security, error handling, retry
+eligibility, JSONB integrity and unrelated-diff review were completed locally.
+
+This is a backend safety foundation, NOT complete ownership collection or AWS
+certification. No production publisher yet emits the complete ownership journal;
+all unprovable historical destruction therefore fails closed. Next bounded work
+must revalidate frozen receipts against durable authority before external cleanup
+and again before the DB cascade, then address complete production collection and
+workflow integration. Live AWS verification remains pending by owner direction.

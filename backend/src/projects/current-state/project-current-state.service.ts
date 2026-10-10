@@ -17,6 +17,7 @@ import { ProjectsService } from "../projects.service";
 import { DeveloperProjectCurrentState, ProjectStateAuthority } from "./project-current-state.types";
 import { DeploymentGenerationStatus, ProjectDeploymentGeneration } from "../project-deployment-generation.entity";
 import { canonicalEnvironmentName } from "../canonical-environment";
+import { githubActionsDestroyEvidenceFromValue, githubActionsDestroyEvidenceMatchesOperation, hasValidatedDestroyCleanupStatus } from "../github-actions-destroy-evidence";
 import { githubActionsFailureLifecyclePhase, githubActionsFailureMessage } from "../pipeline/github-actions-stage-presentation";
 import { RailpackDeploymentService } from "../railpack-deployment.service";
 import { LiveRuntimeIdentityRecoveryService } from "./live-runtime-identity-recovery.service";
@@ -618,24 +619,11 @@ export class ProjectCurrentStateService {
         || current.generationId !== generationId
         || current.metadata?.deploymentAction !== "destroy") return null;
       visited.add(current.id);
-      const evidence = current.metadata?.destroyVerification as Record<string, unknown> | undefined;
-      const finalizedAfterAwsDeletion = current.status === PipelineRunStatus.COMPLETED
-        || (current.status === PipelineRunStatus.FAILED
-          && current.currentStage === "project_delete_cleanup"
-          && current.metadata?.failureCategory === "project_delete_incomplete");
+      const evidence = githubActionsDestroyEvidenceFromValue(current.metadata?.destroyVerification);
       if (
-        finalizedAfterAwsDeletion
-        && evidence?.contractVersion === "deployguard.destroy-result/v2"
-        && evidence.deploymentOperationId === current.id
-        && evidence.projectId === projectId
-        && evidence.environmentName === environmentName
-        && evidence.status === "project_delete_ready"
-        && evidence.generationResourcesRemoved === true
-        && evidence.projectResourcesRemoved === true
-        && evidence.terraformStateArtifactsRemoved === true
-        && evidence.sharedPlatformUntouched === true
-        && Array.isArray(evidence.generationIds)
-        && evidence.generationIds.includes(generationId)
+        hasValidatedDestroyCleanupStatus(current)
+        && evidence
+        && githubActionsDestroyEvidenceMatchesOperation(evidence, current, environmentName)
       ) return current;
       const parentId = current.metadata?.retryOfOperationId;
       if (typeof parentId !== "string" || !parentId) return null;

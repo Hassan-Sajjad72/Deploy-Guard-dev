@@ -5,6 +5,8 @@ import { SnsNotificationAdapter } from "../src/notifications/sns-notification.ad
 import { PipelineRunStatus } from "../src/projects/project-pipeline-run.entity";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { UserRole } from "../src/users/user.entity";
+import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
+import { destroyProofFixture } from "./fixtures/destroy-proof";
 const service = Object.create(NotificationDispatcherService.prototype) as NotificationDispatcherService;
 assert.deepEqual(service.classify("docker_build", "failed"), { type: "deployment_failed", kind: "critical" });
 assert.deepEqual(service.classify("dockerfile_security_check_failed", "failed"), { type: "security_policy_block", kind: "critical" });
@@ -248,6 +250,16 @@ async function verifyLegacyDeliveryHistoryIsPresentedHonestly() {
 }
 
 function lifecycleOperation(action: "deploy" | "rollback" | "destroy", status: PipelineRunStatus, releaseStrategy?: "direct_ecs" | "terraform_bootstrap") {
+  if (action === "destroy" && status === PipelineRunStatus.COMPLETED) {
+    const projectId = "10000000-0000-4000-8000-000000000001";
+    const id = "20000000-0000-4000-8000-000000000002";
+    const generationId = "30000000-0000-4000-8000-000000000003";
+    const proof = destroyProofFixture(projectId, id, [generationId]);
+    const encoded = servicesBase64({ schemaVersion: 3, projectId, operationId: id, sourceSha: "a".repeat(40), environmentName: "dev", projectDeletion: { generationIds: [generationId], ownership: proof.ownership },
+      services: [{ serviceId: "40000000-0000-4000-8000-000000000004", serviceName: "Web", serviceDirectory: ".", servicePort: 8080, runtimeConfigRevisionId: "50000000-0000-4000-8000-000000000005",
+        buildEnvironment: {}, buildSecretReferences: {}, environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] } }] });
+    return { id, projectId, generationId, commitSha: "a".repeat(40), startedAt: new Date(Date.parse(proof.evidence.verifiedAt) - 1000), status, currentStage: "project_delete_cleanup", metadata: { deploymentAction: action, destroyEvidenceValidated: true, destroyVerification: proof.evidence, immutableDispatchInputs: { ...proof.inputs, services_base64: encoded } } };
+  }
   return {
     id: `run-${action}-${releaseStrategy || "default"}`,
     projectId: "project-1",
@@ -288,6 +300,10 @@ async function verifyRailpackLifecycleMappingAndBestEffortBoundary() {
   unverified.metadata.releaseEvidenceVerified = false;
   await lifecycle.dispatchLifecycleNotification(unverified, "completed");
   assert.equal(observed.length, 8, "GitHub success without authoritative release verification cannot emit lifecycle success");
+  const legacy = lifecycleOperation("destroy", PipelineRunStatus.COMPLETED);
+  legacy.metadata.destroyVerification = { ...legacy.metadata.destroyVerification, contractVersion: "deployguard.destroy-result/v2" };
+  await lifecycle.dispatchLifecycleNotification(legacy, "completed");
+  assert.equal(observed.length, 8, "historical validated markers cannot emit destroy success without strict absence proof");
 
   lifecycle.notifications = { dispatch: async () => { throw new Error("SNS unavailable"); } };
   const completed = lifecycleOperation("rollback", PipelineRunStatus.COMPLETED);

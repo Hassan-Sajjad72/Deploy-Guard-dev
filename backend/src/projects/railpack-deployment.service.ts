@@ -20,6 +20,7 @@ import { effectiveServicePort } from "./railpack-release";
 import { GithubActionsRuntimeSecretService, RuntimeSecretMaterialization, RuntimeSecretMaterializationError, RuntimeSecretOwnershipRecorder } from "./github-actions-runtime-secret.service";
 import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
 import { RuntimeSecretOwnershipEvent, RuntimeSecretOwnershipPersistenceError, runtimeSecretOwnershipRecord } from "./runtime-secret-ownership";
+import { AWS_RESOURCE_OWNERSHIP_SOURCE, DestroyOwnership, DestroyOwnershipIncompleteError, freezeDestroyOwnership } from "./aws-resource-ownership";
 import { isSupportedManagedDatabaseEngine, resolveManagedDatabaseUrlScheme } from "./managed-database-engine";
 import { aliasesFor, assertRailpackCapabilityDeclaration, railpackBuildCapabilities, RailpackCapabilityDeclarationError } from "./configuration-ownership";
 import { assertRailpackRuntimeConfiguration, DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH, immutableRailpackBuildCapabilityFingerprint, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
@@ -29,7 +30,7 @@ import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
 import { materializeStableRelease } from "./stable-release-projection";
 import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
 import { DESTROY_CONFIRMATION_PHRASE } from "./destroy-confirmation";
-import { githubActionsDestroyEvidenceFromValue, githubActionsDestroyEvidenceMatchesOperation } from "./github-actions-destroy-evidence";
+import { githubActionsDestroyEvidenceFromValue, githubActionsDestroyEvidenceMatchesOperation, hasValidatedDestroyCleanupStatus } from "./github-actions-destroy-evidence";
 import { ProjectDeletionService } from "./project-deletion.service";
 import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
 import { ProjectDeployableService } from "./project-deployable-service.entity";
@@ -246,7 +247,8 @@ export class RailpackDeploymentService {
     const operation = await this.runs.findOne({ where: { projectId }, order: { createdAt: "DESC" } });
     if (!operation) return { deployment: null };
     const diagnosis = currentFailureDiagnostic(operation);
-    return { deployment: { ...operation, failureOwner: diagnosis?.failureOwner || operation.failureOwner, externalProvider: diagnosis?.externalProvider ?? operation.externalProvider, failureCode: diagnosis?.terminalFailureCode || operation.failureCode, diagnosis } };
+    const presentation = this.presentOperation(operation);
+    return { deployment: { ...operation, deploymentAction: presentation.deploymentAction, destroyVerificationStatus: presentation.destroyVerificationStatus, failureOwner: diagnosis?.failureOwner || operation.failureOwner, externalProvider: diagnosis?.externalProvider ?? operation.externalProvider, failureCode: diagnosis?.terminalFailureCode || operation.failureCode, diagnosis } };
   }
   async history(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
@@ -422,7 +424,7 @@ export class RailpackDeploymentService {
       operation.currentStage = action === "deploy" ? "runtime_secret_materialization" : "runtime_configuration";
       await this.runs.save(operation);
       const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration, provisionalRuntimeSecrets, requirementAdmission,
-        (event) => this.retainRuntimeSecretOwnership(project.id, operationId, environmentName, event));
+        (event) => this.retainRuntimeSecretOwnership(project.id, operationId, environmentName, event), operation.metadata?.destroyOwnership as DestroyOwnership | undefined);
       // A direct ECS release is deliberately limited to an already-LIVE
       // topology.  Any first deployment or topology change remains on the
       // existing Terraform bootstrap path until that path has made it LIVE.
@@ -591,6 +593,8 @@ export class RailpackDeploymentService {
         if (pendingDeletion?.metadata?.deploymentAction === "destroy") {
           throw new ConflictException("Project deletion cleanup must finish before another lifecycle operation can be admitted.");
         }
+        const operationId = randomUUID();
+        const destroyOwnership = action === "destroy" ? await this.destroyOwnershipForAdmission(manager, project, environmentName, operationId) : null;
         // Prototype-only certification fixtures predate the injected billing
         // provider; production construction requires it through Nest.
         if (action === "deploy" && this.entitlements) await this.entitlements.assertCanDeployProject(user.id, project.id, manager);
@@ -616,7 +620,6 @@ export class RailpackDeploymentService {
             throw new ServiceUnavailableException(error instanceof Error ? error.message : "Select an application service before deploying this project.");
           }
         }
-        const operationId = randomUUID();
         const attempt = await runs.count({ where: { projectId: project.id } }) + 1;
         const destroyRoute = action === "destroy"
           ? await manager.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId: project.id, environmentName } })
@@ -627,6 +630,7 @@ export class RailpackDeploymentService {
           currentStage: "dispatching", startedAt: new Date(), githubWorkflowStatus: "dispatching",
           metadata: {
             executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt,
+            ...(destroyOwnership ? { destroyOwnership } : {}),
             applicationEntryPointServiceId: configuration.applicationEntryPointServiceId,
             ...(deployAdmission ? {
               requestedDeploymentMode: deployAdmission.requestedMode,
@@ -1083,7 +1087,7 @@ export class RailpackDeploymentService {
     if (status === "failed" && operation.status !== PipelineRunStatus.FAILED) return;
     if (status === "completed") {
       if (operation.status !== PipelineRunStatus.COMPLETED) return;
-      if (action === "destroy" ? operation.metadata?.destroyEvidenceValidated !== true : operation.metadata?.releaseEvidenceVerified !== true) return;
+      if (action === "destroy" ? operation.metadata?.destroyEvidenceValidated !== true || !this.verifiedDestroyEvidence(operation, project) : operation.metadata?.releaseEvidenceVerified !== true) return;
     }
     const failedStage = status === "failed" ? String(operation.metadata?.failedStage || operation.currentStage || "release_failed") : null;
     const message = status === "failed"
@@ -1119,11 +1123,14 @@ export class RailpackDeploymentService {
     const metadata = operation.metadata || {};
     const diagnosis = currentFailureDiagnostic(operation);
     const action = (metadata.deploymentAction || "deploy") as "deploy" | "rollback" | "destroy";
+    const destroyVerificationStatus = action === "destroy" && metadata.destroyEvidenceValidated === true && this.verifiedDestroyEvidence(operation)
+      ? "verified" : action === "destroy" && operation.status === PipelineRunStatus.COMPLETED ? "pending" : undefined;
     const dispatchFailed = metadata.dispatchState === "failed" && !operation.githubWorkflowRunId;
     const failureServiceName = this.failureServiceName(metadata, operation.failureServiceId);
     return {
       id: operation.id, attempt: String(metadata.attempt || 1), retryOfOperationId: typeof metadata.retryOfOperationId === "string" ? metadata.retryOfOperationId : null,
       deploymentAction: action, status: dispatchFailed ? "dispatch_failed" : operation.status,
+      destroyVerificationStatus,
       commitSha: operation.commitSha || null, generationId: operation.generationId || null, createdAt: operation.createdAt, startedAt: operation.startedAt,
       completedAt: operation.completedAt, failedAt: operation.failedAt, workflowRunId: operation.githubWorkflowRunId || null,
       workflowUrl: typeof metadata.workflowRunUrl === "string" ? metadata.workflowRunUrl : null, workflowStatus: operation.githubWorkflowStatus || null,
@@ -1148,7 +1155,27 @@ export class RailpackDeploymentService {
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [], requirementAdmission: RequirementAdmission | null = null, ownershipRecorder?: RuntimeSecretOwnershipRecorder): Promise<RailpackRuntimeConfiguration> {
+  private async destroyOwnershipForAdmission(manager: EntityManager, project: Project, environmentName: string, operationId: string): Promise<DestroyOwnership> {
+    try {
+      const generations = await manager.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName }, take: 1001 });
+      const history = await manager.getRepository(ProjectPipelineRun).find({ where: { projectId: project.id }, take: 1001 });
+      if (generations.length > 1000 || history.length > 1000) throw new DestroyOwnershipIncompleteError();
+      const operations = history.filter((run) => run.metadata?.deploymentAction !== "destroy"
+        && ((run.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.environment_name === undefined
+          || (run.metadata?.immutableDispatchInputs as Record<string, unknown>)?.environment_name === environmentName));
+      if (!generations.length || generations.some((generation) => !generation.createdByOperationId || !operations.some((run) => run.id === generation.createdByOperationId))) throw new DestroyOwnershipIncompleteError();
+      const events = await manager.getRepository(ProjectPipelineEvent).find({ where: { projectId: project.id, source: AWS_RESOURCE_OWNERSHIP_SOURCE }, take: 1001 });
+      if (events.length > 1000) throw new DestroyOwnershipIncompleteError();
+      const role = this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN").match(/^arn:aws:iam::(\d{12}):role\/.+$/);
+      if (!role) throw new DestroyOwnershipIncompleteError();
+      return freezeDestroyOwnership({ projectId: project.id, operationId, environmentName, accountId: role[1], region: this.config.get<string>("AWS_REGION", "us-east-1"), generationIds: generations.map((generation) => generation.id).sort() }, operations, events, this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"));
+    } catch (error) {
+      if (error instanceof DestroyOwnershipIncompleteError) throw new ConflictException(error.message);
+      throw new ServiceUnavailableException("DG_DESTROY_OWNERSHIP_UNAVAILABLE: retained AWS ownership could not be read; no deletion was admitted.");
+    }
+  }
+
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [], requirementAdmission: RequirementAdmission | null = null, ownershipRecorder?: RuntimeSecretOwnershipRecorder, destroyOwnership?: DestroyOwnership): Promise<RailpackRuntimeConfiguration> {
     if (action !== "deploy") {
       if (!target?.services.length) throw new ServiceUnavailableException("The lifecycle target does not contain canonical service revisions.");
       const services = target.services.map((service) => ({
@@ -1167,7 +1194,7 @@ export class RailpackDeploymentService {
         ...(action === "rollback" ? { rollbackTaskDefinitionArn: service.taskDefinitionArn } : {}),
       })).sort((a, b) => a.serviceId.localeCompare(b.serviceId));
       const projectDeletion = action === "destroy"
-        ? { generationIds: (await this.dataSource.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName } })).map((generation) => generation.id).sort() }
+        ? destroyOwnership && { generationIds: [...destroyOwnership.manifest.scope.generationIds], ownership: destroyOwnership }
         : undefined;
       if (action === "destroy" && !projectDeletion?.generationIds.length) throw new ServiceUnavailableException("Destroy requires an exact persisted runtime generation.");
       return { schemaVersion: 3, projectId: project.id, environmentName, operationId, sourceSha, services, ...(projectDeletion ? { projectDeletion } : {}) };
@@ -1976,11 +2003,13 @@ export class RailpackDeploymentService {
     return operation;
   }
 
-  private verifiedDestroyEvidence(operation: ProjectPipelineRun, project: Project) {
+  private verifiedDestroyEvidence(operation: ProjectPipelineRun, project?: Project) {
+    if (!hasValidatedDestroyCleanupStatus(operation)) return null;
     const verification = githubActionsDestroyEvidenceFromValue(operation.metadata?.destroyVerification);
     return verification
-      && verification.projectId === project.id
-      && githubActionsDestroyEvidenceMatchesOperation(verification, operation, canonicalEnvironmentName(project))
+      && verification.projectId === operation.projectId
+      && (!project || project.id === operation.projectId)
+      && githubActionsDestroyEvidenceMatchesOperation(verification, operation, project ? canonicalEnvironmentName(project) : verification.environmentName)
       ? verification
       : null;
   }
