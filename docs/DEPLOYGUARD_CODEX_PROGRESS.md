@@ -883,3 +883,22 @@ A read-only local reproduction also confirmed the next collector defect:
 `captureDeletionManifest` accepts an explicitly prod-tagged resource into a dev
 manifest when the project tag matches. This must be fixed and regression-tested
 before the collector is integrated. No AWS query or mutation occurred.
+
+## M0.14 — reject explicit collector environment contradictions
+
+The reproduced capture defect is fixed with one pre-delegation check. A managed
+resource explicitly tagged for another or malformed environment cannot enter the
+current environment's inventory, even when its project tag or owned parent
+matches. Matching tags preserve identifier-only output. Older absent tags are not
+fabricated; capture alone still cannot grant historical completeness authority.
+
+The new regression failed on the old implementation with a missing expected
+exception: `/tmp/deployguard-m0-environment-capture-before.log`. It now passes 15
+negative combinations across owned topology, untagged children and delegated
+secret versions, plus matching-environment and unchanged existing assertions.
+Focused observer/retention/v3-consumer checks passed. The full gate exited 0:
+`/tmp/deployguard-m0-environment-capture-pre-final.log`, using fresh reviewed locks,
+full audits and Terraform 1.10.5. Final diff/security/architecture review confirmed
+two implementation/test files, no new dependency, no public workflow/certified
+byte change and no AWS execution. Production ownership transport/collection and
+the v3 producer remain unfinished; live AWS remains explicitly pending.

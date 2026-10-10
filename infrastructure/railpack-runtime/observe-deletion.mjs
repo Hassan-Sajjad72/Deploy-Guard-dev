@@ -115,6 +115,10 @@ export function captureDeletionManifest(state, scope) {
   const result = [];
   for (const r of resources) {
     const v = r.values || {};
+    // Older application resources have no Environment tag. Do not invent one
+    // or adopt a resource explicitly bound to a different/malformed environment.
+    // Check before parent delegation so a child cannot bypass this boundary.
+    if (own(v.tags) && Object.hasOwn(v.tags, "Environment") && v.tags.Environment !== scope.environmentName) throw new Error("DG_DELETION_SCOPE_INVALID");
     const delegatedParent = {
       aws_iam_role_policy: ["aws_iam_role", v.role], aws_iam_role_policy_attachment: ["aws_iam_role", v.role],
       aws_secretsmanager_secret_version: ["aws_secretsmanager_secret", v.secret_id],

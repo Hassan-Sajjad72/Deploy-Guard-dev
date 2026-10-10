@@ -1,6 +1,6 @@
 # M0 verified local report
 
-2026-10-10, Asia/Karachi. **M0 is not release-ready.** Local M0.1–M0.13 slices
+2026-10-10, Asia/Karachi. **M0 is not release-ready.** Local M0.1–M0.14 slices
 passed their checks. The owner approved the stricter v3 destroy contract and
 fail-closed historical deletion. M0.10 adds its backend guard; complete production
 ownership collection and workflow integration remain unresolved.
@@ -22,7 +22,7 @@ M0 maintenance, not unsigned future product milestones.
 | Existing test consumers | Repaired retired stylesheet/pipeline/navigation/form consumers against supported surfaces, retaining admission, ownership, identity, RBAC, failure and destroy guarantees. API mutations and browser observations are reported separately. |
 | Runtime secrets | Identifier-only intent/owned journal in existing pipeline events, before relevant writes; JSONB-stable integrity receipts survive failure/retry. Secrets are not persisted in this journal. HTTP client closes on module shutdown. |
 | Terminal artifacts | Bounded HTTP/listing/archive reads and inflation; strict ZIP/identity checks; duplicate/malformed evidence fails closed. Missing evidence and retrieval outages converge through the existing bounded retry window, never release promotion. |
-| Deletion observer | Standalone exact-ID read-only observer for 18 resource types, typed absence/state checks, bounded convergence/transient retries, denial rejection, strict scope, immutable caller snapshot and safe CLI diagnostics. AWS calls are injected in tests. |
+| Deletion observer | Standalone exact-ID read-only observer for 18 resource types, typed absence/state checks, bounded convergence/transient retries, denial rejection, strict scope, immutable caller snapshot and safe CLI diagnostics. Capture rejects explicit foreign/malformed environment tags, including delegated children. AWS calls are injected in tests. |
 | Manifest transport | Atomic, immutable, content-addressed local retention; exact receipt restoration/union; corrupt/missing/narrowed/conflicting/symlinked evidence fails closed. This is not production inventory persistence. |
 | Deletion scope | v3 requires complete frozen generation/receipt identity and matching per-resource observations. Historical v2 flags cannot authorize admission, cleanup, state projection or success notifications. No mutable-context reconstruction. |
 | Cleanup concurrency | Pending terminal cleanup blocks new lifecycle admission. Actual DB deletion holds configuration/operation locks, revalidates eligibility, and rejects active operations or generation drift before cascading project authority. |
@@ -42,7 +42,7 @@ transport is presented as a certified cloud workflow integration.
 | Check | Result / evidence type |
 | --- | --- |
 | Backend/front-end builds | PASS, local compilation/bundle |
-| Full pre-final gate after each final bounded slice | PASS; latest exit 0 in `/tmp/deployguard-m0-canonical-coverage-pre-final.log` |
+| Full pre-final gate after each final bounded slice | PASS; latest exit 0 in `/tmp/deployguard-m0-environment-capture-pre-final.log` |
 | Backend/full frontend regressions | PASS, current supported consumers and behavior |
 | PostgreSQL migrations/integration | PASS, 111 real migrations in disposable local DBs; isolation, constraints and cascades |
 | Cleanup DB contention | PASS, actual service/repositories and second PostgreSQL connection; shared admission lock and authority-row lock contention |

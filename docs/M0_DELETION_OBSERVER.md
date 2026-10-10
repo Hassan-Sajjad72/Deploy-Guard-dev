@@ -243,3 +243,12 @@ their evidence is never excluded and silently erased. Local fixtures and actual
 PostgreSQL boundary tests pass, as does the full pre-final gate. These are minimum
 coverage and lifecycle checks only. Full production ownership publication and
 workflow integration remain unresolved, and AWS verification remains pending.
+
+## M0.14 — collector environment binding
+
+Identifier capture now rejects any explicit foreign/malformed Environment tag
+before parent delegation. Matching tags retain the existing output; missing old
+tags are not backfilled or treated as proof of historical coverage. The regression
+failed before the fix and passes across owned resources and delegated children.
+Observer/transport/v3 checks and the full release gate pass locally. No public
+workflow, certified fingerprint or AWS resource was changed.

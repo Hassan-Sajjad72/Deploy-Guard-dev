@@ -148,6 +148,21 @@ assert.equal(captured.resources.length, 15);
 assert.equal(captured.resources.find((r) => r.type === "aws_ecs_service").id, manifest.resources[1].id);
 assert.doesNotMatch(JSON.stringify(captured), /DO-NOT-CAPTURE|vpc-shared|arn:aws:iam::aws/);
 validateDeletionManifest(captured);
+for (const environment of ["prod", "Dev", null, 42, ""]) {
+  for (const index of [0, 5, 16]) {
+    const foreign = structuredClone(state);
+    const rows = [...foreign.values.root_module.resources, ...foreign.values.root_module.child_modules[0].resources];
+    rows[index].values.tags = { ...rows[index].values.tags, Environment: environment };
+    assert.throws(() => captureDeletionManifest(foreign, scope), /DG_DELETION_SCOPE_INVALID/,
+      "explicit foreign/malformed environments cannot enter a project-scoped inventory, including delegated children");
+  }
+}
+const environmentBound = structuredClone(state);
+for (const row of [...environmentBound.values.root_module.resources, ...environmentBound.values.root_module.child_modules[0].resources]) {
+  if (row.mode === "managed") row.values.tags = { ...row.values.tags, Environment: scope.environmentName };
+}
+assert.deepEqual(captureDeletionManifest(environmentBound, scope), captured,
+  "matching environment tags preserve identifier-only capture; historical absent tags are not invented");
 assert.throws(() => captureDeletionManifest({ values: { root_module: {} } }, scope), /DG_DELETION_SCOPE_INVALID/);
 assert.throws(() => captureDeletionManifest({ values: { root_module: { resources: [{ mode: "managed", type: "aws_s3_bucket", values: { id: "shared", tags } }] } } }, scope), /DG_DELETION_SCOPE_INVALID/);
 assert.throws(() => captureDeletionManifest({ values: { root_module: { resources: [{ ...stateResources[0], values: { ...stateResources[0].values, tags: {} } }] } } }, scope), /DG_DELETION_SCOPE_INVALID/);
