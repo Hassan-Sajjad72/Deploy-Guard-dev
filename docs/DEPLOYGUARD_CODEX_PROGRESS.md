@@ -9,7 +9,7 @@ Updated: 2026-10-10 (Asia/Karachi).
 - Worktree: `/tmp/deployguard-m0-kGHmNq/checkout`; original worktree's deletions, untracked specification and document files were preserved.
 - Specification reviewed: owner-provided `backend/MASTER-PLAN.md`, v2.1, in the original worktree. It is untracked there and absent from the published baseline. Charter, R0/working rules, M0, dependencies, reporting and as-is sections informed this slice.
 - The specification records R0 as NOT SIGNED OFF. The owner's current message explicitly authorizes existing-system stabilization. This run treats that as authority for M0 maintenance only, not approval of the future product decisions or M1–M19 implementation.
-- Milestone: **M0 in progress; M0.1–M0.5 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
+- Milestone: **M0 in progress; M0.1–M0.6 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
 - No AWS API mutation, live workflow dispatch, Terraform apply/destroy, production DB access, dependency upgrade, schema migration or feature work was executed. GitHub reads for immutable action checks and local mocked provider tests are identified separately below.
 - Tools: Node `v22.23.2`, npm `10.9.8`, Terraform `v1.15.8`; existing backend/frontend lockfiles retained. Installed dependencies were reused through local symlinks; this was not a fresh npm-ci reproducibility certification. Workflow Terraform remains pinned to `1.10.5`, so local Terraform-version parity is unverified.
 
@@ -594,3 +594,36 @@ published workflow SHA/fingerprints and approved disposable account/region/spend
 teardown remain prerequisites for external execution. No push or AWS mutation
 occurred. Intelligence Harness and multi-client work remain gated by complete M0,
 requirements sign-off, M0S controls and tenant/resource ownership certification.
+
+## M0.6 — observer compatibility, task evidence and lifecycle quality
+
+User authorization now covers all remaining local M0 slices and verified logical
+checkpoint commits. The user explicitly deferred live AWS verification until
+account, region and exact project details are supplied. No AWS query, mutation,
+workflow dispatch or publishing was performed.
+
+- Fixed the observer's incompatible environment grammar, non-string identity
+  coercion, asynchronous caller-input mutation and raw CLI parse-error disclosure.
+- Added exact ECS task/cluster observations: actual STOPPED or exact MISSING is
+  required. Desired STOPPED, foreign/ambiguous responses and remaining tasks cannot
+  certify absence. An INACTIVE cluster alone cannot justify a child lookup error.
+- Added bounded recognized transient-error retries, preserving fail-closed denial
+  and clearing stale provider diagnostics. Kept all existing assertions.
+- Released the runtime-secret SDK client on Nest shutdown and ensured disposable
+  PostgreSQL cleanup runs even if its database teardown fails.
+
+Verification: `test:pre-final-certification` exited 0. This includes backend/frontend
+builds, supported UI/regression checks, real local PostgreSQL migrations/integration,
+Playwright full-stack tests, workflow lint (actionlint/ShellCheck), producer/consumer
+contracts, Terraform mock scenarios, lifecycle properties and architecture checks.
+GitHub-selection fixtures retain EXPECTED BLOCKER; none is AWS execution. Log:
+`/tmp/deployguard-m0-quality-pre-final.log`. Focused runtime-secret ownership tests
+also passed in `/tmp/deployguard-m0-quality-ownership.log`; after the final identity
+type guard, both independent-observer and retention tests were rerun successfully.
+
+Review: exact-ID reads only, bounded retries, no new cleanup authority, dependency,
+Terraform resource, workflow executable or fingerprint change. Full ownership
+collection and production destroy-result gating remain the next local slices;
+historical incomplete evidence must fail closed. AWS cleanup verification is
+pending, not successful. The Intelligence Harness and multi-client prerequisites
+listed above remain unchanged.

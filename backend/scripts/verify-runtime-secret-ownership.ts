@@ -87,6 +87,10 @@ async function verifyUnitBoundaries() {
   // The service wrapper must preserve platform-vs-provider failure ownership.
   const wrapper = Object.create(GithubActionsRuntimeSecretService.prototype) as any;
   wrapper.port = () => port;
+  let destroyed = 0;
+  wrapper.client = { destroy: () => { destroyed += 1; } };
+  wrapper.onModuleDestroy();
+  assert.equal(destroyed, 1, "Nest shutdown must release the runtime-secret client's HTTP connections");
   calls.length = 0;
   await assert.rejects(() => wrapper.materialize(input), RuntimeSecretOwnershipPersistenceError);
   assert.deepEqual(calls, [], "the production service must reject an absent durable recorder before provider work");
@@ -180,8 +184,8 @@ async function verifyPostgresRetention() {
     await assert.rejects(() => failing.retainRuntimeSecretOwnership(projectId, operationId, "dev", event("intent")), (error: any) => error instanceof RuntimeSecretOwnershipPersistenceError && !error.message.includes("PRIVATE_DATABASE_ERROR"));
     console.log("RUNTIME_SECRET_OWNERSHIP_POSTGRES=PASS MIGRATIONS=111 APPEND_ONLY_ROWS=1 FAILURE_AND_RETRY_RETAINED=1 AMBIGUOUS_CREATE_INTENT_ONLY=1 POST_CREATE_COMPENSATION=1 AWS_EXECUTION=MOCKED");
   } finally {
-    await database?.destroy();
-    await postgres.stop();
+    try { if (database?.isInitialized) await database.destroy(); }
+    finally { await postgres.stop(); }
   }
 }
 

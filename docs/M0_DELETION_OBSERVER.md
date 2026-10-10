@@ -15,7 +15,9 @@ It adds no dependency and changes no deployment, database, or Terraform contract
 - `observeDeletion(manifest, readOnlyAwsRunner, options)` to observe every listed
   resource independently. It checks STS account identity before resource calls,
   accepts only typed resource-specific not-found responses, validates exact ECS
-  identity and state, and bounds retries for resources that remain present.
+  identity and state, and bounds retries for resources that remain present or
+  return a recognized transient error. Authorization/identity failures do not
+  retry. The observer snapshots its input before asynchronous provider reads.
 
 Explicit read-only CLI usage with a previously retained, trusted manifest:
 
@@ -36,6 +38,7 @@ No real AWS invocation was performed during this milestone.
 | --- | --- | --- |
 | ECS clusters/services | Terraform; missing/inactive, no service running/pending tasks | PASS, mocked exact IDs; deleted-cluster errors require separate exact-cluster absence proof |
 | ECS task definitions | Terraform bootstrap; revision inactive (AWS retains history) | PASS, mocked active/inactive revisions |
+| Individual ECS tasks | Exact retained task ARN and cluster; actual STOPPED or exact MISSING, not merely desired STOPPED | PASS, mocked identity/state/residue/convergence; deleted-cluster error requires exact MISSING cluster proof |
 | ALB/listeners/target groups, security groups | Terraform; typed absence | PASS, mocked absence and residue |
 | EFS file systems/access points/mount targets | Terraform; typed absence | PASS, mocked absence and residue |
 | Managed DB/runtime Secrets Manager secrets | Terraform / DeployGuard respectively; physical absence, not merely scheduled deletion | PASS, mocked absence and scheduled-delete residue |
@@ -52,6 +55,20 @@ cannot certify deletion. Capture tests cover every current `main.tf` managed
 resource type, including explicit parent delegation and local random passwords.
 
 Run `npm --prefix backend run test:independent-aws-deletion`.
+
+### M0.6 quality review
+
+The observer accepts the same environment-name grammar as the backend, including
+digit-first names of at most 40 characters. Scope fields and resource types must
+be actual strings; implicit array/numeric coercion fails before provider access.
+Task observations reject foreign identities, contradictory failures, pagination,
+missing states and duplicate tasks. Retries clear stale diagnostics and remain
+bounded. CLI parse/validation errors reveal no manifest bytes or stack traces.
+The module is importable through Node 22 without executing the CLI.
+
+The production runtime-secret SDK client now releases its HTTP connections on
+Nest module shutdown. Its PostgreSQL regression fixture always stops its own
+container even if database teardown fails. No dependency or workflow pin changed.
 
 ## M0.4 — retained ownership evidence transport (local)
 

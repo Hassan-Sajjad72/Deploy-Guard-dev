@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { Agent } from "https";
-import { Injectable } from "@nestjs/common";
+import { Injectable, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   CreateSecretCommand,
@@ -206,7 +206,7 @@ export class RuntimeSecretMaterializer {
 }
 
 @Injectable()
-export class GithubActionsRuntimeSecretService {
+export class GithubActionsRuntimeSecretService implements OnModuleDestroy {
   private readonly client: SecretsManagerClient;
 
   constructor(config: ConfigService) {
@@ -214,6 +214,10 @@ export class GithubActionsRuntimeSecretService {
       region: config.get<string>("AWS_REGION", "us-east-1"),
       requestHandler: runtimeSecretRequestHandler(),
     });
+  }
+
+  onModuleDestroy() {
+    this.client.destroy();
   }
 
   async materialize(input: {
