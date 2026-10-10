@@ -5,6 +5,7 @@ import { NotificationSubscription } from "../notifications/notification-subscrip
 import { SnsNotificationAdapter } from "../notifications/sns-notification.adapter";
 import { canonicalEnvironmentName } from "./canonical-environment";
 import { GithubAppService } from "./github-app.service";
+import { githubActionsDestroyEvidenceFromValue, githubActionsDestroyEvidenceMatchesOperation } from "./github-actions-destroy-evidence";
 import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
 import { Project } from "./project.entity";
 
@@ -56,8 +57,10 @@ export class ProjectDeletionService {
         await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-delete:${project.id}`]);
         const current = await manager.getRepository(ProjectPipelineRun).findOne({
           where: { id: destroy.id, projectId: project.id },
+          lock: { mode: "pessimistic_write" },
         });
         if (!current) throw new ProjectDeletionIncompleteError("the verified delete operation no longer exists");
+        this.assertReady(project, current);
         await manager.query(
           `DELETE FROM audit_logs WHERE resource_id = $1 OR metadata->>'projectId' = $1`,
           [project.id],
@@ -74,7 +77,7 @@ export class ProjectDeletionService {
   }
 
   private assertReady(project: Project, destroy: ProjectPipelineRun) {
-    const evidence = destroy.metadata?.destroyVerification as Record<string, unknown> | undefined;
+    const evidence = githubActionsDestroyEvidenceFromValue(destroy.metadata?.destroyVerification);
     const finalizationEligible = destroy.status === PipelineRunStatus.COMPLETED
       || (destroy.status === PipelineRunStatus.FAILED
         && destroy.currentStage === "project_delete_cleanup"
@@ -83,18 +86,9 @@ export class ProjectDeletionService {
       destroy.projectId !== project.id
       || !finalizationEligible
       || destroy.metadata?.deploymentAction !== "destroy"
-      || evidence?.contractVersion !== "deployguard.destroy-result/v2"
-      || evidence.deploymentOperationId !== destroy.id
-      || evidence.projectId !== project.id
-      || evidence.environmentName !== canonicalEnvironmentName(project)
-      || evidence.status !== "project_delete_ready"
-      || evidence.generationResourcesRemoved !== true
-      || evidence.projectResourcesRemoved !== true
-      || evidence.terraformStateArtifactsRemoved !== true
-      || evidence.sharedPlatformUntouched !== true
-      || !destroy.generationId
-      || !Array.isArray(evidence.generationIds)
-      || !evidence.generationIds.includes(destroy.generationId)
+      || destroy.metadata?.destroyEvidenceValidated !== true
+      || !evidence
+      || !githubActionsDestroyEvidenceMatchesOperation(evidence, destroy, canonicalEnvironmentName(project))
     ) {
       throw new ProjectDeletionIncompleteError("exact project/generation cleanup evidence is incomplete");
     }

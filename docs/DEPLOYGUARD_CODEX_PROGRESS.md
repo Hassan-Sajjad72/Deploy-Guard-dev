@@ -9,7 +9,7 @@ Updated: 2026-10-10 (Asia/Karachi).
 - Worktree: `/tmp/deployguard-m0-kGHmNq/checkout`; original worktree's deletions, untracked specification and document files were preserved.
 - Specification reviewed: owner-provided `backend/MASTER-PLAN.md`, v2.1, in the original worktree. It is untracked there and absent from the published baseline. Charter, R0/working rules, M0, dependencies, reporting and as-is sections informed this slice.
 - The specification records R0 as NOT SIGNED OFF. The owner's current message explicitly authorizes existing-system stabilization. This run treats that as authority for M0 maintenance only, not approval of the future product decisions or M1–M19 implementation.
-- Milestone: **M0 in progress; M0.1–M0.7 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
+- Milestone: **M0 in progress; M0.1–M0.8 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
 - No AWS API mutation, live workflow dispatch, Terraform apply/destroy, production DB access, dependency upgrade, schema migration or feature work was executed. GitHub reads for immutable action checks and local mocked provider tests are identified separately below.
 - Tools: Node `v22.23.2`, npm `10.9.8`, Terraform `v1.15.8`; existing backend/frontend lockfiles retained. Installed dependencies were reused through local symlinks; this was not a fresh npm-ci reproducibility certification. Workflow Terraform remains pinned to `1.10.5`, so local Terraform-version parity is unverified.
 
@@ -661,3 +661,43 @@ Next: strengthen the existing deletion consumer's frozen-scope and transaction
 checks, then complete production ownership/observation gating. The existing
 destroy producer still emits optimistic v2 flags; it is not independently
 certified. Live AWS verification remains explicitly deferred by the user.
+
+## M0.8 — strict destroy identity and complete frozen generation scope
+
+Reproduced two executable consumer defects: non-string generation IDs were
+silently filtered from claims, and a claim including only LIVE could finalize
+despite a larger frozen generation set. The parser now rejects the entire
+malformed claim, enforces the existing canonical environment grammar and keeps
+the v2 public shape. One shared scope matcher reuses runtime-contract validation
+and requires exact project/environment/operation/source SHA plus the complete
+immutable `projectDeletion.generationIds` set. Final artifact validation,
+finalization, cleanup-only retry and project deletion all use it. Missing frozen
+context cannot be reconstructed from mutable configuration to authorize deletion.
+
+Project deletion revalidates the persisted operation inside its transaction,
+holding a pessimistic row lock through deletion. The new regression covers
+narrowed/widened/substituted identities, order independence, missing context,
+revoked eligibility and the requested lock. Existing lifecycle fixture inputs
+now model the actual frozen runtime input; no assertions were weakened or removed.
+This is scope/concurrency protection, **not independent AWS absence proof**.
+
+Verification: backend build; focused scope, destroy-authority, unified-lifecycle,
+dispatch-projection and architecture checks passed. Full pre-final gate exited 0
+both before and after the final lock addition; latest log:
+`/tmp/deployguard-m0-destroy-scope-lock-pre-final.log`.
+Additional direct ECS redeploy/rollback, requirements, export, billing/Stripe/
+migration, notifications and Trivy checks passed in
+`/tmp/deployguard-m0-extra-checks.log`. Root live-app runner fixture and extra
+frontend session/billing checks passed (no live execution).
+
+The root canonical-environment check initially failed with the pin-only worktree
+environment, which is not a configured product-start fixture. It passed unchanged
+against `/tmp/deployguard-m0-environment-r0YiJD`, a separate credential-free
+configuration pointing only at the owned disposable local PostgreSQL container.
+The original and worktree backend environment files were not overwritten.
+
+Next local safety slice: prevent a new admission racing a verified destroy's
+control-plane cleanup; check active operations/current generations under the
+existing configuration lock, and verify the transaction boundary with real local
+PostgreSQL. Complete production ownership collection/observation gating remains
+open. No AWS query or mutation, workflow dispatch or push occurred.

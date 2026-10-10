@@ -29,7 +29,7 @@ import { ProjectEnvironmentRoute } from "./project-environment-route.entity";
 import { materializeStableRelease } from "./stable-release-projection";
 import { GithubActionsCostEvidenceService } from "./github-actions-cost-evidence.service";
 import { DESTROY_CONFIRMATION_PHRASE } from "./destroy-confirmation";
-import { githubActionsDestroyEvidenceFromValue } from "./github-actions-destroy-evidence";
+import { githubActionsDestroyEvidenceFromValue, githubActionsDestroyEvidenceMatchesOperation } from "./github-actions-destroy-evidence";
 import { ProjectDeletionService } from "./project-deletion.service";
 import { deployguardOperationStagePresentation, githubActionsWorkflowStageRelevant, githubActionsWorkflowStepPresentation } from "./pipeline/github-actions-stage-presentation";
 import { ProjectDeployableService } from "./project-deployable-service.entity";
@@ -1621,7 +1621,7 @@ export class RailpackDeploymentService {
     if (action === "destroy") {
       if (artifact.destroyed !== true) throw new Error("The destroy result artifact does not prove deletion.");
       const destroyVerification = githubActionsDestroyEvidenceFromValue(artifact.destroyVerification);
-      if (!destroyVerification) throw new Error("The destroy result artifact does not contain exact-scope deletion evidence.");
+      if (!destroyVerification || !githubActionsDestroyEvidenceMatchesOperation(destroyVerification, operation, destroyVerification.environmentName)) throw new Error("The destroy result artifact does not contain exact frozen-generation scope evidence.");
       return { releaseArtifact: artifact, destroyed: true, destroyVerification };
     }
     if (!artifact.terraform || typeof artifact.terraform !== "object" || !Array.isArray(artifact.services) || !artifact.services.length) throw new Error("The release result artifact does not prove the complete service runtime.");
@@ -1946,11 +1946,8 @@ export class RailpackDeploymentService {
   private async finalizeVerifiedDestroy(project: Project, operation: ProjectPipelineRun, evidence: Record<string, unknown>, workflowConclusion: string) {
     const verification = githubActionsDestroyEvidenceFromValue(evidence.destroyVerification);
     if (!verification
-      || verification.deploymentOperationId !== operation.id
       || verification.projectId !== project.id
-      || verification.environmentName !== canonicalEnvironmentName(project)
-      || !operation.generationId
-      || !verification.generationIds.includes(operation.generationId)) {
+      || !githubActionsDestroyEvidenceMatchesOperation(verification, operation, canonicalEnvironmentName(project))) {
       throw new Error("Validated destroy evidence does not match the exact project, environment, and generation scope.");
     }
     operation.status = PipelineRunStatus.COMPLETED;
@@ -1978,11 +1975,8 @@ export class RailpackDeploymentService {
   private verifiedDestroyEvidence(operation: ProjectPipelineRun, project: Project) {
     const verification = githubActionsDestroyEvidenceFromValue(operation.metadata?.destroyVerification);
     return verification
-      && verification.deploymentOperationId === operation.id
       && verification.projectId === project.id
-      && verification.environmentName === canonicalEnvironmentName(project)
-      && Boolean(operation.generationId)
-      && verification.generationIds.includes(operation.generationId!)
+      && githubActionsDestroyEvidenceMatchesOperation(verification, operation, canonicalEnvironmentName(project))
       ? verification
       : null;
   }

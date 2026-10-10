@@ -6,6 +6,7 @@ import { LogSanitizerService } from "../src/observability/log-sanitizer.service"
 import { PipelineRunStatus } from "../src/projects/project-pipeline-run.entity";
 import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
+import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
 
 const projectId = "122a34a1-5d28-4f39-bb51-28379671fdb4";
 const generationId = "7fcf0947-d66e-4d79-9cfc-9879d0022548";
@@ -57,6 +58,16 @@ function destroyEvidence() {
   };
 }
 
+function destroyMetadata() {
+  return { executionEngine: "railpack", deploymentAction: "destroy", immutableDispatchInputs: { services_base64: servicesBase64({
+    schemaVersion: 3, projectId, environmentName: "dev", operationId, sourceSha: "a".repeat(40), projectDeletion: { generationIds: [generationId] },
+    services: [{ serviceId: "99999999-9999-4999-8999-999999999999", serviceName: "Web", serviceDirectory: ".", servicePort: 8080,
+      runtimeConfigRevisionId: "88888888-8888-4888-8888-888888888888", buildEnvironment: {}, buildSecretReferences: {},
+      environment: { PORT: "8080", HOST: "0.0.0.0" }, secretReferences: {}, databaseAttached: false, managedDatabase: { engine: null, aliases: [] },
+      rollbackImage: `123456789012.dkr.ecr.us-east-1.amazonaws.com/fixture@sha256:${"a".repeat(64)}` }],
+  }) } };
+}
+
 async function verifyCanonicalProjection() {
   for (const action of ["deploy", "rollback"] as const) {
     const state = authority(failed(action), "present");
@@ -101,7 +112,7 @@ async function verifyCanonicalProjection() {
 async function verifyDestroyFinalizationAndRetry() {
   const saved: any[] = [];
   const ordering: string[] = [];
-  const operation: any = { id: operationId, projectId, generationId, status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: { executionEngine: "railpack", deploymentAction: "destroy" } };
+  const operation: any = { id: operationId, projectId, generationId, commitSha: "a".repeat(40), status: PipelineRunStatus.RUNNING, currentStage: "release_evidence_pending", metadata: destroyMetadata() };
   const service: any = Object.create(RailpackDeploymentService.prototype);
   service.runs = { save: async (row: any) => { saved.push(structuredClone(row)); return row; }, findOne: async () => operation };
   service.sanitizer = new LogSanitizerService();
@@ -116,7 +127,7 @@ async function verifyDestroyFinalizationAndRetry() {
   assert.deepEqual(ordering, ["destroy_completed", "project_cleanup"], "destroy completion is published after verified AWS destruction and before notification/project cleanup");
 
   service.projectDeletion = { finalize: async () => { throw new Error("control plane cleanup unavailable"); } };
-  operation.status = PipelineRunStatus.RUNNING; operation.currentStage = "release_evidence_pending"; operation.metadata = { executionEngine: "railpack", deploymentAction: "destroy" };
+  operation.status = PipelineRunStatus.RUNNING; operation.currentStage = "release_evidence_pending"; operation.metadata = destroyMetadata();
   await service.finalizeVerifiedRelease(project, operation, { releaseArtifact: { destroyed: true }, destroyVerification: destroyEvidence() }, "success");
   assert.equal(operation.status, PipelineRunStatus.FAILED);
   assert.equal(operation.currentStage, "project_delete_cleanup");
@@ -140,7 +151,7 @@ async function verifyDestroyFinalizationAndRetry() {
 async function verifyReconcileUsesDestroyFinalizer() {
   const operation: any = {
     id: operationId, projectId, generationId, triggeredByUserId: 7, githubWorkflowRunId: "33252955775", commitSha: "a".repeat(40),
-    status: PipelineRunStatus.RUNNING, currentStage: "github_actions", metadata: { executionEngine: "railpack", deploymentAction: "destroy" },
+    status: PipelineRunStatus.RUNNING, currentStage: "github_actions", metadata: destroyMetadata(),
   };
   const service: any = Object.create(RailpackDeploymentService.prototype);
   service.projects = { findOne: async () => project };
