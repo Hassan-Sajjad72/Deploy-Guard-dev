@@ -21,4 +21,8 @@ export class AwsAccountsController {
     @Param("organizationId", ParseUUIDPipe) organizationId: string, @Param("bindingId", ParseUUIDPipe) bindingId: string) {
     return this.accounts.revoke(req.user!.id, organizationId, bindingId);
   }
+  @Post(":organizationId/aws-accounts/:bindingId/verify-identity") verifyIdentity(@Req() req: Request,
+    @Param("organizationId", ParseUUIDPipe) organizationId: string, @Param("bindingId", ParseUUIDPipe) bindingId: string) {
+    return this.accounts.verifyIdentity(req.user!.id, organizationId, bindingId);
+  }
 }

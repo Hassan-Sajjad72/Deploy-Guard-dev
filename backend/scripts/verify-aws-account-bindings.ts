@@ -16,6 +16,7 @@ import { UsersModule } from "../src/users/users.module";
 import { AuthenticatedUserMiddleware } from "../src/common/middleware/authenticated-user.middleware";
 import { AwsAccountsModule } from "../src/aws-accounts/aws-accounts.module";
 import { AwsAccountsService } from "../src/aws-accounts/aws-accounts.service";
+import { AwsBindingIdentityService } from "../src/aws-accounts/aws-binding-identity.service";
 import { AwsAccountBinding } from "../src/aws-accounts/aws-account-binding.entity";
 import { OrganizationMembership } from "../src/aws-accounts/organization-membership.entity";
 import { User, UserRole } from "../src/users/user.entity";
@@ -86,6 +87,63 @@ async function run() {
     const binding = results.find((r) => r.status === 201)!.body;
     assert.equal(binding.status, "PENDING"); assert.equal(binding.revokedAt, null);
     assert.match(binding.externalId, /^[0-9a-f-]{36}$/);
+    if (process.argv.includes("--identity")) {
+      // All provider behavior is injected into the existing runtime service,
+      // while HTTP, cookie authentication, SQL, audits and races are real local.
+      const identity = app.get(AwsBindingIdentityService);
+      let calls = 0;
+      const observation = { contractVersion: "deployguard.aws-binding-identity/v1" as const, bindingId: binding.id,
+        organizationId, accountId: binding.accountId, region: binding.region, roleArn: binding.roleArn,
+        roleId: "AROAIDENTITY", assumedRoleArn: `arn:aws:sts::${binding.accountId}:assumed-role/DeployGuard/deployguard-${binding.id}`,
+        observedAt: new Date().toISOString(), executionAuthorized: false as const };
+      identity.verify = async () => { calls++; return observation; };
+      const verifyPath = `${path}/${binding.id}/verify-identity`;
+      assert.equal((await request(verifyPath, tokens[1], {})).status, 404);
+      assert.equal(calls, 0, "foreign tenant cannot reach any provider");
+      await database.getRepository(OrganizationMembership).save({ organizationId, userId: users[2].id, role: "VIEWER", revokedAt: null });
+      assert.equal((await request(verifyPath, tokens[2], {})).status, 403); assert.equal(calls, 0);
+      const verified = await request(verifyPath, tokens[0], {});
+      assert.equal(verified.status, 201); assert.equal(verified.body.status, "PENDING");
+      assert.equal(verified.body.identityObservation.executionAuthorized, false);
+      assert.deepEqual(verified.body.pendingChecks, ["CONTROL_PLANE_TRUST", "OIDC_TRUST", "PROJECT_PERMISSION_SCOPE", "PROJECT_BINDING"]);
+      const records = await database.query("SELECT metadata FROM audit_logs WHERE resource_id = $1 AND action = 'aws_account_binding_identity_observed'", [binding.id]);
+      assert.equal(records.length, 1); assert.deepEqual(records[0].metadata.identityObservation, observation);
+      identity.verify = async () => ({ ...observation, accountId: "999999999999" });
+      assert.equal((await request(verifyPath, tokens[0], {})).status, 503, "foreign observation is rejected before audit acceptance");
+      const service = app.get(AwsAccountsService);
+      // Completion is held behind a provider seam; revoke commits while the
+      // probe is in flight, proving no DB transaction spans provider IO.
+      let entered!: () => void;
+      const ready = new Promise<void>((done) => { entered = done; });
+      let finish!: (value: typeof observation) => void;
+      const held = new Promise<typeof observation>((done) => { finish = done; });
+      identity.verify = async () => { entered(); return held; };
+      const pending = service.verifyIdentity(users[0].id, organizationId, binding.id).then(() => null, (error: unknown) => error);
+      await ready;
+      await service.revoke(users[0].id, organizationId, binding.id);
+      finish(observation);
+      const error = await pending;
+      assert.ok(error instanceof Error); assert.equal((error as { status?: number }).status, 409);
+      assert.equal((await request(verifyPath, tokens[0], {})).status, 409);
+      assert.equal((await database.query("SELECT count(*)::int AS count FROM audit_logs WHERE resource_id = $1 AND action = 'aws_account_binding_identity_observed'", [binding.id]))[0].count, 1,
+        "foreign/stale observations cannot add accepted evidence or reactivate a revoked binding");
+      const second = await service.register(users[0].id, organizationId, { ...dto, roleArn: `${dto.roleArn}-second` });
+      let enteredSecond!: () => void;
+      const readySecond = new Promise<void>((done) => { enteredSecond = done; });
+      let finishSecond!: (value: typeof observation) => void;
+      const heldSecond = new Promise<typeof observation>((done) => { finishSecond = done; });
+      identity.verify = async () => { enteredSecond(); return heldSecond; };
+      const pendingSecond = service.verifyIdentity(users[0].id, organizationId, second.id).then(() => null, (error: unknown) => error);
+      await readySecond;
+      await database.getRepository(OrganizationMembership).update({ organizationId, userId: users[0].id }, { revokedAt: new Date() });
+      finishSecond({ ...observation, bindingId: second.id, roleArn: second.roleArn });
+      const membershipError = await pendingSecond;
+      assert.ok(membershipError instanceof Error); assert.equal((membershipError as { status?: number }).status, 404);
+      assert.equal((await database.query("SELECT count(*)::int AS count FROM audit_logs WHERE resource_id = $1 AND action = 'aws_account_binding_identity_observed'", [second.id]))[0].count, 0,
+        "revoked membership must fail at the post-provider authorization boundary");
+      console.log("S02_IDENTITY_API=PASS COOKIE_SCOPE=PASS FOREIGN_PROVIDER_CALLS=0 INFLIGHT_REVOCATION=PASS PROVIDER_IO_OUTSIDE_TRANSACTION=1 AWS_EXECUTION=INJECTED_ONLY");
+      return;
+    }
     assert.equal((await request(path, tokens[0])).body.length, 1);
     assert.equal((await request(`/${created.body.id}/aws-accounts/${binding.id}/revoke`, tokens[1], {})).status, 404);
     const otherOrganization = (await request("", tokens[1])).body[0];
@@ -96,10 +154,10 @@ async function run() {
       assert.equal((await request(path, tokens[index], { ...dto, roleArn: `${dto.roleArn}-other` })).status, 403);
       assert.equal((await request(`${path}/${binding.id}/revoke`, tokens[index], {})).status, 403);
     }
-    const service = new AwsAccountsService(database, new ConfigService(config));
+    const service = new AwsAccountsService(database, new ConfigService(config), app.get(AwsBindingIdentityService));
     const admin = await database.getRepository(User).save({ name: "Platform admin", role: UserRole.ADMIN });
     await assert.rejects(() => service.list(admin.id, organizationId), { status: 404 }, "platform admin is not tenant membership");
-    await assert.rejects(() => new AwsAccountsService(database!, new ConfigService({})).register(users[0].id, organizationId, dto), { status: 503 });
+    await assert.rejects(() => new AwsAccountsService(database!, new ConfigService({}), app.get(AwsBindingIdentityService)).register(users[0].id, organizationId, dto), { status: 503 });
     // Revocation writes contend with the same membership read lock used by
     // admission. No stale session or previously loaded entity bypasses it.
     const runner = database.createQueryRunner();

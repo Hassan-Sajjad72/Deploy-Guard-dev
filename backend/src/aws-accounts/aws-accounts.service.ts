@@ -8,10 +8,12 @@ import { CreateOrganizationDto, RegisterAwsAccountDto } from "./aws-account.dto"
 import { AwsAccountBinding } from "./aws-account-binding.entity";
 import { Organization } from "./organization.entity";
 import { OrganizationMembership } from "./organization-membership.entity";
+import { AwsBindingIdentityError, AwsBindingIdentityObservation, AwsBindingIdentityService } from "./aws-binding-identity.service";
 
 @Injectable()
 export class AwsAccountsService {
-  constructor(private readonly dataSource: DataSource, private readonly config: ConfigService) {}
+  constructor(private readonly dataSource: DataSource, private readonly config: ConfigService,
+    private readonly identity: AwsBindingIdentityService) {}
 
   private async actor(manager: EntityManager, actorId: number, write: boolean) {
     const user = await manager.findOne(User, { where: { id: actorId }, lock: { mode: "pessimistic_read" } });
@@ -31,14 +33,16 @@ export class AwsAccountsService {
     return user;
   }
 
-  private async audit(manager: EntityManager, user: User, action: string, organizationId: string, binding?: AwsAccountBinding) {
+  private async audit(manager: EntityManager, user: User, action: string, organizationId: string, binding?: AwsAccountBinding,
+    identityObservation?: AwsBindingIdentityObservation) {
     // Use the existing audit entity in the same transaction; an audit write must
     // not silently fail while the privileged registration/revocation commits.
     await manager.save(AuditLog, manager.create(AuditLog, {
       actorUserId: user.id, actorEmail: user.email, actorRole: user.role,
       action, category: "security", resourceType: binding ? "aws_account_binding" : "organization",
       resourceId: binding?.id || organizationId, status: "success",
-      metadata: { organizationId, ...(binding ? { accountId: binding.accountId, region: binding.region, bindingStatus: binding.status } : {}) },
+      metadata: { organizationId, ...(binding ? { accountId: binding.accountId, region: binding.region, bindingStatus: binding.status } : {}),
+        ...(identityObservation ? { identityObservation } : {}) },
     }));
   }
 
@@ -108,6 +112,32 @@ export class AwsAccountsService {
         await this.audit(manager, user, "aws_account_binding_revoked", organizationId, binding);
       }
       return binding;
+    });
+  }
+
+  async verifyIdentity(actorId: number, organizationId: string, bindingId: string) {
+    const snapshot = await this.dataSource.transaction(async (manager) => {
+      await this.authorize(manager, actorId, organizationId, true);
+      const binding = await manager.findOne(AwsAccountBinding, { where: { id: bindingId, organizationId } });
+      if (!binding) throw new NotFoundException("AWS account binding not found");
+      if (binding.status !== "PENDING") throw new ConflictException("Revoked binding cannot be verified");
+      return binding;
+    });
+    // Provider IO never holds DB locks. Recheck live authorization and the
+    // immutable binding before accepting evidence from an in-flight probe.
+    const observation = await this.identity.verify(snapshot);
+    return this.dataSource.transaction(async (manager) => {
+      const user = await this.authorize(manager, actorId, organizationId, true);
+      const binding = await manager.findOne(AwsAccountBinding, {
+        where: { id: bindingId, organizationId }, lock: { mode: "pessimistic_write" },
+      });
+      if (!binding || binding.status !== "PENDING") throw new ConflictException("AWS binding changed during verification");
+      if (observation.bindingId !== binding.id || observation.organizationId !== organizationId
+        || observation.accountId !== binding.accountId || observation.region !== binding.region
+        || observation.roleArn !== binding.roleArn || observation.executionAuthorized !== false) throw new AwsBindingIdentityError();
+      await this.audit(manager, user, "aws_account_binding_identity_observed", organizationId, binding, observation);
+      return { status: binding.status, identityObservation: observation,
+        pendingChecks: ["CONTROL_PLANE_TRUST", "OIDC_TRUST", "PROJECT_PERMISSION_SCOPE", "PROJECT_BINDING"] };
     });
   }
 }

@@ -1147,3 +1147,44 @@ calls, raw secrets, platform-admin tenant bypass, audit best-effort acceptance o
 revoked binding reactivation. Final complete module certification runs once after
 this checkpoint; repeat only identified failed checks, if any. Existing M0
 workflow/infrastructure/frontend/lock files are unchanged; reuse their evidence.
+
+S02.2 complete module certification ran once, exit 0, at source
+`25801fc8f7b9c5f199ef1e19f424ec5088642b1b`:
+`npm --prefix backend run test:s02-binding-certification`.
+Log `/tmp/deployguard-s02-binding-certification.log`, SHA-256
+`9962553a29ad9af1518465c037d403dc3d2638a0c3a7fb35ac6c3301713131cf`.
+Backend build, signed-cookie PostgreSQL binding checks, affected runtime-secret/
+ownership-intake/destroy-scope migration consumers and architecture all PASS.
+112 migrations; 320 modules/1,201 dependencies; zero violations/legacy references.
+No entire M0 or S02.1 gate ran. Disposable local test containers were stopped and
+removed by their test harness; owner databases/resources were not modified.
+
+## S02.3 — temporary-role identity observation (2026-10-10)
+
+FR-021/FR-023/FR-025/FR-027/FR-028 bounded slice: organization-admin identity
+inspection endpoint verifies source control account, assumes the exact bound
+customer role with its server-generated external ID and a 900-second, read-only
+session policy, then correlates returned session identity with STS account/ARN/
+UserId and IAM role ARN/RoleId. SDK clients use explicit temporary credentials,
+one attempt, shared ten-second deadline and unconditional sanitized cleanup.
+No keys/tokens enter responses, logs, bindings or audit evidence. Only identifier
+observations enter the existing transactional audit. Provider IO is outside DB
+transactions; live user/membership and locked binding are revalidated afterward.
+Concurrent revocation cannot resurrect bindings or admit stale observations.
+
+Bindings remain PENDING, `executionAuthorized: false`; control-plane trust, exact
+GitHub OIDC trust, project permission scope and project binding remain required.
+No workflow/customer deployment activation, schema change, AWS mutation/provider
+execution or new dependency. The explicit local/mock label is not AWS proof.
+Official STS AssumeRole/GetCallerIdentity contracts informed duration, session
+policy and identity correlation; inspected no customer AWS account.
+
+Focused build v1 rejected unknown-response narrowing; explicit never-returning
+failure helper fixes types without assertions/casts. Build v2 PASS. Unit + real
+cookie/PostgreSQL API focused v1/v2 PASS, including malformed credentials,
+wrong/changed account/role, expiration, provider denial, ten-second transport
+timeout, all-client cleanup, redaction, foreign/provider-call exclusion and
+binding/membership revocation during provider IO. Source review preserves the
+canonical lifecycle/cleanup path and makes no trust/permission readiness claim.
+Skills: deployguard-build and codebase-design; baseline reconciliation also used
+writing-for-agents/skill-creator. Complete S02.3 module certification follows once.

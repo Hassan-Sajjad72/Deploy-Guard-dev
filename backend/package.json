@@ -35,6 +35,8 @@
     "test:s02-permission-certification": "npm run build && npm run test:aws-permission-admission && npm run test:dispatch-state-projection && npm run test:failure-ownership && npm run test:architecture-dependencies",
     "test:aws-account-bindings": "ts-node scripts/verify-aws-account-bindings.ts",
     "test:s02-binding-certification": "npm run build && npm run test:aws-account-bindings && npm run test:runtime-secret-ownership && npm run test:aws-ownership-ingestion && npm run test:destroy-scope-integrity && npm run test:architecture-dependencies",
+    "test:aws-binding-identity": "ts-node scripts/verify-aws-binding-identity.ts && ts-node scripts/verify-aws-account-bindings.ts --identity",
+    "test:s02-identity-certification": "npm run build && npm run test:aws-binding-identity && npm run test:architecture-dependencies",
     "test:product-maturity-certification": "ts-node scripts/verify-product-maturity-certification.ts",
     "test:deployable-services": "ts-node scripts/verify-deployable-services.ts",
     "test:service-port-resolution": "ts-node scripts/verify-service-port-resolution.ts",
