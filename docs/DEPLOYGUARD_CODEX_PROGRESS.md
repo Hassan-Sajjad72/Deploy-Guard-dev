@@ -9,7 +9,7 @@ Updated: 2026-10-10 (Asia/Karachi).
 - Worktree: `/tmp/deployguard-m0-kGHmNq/checkout`; original worktree's deletions, untracked specification and document files were preserved.
 - Specification reviewed: owner-provided `backend/MASTER-PLAN.md`, v2.1, in the original worktree. It is untracked there and absent from the published baseline. Charter, R0/working rules, M0, dependencies, reporting and as-is sections informed this slice.
 - The specification records R0 as NOT SIGNED OFF. The owner's current message explicitly authorizes existing-system stabilization. This run treats that as authority for M0 maintenance only, not approval of the future product decisions or M1–M19 implementation.
-- Milestone: **M0 in progress; M0.1–M0.8 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
+- Milestone: **M0 release blocked; M0.1–M0.9 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
 - No AWS API mutation, live workflow dispatch, Terraform apply/destroy, production DB access, dependency upgrade, schema migration or feature work was executed. GitHub reads for immutable action checks and local mocked provider tests are identified separately below.
 - Tools: Node `v22.23.2`, npm `10.9.8`, Terraform `v1.15.8`; existing backend/frontend lockfiles retained. Installed dependencies were reused through local symlinks; this was not a fresh npm-ci reproducibility certification. Workflow Terraform remains pinned to `1.10.5`, so local Terraform-version parity is unverified.
 
@@ -701,3 +701,49 @@ control-plane cleanup; check active operations/current generations under the
 existing configuration lock, and verify the transaction boundary with real local
 PostgreSQL. Complete production ownership collection/observation gating remains
 open. No AWS query or mutation, workflow dispatch or push occurred.
+
+## M0.9 — serialize cleanup against admission and verify real DB contention
+
+Executed the previous checkpoint's actual admission method with a pending delete
+fixture: it entered configuration admission instead of returning a cleanup
+conflict (`BASELINE_CLEANUP_CONFLICT_HTTP409=false CONFIGURATION_READS=1`).
+The current method blocks deploy/rollback/destroy admission while a terminal
+destroy remains in `project_delete_cleanup`; cleanup-only retry remains the
+existing recovery path. No AWS/provider work is authorized by this guard.
+
+The deletion transaction now reuses the canonical configuration lock used by
+admission, revalidates its locked operation, rejects any other active operation,
+and compares all current persisted generation IDs to the exact verified frozen
+set. It cannot cascade-delete a newly added generation or active attempt on stale
+cleanup authority. No provider call was moved into the locked transaction.
+
+The expanded scope test migrates a separate disposable PostgreSQL from zero,
+uses the actual service and repositories with injected notification/GitHub
+adapters, verifies real admission conflicts and generation drift, and contends
+from a second DB connection at the final deletion boundary. It observes the
+configuration lock held, a blocked authority-row update (`55P03`), and successful
+project/operation/generation cascade only after eligible scope passes. Every
+fixture connection/container is closed in `finally`. No assertion was weakened.
+
+Verification: focused build/scope/dispatch checks passed.
+`test:pre-final-certification` exited 0 after the final simplification, in
+`/tmp/deployguard-m0-cleanup-concurrency-pre-final.log`; it includes the real DB
+contention test, backend/frontend builds, full local browser/integration suites,
+workflow lint/contracts, Terraform mock matrix, lifecycle and architecture checks.
+AWS cleanup remains explicitly deferred, **UNVERIFIED**, not a blocker to local
+test execution. The detailed verified review is `docs/M0_VERIFIED_REPORT.md`.
+
+### Actual next authorization boundary
+
+**Release remains blocked by the known destroy proof gap.** The frozen generation
+set protects identity, not inventory completeness or AWS absence. The current
+public v2 workflow cannot supply complete retained ownership/observation evidence,
+and historical operations lack Terraform/ECR/direct-ECS provenance. Accepting its
+optimistic flags as independent proof is not an option.
+
+Before a compatibility-affecting producer/consumer replacement, the owner was
+asked to approve a versioned stricter destroy contract and fail-closed automatic
+deletion for historical runs until ownership is recovered. Alternatively, retain
+the current contract and keep release blocked. This is a real legacy-compatibility
+decision, not a request to run AWS. No replacement, push or workflow dispatch was
+assumed authorized. All completed local safety fixes remain checkpointed.

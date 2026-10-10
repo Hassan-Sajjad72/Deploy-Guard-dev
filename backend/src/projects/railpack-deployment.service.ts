@@ -587,6 +587,10 @@ export class RailpackDeploymentService {
         const runs = manager.getRepository(ProjectPipelineRun);
         const active = await runs.findOne({ where: { projectId: project.id, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
         if (active) return { active };
+        const pendingDeletion = await runs.findOne({ where: { projectId: project.id, currentStage: "project_delete_cleanup", status: In([PipelineRunStatus.COMPLETED, PipelineRunStatus.FAILED]) }, order: { createdAt: "DESC" } });
+        if (pendingDeletion?.metadata?.deploymentAction === "destroy") {
+          throw new ConflictException("Project deletion cleanup must finish before another lifecycle operation can be admitted.");
+        }
         // Prototype-only certification fixtures predate the injected billing
         // provider; production construction requires it through Nest.
         if (action === "deploy" && this.entitlements) await this.entitlements.assertCanDeployProject(user.id, project.id, manager);

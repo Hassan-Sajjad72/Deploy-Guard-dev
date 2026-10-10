@@ -1,8 +1,16 @@
 import "reflect-metadata";
 import { strict as assert } from "node:assert";
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
+import { PostgreSqlContainer } from "@testcontainers/postgresql";
+import { DataSource } from "typeorm";
+import AppDataSource from "../src/data-source";
+import { NotificationSubscription } from "../src/notifications/notification-subscription.entity";
 import { githubActionsDestroyEvidenceFromValue } from "../src/projects/github-actions-destroy-evidence";
 import { ProjectDeletionIncompleteError, ProjectDeletionService } from "../src/projects/project-deletion.service";
-import { PipelineRunStatus } from "../src/projects/project-pipeline-run.entity";
+import { PipelineRunStatus, ProjectPipelineRun } from "../src/projects/project-pipeline-run.entity";
+import { Project } from "../src/projects/project.entity";
+import { ProjectDeploymentGeneration } from "../src/projects/project-deployment-generation.entity";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
 
@@ -24,6 +32,24 @@ const operation = () => ({ id: operationId, projectId, generationId: generationI
   metadata: { deploymentAction: "destroy", destroyEvidenceValidated: true, immutableDispatchInputs: { services_base64: encoded }, destroyVerification: evidence() } });
 
 async function verify() {
+  const admission: any = Object.create(RailpackDeploymentService.prototype);
+  let configurationReads = 0;
+  let pendingCleanup = operation();
+  admission.captureAdmittedConfiguration = async () => { configurationReads++; throw new Error("ADMISSION_ADVANCED_DURING_CLEANUP"); };
+  admission.dataSource = { transaction: async (callback: (manager: unknown) => Promise<unknown>) => callback({
+    query: async () => undefined,
+    getRepository: (entity: unknown) => entity === Project ? { findOne: async () => project }
+      : { findOne: async ({ where }: any) => where.currentStage === "project_delete_cleanup" ? pendingCleanup : null },
+  }) };
+  for (const status of [PipelineRunStatus.COMPLETED, PipelineRunStatus.FAILED]) {
+    pendingCleanup = { ...operation(), status };
+    for (const action of ["deploy", "rollback", "destroy"]) {
+      await assert.rejects(() => admission.admitLifecycleOperation({ id: 7 }, project, action, null, null, null),
+        (error: any) => error?.getStatus?.() === 409 && /deletion cleanup/.test(error.message),
+        "verified project deletion cleanup must block another lifecycle admission");
+    }
+  }
+  assert.equal(configurationReads, 0, "cleanup conflicts must fail before configuration or provider work");
   assert.equal(githubActionsDestroyEvidenceFromValue({ ...evidence(), generationIds: [...generationIds, 7] }), null,
     "non-string generation identities cannot be silently discarded from deletion claims");
   for (const invalid of [null, [], { ...evidence(), environmentName: "Prod" }, { ...evidence(), generationIds: [generationIds[0], generationIds[0]] }]) {
@@ -59,24 +85,101 @@ async function verify() {
 
   let deletes = 0;
   let persisted = operation();
+  let activeOperations = 0;
+  let persistedGenerations = [...generationIds];
   deletion.subscriptions = { find: async () => [] };
   deletion.projects = { count: async () => 1 };
   deletion.sns = { deleteProjectResources: async () => undefined };
   deletion.githubApp = { removeManagedWorkflow: async () => { throw new Error("shared caller must be preserved"); } };
   deletion.dataSource = { transaction: async (callback: (manager: unknown) => Promise<unknown>) => callback({
     query: async () => undefined,
-    getRepository: () => ({ findOne: async (options: any) => {
+    getRepository: (entity: unknown) => entity === ProjectDeploymentGeneration ? { find: async () => persistedGenerations.map((id) => ({ id })) }
+      : { count: async () => activeOperations, findOne: async (options: any) => {
       assert.deepEqual(options.lock, { mode: "pessimistic_write" }, "persisted eligibility must remain locked until deletion commits");
       return persisted;
-    }, delete: async () => { deletes++; return { affected: 1 }; } }),
+    }, delete: async () => { deletes++; return { affected: 1 }; } },
   }) };
   persisted = { ...operation(), status: PipelineRunStatus.RUNNING };
   await assert.rejects(() => deletion.finalize(project, operation()), ProjectDeletionIncompleteError,
     "the operation must still be eligible inside the deletion transaction");
   assert.equal(deletes, 0, "a revoked/stale operation cannot erase project authority");
   persisted = operation();
+  activeOperations = 1;
+  await assert.rejects(() => deletion.finalize(project, operation()), /another lifecycle operation is active/);
+  activeOperations = 0;
+  persistedGenerations = [...generationIds, foreignGeneration];
+  await assert.rejects(() => deletion.finalize(project, operation()), /generation set changed/);
+  assert.equal(deletes, 0, "new operations/generations cannot be erased by stale cleanup authority");
+  persistedGenerations = [...generationIds];
   assert.deepEqual(await deletion.finalize(project, operation()), { projectId, status: "deleted" });
   assert.equal(deletes, 1);
-  console.log("DESTROY_SCOPE_INTEGRITY=PASS EXACT_FROZEN_GENERATIONS=1 MALFORMED_IDENTITIES_REJECTED=1 RETRY_REVALIDATED=1 TRANSACTION_REVALIDATED=1 AWS_EXECUTION=NONE ABSENCE_PROOF=NOT_CERTIFIED");
+  console.log("DESTROY_SCOPE_INTEGRITY=PASS EXACT_FROZEN_GENERATIONS=1 MALFORMED_IDENTITIES_REJECTED=1 RETRY_REVALIDATED=1 TRANSACTION_REVALIDATED=1 CLEANUP_ADMISSION_BLOCKED=1 AWS_EXECUTION=NONE ABSENCE_PROOF=NOT_CERTIFIED");
 }
-void verify().catch((error) => { console.error(error); process.exitCode = 1; });
+
+async function verifyPostgresBoundary() {
+  const postgres = await new PostgreSqlContainer("postgres:16-alpine").start();
+  let database: DataSource | null = null;
+  try {
+    const env = { ...process.env, DATABASE_HOST: postgres.getHost(), DATABASE_PORT: String(postgres.getPort()), DATABASE_USERNAME: postgres.getUsername(), DATABASE_PASSWORD: postgres.getPassword(), DATABASE_NAME: postgres.getDatabase(), DATABASE_SSL: "false", AUTH_SESSION_SECRET: "m0-deletion-disposable-local-session-secret-32-characters", TYPEORM_SYNCHRONIZE: "false", NODE_ENV: "test" };
+    const migration = spawnSync("npm", ["run", "migration:run"], { cwd: resolve(__dirname, ".."), env, encoding: "utf8", timeout: 120_000 });
+    assert.equal(migration.status, 0, "disposable deletion fixture must migrate successfully from zero");
+    database = new DataSource({ ...AppDataSource.options, host: postgres.getHost(), port: postgres.getPort(), username: postgres.getUsername(), password: postgres.getPassword(), database: postgres.getDatabase(), ssl: false, synchronize: false, migrations: [] } as any);
+    await database.initialize();
+    assert.equal((await database.query("SELECT count(*)::int AS count FROM migrations"))[0].count, 111);
+    const owner = (await database.query("INSERT INTO users (github_id,name,email,role) VALUES ('m0-deletion','Deletion fixture','deletion@example.invalid','developer') RETURNING id"))[0].id;
+    await database.query("INSERT INTO projects (id,owner_user_id,name,repository_url,repository_full_name,target_branch,status,visibility) VALUES ($1,$2,'Deletion fixture','https://github.com/fixture/repository','fixture/repository','main','configured','private')", [projectId, owner]);
+    const addGeneration = (id: string, ordinal: number) => database!.query("INSERT INTO project_deployment_generations (id,project_id,environment_name,ordinal,status,terraform_state_key) VALUES ($1,$2,'dev',$3,'retired','fixture.tfstate')", [id, projectId, ordinal]);
+    for (let index = 0; index < generationIds.length; index++) await addGeneration(generationIds[index], index + 1);
+    await database.query("INSERT INTO project_pipeline_runs (id,project_id,triggered_by_user_id,repository_url,repository_full_name,target_branch,status,current_stage,commit_sha,generation_id,metadata) VALUES ($1,$2,$3,'https://github.com/fixture/repository','fixture/repository','main','completed','project_delete_cleanup',$4,$5,$6::jsonb)", [operationId, projectId, owner, operation().commitSha, generationIds[0], JSON.stringify(operation().metadata)]);
+    const deletion = new ProjectDeletionService(database, database.getRepository(Project), database.getRepository(NotificationSubscription),
+      { removeManagedWorkflow: async () => undefined } as any, { deleteProjectResources: async () => undefined } as any);
+    const persistedProject: any = { ...project, ownerUserId: owner };
+    await addGeneration(foreignGeneration, 3);
+    await assert.rejects(() => deletion.finalize(persistedProject, operation() as any), /generation set changed/);
+    assert.equal(await database.getRepository(Project).countBy({ id: projectId }), 1);
+    await database.query("DELETE FROM project_deployment_generations WHERE id=$1", [foreignGeneration]);
+
+    const admission: any = Object.create(RailpackDeploymentService.prototype);
+    admission.dataSource = database;
+    admission.captureAdmittedConfiguration = async () => { throw new Error("No admission is allowed during cleanup."); };
+    for (const action of ["deploy", "rollback", "destroy"]) await assert.rejects(() => admission.admitLifecycleOperation({ id: owner }, persistedProject, action, null, null, null), (error: any) => error.getStatus?.() === 409);
+
+    // Contend at the last destructive transaction boundary, using a separate
+    // real PostgreSQL connection. No timing sleeps or provider writes are used.
+    const transaction = database.transaction.bind(database);
+    let contentionChecks = 0;
+    (database as any).transaction = async (callback: any) => transaction(async (manager) => {
+      const query = manager.query.bind(manager);
+      (manager as any).query = async (sql: string, parameters?: unknown[]) => {
+        if (sql.startsWith("DELETE FROM audit_logs")) {
+          const contender = database!.createQueryRunner();
+          await contender.connect();
+          try {
+            await contender.startTransaction();
+            const lock = await contender.query("SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired", [`project_configuration:${projectId}:dev`]);
+            assert.equal(lock[0].acquired, false, "cleanup must hold the same lock as lifecycle admission");
+            await contender.query("SET LOCAL lock_timeout='100ms'");
+            await assert.rejects(() => contender.query("UPDATE project_pipeline_runs SET status='running' WHERE id=$1", [operationId]), (error: any) => error.code === "55P03", "the persisted authority row must remain locked through deletion");
+            contentionChecks++;
+          } finally {
+            try { if (contender.isTransactionActive) await contender.rollbackTransaction(); }
+            finally { await contender.release(); }
+          }
+        }
+        return query(sql, parameters);
+      };
+      return callback(manager);
+    });
+    try { assert.deepEqual(await deletion.finalize(persistedProject, operation() as any), { projectId, status: "deleted" }); }
+    finally { (database as any).transaction = transaction; }
+    assert.equal(contentionChecks, 1);
+    assert.equal(await database.getRepository(Project).countBy({ id: projectId }), 0);
+    assert.equal(await database.getRepository(ProjectPipelineRun).countBy({ projectId }), 0, "verified deletion must cascade operation authority");
+    assert.equal(await database.getRepository(ProjectDeploymentGeneration).countBy({ projectId }), 0);
+    console.log("DESTROY_SCOPE_POSTGRES=PASS MIGRATIONS=111 ADMISSION_CONFLICT=1 CHANGED_GENERATIONS_BLOCKED=1 CONFIGURATION_LOCK=1 ROW_LOCK_CONTENTION=1 CASCADE=1 AWS_EXECUTION=NONE");
+  } finally {
+    try { if (database?.isInitialized) await database.destroy(); }
+    finally { await postgres.stop(); }
+  }
+}
+void (async () => { await verify(); await verifyPostgresBoundary(); })().catch((error) => { console.error(error); process.exitCode = 1; });
