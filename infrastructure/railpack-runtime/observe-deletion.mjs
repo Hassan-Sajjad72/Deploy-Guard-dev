@@ -11,6 +11,17 @@ const VERSION = "deployguard.aws-deletion-manifest/v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const own = (value) => value && typeof value === "object" && !Array.isArray(value);
 const text = (value) => typeof value === "string" && value.length > 0 && value.length <= 2048 && !/[\r\n\0]/.test(value) && !value.startsWith("-");
+const transientErrors = new Set([
+  "Throttling", "ThrottlingException", "ThrottledException", "RequestThrottled", "RequestThrottledException",
+  "RequestLimitExceeded", "TooManyRequestsException", "InternalError", "InternalFailure", "InternalServerError",
+  "InternalServerException", "ServiceUnavailable", "ServiceUnavailableException",
+]);
+// Only a single structured AWS CLI error header is provider evidence. Raw
+// transport errors, contradictory headers and arbitrary message text are not.
+const errorCode = (result) => {
+  const headers = [...String(result?.stderr || "").matchAll(/^An error occurred \(([A-Za-z0-9.]+)\) when calling the [A-Za-z0-9]+ operation:/gm)];
+  return headers.length === 1 ? headers[0][1] : null;
+};
 const absentErrors = {
   aws_security_group: ["InvalidGroup.NotFound"],
   aws_lb: ["LoadBalancerNotFound"], aws_lb_listener: ["ListenerNotFound"], aws_lb_target_group: ["TargetGroupNotFound"],
@@ -22,6 +33,7 @@ const absentErrors = {
 const commands = {
   aws_ecs_cluster: (r) => ["ecs", "describe-clusters", "--clusters", r.id],
   aws_ecs_service: (r) => ["ecs", "describe-services", "--cluster", r.parent, "--services", r.id],
+  aws_ecs_task: (r) => ["ecs", "describe-tasks", "--cluster", r.parent, "--tasks", r.id],
   aws_ecs_task_definition: (r) => ["ecs", "describe-task-definition", "--task-definition", r.id],
   aws_security_group: (r) => ["ec2", "describe-security-groups", "--group-ids", r.id],
   aws_lb: (r) => ["elbv2", "describe-load-balancers", "--load-balancer-arns", r.id],
@@ -40,11 +52,13 @@ const commands = {
 };
 
 function scopeValid(scope) {
-  if (!own(scope) || !UUID.test(scope.projectId) || !UUID.test(scope.operationId)
-    || !/^[a-z][a-z0-9_-]{0,63}$/.test(scope.environmentName)
-    || !/^\d{12}$/.test(scope.accountId) || !/^[a-z]{2}(?:-[a-z]+)+-\d$/.test(scope.region)
+  if (!own(scope) || typeof scope.projectId !== "string" || !UUID.test(scope.projectId)
+    || typeof scope.operationId !== "string" || !UUID.test(scope.operationId)
+    || typeof scope.environmentName !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(scope.environmentName)
+    || typeof scope.accountId !== "string" || !/^\d{12}$/.test(scope.accountId)
+    || typeof scope.region !== "string" || !/^[a-z]{2}(?:-[a-z]+)+-\d$/.test(scope.region)
     || !Array.isArray(scope.generationIds) || !scope.generationIds.length
-    || scope.generationIds.some((id) => !UUID.test(id)) || new Set(scope.generationIds).size !== scope.generationIds.length
+    || scope.generationIds.some((id) => typeof id !== "string" || !UUID.test(id)) || new Set(scope.generationIds).size !== scope.generationIds.length
     || Object.keys(scope).some((key) => !["projectId", "operationId", "generationIds", "environmentName", "accountId", "region"].includes(key))) throw new Error("DG_DELETION_SCOPE_INVALID");
 }
 
@@ -54,14 +68,24 @@ export function validateDeletionManifest(manifest) {
     || manifest.contractVersion !== VERSION || !Array.isArray(manifest.resources) || !manifest.resources.length
     || manifest.resources.length > 1000) throw new Error("DG_DELETION_SCOPE_INVALID");
   const seen = new Set();
+  const seenTasks = new Set();
   for (const resource of manifest.resources) {
-    if (!own(resource) || !Object.hasOwn(commands, resource.type) || !text(resource.id)
+    if (!own(resource) || typeof resource.type !== "string" || !Object.hasOwn(commands, resource.type) || !text(resource.id)
       || (resource.parent !== undefined && !text(resource.parent))
       || Object.keys(resource).some((key) => !["type", "id", "parent"].includes(key))) throw new Error("DG_DELETION_SCOPE_INVALID");
     const identity = `${resource.type}:${resource.parent || ""}:${resource.id}`;
     if (seen.has(identity)) throw new Error("DG_DELETION_SCOPE_INVALID");
     seen.add(identity);
-    if (["aws_ecs_service", "s3_state_object"].includes(resource.type) && !resource.parent) throw new Error("DG_DELETION_SCOPE_INVALID");
+    if (["aws_ecs_service", "aws_ecs_task", "s3_state_object"].includes(resource.type) && !resource.parent) throw new Error("DG_DELETION_SCOPE_INVALID");
+    if (resource.type === "aws_ecs_task") {
+      const prefix = `arn:aws:ecs:${manifest.scope.region}:${manifest.scope.accountId}:`;
+      const cluster = resource.parent.startsWith(prefix) && resource.parent.slice(prefix.length).match(/^cluster\/([A-Za-z0-9_-]{1,255})$/);
+      // Both AWS task ARN formats identify a single task. For the long format,
+      // its cluster name must agree with the separately supplied exact parent.
+      const task = resource.id.startsWith(prefix) && resource.id.slice(prefix.length).match(/^task\/(?:([A-Za-z0-9_-]{1,255})\/)?([a-f0-9]{32})$/);
+      if (!cluster || !task || (task[1] && task[1] !== cluster[1]) || seenTasks.has(resource.id)) throw new Error("DG_DELETION_SCOPE_INVALID");
+      seenTasks.add(resource.id);
+    }
     for (const identifier of [resource.id, resource.parent].filter(Boolean)) {
       if (identifier.startsWith("arn:")) {
         const parts = identifier.split(":");
@@ -100,15 +124,26 @@ export function captureDeletionManifest(state, scope) {
     if (!Object.hasOwn(commands, r.type)) throw new Error("DG_DELETION_SCOPE_INVALID");
     const parent = { aws_lb_listener: v.load_balancer_arn, aws_efs_access_point: v.file_system_id, aws_efs_mount_target: v.file_system_id }[r.type];
     if (!owned.has(v.id) && !owned.has(v.arn) && !(parent && owned.has(parent))) throw new Error("DG_DELETION_SCOPE_INVALID");
-    if (r.type === "aws_ecs_service" && !parentOwned("aws_ecs_cluster", v.cluster)) throw new Error("DG_DELETION_SCOPE_INVALID");
-    const id = ["aws_lb", "aws_lb_listener", "aws_lb_target_group", "aws_ecs_task_definition", "aws_secretsmanager_secret"].includes(r.type) ? v.arn : r.type === "aws_cloudwatch_log_group" || r.type === "aws_iam_role" ? v.name : v.id;
-    result.push({ type: r.type, id, ...(r.type === "aws_ecs_service" ? { parent: v.cluster } : {}) });
+    if (["aws_ecs_service", "aws_ecs_task"].includes(r.type) && !parentOwned("aws_ecs_cluster", v.cluster)) throw new Error("DG_DELETION_SCOPE_INVALID");
+    const id = ["aws_lb", "aws_lb_listener", "aws_lb_target_group", "aws_ecs_task", "aws_ecs_task_definition", "aws_secretsmanager_secret"].includes(r.type) ? v.arn : r.type === "aws_cloudwatch_log_group" || r.type === "aws_iam_role" ? v.name : v.id;
+    result.push({ type: r.type, id, ...(["aws_ecs_service", "aws_ecs_task"].includes(r.type) ? { parent: v.cluster } : {}) });
   }
   return validateDeletionManifest({ contractVersion: VERSION, scope: structuredClone(scope), resources: result });
 }
 
 function successfulObservation(r, payload) {
   if (!own(payload) || payload.NextToken || payload.nextToken) return "UNVERIFIED";
+  if (r.type === "aws_ecs_task") {
+    if (!Array.isArray(payload.tasks) || !Array.isArray(payload.failures)) return "UNVERIFIED";
+    if (payload.tasks.length === 1 && payload.failures.length === 0) {
+      const task = payload.tasks[0];
+      if (!own(task) || task.taskArn !== r.id || task.clusterArn !== r.parent
+        || !["PROVISIONING", "PENDING", "ACTIVATING", "RUNNING", "DEACTIVATING", "STOPPING", "DEPROVISIONING", "STOPPED"].includes(task.lastStatus)) return "UNVERIFIED";
+      return task.lastStatus === "STOPPED" ? "PASS" : "CONFIRMED DEFECT";
+    }
+    return payload.tasks.length === 0 && payload.failures.length === 1 && own(payload.failures[0])
+      && payload.failures[0].arn === r.id && payload.failures[0].reason === "MISSING" ? "PASS" : "UNVERIFIED";
+  }
   if (r.type === "aws_cloudwatch_log_group") {
     if (!Array.isArray(payload.logGroups) || payload.logGroups.some((g) => !text(g.logGroupName))) return "UNVERIFIED";
     return payload.logGroups.some((g) => g.logGroupName === r.id) ? "CONFIRMED DEFECT" : "PASS";
@@ -151,14 +186,22 @@ function successfulObservation(r, payload) {
 
 export async function observeDeletion(manifest, run, options = {}) {
   validateDeletionManifest(manifest); // Reject invalid scope before ANY AWS call.
+  manifest = structuredClone(manifest); // Freeze caller authority before the first await.
   const attempts = options.attempts ?? 3;
   const delayMs = options.delayMs ?? 1000;
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10 || !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 5000) throw new Error("DG_DELETION_SCOPE_INVALID");
   const invoke = (args) => run([...args, "--region", manifest.scope.region, "--output", "json", "--no-cli-pager"]);
   const observations = [];
   try {
-    const identity = await invoke(["sts", "get-caller-identity"]);
-    if (identity.status !== 0 || JSON.parse(identity.stdout).Account !== manifest.scope.accountId) throw new Error();
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const identity = await invoke(["sts", "get-caller-identity"]);
+      if (identity.status === 0) {
+        if (JSON.parse(identity.stdout).Account !== manifest.scope.accountId) throw new Error();
+        break;
+      }
+      if (attempt === attempts || !transientErrors.has(errorCode(identity))) throw new Error();
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   } catch {
     return { contractVersion: "deployguard.aws-deletion-observation/v1", scope: manifest.scope, status: "UNVERIFIED", code: "DG_DELETION_ACCOUNT_UNVERIFIED", observations };
   }
@@ -168,26 +211,34 @@ export async function observeDeletion(manifest, run, options = {}) {
     let status = "UNVERIFIED";
     let providerCode = null;
     let observedAttempts = 0;
+    let clusterAbsent = false;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       observedAttempts = attempt;
+      providerCode = null;
+      let transient = false;
       try {
         const result = await invoke(commands[resource.type](resource));
-        if (result.status === 0) status = successfulObservation(resource, JSON.parse(result.stdout));
+        if (result.status === 0) {
+          const payload = JSON.parse(result.stdout);
+          status = successfulObservation(resource, payload);
+          clusterAbsent = resource.type === "aws_ecs_cluster" && status === "PASS" && payload.clusters.length === 0;
+        }
         else {
           // Match the structured AWS CLI error header, not arbitrary text that
           // might contain both AccessDenied and a misleading NotFound string.
-          providerCode = String(result.stderr || "").match(/^An error occurred \(([A-Za-z0-9.]+)\) when calling the [A-Za-z0-9]+ operation:/m)?.[1] || null;
+          providerCode = errorCode(result);
+          transient = transientErrors.has(providerCode);
           status = providerCode && absentErrors[resource.type]?.includes(providerCode) ? "PASS" : "UNVERIFIED";
-          // AWS cannot describe a service after its cluster has been removed.
+          // AWS cannot describe a service/task after its cluster has been removed.
           // Accept this only with independent absence proof for that exact
           // cluster in the same pass, never on the exception alone.
-          if (resource.type === "aws_ecs_service" && providerCode === "ClusterNotFoundException" && absentClusters.has(resource.parent)) status = "PASS";
+          if (["aws_ecs_service", "aws_ecs_task"].includes(resource.type) && providerCode === "ClusterNotFoundException" && absentClusters.has(resource.parent)) status = "PASS";
         }
       } catch { status = "UNVERIFIED"; }
-      if (status !== "CONFIRMED DEFECT" || attempt === attempts) break;
+      if ((status !== "CONFIRMED DEFECT" && !transient) || attempt === attempts) break;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
-    if (resource.type === "aws_ecs_cluster" && status === "PASS") absentClusters.add(resource.id);
+    if (clusterAbsent) absentClusters.add(resource.id);
     observations.push({ ...resource, status, providerCode, attempts: observedAttempts });
   }
   const status = observations.some((r) => r.status === "UNVERIFIED") ? "UNVERIFIED" : observations.every((r) => r.status === "PASS") ? "PASS" : "CONFIRMED DEFECT";
@@ -199,18 +250,27 @@ export async function observeDeletion(manifest, run, options = {}) {
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+async function main() {
   // Explicit read-only invocation, separate from the destructive workflow.
   if (process.argv.length !== 4 || process.argv[2] !== "--manifest") throw new Error("Usage: node observe-deletion.mjs --manifest retained-manifest.json");
   const manifest = JSON.parse(readFileSync(process.argv[3], "utf8"));
   const exec = promisify(execFile);
   const run = async (args) => {
     try {
-      const result = await exec("aws", args, { timeout: 30000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env, AWS_PAGER: "", AWS_MAX_ATTEMPTS: "2" } });
+      const result = await exec("aws", args, { timeout: 30000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env, AWS_PAGER: "", AWS_MAX_ATTEMPTS: "1" } });
       return { status: 0, stdout: result.stdout, stderr: result.stderr };
     } catch (error) { return { status: 1, stdout: "", stderr: error.stderr || "" }; }
   };
   const report = await observeDeletion(manifest, run);
   process.stdout.write(`${JSON.stringify(report)}\n`);
   if (report.status !== "PASS") process.exitCode = 1;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(() => {
+    // Parsing/validation errors can contain raw manifest bytes or file paths.
+    // The CLI exposes only the bounded contract failure, never a stack trace.
+    process.stderr.write("DG_DELETION_SCOPE_INVALID\n");
+    process.exitCode = 1;
+  });
 }
