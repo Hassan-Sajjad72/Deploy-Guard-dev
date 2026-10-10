@@ -1081,3 +1081,18 @@ documentation; simulation is not live authorization proof. Source checkpoint is
 focused-verified; exactly one module certification follows after integration.
 Skills actually used: deployguard-build, aws-infrastructure-auditor, Matt Pocock
 codebase-design, plugin-management (inventory only), writing-for-agents (approval/policy).
+
+S02.1 module certification completed **once**, exit 0, at
+`7f748ac1afe964ed6bd7a917cab2ad1aa38dee29`:
+`npm --prefix backend run test:s02-permission-certification`.
+Log `/tmp/deployguard-s02-permission-certification.log`, SHA-256
+`73163b3263f0855e1930c14ae6539effc8cbddf7ed0640131aff87bc937bccd7`.
+Build, all new permission/identity/denial/resource/pagination/abort/sanitization
+cases, existing dispatch integration and failure-ownership regressions pass.
+Architecture: 313 modules/1,178 dependencies, zero violations/legacy references.
+M0 workflow/frontend/infrastructure/locks are unchanged; their verified evidence
+is reused, not recertified. No critical failure remains in this bounded module.
+Scope remains PARTIAL for full FR-023 and S02: customer binding, cross-account
+credentials, exact trust/region/revocation, client isolation and live proof are not
+claimed implemented by this permission slice. Next action is the S02 binding and
+temporary credential scope module; no additional baseline approval is requested.
