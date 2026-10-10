@@ -53,13 +53,66 @@ resource type, including explicit parent delegation and local random passwords.
 
 Run `npm --prefix backend run test:independent-aws-deletion`.
 
+## M0.4 — retained ownership evidence transport (local)
+
+`retain-deletion-manifest.mjs` now stores validated identifier manifests as
+immutable, content-addressed local snapshots. It publishes complete bytes
+atomically, synchronizes them to disk, and returns a SHA-256 receipt. Repeating
+the same manifest with reordered resources is idempotent; corrupt same-name
+objects are never overwritten. Unexpected root fields (including raw state or
+secret payloads) are rejected by the shared manifest validator.
+
+The caller must retain **every receipt** in its authoritative durable operation
+history before destructive work. Restoration takes exact receipts rather than
+discovering files/tags, verifies each object's hash and schema, and unions all
+resources. It allows a new retry operation ID but requires unchanged project,
+environment, account and region, and an exact union of recorded generation IDs.
+Lost/corrupt objects, generation narrowing/widening, conflicting resource parents,
+or symlinked stores/objects fail closed. Partially removed or empty current
+Terraform state is not an input to restoration and cannot erase prior evidence.
+
+Local API:
+
+```js
+const receipt = retainDeletionManifest(evidenceDirectory, ownedManifest);
+// Persist receipt durably in the canonical operation history before mutation.
+const retained = restoreDeletionManifest(evidenceDirectory, retryScope, allReceipts);
+const observation = await observeDeletion(retained, readOnlyAwsRunner);
+```
+
+The transport CLI can retain a previously captured manifest or restore one from
+a request containing `{scope, receipts}`:
+
+```sh
+node infrastructure/railpack-runtime/retain-deletion-manifest.mjs --retain owned-manifest.json --directory retained-evidence
+node infrastructure/railpack-runtime/retain-deletion-manifest.mjs --restore retry-request.json --directory retained-evidence
+```
+
+Both print identifier-only JSON. Restore output is compatible with the existing
+observer's `--manifest` input. The retention CLI performs local file writes only;
+it never calls AWS, Terraform, GitHub, or a control-plane finalizer.
+
+This is a tested evidence transport, **not yet production persistence**. Local
+hash integrity is not an authenticated ownership claim, and caller-supplied
+receipts do not prove inventory completeness. Tests supply direct/historical
+task revisions, ECR, runtime secrets, and exact state/lock keys explicitly;
+production collectors and durable receipt retention are still required. No
+workflow currently calls this component, no backend deletion rule changed, and
+no new destroy-result contract or cloud executable fingerprint was certified.
+
+`test:independent-aws-deletion` runs both observer and retention checks and is now
+included in `test:pre-final-certification` so the new regressions cannot be
+omitted from that gate. Tests cover real temporary filesystem operations and
+concurrent CLI publication; AWS observation remains injected/mocked.
+
 ## Remaining release blocker / next bounded integration
 
 The existing destroy workflow still constructs its v2 success booleans without
 this observer. Do not treat that artifact as independent AWS deletion proof.
 Before wiring or publishing a changed executable workflow:
 
-1. Persist complete immutable pre-destroy ownership manifests, including failed
+1. Integrate the local retention transport with authoritative durable operation
+   history and complete immutable pre-destroy ownership manifests, including failed
    creates, every generation, externally registered active/historical ECS
    revisions, runtime secrets, ECR repositories, and exact state/lock keys.
    Terraform state alone does not describe all direct ECS release revisions or

@@ -50,7 +50,8 @@ function scopeValid(scope) {
 
 export function validateDeletionManifest(manifest) {
   scopeValid(manifest?.scope);
-  if (manifest.contractVersion !== VERSION || !Array.isArray(manifest.resources) || !manifest.resources.length
+  if (!own(manifest) || Object.keys(manifest).some((key) => !["contractVersion", "scope", "resources"].includes(key))
+    || manifest.contractVersion !== VERSION || !Array.isArray(manifest.resources) || !manifest.resources.length
     || manifest.resources.length > 1000) throw new Error("DG_DELETION_SCOPE_INVALID");
   const seen = new Set();
   for (const resource of manifest.resources) {

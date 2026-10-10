@@ -9,7 +9,7 @@ Updated: 2026-10-10 (Asia/Karachi).
 - Worktree: `/tmp/deployguard-m0-kGHmNq/checkout`; original worktree's deletions, untracked specification and document files were preserved.
 - Specification reviewed: owner-provided `backend/MASTER-PLAN.md`, v2.1, in the original worktree. It is untracked there and absent from the published baseline. Charter, R0/working rules, M0, dependencies, reporting and as-is sections informed this slice.
 - The specification records R0 as NOT SIGNED OFF. The owner's current message explicitly authorizes existing-system stabilization. This run treats that as authority for M0 maintenance only, not approval of the future product decisions or M1–M19 implementation.
-- Milestone: **M0 in progress; M0.1 workflow-run identity locally verified**. Full M0 completion remains blocked by the defects and certification gaps below.
+- Milestone: **M0 in progress; M0.1–M0.4 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
 - No AWS API mutation, live workflow dispatch, Terraform apply/destroy, production DB access, dependency upgrade, schema migration or feature work was executed. GitHub reads for immutable action checks and local mocked provider tests are identified separately below.
 - Tools: Node `v22.23.2`, npm `10.9.8`, Terraform `v1.15.8`; existing backend/frontend lockfiles retained. Installed dependencies were reused through local symlinks; this was not a fresh npm-ci reproducibility certification. Workflow Terraform remains pinned to `1.10.5`, so local Terraform-version parity is unverified.
 
@@ -315,3 +315,134 @@ running services were not changed.
 - Intelligence Harness and multi-client implementation remain gated. Green local
   consumers satisfy one prerequisite, not durable evidence completeness,
   tenant-boundary proof, release publication, or real AWS lifecycle certification.
+
+## M0.4 — immutable deletion-manifest retention transport (2026-10-10)
+
+Status: **PASS — local transport and regression gates; production integration
+and AWS cleanup UNVERIFIED**.
+
+Baseline: `8d9f9525db7aeb6bce46e69a50390af620605050` on the existing isolated
+M0 branch/worktree. Read-only `git ls-remote origin refs/heads/version1`
+reconfirmed `3ac3d951f9a339a177a627acd306fc54bc6b8ac1`. Original `version1`
+and its pre-existing file deletions/untracked documents remain untouched.
+
+This is one bounded **local evidence-retention** slice, not complete M0, not
+production cleanup integration, and not new product work. The infrastructure
+auditor and lifecycle certifier skills required tracing actual Terraform,
+direct-ECS, immutable generation and finalization ownership before implementation.
+Their architecture reference is stale (test1); current source remains schema v3 /
+release-result v5 and destroy-result v2, with nine dispatched executable hashes.
+
+### Changes and reproduced boundaries
+
+- Added `infrastructure/railpack-runtime/retain-deletion-manifest.mjs`: private
+  local identifier snapshot storage, atomic content-addressed publication,
+  synchronized files/directories, immutable hash receipts and exact-receipt
+  restoration. Reordered identical captures are idempotent and concurrent first
+  publication leaves one complete snapshot. A new retry operation can retain
+  prior evidence without narrowing project/environment/account/region or the
+  recorded generation/resource set. No directory/tag discovery selects authority.
+- Restoring a partial Terraform snapshot would lose three previously captured
+  resources in the executed fixture. Restoration now unions the original and
+  partial snapshots; explicitly supplied historical/direct task definitions,
+  ECR, runtime secrets, and exact state/lock keys are retained too. Empty current
+  state is never substituted for a prior manifest. Missing/corrupt receipt objects,
+  conflicting resource parents, scope changes and unsafe/symlinked stores fail
+  closed. Receipts must themselves be retained in canonical durable history.
+- Reproduced a validator defect: an unexpected `rawState` object was accepted
+  by `validateDeletionManifest` (expected rejection failed). Root-level unknown
+  fields are now rejected, preserving the identifier-only schema and preventing
+  raw-state payloads from entering this transport. No existing assertion relaxed.
+- Added real-filesystem/concurrent-CLI regression coverage in
+  `backend/scripts/verify-deletion-manifest-retention.mjs`. Extended
+  `test:independent-aws-deletion` to run it and included that check in the
+  pre-final aggregate. The restored resource set is exercised through the existing
+  observer with mocked AWS responses. No new dependency/schema/API/UI feature.
+- Updated `docs/M0_DELETION_OBSERVER.md` with local APIs, CLI and precise limits.
+
+The reusable workflow, Terraform resources, backend deletion parser/finalizer,
+caller pin and every certified cloud executable remain unchanged. No code yet
+calls this transport from an executing lifecycle. Snapshot hashes detect altered
+bytes; they do **not** authenticate ownership or prove all receipts/resources
+were collected. The production completeness gap remains explicit.
+
+### Verification
+
+`npm --prefix backend run test:independent-aws-deletion`: **PASS**.
+
+```text
+INDEPENDENT_AWS_DELETION=PASS MOCKED_AWS_ONLY=1 READ_ONLY=1 RESOURCE_FAMILIES=17 STATE_AND_LOCK=1 RESIDUE_AND_ACCESS_FAILURE_FAIL_CLOSED=1
+DELETION_MANIFEST_RETENTION=PASS LOCAL_FILES_ONLY=1 PARTIAL_RETRY_UNION=1 IMMUTABLE_HASH_RECEIPTS=1 MISSING_OR_CORRUPT_FAIL_CLOSED=1 MOCKED_OBSERVER_HANDOFF=1
+```
+
+Direct ECS redeploy and rollback fixture checks: **PASS**; no ECS execution.
+Supplementary deployment requirements, Terraform export, billing subscriptions,
+Stripe, notifications, Trivy, frontend session refresh/billing UI and live-app
+runner fixture checks: **PASS**. The runner check is synthetic, not live-app
+certification. All nine dispatched file fingerprints still match the unchanged
+certified pin. JavaScript syntax checks and `git diff --check`: **PASS**.
+
+Initial pre-final run stopped at multi-user PostgreSQL authentication because the
+previous milestone's disposable fixture had been removed. The separate canonical
+environment check also required explicit canonical AWS/SNS keys. Neither check
+was disabled. A new labelled localhost-only disposable PostgreSQL container and
+an ignored credential-free local environment supplied those prerequisites; AWS
+credential fields were explicitly empty and notifications disabled. Existing
+PostgreSQL/monitoring containers and the original environment were not changed.
+The complete chain was rerun with these explicit local prerequisites:
+`npm --prefix backend run test:pre-final-certification`: **PASS, exit 0**.
+Evidence: `/tmp/deployguard-m0-retention-pre-final-confirm.log`. The initial
+failed run is retained as `/tmp/deployguard-m0-retention-pre-final.log`.
+
+```text
+POSTGRES_MIGRATIONS_FROM_ZERO=PASS COUNT=111
+7 passed (23.0s)
+PLAYWRIGHT_FULL_STACK=PASS API_MUTATIONS=9 BROWSER_SURFACES=5 GITHUB_SELECTION=EXPECTED_BLOCKER
+POSTGRES_INTEGRATION=PASS MIGRATIONS_FROM_ZERO=1 SERVICE_ENV_ISOLATION=1 DATABASE_ATTACHMENT=1 CASCADE=1 LIVE_UNIQUENESS=1
+GITHUB_WORKFLOW_LINT=PASS WORKFLOWS=1 ACTIONLINT=1.7.12 SHELLCHECK=0.11.0
+LIFECYCLE_PROPERTY_TESTS=PASS SEED=20260831 RUNS=1000 RUNTIME_RUNS=250
+UUID_ADMISSION_CONTRACT=PASS ACTIVE_CONTROLLERS=5
+```
+
+Backend/frontend builds, all full-local consumers, actual non-root Docker fallback
+build/security checks, real local PostgreSQL integration, seven browser tests,
+API contracts, workflow lint, seven mocked Terraform matrix tests, lifecycle
+properties, architecture boundaries (308 modules / 1140 dependencies, zero
+violations), configuration admission and the new retention gate all passed.
+No failing assertion was removed or security requirement weakened. Supplemental
+billing migration passed after all 111 migrations on the separate disposable
+fixture; evidence: `/tmp/deployguard-m0-retention-migrations.log`. Local Terraform
+remains 1.15.8 versus workflow pin 1.10.5; no version-parity claim is made.
+The exact labelled `deployguard-m0-retention-20261010` fixture container and its
+own anonymous volume were removed after verification; all existing containers
+were preserved. The ignored worktree environment was restored to its original
+credential-free workflow pin. Test-owned retention directories were cleaned up.
+
+### Ownership / lifecycle classification
+
+| Resource family | Canonical owner | Expected action | Observed result / cleanup evidence | Status |
+| --- | --- | --- | --- | --- |
+| Terraform ECS/ALB/network/IAM/log/DB/EFS/Cloud Map resources | Exact owned Terraform state | Retain identifiers before mutation; restore through partial retry | Real local snapshot union and observer fixture checks; no AWS queries | PASS locally; AWS UNVERIFIED |
+| Direct/historical ECS definitions, ECR, runtime secrets | Immutable revisions / validated creation evidence | Include every exact external identifier | Explicit synthetic manifest inputs preserved; production collection not integrated | PASS transport; completeness UNVERIFIED |
+| State and lock objects | Exact project/environment backend keys | Retain/check exact keys; exclude shared bucket | Both keys retained and mock-observed; bucket never selected | PASS locally; AWS UNVERIFIED |
+
+| Action | Admission identity | Workflow/result contract | Expected / actual transition | External execution | Status |
+| --- | --- | --- | --- | --- | --- |
+| Destroy retry | New operation, fixed owner, exact recorded generation union | Existing destroy-result/v2 unchanged | Restore all trusted receipts; missing/corrupt objects block restoration | Local filesystem + mocked observer only; finalizer not changed | PASS retention; cleanup UNVERIFIED |
+| Deploy/redeploy/rollback | Existing immutable source/service/runtime identities | Existing release-result/v5 and fingerprints unchanged | Existing regression and direct-ECS fixtures retained | No GitHub dispatch or AWS execution | PASS local contracts; AWS UNVERIFIED |
+
+### Unresolved / next bounded slice
+
+Integrate exact ownership capture and receipt durability into the canonical
+operation history for every creation attempt, including failed deployment and
+direct-ECS registration, not just successful LIVE releases. Prove the complete
+historical generation/service set, owned secrets/ECR, bootstrap and direct task
+revisions, runtime tasks and state/lock scope are included. Then separately gate
+destroy finalization on complete independent observations. No optimistic v2
+success flags should be treated as cloud evidence in the interim.
+
+AWS_E2E_STATUS: **UNVERIFIED**. Real GitHub selection remains an expected fixture
+blocker. Publishing a changed workflow/certified commit and an approved disposable
+AWS exercise remain prerequisites; no push, cloud mutation or destructive AWS
+operation occurred. Intelligence Harness and multi-client work remain gated by
+completed M0, approved requirements, M0S safety and tenant/ownership evidence.
