@@ -27,7 +27,7 @@ export function ownershipSha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 }
 
-function assertScope(value: unknown): asserts value is OwnershipScope & Record<string, any> {
+export function assertOwnershipScope(value: unknown): asserts value is OwnershipScope & Record<string, any> {
   if (!object(value) || !uuid(value.projectId) || !uuid(value.operationId)
     || typeof value.environmentName !== "string" || !isCanonicalEnvironmentName(value.environmentName)
     || typeof value.accountId !== "string" || !/^\d{12}$/.test(value.accountId)
@@ -68,7 +68,7 @@ export function assertOwnedAwsResources(value: unknown, scope: OwnershipScope): 
 
 export function assertDeletionManifest(value: unknown): asserts value is DeletionManifest {
   if (!object(value) || !keys(value, ["contractVersion", "scope", "resources"]) || value.contractVersion !== "deployguard.aws-deletion-manifest/v1") fail();
-  assertScope(value.scope);
+  assertOwnershipScope(value.scope);
   if (!Array.isArray(value.scope.generationIds) || !value.scope.generationIds.length || value.scope.generationIds.length > 1000
     || value.scope.generationIds.some((id: unknown) => !uuid(id)) || new Set(value.scope.generationIds).size !== value.scope.generationIds.length) fail();
   assertOwnedAwsResources(value.resources, value.scope);
@@ -78,7 +78,7 @@ export function assertDeletionManifest(value: unknown): asserts value is Deletio
 export function assertAwsOwnershipJournal(value: unknown): asserts value is AwsOwnershipJournal {
   if (!object(value) || !keys(value, ["contractVersion", "scope", "sourceSha", "coverage", "unresolvedIntents", "resources"])
     || value.contractVersion !== "deployguard.aws-resource-ownership/v1") fail();
-  assertScope(value.scope);
+  assertOwnershipScope(value.scope);
   if (!keys(value.scope, ["projectId", "operationId", "environmentName", "accountId", "region"])
     || typeof value.sourceSha !== "string" || !/^[a-f0-9]{40}$/i.test(value.sourceSha)
     || !Array.isArray(value.coverage) || value.coverage.length !== OWNERSHIP_FAMILIES.length

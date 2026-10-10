@@ -902,3 +902,26 @@ full audits and Terraform 1.10.5. Final diff/security/architecture review confir
 two implementation/test files, no new dependency, no public workflow/certified
 byte change and no AWS execution. Production ownership transport/collection and
 the v3 producer remain unfinished; live AWS remains explicitly pending.
+
+## M0.15 — exact workflow ownership-artifact intake
+
+Resumed the preserved eight-file intake candidate without changing its tested
+source snapshot (`2d2dbe757c93f67fad5008ddc60fe1defab79436cc900463dbe68fe81470c85f`).
+The exact correlated run supplies only the bounded operation-named ownership
+artifact. Immutable dispatch identity is checked again under configuration and
+operation locks; identifier receipts are normalized, append-only and idempotent.
+Runtime-secret coverage comes from server intent/owned pairs, including distinct
+same-key build/runtime secret identities, not runner completeness declarations.
+Missing/invalid/conflicting evidence remains non-authoritative and blocks destroy;
+ownership intake does not weaken release promotion or terminal failure handling.
+
+On resumption, `npm run build && npm run test:aws-ownership-ingestion` exited 0.
+Real disposable PostgreSQL ran all 111 migrations and verified concurrent
+idempotency, locked transport drift, failed-attempt retention and bounded append-only
+conflicts. The unchanged snapshot also has the prior complete local gate's exit-0
+record `/tmp/deployguard-m0-ownership-intake-pre-final.log`. Review covered canonical
+module boundaries, bounded transport, secret-safe errors, locks and resource cleanup;
+no dependency, migration, AWS operation or publication was introduced.
+
+This checkpoints intake only. Complete production collection/durable write evidence
+and strict v3 destruction publishing are still required by roadmap S01.

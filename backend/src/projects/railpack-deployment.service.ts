@@ -22,6 +22,7 @@ import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
 import { RuntimeSecretOwnershipEvent, RuntimeSecretOwnershipPersistenceError, runtimeSecretOwnershipRecord } from "./runtime-secret-ownership";
 import { DestroyOwnership, DestroyOwnershipIncompleteError } from "./aws-resource-ownership";
 import { loadDestroyOwnership } from "./aws-resource-ownership-reader";
+import { awsOwnershipCollectionContext, retainAwsOwnershipCollection } from "./aws-resource-ownership-ingestion";
 import { isSupportedManagedDatabaseEngine, resolveManagedDatabaseUrlScheme } from "./managed-database-engine";
 import { aliasesFor, assertRailpackCapabilityDeclaration, railpackBuildCapabilities, RailpackCapabilityDeclarationError } from "./configuration-ownership";
 import { assertRailpackRuntimeConfiguration, DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH, immutableRailpackBuildCapabilityFingerprint, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
@@ -1416,6 +1417,7 @@ export class RailpackDeploymentService {
           terminalWorkflowStagesUnavailable: terminalMetadata.unavailable,
           workflowUpdatedAt: new Date().toISOString(),
         };
+        if (action !== "destroy") await this.retainWorkflowAwsOwnership(project.repositoryFullName, operation, credential.token);
         if (conclusion === "success") {
           let evidence: Record<string, unknown> | null;
           try {
@@ -1492,6 +1494,20 @@ export class RailpackDeploymentService {
       // solely because GitHub status was temporarily unavailable.
     }
     return operation;
+  }
+
+  private async retainWorkflowAwsOwnership(repository: string, operation: ProjectPipelineRun, token: string) {
+    let status: "retained" | "conflict" | "missing" | "invalid" | "unavailable" = "unavailable";
+    try {
+      awsOwnershipCollectionContext(operation);
+      const raw = await this.actions.getOwnershipArtifact(repository, operation.githubWorkflowRunId, operation.id, token);
+      status = raw === null ? "missing" : await retainAwsOwnershipCollection(this.dataSource, operation, JSON.parse(raw));
+    } catch (error) {
+      if (error instanceof DestroyOwnershipIncompleteError || error instanceof GithubActionsArtifactValidationError || error instanceof SyntaxError) status = "invalid";
+    }
+    // This does not change release-success authority. Without a complete durable
+    // journal the destroy reader still fails closed, including on failed attempts.
+    operation.metadata = { ...(operation.metadata || {}), awsOwnershipCollectionStatus: status };
   }
 
   private async persistFinalizationFailure(operation: ProjectPipelineRun, evidence: Record<string, unknown>, error: unknown) {
@@ -1957,7 +1973,7 @@ export class RailpackDeploymentService {
       current.errorMessage = null;
       current.failureOwner = null; current.externalProvider = null; current.failureCode = null; current.failureServiceId = null;
       current.completedAt = current.completedAt || new Date();
-      current.metadata = { ...(current.metadata || {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl, publicUrls: Object.fromEntries(reconciledServices.map((service) => [String(service.serviceId), service.publicUrl])), releaseEvidenceVerified: true, runtimeIdentity };
+      current.metadata = { ...(current.metadata || {}), ...(operation.metadata?.awsOwnershipCollectionStatus ? { awsOwnershipCollectionStatus: operation.metadata.awsOwnershipCollectionStatus } : {}), workflowConclusion, workflowUpdatedAt: new Date().toISOString(), ...immutable, deployedUrl, publicUrls: Object.fromEntries(reconciledServices.map((service) => [String(service.serviceId), service.publicUrl])), releaseEvidenceVerified: true, runtimeIdentity };
       await operations.save(current);
       Object.assign(operation, current);
     });

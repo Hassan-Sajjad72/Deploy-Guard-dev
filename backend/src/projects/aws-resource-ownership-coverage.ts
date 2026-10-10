@@ -3,7 +3,7 @@ import type { ProjectDeploymentGeneration } from "./project-deployment-generatio
 import type { ProjectGenerationServiceRevision } from "./project-generation-service-revision.entity";
 import type { ProjectPipelineEvent } from "./project-pipeline-event.entity";
 import type { ProjectServiceRuntimeConfigRevision } from "./project-service-runtime-config-revision.entity";
-import { RUNTIME_SECRET_OWNERSHIP_SOURCE, RuntimeSecretOwnershipEvent, RuntimeSecretOwnershipPersistenceError, runtimeSecretOwnershipRecord } from "./runtime-secret-ownership";
+import { restoreRuntimeSecretOwnership, RuntimeSecretOwnershipPersistenceError } from "./runtime-secret-ownership";
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 function incomplete(): never { throw new DestroyOwnershipIncompleteError(); }
@@ -41,35 +41,13 @@ export function assertCanonicalDestroyCoverage(
     need("aws_ecs_service", id, parent);
   };
 
-  const intents = new Set<string>();
-  const owned = new Set<string>();
-  const ownedSecrets = new Set<string>();
-  for (const row of runtimeEvents) {
-    const evidence = row.metadata?.evidence;
-    if (row.source !== RUNTIME_SECRET_OWNERSHIP_SOURCE || row.projectId !== scope.projectId || !operations.has(row.pipelineRunId)
-      || !object(evidence) || evidence.contractVersion !== "deployguard.runtime-secret-ownership/v1"
-      || Object.keys(evidence).some((key) => !["contractVersion", "projectId", "operationId", "serviceId", "environmentName", "accountId", "region", "phase", "secretName", "versionToken", "secretArn"].includes(key))
-      || evidence.operationId !== row.pipelineRunId || evidence.accountId !== scope.accountId || evidence.region !== scope.region) incomplete();
-    // Reuse the production collector's strict scope/identifier validation and
-    // JSONB-stable receipt, rather than a second runtime-secret schema.
-    let retained: ReturnType<typeof runtimeSecretOwnershipRecord>;
-    try {
-      retained = runtimeSecretOwnershipRecord({ phase: evidence.phase, projectId: evidence.projectId, operationId: evidence.operationId,
-        serviceId: evidence.serviceId, environmentName: evidence.environmentName, secretName: evidence.secretName, versionToken: evidence.versionToken,
-        ...(evidence.secretArn === undefined ? {} : { secretArn: evidence.secretArn }) } as RuntimeSecretOwnershipEvent, { ...scope, operationId: row.pipelineRunId });
-    } catch (error) {
-      if (error instanceof RuntimeSecretOwnershipPersistenceError) incomplete();
-      throw error;
-    }
-    if (row.metadata?.sha256 !== retained.metadata?.sha256) incomplete();
-    const identity = JSON.stringify([row.pipelineRunId, evidence.serviceId, evidence.secretName, evidence.versionToken]);
-    if (evidence.phase === "intent") intents.add(identity);
-    else {
-      owned.add(identity); ownedSecrets.add(String(evidence.secretArn));
-      need("aws_secretsmanager_secret", evidence.secretArn);
-    }
+  let ownedSecrets: Set<string>;
+  try { ownedSecrets = restoreRuntimeSecretOwnership(runtimeEvents, scope, operations); }
+  catch (error) {
+    if (error instanceof RuntimeSecretOwnershipPersistenceError) incomplete();
+    throw error;
   }
-  if ([...intents].some((intent) => !owned.has(intent)) || [...owned].some((receipt) => !intents.has(receipt))) incomplete();
+  for (const arn of ownedSecrets) need("aws_secretsmanager_secret", arn);
 
   const configs = new Map(configurations.map((config) => [config.id, config]));
   if (configs.size !== configurations.length) incomplete();

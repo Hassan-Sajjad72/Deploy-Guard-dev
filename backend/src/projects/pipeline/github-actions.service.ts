@@ -168,6 +168,7 @@ async function boundedArtifactBytes(response: Response, maximum: number): Promis
 // directory, so `path: terraform/deployguard-result.json` is ZIP-rooted.
 export const DEPLOYGUARD_RESULT_ARTIFACT_ENTRY = "deployguard-result.json";
 export const DEPLOYGUARD_FAILURE_ARTIFACT_ENTRY = "deployguard-failure-evidence.json";
+export const DEPLOYGUARD_OWNERSHIP_ARTIFACT_ENTRY = "deployguard-aws-ownership.json";
 
 export type GithubActionsWorkflowStage = {
   key: string;
@@ -575,7 +576,14 @@ export class GithubActionsService {
   }
 
   async getArtifactEntry(repository: string, workflowRunId: string, operationId: string, token: string, entryName: string, maxEntryBytes: number) {
-    const name = `deployguard-result-${operationId}`;
+    return this.getNamedArtifactEntry(repository, workflowRunId, `deployguard-result-${operationId}`, token, entryName, maxEntryBytes);
+  }
+
+  async getOwnershipArtifact(repository: string, workflowRunId: string, operationId: string, token: string) {
+    return this.getNamedArtifactEntry(repository, workflowRunId, `deployguard-ownership-${operationId}`, token, DEPLOYGUARD_OWNERSHIP_ARTIFACT_ENTRY, 512 * 1024);
+  }
+
+  private async getNamedArtifactEntry(repository: string, workflowRunId: string, name: string, token: string, entryName: string, maxEntryBytes: number) {
     const list = await fetch(`https://api.github.com/repos/${repository}/actions/runs/${workflowRunId}/artifacts?name=${encodeURIComponent(name)}&per_page=10`, { headers: this.headers(token), signal: AbortSignal.timeout(30_000) });
     if (!list.ok) {
       await list.body?.cancel().catch(() => undefined);

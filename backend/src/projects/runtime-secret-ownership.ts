@@ -53,3 +53,36 @@ export function runtimeSecretOwnershipRecord(event: RuntimeSecretOwnershipEvent,
     metadata: { evidence, sha256: createHash("sha256").update(JSON.stringify(evidence, Object.keys(evidence).sort())).digest("hex") },
   };
 }
+
+/** Restore exact physical identities from complete, integrity-checked pairs.
+ * An intent is never converted to ownership by name or by presumed creation.
+ */
+export function restoreRuntimeSecretOwnership(
+  rows: Array<Pick<ProjectPipelineEvent, "pipelineRunId" | "projectId" | "source" | "metadata">>,
+  scope: { projectId: string; operationId: string; environmentName: string; accountId: string; region: string },
+  operations: ReadonlySet<string> = new Set([scope.operationId]),
+): Set<string> {
+  const invalid = (): never => { throw new RuntimeSecretOwnershipPersistenceError(); };
+  const intents = new Set<string>();
+  const owned = new Set<string>();
+  const secrets = new Set<string>();
+  if (rows.length > 1000) invalid();
+  for (const row of rows) {
+    const evidence = row.metadata?.evidence;
+    if (row.source !== RUNTIME_SECRET_OWNERSHIP_SOURCE || row.projectId !== scope.projectId || !operations.has(row.pipelineRunId)
+      || !evidence || typeof evidence !== "object" || Array.isArray(evidence)) invalid();
+    const value = evidence as Record<string, unknown>;
+    if (value.contractVersion !== "deployguard.runtime-secret-ownership/v1"
+      || Object.keys(value).some((key) => !["contractVersion", "projectId", "operationId", "serviceId", "environmentName", "accountId", "region", "phase", "secretName", "versionToken", "secretArn"].includes(key))
+      || value.operationId !== row.pipelineRunId || value.accountId !== scope.accountId || value.region !== scope.region) invalid();
+    const retained = runtimeSecretOwnershipRecord({ phase: value.phase, projectId: value.projectId, operationId: value.operationId,
+      serviceId: value.serviceId, environmentName: value.environmentName, secretName: value.secretName, versionToken: value.versionToken,
+      ...(value.secretArn === undefined ? {} : { secretArn: value.secretArn }) } as RuntimeSecretOwnershipEvent, { ...scope, operationId: row.pipelineRunId });
+    if (row.metadata?.sha256 !== retained.metadata?.sha256) invalid();
+    const identity = JSON.stringify([row.pipelineRunId, value.serviceId, value.secretName, value.versionToken]);
+    if (value.phase === "intent") intents.add(identity);
+    else { owned.add(identity); secrets.add(String(value.secretArn)); }
+  }
+  if ([...intents].some((intent) => !owned.has(intent)) || [...owned].some((receipt) => !intents.has(receipt))) invalid();
+  return secrets;
+}
