@@ -1096,3 +1096,18 @@ Scope remains PARTIAL for full FR-023 and S02: customer binding, cross-account
 credentials, exact trust/region/revocation, client isolation and live proof are not
 claimed implemented by this permission slice. Next action is the S02 binding and
 temporary credential scope module; no additional baseline approval is requested.
+
+Before the next S02 binding slice, the final preservation check detected an
+externally changed PRD input: the original workspace's `docs/prdv1.0.md` now
+contains **PROPOSED v1.1**, SHA-256
+`940ab7fb97460f0db5be3881e37bccaef708d8f43fc0631334ffff7973213b54`.
+Comparing it to the canonical v1.0 failed because the owner's input changed,
+not because requirement text was rewritten here. Reconstructing only v1.0's
+original status metadata reproduces its recorded `17c9ab...` SHA exactly.
+Both inputs remain preserved. FR-017/FR-022/FR-026 change mandatory agency/client
+ownership to organization-owned team projects with optional client/engagement.
+The completed IAM permission slice applies to both versions; account-binding
+design depends on which version the founder meant by "current PRD" approval.
+Asked that exact scope-version question; stop before silently adopting either
+ownership model. This is not a renewed M0 certification or a routine technical
+decision. No product code changes follow the passing single module certification.
