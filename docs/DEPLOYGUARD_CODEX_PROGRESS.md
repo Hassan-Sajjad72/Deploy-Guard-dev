@@ -1188,3 +1188,33 @@ binding/membership revocation during provider IO. Source review preserves the
 canonical lifecycle/cleanup path and makes no trust/permission readiness claim.
 Skills: deployguard-build and codebase-design; baseline reconciliation also used
 writing-for-agents/skill-creator. Complete S02.3 module certification follows once.
+
+S02.3 complete certification ran exactly once, exit 0, at source
+`ba522ab158a6773fafcfb4aa38cf4f2e621d1794`:
+`npm --prefix backend run test:s02-identity-certification`.
+Log `/tmp/deployguard-s02-identity-certification.log`, SHA-256
+`21145bd575945e3f232ff73d5589764a9c079025f6fe56492332b7b8290fce0f`.
+Build, injected provider/timeout/cleanup/secret-denial unit cases, cookie/PostgreSQL
+identity/race integration and architecture PASS (321 modules/1,203 dependencies;
+zero violations/legacy references). No new schema/dependency/lifecycle/workflow/
+frontend edits followed S02.2; reuse its 112-migration/cleanup evidence. No failed
+complete certification or critical local failure remains in these bounded modules.
+
+Approved v1.1 and historical v1.0 are preserved in versioned product documents;
+all requirement bodies retain their source wording. Existing Engineering OS,
+owner-installed skills, .gitignore and dependency-link setup remain unstaged;
+no unrelated owner setup is bundled into source checkpoints. Original version1
+still `3ac3d951f9a339a177a627acd306fc54bc6b8ac1` and original input unchanged.
+Full S02 remains PARTIAL, not AWS_VERIFIED: next development action is exact
+control-plane/GitHub trust plus organization-owned project/binding admission and
+temporary credential routing through canonical execution/state/evidence clients.
+AWS deploy/redeploy/rollback/cleanup and publishing remain owner-deferred; all
+historical uncertain resource ownership still fails closed for automatic deletion.
+
+The product-document checkpoint's general Git whitespace check flags the
+approved originals' intentional two-space Markdown hard breaks. Investigated:
+canonical v1.1 restores exact source bytes when only approval metadata is reverted;
+both PRDs' trailing whitespace is exclusively exact two-space hard breaks on
+nonempty lines. Preserve approved wording/format rather than silently normalize.
+Source/progress whitespace checks and FR/NFR/IH/AT completeness checks pass.
+No Git whitespace policy, certification hook or security check was disabled.
