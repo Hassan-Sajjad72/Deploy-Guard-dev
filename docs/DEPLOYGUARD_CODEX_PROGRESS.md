@@ -966,3 +966,29 @@ I/O, cleanup and unrelated-diff reviews were performed.
 This logical source checkpoint is verified by focused checks; the complete local
 integration gate follows against its exact Git object/local fixture pin. M0 completion
 and AWS/published-workflow certification are not claimed at this checkpoint.
+
+## M0.17 — evidence diagnostics and bounded terminal ownership recovery
+
+The first M0.16 integration gate failed at the unchanged emitted-failure-code
+contract (`/tmp/deployguard-m0-producer-consumer-pre-final.log`). Registered the
+three new identity/ownership guards with explicit diagnostics: ownership remains
+UNVERIFIED, blame is not guessed, and destructive retry remains NOT_SAFE_YET.
+Regression checks cover every guard's causal precedence, sanitizer vocabulary,
+attribution, retry and remediation; executable scanning now includes both new
+emitters. No contract assertion was disabled or security requirement weakened.
+
+A separate failing-before test (`/tmp/deployguard-m0-ownership-retry-before.log`)
+proved settled terminal stages prevented retry after a transient artifact failure.
+Reuse the existing terminal reconciliation loop for throttled, bounded ownership
+reads using the frozen historical repository. Invalid/conflicting evidence is not
+automatically recovered, and historical rows without a collection attempt do not
+acquire inferred ownership. Terminal metadata now uses scoped UPDATE/JSONB merge,
+not stale entity save/upsert. Real PostgreSQL verifies preserved failed-release
+authority, idempotent recovered receipts and a deletion race without resurrection.
+
+Focused build, ownership intake/111 PostgreSQL migrations, dispatch/state projection,
+failure diagnostics and failure-ownership checks passed. Reviewed error paths,
+immutable identity, retry limits, non-authoritative metadata, concurrent retention
+and deletion, and unrelated changes. No dependencies/schema changes or AWS calls.
+This source checkpoint is locally focused-verified; the full integration gate must
+still pass before declaring M0 locally complete.

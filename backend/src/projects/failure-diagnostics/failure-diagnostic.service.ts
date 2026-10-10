@@ -9,7 +9,7 @@ import {
   FailureRetryDecision,
 } from "./failure-diagnostic.types";
 import { MANAGED_DATABASE_RECONCILIATION_FAILURE } from "../managed-database-reconciliation.error";
-import { failureContractFor } from "./failure-contract.catalog";
+import { failureContractFor, OWNERSHIP_EVIDENCE_FAILURE_CODES } from "./failure-contract.catalog";
 import { classifyFailureCode } from "../failure-ownership";
 
 type Diagnosis = {
@@ -88,6 +88,14 @@ export class FailureDiagnosticService {
     externalProvider: DeploymentFailureDiagnosticInput["externalProvider"],
     managedDatabase?: DeploymentFailureDiagnosticInput["managedDatabaseReconciliation"],
   ): Diagnosis {
+    if (OWNERSHIP_EVIDENCE_FAILURE_CODES.some((code) => code === terminalCode)) return {
+      rootCauseCode: terminalCode, owner: "UNVERIFIED", provider: null, affectedComponent: "AWS ownership and cleanup evidence",
+      summary: "The operation could not establish complete AWS identity, ownership or cleanup proof.",
+      technicalReason: "The fail-closed verification boundary failed; this code alone does not prove the underlying platform, application or provider cause.",
+      recommendedAction: "Keep destructive cleanup blocked until authorized exact-scope evidence recovery and verification are complete.",
+      remediationSteps: ["Review the immutable operation and retained identifier/intent receipts.", "Recover missing evidence only through an authorized exact-scope process.", "Retry cleanup only after ownership and independent observations validate; never bypass safety checks."],
+      retryDecision: "NOT_SAFE_YET", confidence: "UNVERIFIED",
+    };
     if (terminalCode === MANAGED_DATABASE_RECONCILIATION_FAILURE && managedDatabase) {
       return this.managedDatabaseDiagnosis(managedDatabase);
     }

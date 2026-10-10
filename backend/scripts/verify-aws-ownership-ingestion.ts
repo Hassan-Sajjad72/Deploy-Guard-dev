@@ -129,16 +129,56 @@ async function verifyUnitAndTransport() {
   let reads = 0;
   lifecycle.actions = { getOwnershipArtifact: async () => { reads++; return null; } };
   const missing = structuredClone(operation);
-  await lifecycle.retainWorkflowAwsOwnership(inputs.repository_full_name, missing, "fixture-token");
+  await lifecycle.retainWorkflowAwsOwnership(missing, "fixture-token");
   assert.equal(missing.metadata.awsOwnershipCollectionStatus, "missing");
   lifecycle.actions.getOwnershipArtifact = async () => "{DO-NOT-RETAIN";
   const invalid = structuredClone(operation);
-  await lifecycle.retainWorkflowAwsOwnership(inputs.repository_full_name, invalid, "fixture-token");
+  await lifecycle.retainWorkflowAwsOwnership(invalid, "fixture-token");
   assert.equal(invalid.metadata.awsOwnershipCollectionStatus, "invalid");
   assert.doesNotMatch(JSON.stringify(invalid.metadata), /DO-NOT-RETAIN|fixture-token/);
   const unbound = structuredClone(operation); unbound.metadata.immutableDispatchFingerprint = "f".repeat(64);
-  await lifecycle.retainWorkflowAwsOwnership(inputs.repository_full_name, unbound, "fixture-token");
+  await lifecycle.retainWorkflowAwsOwnership(unbound, "fixture-token");
   assert.equal(reads, 1, "unbound operations fail before artifact/provider work");
+  const terminal: any = structuredClone(operation);
+  terminal.status = "completed";
+  terminal.metadata = { ...terminal.metadata, awsOwnershipCollectionStatus: "unavailable", awsOwnershipCollectionAttempts: 1,
+    awsOwnershipCollectionReadAfter: new Date(0).toISOString(), terminalWorkflowStagesUnavailable: false,
+    workflowStages: [{ key: "runtime", status: "passed" }] };
+  const recovery: any = Object.create(RailpackDeploymentService.prototype);
+  let ownershipReads = 0;
+  let persistedPatches = 0;
+  let parameters: Record<string, unknown> = {};
+  const query: any = { update: () => query, set: (fields: any) => { assert.deepEqual(Object.keys(fields), ["metadata"]); return query; },
+    where: (_where: string, values: any) => { parameters = values; return query; },
+    setParameters: (values: any) => { parameters = { ...parameters, ...values }; return query; }, execute: async () => {
+      assert.equal(parameters.id, terminal.id); assert.equal(parameters.projectId, terminal.projectId);
+      assert.equal(parameters.workflowRunId, terminal.githubWorkflowRunId);
+      const patch = JSON.parse(String(parameters.ownershipPatch));
+      assert.deepEqual(Object.keys(patch).sort(), ["awsOwnershipCollectionAttempts", "awsOwnershipCollectionReadAfter", "awsOwnershipCollectionStatus"]);
+      assert.equal(patch.awsOwnershipCollectionStatus, "missing");
+      persistedPatches++; return { affected: 1 };
+    } };
+  recovery.projects = { findOne: async () => ({ id: projectId, repositoryFullName: "fixture/moved" }) };
+  recovery.users = { findOne: async () => ({ id: 7 }) };
+  recovery.githubApp = { tokenForRepository: async (_id: number, repository: string) => {
+    assert.equal(repository, inputs.repository_full_name, "ownership backfill uses immutable historical repository, not current project settings");
+    return { token: "fixture-token" };
+  } };
+  recovery.actions = { getOwnershipArtifact: async (repository: string) => { ownershipReads++; assert.equal(repository, inputs.repository_full_name); return null; } };
+  recovery.runs = { createQueryBuilder: () => query, save: async () => assert.fail("terminal backfill must never save/reinsert a stale deleted operation") };
+  await recovery.reconcileTerminalWorkflowStages(terminal);
+  assert.equal(ownershipReads, 1, "a settled terminal stage snapshot must not prevent retry of transient ownership transport failure");
+  assert.equal(terminal.metadata.awsOwnershipCollectionAttempts, 2);
+  assert.equal(terminal.status, "completed", "ownership recovery cannot change release outcome");
+  await recovery.reconcileTerminalWorkflowStages(terminal);
+  assert.equal(ownershipReads, 1, "retry remains throttled even under repeated polling");
+  terminal.metadata.awsOwnershipCollectionReadAfter = new Date(0).toISOString();
+  await recovery.reconcileTerminalWorkflowStages(terminal);
+  assert.equal(ownershipReads, 2); assert.equal(terminal.metadata.awsOwnershipCollectionAttempts, 3);
+  terminal.metadata.awsOwnershipCollectionReadAfter = new Date(0).toISOString();
+  await recovery.reconcileTerminalWorkflowStages(terminal);
+  assert.equal(ownershipReads, 2, "retry budget cannot become unlimited provider polling");
+  assert.equal(persistedPatches, 2, "bounded terminal retries persist metadata-only updates, never overwrite immutable release authority");
   console.log("AWS_OWNERSHIP_INTAKE=PASS IMMUTABLE_IDENTITY=1 EXACT_BOUNDED_ARTIFACT=1 SERVER_SECRET_COVERAGE=1 INCOMPLETE_REJECTED=1 RAW_VALUES_RETAINED=0 AWS_EXECUTION=NONE");
 }
 
@@ -170,6 +210,40 @@ async function verifyPostgresRetention() {
     const historicalScope = { ...scope, operationId: destroyId, generationIds: [operationId] };
     const frozen = freezeDestroyOwnership(historicalScope, [operation], retained, inputs.terraform_state_bucket);
     assert.ok(frozen.manifest.resources.some((row) => row.id === secretArn));
+
+    const recovery: any = Object.create(RailpackDeploymentService.prototype);
+    recovery.dataSource = database;
+    recovery.projects = { findOne: async () => ({ id: projectId, repositoryFullName: "fixture/moved" }) };
+    recovery.users = { findOne: async () => ({ id: owner }) };
+    recovery.githubApp = { tokenForRepository: async (_id: number, repository: string) => {
+      assert.equal(repository, inputs.repository_full_name); return { token: "fixture-token" };
+    } };
+    recovery.actions = { getOwnershipArtifact: async () => JSON.stringify(collection) };
+    recovery.runs = database.getRepository(ProjectPipelineRun);
+    const terminal = await recovery.runs.findOneByOrFail({ id: operationId });
+    terminal.metadata = { ...terminal.metadata, awsOwnershipCollectionStatus: "unavailable", awsOwnershipCollectionAttempts: 1,
+      awsOwnershipCollectionReadAfter: new Date(0).toISOString(), workflowStages: [{ key: "runtime", status: "failed" }] };
+    await recovery.runs.update({ id: operationId }, { metadata: terminal.metadata });
+    await recovery.reconcileTerminalWorkflowStages(terminal);
+    const backfilled = await recovery.runs.findOneByOrFail({ id: operationId });
+    assert.equal(backfilled.metadata.awsOwnershipCollectionStatus, "retained");
+    assert.equal(backfilled.metadata.awsOwnershipCollectionAttempts, 2);
+    assert.equal(backfilled.status, "failed", "real PostgreSQL backfill cannot promote a failed release");
+    assert.equal(backfilled.commitSha, operation.commitSha);
+    assert.deepEqual(backfilled.metadata.immutableDispatchInputs, inputs);
+    assert.equal(await events.countBy({ pipelineRunId: operationId, source: AWS_RESOURCE_OWNERSHIP_SOURCE }), 1);
+
+    // A terminal stage-only refresh racing cascade deletion cannot resurrect a
+    // stale operation. Exercise the actual TypeORM UPDATE against PostgreSQL.
+    const deletedId = "44444444-4444-4444-8444-444444444444";
+    const deleted = recovery.runs.create({ ...backfilled, id: deletedId, metadata: { workflowStages: [{ key: "runtime", status: "running" }] } });
+    await recovery.runs.save(deleted);
+    recovery.terminalWorkflowStages = async () => {
+      await database!.query("DELETE FROM project_pipeline_runs WHERE id=$1", [deletedId]);
+      return { stages: [{ key: "runtime", status: "failed" }], unavailable: false };
+    };
+    await recovery.reconcileTerminalWorkflowStages(deleted);
+    assert.equal(await recovery.runs.countBy({ id: deletedId }), 0, "metadata-only refresh never reinserts a concurrently deleted terminal row");
 
     await database.query("UPDATE project_pipeline_runs SET github_workflow_run_id='456' WHERE id=$1", [operationId]);
     await assert.rejects(() => retainAwsOwnershipCollection(database!, operation, collection), DestroyOwnershipIncompleteError,

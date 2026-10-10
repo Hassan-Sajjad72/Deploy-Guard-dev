@@ -38,7 +38,7 @@ export function awsOwnershipCollectionContext(operation: ProjectPipelineRun) {
   } catch { incomplete(); }
   const runtimeSecretArns = [...new Set(runtime.services.flatMap((service) => [...Object.values(service.buildSecretReferences), ...Object.values(service.secretReferences)])
     .map((reference) => reference.split(":").slice(0, 7).join(":")))].sort();
-  return { scope, stateBucket: String(inputs.terraform_state_bucket), workflowRunId: operation.githubWorkflowRunId,
+  return { scope, repositoryFullName: String(inputs.repository_full_name), stateBucket: String(inputs.terraform_state_bucket), workflowRunId: operation.githubWorkflowRunId,
     controlPlaneSha: String(inputs.control_plane_sha), dispatchFingerprint: String(operation.metadata.immutableDispatchFingerprint), runtimeSecretArns };
 }
 

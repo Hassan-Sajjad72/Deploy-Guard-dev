@@ -100,6 +100,13 @@ export const FAILURE_CONTRACT = {
 
 export type AuthoritativeFailureCode = keyof typeof FAILURE_CONTRACT;
 
+/** These guards prove verification failed, not who caused the missing proof.
+ * Their registered diagnostics must block unsafe retry without guessing blame.
+ */
+export const OWNERSHIP_EVIDENCE_FAILURE_CODES = [
+  "DG_AWS_IDENTITY_UNVERIFIED", "DG_AWS_OWNERSHIP_INCOMPLETE", "DG_DESTROY_OWNERSHIP_INCOMPLETE",
+] as const;
+
 /**
  * Codes that may appear as a diagnosis root cause. This keeps advisory AI
  * output inside the same vocabulary as deterministic failure diagnostics.
@@ -130,6 +137,7 @@ export const APPROVED_ROOT_CAUSE_CODES = [...new Set([
   ...Object.keys(FAILURE_CONTRACT),
   ...Object.values(FAILURE_CONTRACT).map((contract) => contract.rootCauseCode),
   ...DIAGNOSTIC_ROOT_CAUSE_CODES,
+  ...OWNERSHIP_EVIDENCE_FAILURE_CODES,
 ])];
 
 export function isApprovedRootCauseCode(code: string) {

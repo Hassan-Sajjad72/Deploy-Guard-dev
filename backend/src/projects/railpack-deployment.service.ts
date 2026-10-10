@@ -1417,7 +1417,7 @@ export class RailpackDeploymentService {
           terminalWorkflowStagesUnavailable: terminalMetadata.unavailable,
           workflowUpdatedAt: new Date().toISOString(),
         };
-        if (action !== "destroy") await this.retainWorkflowAwsOwnership(project.repositoryFullName, operation, credential.token);
+        if (action !== "destroy") await this.retainWorkflowAwsOwnership(operation, credential.token);
         if (conclusion === "success") {
           let evidence: Record<string, unknown> | null;
           try {
@@ -1496,18 +1496,30 @@ export class RailpackDeploymentService {
     return operation;
   }
 
-  private async retainWorkflowAwsOwnership(repository: string, operation: ProjectPipelineRun, token: string) {
+  private canReadAwsOwnership(operation: ProjectPipelineRun) {
+    const metadata = operation.metadata || {};
+    const attempts = metadata.awsOwnershipCollectionAttempts ?? 0;
+    const after = metadata.awsOwnershipCollectionReadAfter;
+    return (metadata.awsOwnershipCollectionStatus === undefined || ["missing", "unavailable"].includes(String(metadata.awsOwnershipCollectionStatus)))
+      && Number.isInteger(attempts) && Number(attempts) >= 0 && Number(attempts) < 3
+      && (after === undefined || (typeof after === "string" && Number.isFinite(Date.parse(after)) && Date.parse(after) <= Date.now()));
+  }
+
+  private async retainWorkflowAwsOwnership(operation: ProjectPipelineRun, token: string) {
+    if (!this.canReadAwsOwnership(operation)) return;
     let status: "retained" | "conflict" | "missing" | "invalid" | "unavailable" = "unavailable";
     try {
-      awsOwnershipCollectionContext(operation);
-      const raw = await this.actions.getOwnershipArtifact(repository, operation.githubWorkflowRunId, operation.id, token);
+      const context = awsOwnershipCollectionContext(operation);
+      const raw = await this.actions.getOwnershipArtifact(context.repositoryFullName, context.workflowRunId, operation.id, token);
       status = raw === null ? "missing" : await retainAwsOwnershipCollection(this.dataSource, operation, JSON.parse(raw));
     } catch (error) {
       if (error instanceof DestroyOwnershipIncompleteError || error instanceof GithubActionsArtifactValidationError || error instanceof SyntaxError) status = "invalid";
     }
     // This does not change release-success authority. Without a complete durable
     // journal the destroy reader still fails closed, including on failed attempts.
-    operation.metadata = { ...(operation.metadata || {}), awsOwnershipCollectionStatus: status };
+    operation.metadata = { ...(operation.metadata || {}), awsOwnershipCollectionStatus: status,
+      awsOwnershipCollectionAttempts: Number(operation.metadata?.awsOwnershipCollectionAttempts || 0) + 1,
+      awsOwnershipCollectionReadAfter: new Date(Date.now() + 60_000).toISOString() };
   }
 
   private async persistFinalizationFailure(operation: ProjectPipelineRun, evidence: Record<string, unknown>, error: unknown) {
@@ -1609,21 +1621,39 @@ export class RailpackDeploymentService {
   private async reconcileTerminalWorkflowStages(operation: ProjectPipelineRun) {
     if (!operation.githubWorkflowRunId || ACTIVE.includes(operation.status)) return;
     const existing = Array.isArray(operation.metadata?.workflowStages) ? operation.metadata.workflowStages as Array<Record<string, unknown>> : [];
-    if (operation.metadata?.terminalWorkflowStagesUnavailable !== true && existing.length && !existing.some((stage) => stage.status === "running" || stage.status === "pending" || stage.status === "unavailable")) return;
+    const needsStages = operation.metadata?.terminalWorkflowStagesUnavailable === true || !existing.length
+      || existing.some((stage) => stage.status === "running" || stage.status === "pending" || stage.status === "unavailable");
+    const needsOwnership = ["missing", "unavailable"].includes(String(operation.metadata?.awsOwnershipCollectionStatus)) && this.canReadAwsOwnership(operation);
+    if (!needsStages && !needsOwnership) return;
     const [project, user] = await Promise.all([
       this.projects.findOne({ where: { id: operation.projectId } }),
       this.users.findOne({ where: { id: operation.triggeredByUserId } }),
     ]);
     if (!project?.repositoryFullName || !user) return;
     try {
-      const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
-      const action = operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy";
-      const result = await this.terminalWorkflowStages(project.repositoryFullName, operation.githubWorkflowRunId, credential.token, action, existing);
-      operation.metadata = { ...(operation.metadata || {}), ...(result.stages.length ? { workflowStages: result.stages } : {}), terminalWorkflowStagesUnavailable: result.unavailable, workflowUpdatedAt: new Date().toISOString() };
-      await this.runs.save(operation);
+      const repository = needsOwnership ? awsOwnershipCollectionContext(operation).repositoryFullName : operation.repositoryFullName || project.repositoryFullName;
+      const credential = await this.githubApp.tokenForRepository(user.id, repository, project.githubInstallationId);
+      const patch: Record<string, unknown> = {};
+      if (needsOwnership) {
+        await this.retainWorkflowAwsOwnership(operation, credential.token);
+        for (const key of ["awsOwnershipCollectionStatus", "awsOwnershipCollectionAttempts", "awsOwnershipCollectionReadAfter"]) patch[key] = operation.metadata?.[key];
+      }
+      if (needsStages) {
+        const action = operation.metadata?.deploymentAction as "deploy" | "rollback" | "destroy" || "deploy";
+        const result = await this.terminalWorkflowStages(repository, operation.githubWorkflowRunId, credential.token, action, existing);
+        Object.assign(patch, result.stages.length ? { workflowStages: result.stages } : {},
+          { terminalWorkflowStagesUnavailable: result.unavailable, workflowUpdatedAt: new Date().toISOString() });
+      }
+      // Never upsert a stale terminal row after concurrent cascade deletion or
+      // overwrite release/dispatch authority while recording observation metadata.
+      await this.runs.createQueryBuilder().update().set({ metadata: () => "COALESCE(metadata, '{}'::jsonb) || CAST(:ownershipPatch AS jsonb)" })
+        .where("id = :id AND project_id = :projectId AND github_workflow_run_id = :workflowRunId",
+          { id: operation.id, projectId: operation.projectId, workflowRunId: operation.githubWorkflowRunId })
+        .setParameters({ ownershipPatch: JSON.stringify(patch) }).execute();
+      operation.metadata = { ...(operation.metadata || {}), ...patch };
     } catch {
-      // This is a read-only presentation backfill. Terminal operation state and
-      // immutable release evidence remain authoritative when GitHub is absent.
+      // GitHub evidence backfill never operates AWS or changes terminal release
+      // authority. Missing/invalid ownership continues to block cleanup.
     }
   }
 

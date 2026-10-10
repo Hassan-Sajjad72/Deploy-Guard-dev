@@ -1025,12 +1025,20 @@ async function verifyTerminalStageMetadataConvergenceAndBackfill() {
   service.projects = { findOne: async () => project };
   service.users = { findOne: async () => user };
   service.githubApp = { tokenForRepository: async () => ({ token: "ignored" }) };
-  service.runs = { save: async (row: any) => row };
+  let patches = 0;
+  const terminalQuery: any = { update: () => terminalQuery, set: (fields: any) => {
+    assert.deepEqual(Object.keys(fields), ["metadata"]); return terminalQuery;
+  }, where: (_sql: string, scope: any) => {
+    assert.equal(scope.id, terminal.id); assert.equal(scope.projectId, terminal.projectId);
+    assert.equal(scope.workflowRunId, terminal.githubWorkflowRunId); return terminalQuery;
+  }, setParameters: () => terminalQuery, execute: async () => { patches++; return { affected: 1 }; } };
+  service.runs = { createQueryBuilder: () => terminalQuery, save: async () => assert.fail("terminal metadata must not upsert stale operations") };
   service.actions.getWorkflowStages = async () => [{ key: "materialize_release_runtime", label: "Deploy Runtime and Verify Application", status: "failed", startedAt: "2026-09-01T00:00:00Z", completedAt: "2026-09-01T00:04:00Z" }];
   await service.reconcileTerminalWorkflowStages(terminal);
   assert.equal(terminal.status, PipelineRunStatus.FAILED, "read-only stage backfill cannot change the terminal operation outcome");
   assert.equal(terminal.metadata.terminalWorkflowStagesUnavailable, false);
   assert.deepEqual(terminal.metadata.workflowStages.map((stage: any) => stage.status), ["failed"], "a later read-only refresh backfills real final GitHub metadata without fabricating Passed");
+  assert.equal(patches, 1, "terminal stage backfill persists exactly one scoped metadata-only update");
 }
 
 async function verifyCurrentStateReconcilesWithoutPipeline() {

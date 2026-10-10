@@ -6,7 +6,7 @@ import { AiEvidencePreprocessorService } from "../src/ai-troubleshooting/ai-evid
 import { currentFailureDiagnostic, FailureDiagnosticService } from "../src/projects/failure-diagnostics/failure-diagnostic.service";
 import { DeploymentFailureDiagnosticInput, FailureRetryDecision } from "../src/projects/failure-diagnostics/failure-diagnostic.types";
 import { classifyStructuredFailure } from "../src/projects/failure-ownership";
-import { FAILURE_CONTRACT } from "../src/projects/failure-diagnostics/failure-contract.catalog";
+import { FAILURE_CONTRACT, isApprovedRootCauseCode, OWNERSHIP_EVIDENCE_FAILURE_CODES } from "../src/projects/failure-diagnostics/failure-contract.catalog";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { MANAGED_DATABASE_RECONCILIATION_FAILURE, ManagedDatabaseReconciliationAdmissionError } from "../src/projects/managed-database-reconciliation.error";
 import { ManagedDatabaseReconciliationState } from "../src/projects/managed-database-reconciliation";
@@ -138,6 +138,19 @@ assert.equal(repositoryDeclaredDriverMissing.rootCauseCode, "DG_APPLICATION_MODU
 assert.equal(repositoryDeclaredDriverMissing.failureOwner, "REPOSITORY_APPLICATION");
 assert.equal(repositoryDeclaredDriverMissing.retryDecision, "SAFE_AFTER_FIX");
 
+for (const code of OWNERSHIP_EVIDENCE_FAILURE_CODES) {
+  const guarded = diagnose(`npm ERR! code ERESOLVE\nERESOLVE unable to resolve dependency tree\nDG_FAILURE code=${code} stage=ownership_retention`,
+    { terminalFailureCode: code, failureStage: "ownership_retention" });
+  assert.equal(guarded.terminalFailureCode, code);
+  assert.equal(guarded.rootCauseCode, code, "unrelated repository diagnostics cannot replace the ownership verification failure");
+  assert.equal(guarded.failureOwner, "UNVERIFIED", "the guard does not prove who caused the missing evidence");
+  assert.equal(guarded.externalProvider, null);
+  assert.equal(guarded.retryDecision, "NOT_SAFE_YET", "unknown ownership/absence must never recommend automatic destructive retry");
+  assert.equal(guarded.confidence, "UNVERIFIED");
+  assert.match(guarded.recommendedAction, /authorized exact-scope/);
+  assert.ok(isApprovedRootCauseCode(guarded.rootCauseCode), "sanitized advisory consumers retain the registered guard code");
+}
+
 for (const [code, contract] of Object.entries(FAILURE_CONTRACT)) {
   const result = diagnose(`DG_FAILURE code=${code} stage=contract_audit`, { terminalFailureCode: code, failureStage: "contract_audit" });
   assert.equal(result.terminalFailureCode, code, `${code} retains terminal identity`);
@@ -156,9 +169,11 @@ const executableFailureSources = [
   "infrastructure/railpack-runtime/verify-runtime.sh",
   "infrastructure/railpack-runtime/register-release-task-definitions.sh",
   "infrastructure/railpack-runtime/build-release-result.sh",
+  "infrastructure/railpack-runtime/collect-ownership.mjs",
+  "infrastructure/railpack-runtime/destroy-retained-runtime.mjs",
 ].map((path) => readFileSync(join(repositoryRoot, path), "utf8")).join("\n");
 const literalEmittedCodes = new Set([...executableFailureSources.matchAll(/\bcode=(DG_[A-Z0-9_]+)|\b(?:runtime_failure|managed_database_failure)\s+"[^"\n]+"\s+(DG_[A-Z0-9_]+)/g)].map((match) => match[1] || match[2]));
-const evidenceDependentCodes = new Set(["DG_RAILPACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED"]);
+const evidenceDependentCodes = new Set(["DG_RAILPACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED", ...OWNERSHIP_EVIDENCE_FAILURE_CODES]);
 for (const code of literalEmittedCodes) {
   assert.ok(code in FAILURE_CONTRACT || evidenceDependentCodes.has(code), `${code} is emitted by executable workflow/runtime code but absent from the failure contract`);
 }
