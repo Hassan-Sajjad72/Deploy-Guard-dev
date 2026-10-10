@@ -1005,3 +1005,44 @@ Focused external-action certification passed (nine sites, five approved actions,
 upstream metadata checks); release identity passed for the exact M0.16 producer
 Git object and all twelve executable files. No runtime code/pin/dependency change.
 The final aggregate must still complete; previous failures are not suppressed.
+
+## M0 local completion — final integration and quality gate
+
+At source `1286c6254f25c4969b7eaa748b7c2037a6268b71`, backend
+`npm run test:pre-final-certification` completed with exit 0. Evidence:
+`/tmp/deployguard-m0-final-integration-v2-pre-final.log`, SHA-256
+`97926df3e690404e4591672ac1a66cbda550e15ac9f6b70be974e38fa1524ddc`.
+Producer executable Git object/local fixture pin remains
+`f69ee49d2052abb656053d0125e8f6282a874465`, not a published release.
+
+Passed: backend/frontend builds and regressions; both complete dependency audits
+(zero vulnerabilities); artifact/ownership/strict result contracts; actionlint
+1.7.12 and ShellCheck 0.11.0; exact nine action call sites/twelve executable files;
+111 real disposable PostgreSQL migrations, append-only/idempotent receipts,
+configuration/operation locks, contention, durable authority before cleanup and
+cascade, drift rejection and stale-row deletion race; 18 typed independent
+observer fixtures; 1,000 lifecycle sequences/250 runtime properties; Terraform
+1.10.5 fmt/validate and seven mocked scenarios; architecture review (313 modules,
+1,178 dependencies, zero violations). Playwright: nine API mutations, five browser
+surfaces; GitHub repository selection remains EXPECTED BLOCKER, not live proof.
+No configured general TS/React lint task exists; available checks are labeled honestly.
+
+Final self-review covered canonical producer/consumer authority, compatibility,
+bounded I/O/retries, secrets, conditional Bash errors, await-boundary identity,
+resource cleanup, concurrency/locks, duplicated logic and unrelated changes.
+All critical local checks pass. No new dependency, schema migration, feature,
+automatic suite hook, AWS call, dispatch, push or merge. The original version1
+HEAD remains `3ac3d951f9a339a177a627acd306fc54bc6b8ac1`; owner work is preserved.
+
+Refreshed existing report/scope/contracts/current state/roadmap rather than adding
+a second progress authority. Document links, three skill metadata blocks and all
+301 PRD IDs mapped exactly once passed; PRD SHA-256 remains unchanged. The initial
+ad-hoc ID parser handled only colon definitions; corrected it to include the PRD's
+existing bold title/heading forms, retaining the exact 301-ID assertion.
+
+**M0 is locally verified, not AWS/release-certified.** Publication/activation and
+exact-scope independent AWS lifecycle/deletion proof remain separately authorized
+and pending. Lost/unknown writes and historical incomplete provenance remain
+fail closed; C8 recovery/retention policy is not invented. There is no approved
+next product slice: S02 requires G0 founder approval of the PROPOSED baseline and
+applicable compatibility decisions. Stop there; do not infer approval from M0 resumption.
