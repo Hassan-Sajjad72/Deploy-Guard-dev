@@ -31,6 +31,8 @@
     "test:runtime-secret-ownership": "ts-node scripts/verify-runtime-secret-ownership.ts",
     "test:aws-ownership-ingestion": "ts-node scripts/verify-aws-ownership-ingestion.ts",
     "test:aws-ownership-producer": "node scripts/verify-aws-ownership-producer.mjs && node scripts/verify-strict-destroy-producer.mjs",
+    "test:aws-permission-admission": "ts-node scripts/verify-aws-permission-admission.ts",
+    "test:s02-permission-certification": "npm run build && npm run test:aws-permission-admission && npm run test:dispatch-state-projection && npm run test:failure-ownership && npm run test:architecture-dependencies",
     "test:product-maturity-certification": "ts-node scripts/verify-product-maturity-certification.ts",
     "test:deployable-services": "ts-node scripts/verify-deployable-services.ts",
     "test:service-port-resolution": "ts-node scripts/verify-service-port-resolution.ts",

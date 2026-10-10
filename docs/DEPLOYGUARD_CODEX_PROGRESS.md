@@ -1046,3 +1046,38 @@ and pending. Lost/unknown writes and historical incomplete provenance remain
 fail closed; C8 recovery/retention policy is not invented. There is no approved
 next product slice: S02 requires G0 founder approval of the PROPOSED baseline and
 applicable compatibility decisions. Stop there; do not infer approval from M0 resumption.
+
+## S02.1 — approved baseline and AWS permission admission implementation
+
+Founder formally approved the current PRD baseline, accepted local M0 and
+authorized S02 on 2026-10-10. Only PRD status metadata changes; requirement text
+and IDs are preserved. M0 evidence/commits and original version1 are untouched.
+Testing policy: focused development checks; one completed-module local certification,
+then only failed-check retries if needed. No M0 aggregate recertification.
+
+One-time inventory: Matt Pocock skills installed (source lock and readable local
+codebase-design skill); AWS Toolkit VS Code extension 4.15.0, AWS CLI, Terraform,
+Node/npm and Docker present. ECC/Ponytail/Grafana tooling not found in inspected
+catalogs; no AWS/Grafana tools exposed by this session. Available MCP resources
+are on codex_apps; local Codex config also names Stripe, with no relevant AWS
+integration. Plugin catalog search did not find ECC/Ponytail/Grafana or AWS Toolkit
+(uninstalled AWS Data Analytics is unrelated). No installs, connections or key requests.
+
+FR-023/FR-028/FR-030: reuse the existing capability verifier and pre-dispatch caller,
+not a parallel permission catalog. Reproduced empty IAM evidence incorrectly
+passing (`/tmp/deployguard-s02-permission-before.log`). Require complete action
+coverage; reject malformed, duplicate, unknown or missing observations. When
+per-resource results exist, validate the complete exact requested identifiers.
+Aggregate/per-resource denial, missing context and boundary/organization denials
+cannot be overridden by an allow. Bound pagination/abort, sanitize provider errors,
+and reject a supplied-but-empty STS caller account. Customer/external roles stay
+read-only; no permission auto-expansion, new SDK/dependency or schema change.
+
+Focused backend build, AWS permission cases and existing dispatch projection pass.
+Final review covers compatible aggregate IAM output, canonical catalog reuse,
+denial/scope/identity, bounded I/O, secret handling, cleanup and unrelated diff.
+IAM response shape checked against official AWS EvaluationResult/ResourceSpecificResult
+documentation; simulation is not live authorization proof. Source checkpoint is
+focused-verified; exactly one module certification follows after integration.
+Skills actually used: deployguard-build, aws-infrastructure-auditor, Matt Pocock
+codebase-design, plugin-management (inventory only), writing-for-agents (approval/policy).

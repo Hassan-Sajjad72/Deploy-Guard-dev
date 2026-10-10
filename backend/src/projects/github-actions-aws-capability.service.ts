@@ -38,7 +38,7 @@ export class AwsAccountConfigurationError extends ServiceUnavailableException {
 export function assertAwsAccountConsistency(configuredAccountId: string, roleAccountId: string, callerAccountId?: string) {
   if (!/^\d{12}$/.test(configuredAccountId)) throw new AwsAccountConfigurationError("AWS_ACCOUNT_ID must be a 12-digit AWS account ID.");
   if (configuredAccountId !== roleAccountId) throw new AwsAccountConfigurationError("AWS_ACCOUNT_ID does not match DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN.");
-  if (callerAccountId && callerAccountId !== configuredAccountId) throw new AwsAccountConfigurationError("AWS_ACCOUNT_ID does not match the active backend AWS credential account.");
+  if (callerAccountId !== undefined && callerAccountId !== configuredAccountId) throw new AwsAccountConfigurationError("AWS_ACCOUNT_ID does not match the active backend AWS credential account.");
 }
 
 const decodedPolicy = (value?: string) => {
@@ -53,6 +53,15 @@ const canonicalJson = (value: unknown): string => {
 const concreteSimulationResource = (resource: string) => resource === "*"
   ? resource
   : resource.replace(/\*/g, "deployguard-simulation");
+
+const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+function simulationAllows(row: Record<string, unknown>, decision: string) {
+  return row[decision] === "allowed"
+    && (row.MissingContextValues === undefined || (Array.isArray(row.MissingContextValues) && row.MissingContextValues.length === 0))
+    && (row.PermissionsBoundaryDecisionDetail === undefined || (record(row.PermissionsBoundaryDecisionDetail) && row.PermissionsBoundaryDecisionDetail.AllowedByPermissionsBoundary === true))
+    && (row.OrganizationsDecisionDetail === undefined || (record(row.OrganizationsDecisionDetail) && row.OrganizationsDecisionDetail.AllowedByOrganizations === true))
+    && (row.EvalDecisionDetails === undefined || (record(row.EvalDecisionDetails) && Object.values(row.EvalDecisionDetails).every((value) => value === "allowed")));
+}
 
 export class WorkflowAwsCapabilityError extends ServiceUnavailableException {
   constructor(public readonly missingCapabilities: string[], detail: string) {
@@ -79,23 +88,58 @@ async function simulateCapability(client: IamSender, roleArn: string, scope: Wor
   }
   for (const group of actionGroups.values()) {
     let marker: string | undefined;
+    const markers = new Set<string>();
+    const seen = new Set<string>();
+    const expected = new Map(group.actions.map((action) => [action.toLowerCase(), action]));
+    const incomplete = (): never => { throw new WorkflowAwsCapabilityError(group.actions,
+      `Effective IAM simulation returned incomplete or invalid evidence for ${capability.id}.`); };
+    let pages = 0;
     do {
+      if (abortSignal?.aborted || pages++ >= 20) incomplete();
       const response = await client.send(new SimulatePrincipalPolicyCommand({
         PolicySourceArn: roleArn,
-        ActionNames: group.actions,
-        ResourceArns: group.resources,
+        ActionNames: [...group.actions],
+        ResourceArns: [...group.resources],
+        MaxItems: 1000,
         ContextEntries: Object.entries(group.context).map(([key, values]) => ({
           ContextKeyName: key,
           ContextKeyType: "string" as const,
-          ContextKeyValues: values,
+          ContextKeyValues: [...values],
         })),
         Marker: marker,
       }), { abortSignal });
-      for (const result of response.EvaluationResults || []) {
-        if (result.EvalDecision !== "allowed") denied.add(String(result.EvalActionName || capability.id));
+      if (abortSignal?.aborted || !record(response) || !Array.isArray(response.EvaluationResults)
+        || response.EvaluationResults.length > 1000 || (response.IsTruncated !== undefined && typeof response.IsTruncated !== "boolean")) incomplete();
+      for (const result of response.EvaluationResults) {
+        if (!record(result) || typeof result.EvalActionName !== "string" || typeof result.EvalDecision !== "string"
+          || !["allowed", "implicitDeny", "explicitDeny"].includes(result.EvalDecision)) incomplete();
+        const action = expected.get(result.EvalActionName.toLowerCase());
+        if (!action || seen.has(action)) incomplete();
+        seen.add(action);
+        if (!simulationAllows(result, "EvalDecision")) denied.add(action);
+        // IAM returns aggregate decisions per action. When per-resource evidence
+        // is provided, every requested identifier must be present exactly once.
+        const resources = result.ResourceSpecificResults;
+        if (resources !== undefined) {
+          if (!Array.isArray(resources) || resources.length > group.resources.length) incomplete();
+          const covered = new Set<string>();
+          for (const resource of resources) {
+            if (!record(resource) || typeof resource.EvalResourceName !== "string" || typeof resource.EvalResourceDecision !== "string"
+              || !group.resources.includes(resource.EvalResourceName) || covered.has(resource.EvalResourceName)
+              || !["allowed", "implicitDeny", "explicitDeny"].includes(resource.EvalResourceDecision)) incomplete();
+            covered.add(resource.EvalResourceName);
+            if (!simulationAllows(resource, "EvalResourceDecision")) denied.add(action);
+          }
+          if (covered.size !== group.resources.length && !(resources.length === 0 && group.resources.length === 1 && group.resources[0] === "*")) incomplete();
+        }
       }
-      marker = response.IsTruncated ? response.Marker : undefined;
+      marker = undefined;
+      if (response.IsTruncated) {
+        if (typeof response.Marker !== "string" || !response.Marker.length || response.Marker.length > 1024 || markers.has(response.Marker)) incomplete();
+        marker = response.Marker; markers.add(marker);
+      }
     } while (marker);
+    if (seen.size !== expected.size) incomplete();
   }
   return [...denied].sort();
 }
@@ -113,7 +157,8 @@ export async function verifyEffectiveWorkflowCapabilities(
     try {
       for (const item of await simulateCapability(client, roleArn, scope, capability, abortSignal)) denied.add(item);
     } catch (error) {
-      throw new WorkflowAwsCapabilityError([capability.id], `Effective IAM simulation failed for ${capability.id}: ${error instanceof Error ? error.message : "unknown IAM error"}`);
+      if (error instanceof WorkflowAwsCapabilityError) throw error;
+      throw new WorkflowAwsCapabilityError([capability.id], `Effective IAM simulation could not verify ${capability.id}.`);
     }
   }
   return [...denied].sort();
