@@ -37,6 +37,7 @@ jobs:
     timeout-minutes: 90
     env:
       AWS_REGION: ${{ inputs.aws_region }}
+      AWS_ROLE_ARN: ${{ inputs.aws_role_arn }}
       DEPLOYMENT_ACTION: ${{ inputs.deployment_action }}
       PROJECT_ID: ${{ inputs.project_id }}
       ENVIRONMENT_NAME: ${{ inputs.environment_name }}
@@ -133,13 +134,40 @@ jobs:
           mkdir -p .deployguard; jq -cn --arg version 0.38.0 --arg archiveSha256 7c3f0e70ca8bf80bde87e8c30cb0171414c2b6bbd794d6f60a19cc3b71772950 '{version:$version,archiveSha256:$archiveSha256,checksumVerified:true}' > .deployguard/railpack-install.json
           printf '%s\n' "$installed_version"
       - name: Checkout immutable DeployGuard builder contracts
-        if: success() && inputs.deployment_action == 'deploy'
+        if: success()
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: Hassan-Sajjad72/Deploy-Guard-dev
           ref: "${{ inputs.control_plane_sha }}"
           path: .deployguard/control-plane
           fetch-depth: 1
+      - name: Retain immutable ownership write intent
+        id: ownership
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "$account" =~ ^[0-9]{12}$ ]] && [[ "$AWS_ROLE_ARN" == "arn:aws:iam::${account}:role/"* ]] || { echo 'DG_FAILURE code=DG_AWS_IDENTITY_UNVERIFIED stage=ownership_retention' >&2; exit 1; }
+          git init /tmp/deployguard-control-plane; git -C /tmp/deployguard-control-plane remote add origin https://github.com/Hassan-Sajjad72/Deploy-Guard-dev.git; git -C /tmp/deployguard-control-plane fetch --depth 1 origin "$CONTROL_PLANE_SHA"; git -C /tmp/deployguard-control-plane checkout --detach "$CONTROL_PLANE_SHA"; [ "$(git -C /tmp/deployguard-control-plane rev-parse HEAD)" = "$CONTROL_PLANE_SHA" ]
+          ownership_directory="$(mktemp -d /tmp/deployguard-ownership-XXXXXXXX)"
+          export AWS_ACCOUNT_ID="$account"
+          {
+            printf 'AWS_ACCOUNT_ID=%s\n' "$account"
+            printf 'DG_AWS_OWNERSHIP_COLLECTOR=%s\n' /tmp/deployguard-control-plane/infrastructure/railpack-runtime/collect-ownership.mjs
+            printf 'DG_AWS_OWNERSHIP_FILE=%s/deployguard-aws-ownership.json\n' "$ownership_directory"
+          } >> "$GITHUB_ENV"
+          if [ "$DEPLOYMENT_ACTION" != destroy ]; then
+            node /tmp/deployguard-control-plane/infrastructure/railpack-runtime/collect-ownership.mjs init "$ownership_directory/deployguard-aws-ownership.json" .deployguard/runtime.json
+          fi
+      - name: Publish pre-mutation ownership intent
+        if: success() && inputs.deployment_action != 'destroy'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deployguard-ownership-intent-${{ inputs.deployment_operation_id }}
+          path: ${{ env.DG_AWS_OWNERSHIP_FILE }}
+          if-no-files-found: error
       - name: Build immutable Railpack images
         if: success() && inputs.deployment_action == 'deploy'
         id: build
@@ -254,7 +282,20 @@ jobs:
           while IFS= read -r artifact; do
             service_id="$(jq -r '.serviceId' <<<"$artifact")"; repository="$(jq -r '.repository' <<<"$artifact")"; registry="$(jq -r '.registry' <<<"$artifact")"; image="$(jq -r '.localImage' <<<"$artifact")"; expected_image_id="$(jq -r '.localImageId' <<<"$artifact")"; tag="${image##*:}"
             [ "$(docker image inspect --format '{{.Id}}' "$image")" = "$expected_image_id" ] || { echo "DG_FAILURE serviceId=$service_id code=DG_ECR_PUBLISH_FAILED stage=ecr_publish message=validated_image_changed" >&2; exit 1; }
-            aws ecr describe-repositories --repository-names "$repository" >/dev/null 2>&1 || aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE >/dev/null
+            compact_project="${PROJECT_ID//-/}"; compact_service="${service_id//-/}"
+            [ "$repository" = "deployguard-${PROJECT_ID}" ] || [ "$repository" = "deployguard-${compact_project:0:12}-${compact_service:0:8}" ] || exit 1
+            node "$DG_AWS_OWNERSHIP_COLLECTOR" begin "$DG_AWS_OWNERSHIP_FILE" "ecr/${service_id}"
+            if repository_metadata="$(aws ecr describe-repositories --repository-names "$repository" --output json 2>"${DG_AWS_OWNERSHIP_FILE}.error")"; then
+              :
+            elif [ "$(grep -Ec '^An error occurred \([A-Za-z0-9.]+\) when calling the [A-Za-z0-9]+ operation:' "${DG_AWS_OWNERSHIP_FILE}.error")" = 1 ] && grep -Eq '^An error occurred \(RepositoryNotFoundException\) when calling the DescribeRepositories operation:' "${DG_AWS_OWNERSHIP_FILE}.error"; then
+              created="$(aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE --output json)"
+              repository_metadata="$(jq -c '{repositories:[.repository]}' <<<"$created")"
+            else
+              echo 'DG_FAILURE code=DG_ECR_PUBLISH_FAILED stage=ecr_publish message=repository_lookup_unverified' >&2; exit 1
+            fi
+            jq -e --arg name "$repository" --arg account "$AWS_ACCOUNT_ID" --arg arn "arn:aws:ecr:${AWS_REGION}:${AWS_ACCOUNT_ID}:repository/${repository}" '.repositories | length == 1 and .[0].repositoryName == $name and .[0].registryId == $account and .[0].repositoryArn == $arn' <<<"$repository_metadata" >/dev/null || exit 1
+            jq -cn --arg name "$repository" '[{type:"aws_ecr_repository",id:$name}]' > "${DG_AWS_OWNERSHIP_FILE}.receipt"
+            node "$DG_AWS_OWNERSHIP_COLLECTOR" resolve "$DG_AWS_OWNERSHIP_FILE" "ecr/${service_id}" "${DG_AWS_OWNERSHIP_FILE}.receipt"
             if [ "$logged_in" = false ]; then aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"; logged_in=true; fi
             docker push "$image" || { echo "DG_FAILURE serviceId=$service_id code=DG_ECR_PUBLISH_FAILED stage=ecr_publish" >&2; exit 1; }
             digest="$(aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$tag" --query 'imageDetails[0].imageDigest' --output text)"; [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
@@ -318,7 +359,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git init /tmp/deployguard-control-plane; git -C /tmp/deployguard-control-plane remote add origin https://github.com/Hassan-Sajjad72/Deploy-Guard-dev.git; git -C /tmp/deployguard-control-plane fetch --depth 1 origin "$CONTROL_PLANE_SHA"; git -C /tmp/deployguard-control-plane checkout --detach "$CONTROL_PLANE_SHA"; [ "$(git -C /tmp/deployguard-control-plane rev-parse HEAD)" = "$CONTROL_PLANE_SHA" ]
+          [ "$(git -C /tmp/deployguard-control-plane rev-parse HEAD)" = "$CONTROL_PLANE_SHA" ]
           mkdir -p .deployguard/terraform; cp -R /tmp/deployguard-control-plane/infrastructure/railpack-runtime/. .deployguard/terraform/
           jq -n --arg region "$AWS_REGION" --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg vpc "$VPC_ID" --argjson subnets "$(printf '%s' "$PUBLIC_SUBNET_IDS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')" --slurpfile runtime .deployguard/runtime.json --slurpfile artifacts .deployguard/service-artifacts.json '
             ($artifacts[0] | map({key:.serviceId,value:.}) | from_entries) as $images |
@@ -329,57 +370,11 @@ jobs:
           terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/runtime/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" -backend-config="use_lockfile=true" || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
           terraform -chdir=.deployguard/terraform validate || { echo 'DG_FAILURE code=DG_TERRAFORM_VALIDATE_FAILED stage=terraform_validate' >&2; exit 1; }
           if [ "$DEPLOYMENT_ACTION" = destroy ]; then
+            umask 077
+            terraform -chdir=.deployguard/terraform show -json > "${DG_AWS_OWNERSHIP_FILE}.state"
+            node .deployguard/terraform/destroy-retained-runtime.mjs --validate-state .deployguard/runtime.json "${DG_AWS_OWNERSHIP_FILE}.state"
             terraform -chdir=.deployguard/terraform destroy -input=false -auto-approve
-            compact_project="${PROJECT_ID//-/}"
-            # Runtime secrets are created by DeployGuard, outside Terraform,
-            # and are therefore removed only after Terraform has stopped every
-            # task that can reference them.  Never delete an arbitrary secret:
-            # every candidate must match the exact project/environment/service
-            # namespace and DeployGuard ownership tags from the immutable input.
-            while IFS= read -r service; do
-              service_id="$(jq -r '.serviceId' <<<"$service")"
-              service_secret="deployguard/${PROJECT_ID}/${ENVIRONMENT_NAME}/services/${service_id}/runtime"
-              legacy_secret="deployguard/${PROJECT_ID}/${ENVIRONMENT_NAME}/application/runtime"
-              while IFS= read -r secret_arn; do
-                [ -n "$secret_arn" ] || continue
-                metadata="$(aws secretsmanager describe-secret --secret-id "$secret_arn" --output json)"
-                jq -e --arg project "$PROJECT_ID" --arg environment "$ENVIRONMENT_NAME" --arg service "$service_id" --arg serviceSecret "$service_secret" --arg legacySecret "$legacy_secret" '
-                  def tag($key): ([.Tags[]? | select(.Key == $key) | .Value] | first);
-                  tag("ManagedBy") == "DeployGuard"
-                  and tag("DeployGuardProjectId") == $project
-                  and tag("Environment") == $environment
-                  and tag("SecretPurpose") == "application_runtime"
-                  and ((.Name == $serviceSecret and tag("DeployGuardScope") == "service" and tag("DeployGuardServiceId") == $service) or (.Name == $legacySecret and tag("DeployGuardScope") == "project"))
-                ' <<<"$metadata" >/dev/null || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
-                aws secretsmanager delete-secret --secret-id "$secret_arn" --force-delete-without-recovery
-              done < <({
-                jq -r '.secretReferences[]? | split(":") | .[0:7] | join(":")' <<<"$service"
-                aws secretsmanager describe-secret --secret-id "$service_secret" --query ARN --output text 2>/dev/null || true
-              } | sort -u)
-              repository="$(jq -r '.rollbackImage | split("@")[0] | split("/")[1:] | join("/")' <<<"$service")"
-              compact_service="${service_id//-/}"
-              [ "$repository" = "deployguard-${PROJECT_ID}" ] || [ "$repository" = "deployguard-${compact_project:0:12}-${compact_service:0:8}" ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=terraform_materialization' >&2; exit 1; }
-              if ! delete_error="$(aws ecr delete-repository --repository-name "$repository" --force 2>&1)"; then
-                if ! grep -q 'RepositoryNotFoundException' <<<"$delete_error"; then
-                  echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
-                  exit 1
-                fi
-              fi
-              if describe_error="$(aws ecr describe-repositories --repository-names "$repository" 2>&1)"; then
-                echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
-                exit 1
-              elif ! grep -q 'RepositoryNotFoundException' <<<"$describe_error"; then
-                echo 'DG_FAILURE code=DG_ECR_CLEANUP_FAILED stage=terraform_materialization' >&2
-                exit 1
-              fi
-            done < <(jq -c '.services[]' .deployguard/runtime.json)
-            state_key="projects/${PROJECT_ID}/${ENVIRONMENT_NAME}/runtime/terraform.tfstate"
-            aws s3api delete-object --bucket "$TERRAFORM_STATE_BUCKET" --key "$state_key" >/dev/null
-            if aws s3api head-object --bucket "$TERRAFORM_STATE_BUCKET" --key "$state_key" >/dev/null 2>&1; then
-              echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2
-              exit 1
-            fi
-            jq -n --arg action "$DEPLOYMENT_ACTION" --arg contractVersion "$RESULT_CONTRACT_VERSION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --arg projectId "$PROJECT_ID" --arg environmentName "$ENVIRONMENT_NAME" --slurpfile runtime .deployguard/runtime.json '{action:$action,contractVersion:$contractVersion,sourceSha:$sourceSha,operationId:$operationId,destroyed:true,destroyVerification:{contractVersion:"deployguard.destroy-result/v2",deploymentOperationId:$operationId,projectId:$projectId,environmentName:$environmentName,generationIds:($runtime[0].projectDeletion.generationIds|sort),status:"project_delete_ready",generationResourcesRemoved:true,projectResourcesRemoved:true,terraformStateArtifactsRemoved:true,sharedPlatformUntouched:true,verifiedAt:(now|todateiso8601)}}' > .deployguard/release-runtime.json
+            node .deployguard/terraform/destroy-retained-runtime.mjs --cleanup-and-verify .deployguard/runtime.json > .deployguard/release-runtime.json
           elif [ "$RELEASE_ONLY" = true ]; then
             # Terraform remains the bootstrap/topology/destroy authority.  A
             # release-only redeploy updates only the active ECS task revision.
@@ -423,10 +418,14 @@ jobs:
                     | del(.change.before_sensitive, .change.after_sensitive)
                   ))
                 ' > .deployguard/terraform/deployguard-cost-plan.json
+            node "$DG_AWS_OWNERSHIP_COLLECTOR" begin "$DG_AWS_OWNERSHIP_FILE" terraform
             if ! terraform -chdir=.deployguard/terraform apply -input=false -auto-approve deployguard.tfplan; then
               echo 'DG_FAILURE code=DG_TERRAFORM_APPLY_FAILED stage=terraform_apply' >&2
               exit 1
             fi
+            umask 077
+            terraform -chdir=.deployguard/terraform show -json > "${DG_AWS_OWNERSHIP_FILE}.state"
+            node "$DG_AWS_OWNERSHIP_COLLECTOR" terraform "$DG_AWS_OWNERSHIP_FILE" "${DG_AWS_OWNERSHIP_FILE}.state"
             terraform -chdir=.deployguard/terraform output -json | jq -c 'with_entries(.value=.value.value)' > .deployguard/terraform-outputs.json
             if [ "$DEPLOYMENT_ACTION" = rollback ]; then
               expected_database_version="$(jq -r '[.services[] | select(.databaseAttached == true) | .managedDatabase.secretVersionId // empty] | first // empty' .deployguard/runtime.json)"
@@ -460,6 +459,13 @@ jobs:
           mkdir -p terraform
           jq -n --arg contractVersion deployguard.release-failure/v1 --arg action "$DEPLOYMENT_ACTION" --arg sourceSha "$SOURCE_SHA" --arg operationId "$OPERATION_ID" --slurpfile verification .deployguard/aws-runtime-verification.json '{contractVersion:$contractVersion,action:$action,sourceSha:$sourceSha,operationId:$operationId,failedStage:"aws_runtime_verification",awsRuntimeVerification:$verification[0]}' > terraform/deployguard-failure-evidence.json
           [ "$(wc -c < terraform/deployguard-failure-evidence.json)" -le 524288 ]
+      - name: Publish retained AWS ownership identifiers
+        if: always() && steps.ownership.outcome == 'success' && inputs.deployment_action != 'destroy'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deployguard-ownership-${{ inputs.deployment_operation_id }}
+          path: ${{ env.DG_AWS_OWNERSHIP_FILE }}
+          if-no-files-found: error
       - name: Preserve authoritative deployment failure evidence
         if: failure() && hashFiles('.deployguard/terminal-failure.json') != '' && hashFiles('terraform/deployguard-failure-evidence.json') == ''
         shell: bash

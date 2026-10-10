@@ -263,18 +263,21 @@ export async function observeDeletion(manifest, run, options = {}) {
   };
 }
 
-async function main() {
-  // Explicit read-only invocation, separate from the destructive workflow.
-  if (process.argv.length !== 4 || process.argv[2] !== "--manifest") throw new Error("Usage: node observe-deletion.mjs --manifest retained-manifest.json");
-  const manifest = JSON.parse(readFileSync(process.argv[3], "utf8"));
+export function awsCliRunner() {
   const exec = promisify(execFile);
-  const run = async (args) => {
+  return async (args) => {
     try {
       const result = await exec("aws", args, { timeout: 30000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env, AWS_PAGER: "", AWS_MAX_ATTEMPTS: "1" } });
       return { status: 0, stdout: result.stdout, stderr: result.stderr };
     } catch (error) { return { status: 1, stdout: "", stderr: error.stderr || "" }; }
   };
-  const report = await observeDeletion(manifest, run);
+}
+
+async function main() {
+  // Explicit read-only invocation, separate from the destructive workflow.
+  if (process.argv.length !== 4 || process.argv[2] !== "--manifest") throw new Error("Usage: node observe-deletion.mjs --manifest retained-manifest.json");
+  const manifest = JSON.parse(readFileSync(process.argv[3], "utf8"));
+  const report = await observeDeletion(manifest, awsCliRunner());
   process.stdout.write(`${JSON.stringify(report)}\n`);
   if (report.status !== "PASS") process.exitCode = 1;
 }

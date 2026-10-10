@@ -110,12 +110,27 @@ while IFS= read -r artifact; do
     ')"
     registration_path=".deployguard/release-only/${service_id}.task-definition.json"
     printf '%s\n' "$registration" > "$registration_path"
+    if [ -n "${DG_AWS_OWNERSHIP_FILE:-}" ]; then
+      node "$DG_AWS_OWNERSHIP_COLLECTOR" begin "$DG_AWS_OWNERSHIP_FILE" "ecs/${service_id}/register"
+    fi
     registered="$(aws ecs register-task-definition --cli-input-json "file://${registration_path}" --output json 2>&1)" || failure task_definition_registration_failed
     task_definition_arn="$(jq -r '.taskDefinition.taskDefinitionArn // empty' <<<"$registered")"
     [ -n "$task_definition_arn" ] || failure registered_task_definition_missing
+    if [ -n "${DG_AWS_OWNERSHIP_FILE:-}" ]; then
+      jq -cn --arg id "$task_definition_arn" '[{type:"aws_ecs_task_definition",id:$id}]' > "${DG_AWS_OWNERSHIP_FILE}.receipt"
+      node "$DG_AWS_OWNERSHIP_COLLECTOR" resolve "$DG_AWS_OWNERSHIP_FILE" "ecs/${service_id}/register" "${DG_AWS_OWNERSHIP_FILE}.receipt"
+    fi
   fi
   fi
-  aws ecs update-service --cluster "$cluster" --service "$service_name" --task-definition "$task_definition_arn" --force-new-deployment --output json >/dev/null 2>&1 || failure ecs_service_update_failed
+  if [ -n "${DG_AWS_OWNERSHIP_FILE:-}" ]; then
+    node "$DG_AWS_OWNERSHIP_COLLECTOR" begin "$DG_AWS_OWNERSHIP_FILE" "ecs/${service_id}/update"
+  fi
+  updated="$(aws ecs update-service --cluster "$cluster" --service "$service_name" --task-definition "$task_definition_arn" --force-new-deployment --output json 2>&1)" || failure ecs_service_update_failed
+  if [ -n "${DG_AWS_OWNERSHIP_FILE:-}" ]; then
+    jq -e --arg task "$task_definition_arn" '.service.taskDefinition == $task and (.service.serviceArn | type == "string") and (.service.clusterArn | type == "string")' <<<"$updated" >/dev/null || failure ecs_service_update_identity_missing
+    jq -c --arg task "$task_definition_arn" '[{type:"aws_ecs_cluster",id:.service.clusterArn},{type:"aws_ecs_service",id:.service.serviceArn,parent:.service.clusterArn},{type:"aws_ecs_task_definition",id:$task}]' <<<"$updated" > "${DG_AWS_OWNERSHIP_FILE}.receipt"
+    node "$DG_AWS_OWNERSHIP_COLLECTOR" resolve "$DG_AWS_OWNERSHIP_FILE" "ecs/${service_id}/update" "${DG_AWS_OWNERSHIP_FILE}.receipt"
+  fi
   jq --arg id "$service_id" --arg image "$image" --arg revision "$runtime_config_revision_id" --arg task "$task_definition_arn" --argjson port "$service_port" '.services[$id] += {image:$image,runtime_config_revision_id:$revision,task_definition_arn:$task,service_port:$port}' .deployguard/release-only/terraform-outputs.json > .deployguard/release-only/terraform-outputs.next
   mv .deployguard/release-only/terraform-outputs.next .deployguard/release-only/terraform-outputs.json
 done < <(jq -c '.[]' "$artifacts")

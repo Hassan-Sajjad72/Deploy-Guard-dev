@@ -7,6 +7,23 @@ evidence="${3:-.deployguard/aws-runtime-verification.json}"
 mkdir -p "$(dirname "$evidence")"
 printf '[]' > "$evidence"
 
+ownership_failure() {
+  echo "DG_FAILURE serviceId=$1 code=DG_AWS_OWNERSHIP_INCOMPLETE stage=ownership_retention" >&2
+  append_outcome "$1" false DG_AWS_OWNERSHIP_INCOMPLETE "AWS ownership identifiers could not be retained." ownership_retention
+  exit 1
+}
+
+retain_task_ownership() {
+  [ -n "${DG_AWS_OWNERSHIP_FILE:-}" ] || return 0
+  local service_id="$1" listing="$2" cluster_arn
+  cluster_arn="$(jq -r '.ecs_cluster_arn // empty' "$outputs")" || return 1
+  jq -e '.taskArns | type == "array"' <<<"$listing" >/dev/null || return 1
+  jq -e '(.nextToken // .NextToken // null) == null' <<<"$listing" >/dev/null || return 1
+  node "$DG_AWS_OWNERSHIP_COLLECTOR" begin "$DG_AWS_OWNERSHIP_FILE" "ecs/${service_id}/tasks" || return 1
+  jq -c --arg cluster "$cluster_arn" '[.taskArns[] | {type:"aws_ecs_task",id:.,parent:$cluster}]' <<<"$listing" > "${DG_AWS_OWNERSHIP_FILE}.receipt" || return 1
+  node "$DG_AWS_OWNERSHIP_COLLECTOR" resolve "$DG_AWS_OWNERSHIP_FILE" "ecs/${service_id}/tasks" "${DG_AWS_OWNERSHIP_FILE}.receipt"
+}
+
 append_outcome() {
   local service_id="$1" verified="$2" code="${3:-}" summary="${4:-}" stage="${5:-aws_runtime_verification}"
   local outcome
@@ -397,9 +414,17 @@ wait_for_cloud_map_registration() {
 
 release_database_attached_service() {
   local service_id="$1" cluster="$2" attached_service="$3" update
+  if [ -n "${DG_AWS_OWNERSHIP_FILE:-}" ]; then
+    node "$DG_AWS_OWNERSHIP_COLLECTOR" begin "$DG_AWS_OWNERSHIP_FILE" "ecs/${service_id}/activate" || ownership_failure "$service_id"
+  fi
   update="$(aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count 1 --output json 2>&1)" || provider_failure "$service_id" "$update"
   jq -e --arg service "$attached_service" '.service.serviceName == $service and .service.desiredCount == 1' <<<"$update" >/dev/null || configuration_failure "$service_id" "The attached application service did not accept its intended desired count."
   printf 'DG_DATABASE_ATTACHED_SERVICE_RELEASED serviceId=%s desiredCount=1\n' "$service_id"
+  if [ -n "${DG_AWS_OWNERSHIP_FILE:-}" ]; then
+    jq -e '.service.serviceArn | type == "string"' <<<"$update" >/dev/null || provider_failure "$service_id" "AWS activation identity unavailable."
+    jq -c '[{type:"aws_ecs_cluster",id:.service.clusterArn},{type:"aws_ecs_service",id:.service.serviceArn,parent:.service.clusterArn},{type:"aws_ecs_task_definition",id:.service.taskDefinition}]' <<<"$update" > "${DG_AWS_OWNERSHIP_FILE}.receipt" || ownership_failure "$service_id"
+    node "$DG_AWS_OWNERSHIP_COLLECTOR" resolve "$DG_AWS_OWNERSHIP_FILE" "ecs/${service_id}/activate" "${DG_AWS_OWNERSHIP_FILE}.receipt" || ownership_failure "$service_id"
+  fi
 }
 
 cluster="$(jq -r '.ecs_cluster_name' "$outputs")"
@@ -426,6 +451,7 @@ verify_database() {
   jq -e '.taskArns | length > 0' <<<"$database_task" >/dev/null || configuration_failure "$database_id" "Managed database has no running ECS task."
   jq -e '.Service.Type == "DNS_HTTP"' <<<"$cloud_map" >/dev/null || configuration_failure "$database_id" "Cloud Map service is not DNS-enabled."
   mapfile -t database_task_arns < <(jq -r '.taskArns[]' <<<"$database_task")
+  retain_task_ownership "$database_id" "$database_task" || ownership_failure "$database_id"
   database_tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "${database_task_arns[@]}" --output json 2>&1)" || provider_failure "$database_id" "$database_tasks"
   database_task_ips="$(jq -c --arg taskDefinition "$database_task_definition" '[.tasks[]? | select(.taskDefinitionArn == $taskDefinition and .lastStatus == "RUNNING") | .attachments[]?.details[]? | select(.name == "privateIPv4Address") | .value] | unique | sort' <<<"$database_tasks")" || configuration_failure "$database_id" "Managed database task-network evidence is invalid."
   jq -e 'length > 0' <<<"$database_task_ips" >/dev/null || configuration_failure "$database_id" "Managed database has no current task ENI identity."
@@ -506,6 +532,7 @@ verify_service() {
   running="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status RUNNING --output json 2>&1)" || provider_failure "$service_id" "$running"
   jq -e '.taskArns | length > 0' <<<"$running" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   mapfile -t running_task_arns < <(jq -r '.taskArns[]' <<<"$running")
+  retain_task_ownership "$service_id" "$running" || ownership_failure "$service_id"
   tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "${running_task_arns[@]}" --output json 2>&1)" || provider_failure "$service_id" "$tasks"
   jq -e --arg task "$task_definition_arn" 'all(.tasks[]; .lastStatus == "RUNNING" and .taskDefinitionArn == $task and any(.containers[]; .name == "application" and .lastStatus == "RUNNING"))' <<<"$tasks" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   expected_targets="$(jq -c '[.tasks[]?.attachments[]?.details[]? | select(.name == "privateIPv4Address") | .value] | sort | unique' <<<"$tasks")"

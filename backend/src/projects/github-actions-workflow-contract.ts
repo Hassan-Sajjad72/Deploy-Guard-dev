@@ -11,17 +11,23 @@ export const CONTROL_PLANE_EXECUTABLE_PATHS = {
   releaseOnlyTaskDefinitions: "infrastructure/railpack-runtime/register-release-task-definitions.sh",
   runtimeVerifier: "infrastructure/railpack-runtime/verify-runtime.sh",
   runtimeInfrastructure: "infrastructure/railpack-runtime/main.tf",
+  ownershipCollector: "infrastructure/railpack-runtime/collect-ownership.mjs",
+  deletionObserver: "infrastructure/railpack-runtime/observe-deletion.mjs",
+  strictDestroyProducer: "infrastructure/railpack-runtime/destroy-retained-runtime.mjs",
   fallbackBuilder: "infrastructure/docker-fallback/build-images.sh",
   fallbackContract: "infrastructure/docker-fallback/fallback-contract.mjs",
   fallbackTemplate: "infrastructure/docker-fallback/node22-npm-workspace.Dockerfile",
   fallbackManifest: "infrastructure/docker-fallback/templates.json",
 } as const;
 const CONTROL_PLANE_EXECUTABLE_SHA256 = {
-  workflow: "b2a02a6444df5e397e9a464ce4a4c21e9d034c5f4267c15b6f73d4c7cef43505",
+  workflow: "56ddfe119b93fb76692fbe4484b4038ac135f4a7dde4d69d603767695cf7697c",
   releaseResultProducer: "b0a19dd5cba4144dc460a99981ada034fef12d2ac1c1a5a2b1bdbe3f415af7ea",
-  releaseOnlyTaskDefinitions: "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
-  runtimeVerifier: "adcd8c5f5b9eb535a53ee868d894caccc67b415f92d89eafb46b0a7d51843c90",
+  releaseOnlyTaskDefinitions: "9a1f9932a7b17fab45b8a399b9b4cb29a2a735e3788804e7791591c8a62e8587",
+  runtimeVerifier: "66e850065afe23caa1e58587d0a092cf5f2c999d789fbdbcc17b64692d75a766",
   runtimeInfrastructure: "a57d0142ff63eed47399aad6a3f6f8bf5dd4f8bd7ade731bac98c9c0d7cf955a",
+  ownershipCollector: "32fcd663ff7c19657fc7c3ade4c21dd81eac19a1ce99698cc718e4f990ba93fe",
+  deletionObserver: "c955bd06db51abaf79cd3a46c47257ce8b5d74234ae5c4ca7cc63f2c5d51ddea",
+  strictDestroyProducer: "6af811ddbb9b8a401fc909024d565430494415329b06e66f1895371bbde9e5ef",
   fallbackBuilder: "b4974d375b0db2215552d1dc69b887da83a622b9ecc89610fd81e7c4d5f8497e",
   fallbackContract: "d23b986804cfddc24a2b651535dde0dad2f2ef92d008045d2db13c462536aafd",
   fallbackTemplate: "04872857e43a18e2e083a71f739e1cd5f9b7c2463cd50516832c05558686b4d6",
@@ -33,6 +39,9 @@ export type ReusableWorkflowExecutableContract = {
   releaseOnlyTaskDefinitions: string;
   runtimeVerifier: string;
   runtimeInfrastructure: string;
+  ownershipCollector: string;
+  deletionObserver: string;
+  strictDestroyProducer: string;
   fallbackBuilder: string;
   fallbackContract: string;
   fallbackTemplate: string;
@@ -173,6 +182,9 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     releaseOnlyTaskDefinitions: sha256(executable.releaseOnlyTaskDefinitions),
     runtimeVerifier: sha256(executable.runtimeVerifier),
     runtimeInfrastructure: sha256(executable.runtimeInfrastructure),
+    ownershipCollector: sha256(executable.ownershipCollector),
+    deletionObserver: sha256(executable.deletionObserver),
+    strictDestroyProducer: sha256(executable.strictDestroyProducer),
     fallbackBuilder: sha256(executable.fallbackBuilder),
     fallbackContract: sha256(executable.fallbackContract),
     fallbackTemplate: sha256(executable.fallbackTemplate),

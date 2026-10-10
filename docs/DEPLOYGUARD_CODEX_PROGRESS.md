@@ -925,3 +925,44 @@ no dependency, migration, AWS operation or publication was introduced.
 
 This checkpoints intake only. Complete production collection/durable write evidence
 and strict v3 destruction publishing are still required by roadmap S01.
+
+## M0.16 — local ownership publisher and strict v3 producer integration
+
+The reusable workflow now publishes an operation-named identifier-only ownership
+artifact on supported terminal success/failure paths, separate from release proof.
+The operation's immutable server row precedes dispatch; a pre-mutation artifact
+is uploaded before workflow writes. A private, bounded, fsynced runner journal
+records intents before ECR/Terraform/direct-ECS mutations and actual identifiers
+after responses, including registered revisions before activation and observed
+application/database task identities. Lost responses/partial apply remain unresolved;
+killed runners/missing uploads cannot manufacture complete historical receipts.
+Their recovery remains fail closed, not guessed from tags or an empty state.
+
+Destroy validates current Terraform identifiers against the full frozen inventory
+before Terraform destruction, then cleans only exact retained out-of-Terraform
+task revisions, ECR/runtime-secret and state identities. Existing runtime-secret
+namespace/tag checks remain. The independent observer must pass every retained
+resource and state/lock before a v3 result is emitted. Present locks are never
+force-unlocked; database-secret recovery protection is not shortened. No shared
+bucket, broad discovery, or new data-deletion policy is introduced.
+
+The existing bounded AWS CLI observer runner and bounded identifier reader are
+reused. All three new/reused workflow modules join the immutable executable-byte
+certification; there are now 12 checked files, with the existing 19-input/v5/schema-3
+deployment interfaces preserved. This is an unpublished local candidate, not a
+claim that the configured remote workflow has been activated.
+
+Focused build, workflow/actionlint/ShellCheck, producer/shell-hook, strict destroy
+round-trip, independent observer/retention, server runtime-secret and real
+PostgreSQL ownership intake/configuration-admission checks passed. Assertions now
+trace the stronger v3 implementation instead of requiring retired inline v2 code;
+provider denial, residual resources, failed writes, historical namespace and secret
+protections remain tested. An await-boundary identity drift was reproduced at
+`/tmp/deployguard-m0-producer-identity-before.log` and fixed by freezing result identity
+before provider awaits; its assertion now passes. No dependencies/migrations were
+added. Architecture, error handling, conditional Bash failure propagation, bounded
+I/O, cleanup and unrelated-diff reviews were performed.
+
+This logical source checkpoint is verified by focused checks; the complete local
+integration gate follows against its exact Git object/local fixture pin. M0 completion
+and AWS/published-workflow certification are not claimed at this checkpoint.

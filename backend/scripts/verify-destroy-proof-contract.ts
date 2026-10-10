@@ -32,7 +32,8 @@ async function verify() {
   const { observeDeletion } = require("../../infrastructure/railpack-runtime/observe-deletion.mjs");
   // Run the real observer with explicitly injected read-only responses, then
   // validate its output through the production backend contract.
-  const report = await observeDeletion(proof.ownership.manifest, async (args: string[]) => {
+  const readOnlyProvider = async (args: string[]) => {
+    assert.match(args[1], /^(get-|describe-|head-)/, "an already-clean inventory must not trigger writes");
     const body = args[0] === "sts" ? { Account: "123456789012" }
       : args[1] === "describe-clusters" ? { clusters: [], failures: [{ arn: args[3], reason: "MISSING" }] }
         : args[1] === "describe-task-definition" ? { taskDefinition: { taskDefinitionArn: args[3], status: "INACTIVE" } }
@@ -41,11 +42,17 @@ async function verify() {
       "describe-load-balancers": "LoadBalancerNotFound", "describe-target-groups": "TargetGroupNotFound" }[args[1]];
     return body ? { status: 0, stdout: JSON.stringify(body), stderr: "" }
       : { status: 1, stdout: "", stderr: `An error occurred (${code}) when calling the Read operation:` };
-  }, { attempts: 1, delayMs: 0 });
+  };
+  const report = await observeDeletion(proof.ownership.manifest, readOnlyProvider, { attempts: 1, delayMs: 0 });
   assert.equal(report.status, "PASS");
   const evidence: any = { ...proof.evidence, verifiedAt: report.verifiedAt, observation: report };
   const parsed = githubActionsDestroyEvidenceFromValue(evidence);
   assert.ok(parsed && githubActionsDestroyEvidenceMatchesOperation(parsed, operation(), "dev"), "actual injected observer output must match the frozen receipt-bound manifest");
+  const { cleanupRetainedRuntime } = require("../../infrastructure/railpack-runtime/destroy-retained-runtime.mjs");
+  const produced = await cleanupRetainedRuntime(runtime(), readOnlyProvider, { attempts: 1, delayMs: 0 });
+  const producedEvidence = githubActionsDestroyEvidenceFromValue(produced.destroyVerification);
+  assert.ok(producedEvidence && githubActionsDestroyEvidenceMatchesOperation(producedEvidence, operation(), "dev"),
+    "production v3 producer output, including JSONB-stable receipt hash and exact observer hash, must pass the unchanged backend admission contract");
   const legacy: any = { ...proof.evidence, contractVersion: "deployguard.destroy-result/v2" };
   delete legacy.ownershipSha256; delete legacy.observation;
   assert.equal(githubActionsDestroyEvidenceFromValue(legacy), null, "legacy success booleans cannot become deletion authority");

@@ -31,7 +31,10 @@ const releaseOnlyTaskDefinitions = readFileSync(join(root, "infrastructure", "ra
 const fallbackContract = readFileSync(join(root, "infrastructure", "docker-fallback", "fallback-contract.mjs"), "utf8");
 const fallbackTemplate = readFileSync(join(root, "infrastructure", "docker-fallback", "node22-npm-workspace.Dockerfile"), "utf8");
 const fallbackManifest = readFileSync(join(root, "infrastructure", "docker-fallback", "templates.json"), "utf8");
-const executableContract = { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform, fallbackBuilder: buildExecution, fallbackContract, fallbackTemplate, fallbackManifest };
+const ownershipCollector = readFileSync(join(root, "infrastructure", "railpack-runtime", "collect-ownership.mjs"), "utf8");
+const deletionObserver = readFileSync(join(root, "infrastructure", "railpack-runtime", "observe-deletion.mjs"), "utf8");
+const strictDestroyProducer = readFileSync(join(root, "infrastructure", "railpack-runtime", "destroy-retained-runtime.mjs"), "utf8");
+const executableContract = { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform, ownershipCollector, deletionObserver, strictDestroyProducer, fallbackBuilder: buildExecution, fallbackContract, fallbackTemplate, fallbackManifest };
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
 const providerLock = readFileSync(join(root, "infrastructure", "railpack-runtime", ".terraform.lock.hcl"), "utf8");
@@ -180,26 +183,21 @@ destroyFixture.projectDeletion = { generationIds: ["55555555-5555-4555-8555-5555
 const destroyJqResult = spawnSync("jq", ["-e", "--arg", "project", destroyFixture.projectId, "--arg", "operation", destroyFixture.operationId, "--arg", "sha", destroyFixture.sourceSha, "--arg", "action", "destroy", jqContract], { input: JSON.stringify(destroyFixture), encoding: "utf8" });
 assert.equal(destroyJqResult.status, 0, `workflow must accept the exact canonical destroy runtime fixture: ${destroyJqResult.stderr}`);
 const destroyRuntime = workflow.slice(workflow.indexOf('if [ "$DEPLOYMENT_ACTION" = destroy ]; then'), workflow.indexOf('else\n            terraform -chdir=.deployguard/terraform plan'));
-assert.match(destroyRuntime, /terraform -chdir=\.deployguard\/terraform destroy -input=false -auto-approve[\s\S]*?aws secretsmanager delete-secret --secret-id .*--force-delete-without-recovery[\s\S]*?aws ecr delete-repository --repository-name .* --force[\s\S]*?aws s3api delete-object --bucket "\$TERRAFORM_STATE_BUCKET" --key "\$state_key"[\s\S]*?aws s3api head-object/, "destroy must prove exact Terraform state, DeployGuard-owned runtime-secret, and immutable-image cleanup before it emits deletion evidence");
-assert.match(destroyRuntime, /if ! delete_error=.*aws ecr delete-repository[\s\S]*?RepositoryNotFoundException[\s\S]*?if describe_error=.*aws ecr describe-repositories[\s\S]*?RepositoryNotFoundException/, "Destroy treats only a confirmed missing repository as already clean");
-assert.doesNotMatch(destroyRuntime, /delete-repository[^\n]*\|\|\s*true/, "Destroy must never convert an unknown ECR deletion result into successful evidence");
-const ecrCleanup = destroyRuntime.match(/if ! delete_error=.*?[\s\S]*?\n\s*fi\n\s*if describe_error=.*?[\s\S]*?\n\s*fi/)?.[0];
-assert.ok(ecrCleanup, "the executable ECR deletion proof must be extractable");
-const executeEcrCleanup = (deleteExit: number, deleteError: string, describeExit: number, describeError: string) => spawnSync("bash", ["-c", `
-  aws() {
-    if [ "$1 $2" = "ecr delete-repository" ]; then printf '%s' '${deleteError}' >&2; return ${deleteExit}; fi
-    if [ "$1 $2" = "ecr describe-repositories" ]; then printf '%s' '${describeError}' >&2; return ${describeExit}; fi
-    return 99
-  }
-  repository=deployguard-test
-  ${ecrCleanup}
-`], { encoding: "utf8" });
-assert.notEqual(executeEcrCleanup(1, "AccessDeniedException", 1, "AccessDeniedException").status, 0, "an unverified ECR deletion failure must stop Destroy before release evidence");
-assert.notEqual(executeEcrCleanup(0, "", 0, "").status, 0, "an ECR repository still observable after deletion must stop Destroy before release evidence");
-assert.equal(executeEcrCleanup(1, "RepositoryNotFoundException", 1, "RepositoryNotFoundException").status, 0, "a confirmed already-absent ECR repository may continue to state cleanup and release evidence");
-assert.match(destroyRuntime, /\.Name == \$serviceSecret[\s\S]*?\.Name == \$legacySecret/, "destroy supports only exact owned service-scoped or historical project-scoped runtime secret namespaces");
-assert.match(destroyRuntime, /describe-secret --secret-id "\$service_secret" --query ARN --output text/, "destroy discovers the exact service secret even when it contains only build-scope values");
-assert.match(destroyRuntime, /\[ "\$repository" = "deployguard-\$\{PROJECT_ID\}" \] \|\| \[ "\$repository" = "deployguard-\$\{compact_project:0:12\}-\$\{compact_service:0:8\}" \]/, "destroy must reject any ECR repository outside the exact legacy or service-scoped DeployGuard namespace");
+assert.match(destroyRuntime, /--validate-state[\s\S]*?terraform -chdir=\.deployguard\/terraform destroy -input=false -auto-approve[\s\S]*?--cleanup-and-verify/, "exact retained Terraform scope is checked before destruction and independent cleanup proof follows it");
+assert.doesNotMatch(workflow, /deployguard\.destroy-result\/v2/, "the production workflow must never publish legacy success booleans");
+assert.match(strictDestroyProducer, /observeDeletion\(manifest, run[\s\S]*?observation\.status !== "PASS"/, "every retained historical resource, state and lock must independently pass before evidence");
+assert.match(strictDestroyProducer, /deregister-task-definition[\s\S]*?delete-repository[\s\S]*?delete-secret[\s\S]*?delete-object/, "out-of-Terraform task revisions, ECR, runtime secrets and state retain their exact cleanup contracts");
+assert.match(strictDestroyProducer, /observation\.status === "PASS"[\s\S]*?continue/, "only independently proven absence/inactivity permits an already-clean skip");
+assert.match(strictDestroyProducer, /preliminary\.status === "UNVERIFIED"[\s\S]*?fail\(\)/, "authorization or unknown provider results cannot authorize cleanup");
+assert.match(strictDestroyProducer, /result\.status !== 0[\s\S]*?fail\(\)/, "failed writes never become successful cleanup");
+assert.match(strictDestroyProducer, /!observation\.id\.endsWith\("\.tflock"\)/, "cleanup cannot force-unlock a current state writer");
+assert.match(strictDestroyProducer, /ownership\.manifest\.resources[\s\S]*?aws_ecr_repository[\s\S]*?repository\.test/, "all historical ECR names, not just current images, stay project-scoped");
+assert.match(strictDestroyProducer, /aws_secretsmanager_secret[\s\S]*?runtimeSecret/, "only exact retained project/environment secret identities are eligible");
+assert.match(strictDestroyProducer, /services[\s\S]*?application[\s\S]*?runtime-/, "service-scoped and historical project-scoped runtime secrets remain supported");
+assert.doesNotMatch(strictDestroyProducer, /delete-repository[^\n]*\|\|\s*true/, "unknown ECR failures must never be swallowed");
+assert.match(workflow, /Publish pre-mutation ownership intent[\s\S]*?deployguard-ownership-intent-/, "intent is uploaded durably before provider writes");
+assert.ok(workflow.indexOf("Publish pre-mutation ownership intent") < workflow.indexOf("aws ecr create-repository"), "pre-write intent publication precedes ECR mutation");
+assert.match(workflow, /Publish retained AWS ownership identifiers[\s\S]*?if: always\(\)[\s\S]*?deployguard-ownership-/, "supported success/failure paths publish bounded ownership separately from release evidence");
 assert.doesNotThrow(() => assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), executableContract));
 const staleResultContract = workflow.replace(/^      result_contract_version:.*\n/m, "");
 assert.throws(
@@ -490,9 +488,9 @@ assert.deepEqual(isolatedDatabaseFailure.verified, ["55555555-5555-4555-8555-555
 const noDatabasePath = executeServiceIsolation(false);
 assert.equal(noDatabasePath.result.status, 0, noDatabasePath.result.stderr);
 assert.deepEqual(noDatabasePath.verified.sort(), ["33333333-3333-4333-8333-333333333333", "55555555-5555-4555-8555-555555555555"], "no-database deployments bypass the database barrier and verify every service");
-assert.match(workflow, /destroyVerification:\{/);
-assert.match(workflow, /contractVersion:"deployguard\.destroy-result\/v2"/);
-assert.match(workflow, /generationIds:\(\$runtime\[0\]\.projectDeletion\.generationIds\s*\|\s*sort\)/);
+assert.match(strictDestroyProducer, /destroyVerification:\s*\{/);
+assert.match(strictDestroyProducer, /contractVersion:\s*"deployguard\.destroy-result\/v3"/);
+assert.match(strictDestroyProducer, /generationIds:\s*\[\.\.\.manifest\.scope\.generationIds\]\.sort\(\)/);
 assert.doesNotMatch(workflow, /build_plan_base64|generated_dockerfile_base64|terraform:\/\//);
 assert.match(deploymentService, /getResultArtifact/);
 assert.match(deploymentService, /releaseEvidence/);

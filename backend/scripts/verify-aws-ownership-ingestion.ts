@@ -43,6 +43,14 @@ const runtimeEvents = (["intent", "owned"] as const).map((phase) => runtimeSecre
   secretName, versionToken: "e".repeat(64), ...(phase === "owned" ? { secretArn } : {}) }, scope));
 
 async function verifyUnitAndTransport() {
+  const { initializeOwnership, beginOwnershipWrite, resolveOwnershipWrite, completedOwnership } = require("../../infrastructure/railpack-runtime/collect-ownership.mjs");
+  const started = initializeOwnership(scope, operation.commitSha, inputs.terraform_state_bucket);
+  const pending = beginOwnershipWrite(started, "fixture/terraform");
+  assert.throws(() => buildAwsOwnershipJournal(pending, operation, runtimeEvents as ProjectPipelineEvent[]), DestroyOwnershipIncompleteError,
+    "an actual interrupted producer cannot pass the existing strict intake");
+  const resolved = resolveOwnershipWrite(pending, "fixture/terraform", proof.journals[0].resources);
+  assert.deepEqual(buildAwsOwnershipJournal(completedOwnership(resolved), operation, runtimeEvents as ProjectPipelineEvent[]),
+    buildAwsOwnershipJournal(collection, operation, runtimeEvents as ProjectPipelineEvent[]), "real producer identifiers round-trip through server-secret intake");
   const journal = buildAwsOwnershipJournal(collection, operation, runtimeEvents as ProjectPipelineEvent[]);
   assert.deepEqual(journal.coverage, ["terraform", "ecr", "ecs", "runtime_secrets", "state"]);
   assert.ok(journal.resources.some((row) => row.type === "aws_secretsmanager_secret" && row.id === secretArn));
