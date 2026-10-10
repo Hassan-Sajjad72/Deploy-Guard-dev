@@ -992,3 +992,16 @@ immutable identity, retry limits, non-authoritative metadata, concurrent retenti
 and deletion, and unrelated changes. No dependencies/schema changes or AWS calls.
 This source checkpoint is locally focused-verified; the full integration gate must
 still pass before declaring M0 locally complete.
+
+## M0.18 — reconcile immutable action call-site certification
+
+The next aggregate gate failed at the existing exact external-action count
+(`/tmp/deployguard-m0-final-integration-pre-final.log`): nine actual call sites
+versus seven legacy expected. The two additional intent/ownership uploads reuse
+the existing approved immutable upload action. Reconciled its exact reviewed
+occurrence count from two to four; retain all SHA and exact-count assertions and
+add negative tests for unreviewed immutable pins, missing and extra uploads.
+Focused external-action certification passed (nine sites, five approved actions,
+upstream metadata checks); release identity passed for the exact M0.16 producer
+Git object and all twelve executable files. No runtime code/pin/dependency change.
+The final aggregate must still complete; previous failures are not suppressed.

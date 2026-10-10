@@ -13,7 +13,8 @@ const APPROVED_ACTION_OCCURRENCES = new Map<string, number>([
   ["actions/checkout", 2],
   ["aws-actions/configure-aws-credentials", 1],
   ["hashicorp/setup-terraform", 1],
-  ["actions/upload-artifact", 2],
+  // Pre-write intent, final ownership, terminal failure, and verified release result.
+  ["actions/upload-artifact", 4],
   ["aquasecurity/setup-trivy", 1],
 ]);
 
@@ -58,6 +59,12 @@ async function run() {
     /immutable 40-character commit SHA/,
     "a nonexistent or floating third-party action ref must fail certification",
   );
+  assert.throws(() => assertApprovedReferences(workflow.replace(/actions\/upload-artifact@[0-9a-f]{40}/,
+    `actions/upload-artifact@${"f".repeat(40)}`)), /reviewed commit/, "ownership uploads cannot use an unreviewed immutable action");
+  assert.throws(() => assertApprovedReferences(workflow.replace(/^\s*uses: actions\/upload-artifact@[^\n]+\n/m, "")),
+    /every direct external action/, "a missing reviewed evidence upload cannot pass certification");
+  assert.throws(() => assertApprovedReferences(`${workflow}\n        uses: actions/upload-artifact@${APPROVED_ACTIONS.get("actions/upload-artifact")}\n`),
+    /every direct external action/, "an extra even-pinned upload cannot silently expand the reviewed workflow");
   for (const reference of references) {
     assert.equal(await actionMetadataExists(reference), true, `${reference.repository}@${reference.sha} must expose action metadata upstream`);
   }
