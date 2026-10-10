@@ -9,7 +9,7 @@ Updated: 2026-10-10 (Asia/Karachi).
 - Worktree: `/tmp/deployguard-m0-kGHmNq/checkout`; original worktree's deletions, untracked specification and document files were preserved.
 - Specification reviewed: owner-provided `backend/MASTER-PLAN.md`, v2.1, in the original worktree. It is untracked there and absent from the published baseline. Charter, R0/working rules, M0, dependencies, reporting and as-is sections informed this slice.
 - The specification records R0 as NOT SIGNED OFF. The owner's current message explicitly authorizes existing-system stabilization. This run treats that as authority for M0 maintenance only, not approval of the future product decisions or M1–M19 implementation.
-- Milestone: **M0 in progress; M0.1–M0.6 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
+- Milestone: **M0 in progress; M0.1–M0.7 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
 - No AWS API mutation, live workflow dispatch, Terraform apply/destroy, production DB access, dependency upgrade, schema migration or feature work was executed. GitHub reads for immutable action checks and local mocked provider tests are identified separately below.
 - Tools: Node `v22.23.2`, npm `10.9.8`, Terraform `v1.15.8`; existing backend/frontend lockfiles retained. Installed dependencies were reused through local symlinks; this was not a fresh npm-ci reproducibility certification. Workflow Terraform remains pinned to `1.10.5`, so local Terraform-version parity is unverified.
 
@@ -627,3 +627,37 @@ collection and production destroy-result gating remain the next local slices;
 historical incomplete evidence must fail closed. AWS cleanup verification is
 pending, not successful. The Intelligence Harness and multi-client prerequisites
 listed above remain unchanged.
+
+## M0.7 — accepted-dispatch uncertainty and bounded terminal artifacts
+
+Independent review reproduced a malformed workflow-listing TypeError after an
+accepted POST. It lost dispatch uncertainty and could enable runtime-secret
+compensation while the workflow was running. Strict listing-field validation and
+the accepted-POST exception boundary now preserve `dispatchMayHaveOccurred`.
+The regression exercises actual Railpack compensation: 39 malformed listings and
+two unexpected discovery exceptions, one POST and zero secret/provider calls.
+
+The new artifact regressions initially failed on unbounded ZIP inflation and on
+invalid archives/provider retrieval outages leaving successful workflows running
+indefinitely. Archive/listing streams and inflation now have enforced byte limits,
+HTTP retrieval has timeouts, duplicate entries/identities and malformed archives
+fail closed, and response streams are cancelled/released on rejection. Stored,
+deflated and streamed-data-descriptor ZIPs remain compatible. Terminal invalid
+artifacts fail validation; temporary retrieval outages use the existing bounded
+pending-evidence window and cannot promote a release. Invalid historical retry
+metadata is repaired to a finite window; raw provider/ZIP bytes are not persisted.
+No dependency, architecture, public workflow schema or executable fingerprint
+changed. All previous assertions remain.
+
+Verification: focused backend build, `test:github-artifact-boundaries`,
+`test:workflow-run-identity`, and `test:dispatch-state-projection` passed.
+`test:pre-final-certification` exited 0 in
+`/tmp/deployguard-m0-artifact-pre-final.log`, including all aggregate local
+build/integration/browser/architecture/lifecycle/workflow/Terraform checks.
+Independent read-only review additionally tested standard ZIP compatibility.
+Tests use local fixtures and injected HTTP/AWS behavior, not cloud execution.
+
+Next: strengthen the existing deletion consumer's frozen-scope and transaction
+checks, then complete production ownership/observation gating. The existing
+destroy producer still emits optimistic v2 flags; it is not independently
+certified. Live AWS verification remains explicitly deferred by the user.

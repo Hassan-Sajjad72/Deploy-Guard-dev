@@ -3,6 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import { renderDeployguardCallerWorkflow } from "../src/projects/github-app.service";
 import { RAILPACK_WORKFLOW_INPUTS } from "../src/projects/railpack-workflow-contract";
 import { GithubActionsDispatchError, GithubActionsService } from "../src/projects/pipeline/github-actions.service";
+import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
+import { GithubActionsRuntimeSecretService, RuntimeSecretMaterialization, RuntimeSecretMaterializationPort } from "../src/projects/github-actions-runtime-secret.service";
 
 const operationId = "11111111-1111-4111-8111-111111111111";
 const otherOperationId = "22222222-2222-4222-8222-222222222222";
@@ -19,6 +21,7 @@ async function scenario(options: {
   discoveryStatus?: number;
   discoveryThrows?: boolean;
   malformedListing?: boolean;
+  rawListing?: string;
   totalCount?: number;
   endlessPagination?: boolean;
 }, verify: (service: GithubActionsService, posts: () => number) => Promise<void>) {
@@ -39,7 +42,7 @@ async function scenario(options: {
       if (options.discoveryThrows) throw new Error("fixture transport failure");
       const page = Number(new URL(url).searchParams.get("page") || 1);
       const pages = options.pages || [[]];
-      return new Response(options.malformedListing ? "{" : JSON.stringify({ workflow_runs: pages[page - 1] || [], total_count: options.totalCount }), {
+      return new Response(options.rawListing ?? (options.malformedListing ? "{" : JSON.stringify({ workflow_runs: pages[page - 1] || [], total_count: options.totalCount })), {
         status: options.discoveryStatus || 200,
         headers: page < pages.length || options.endlessPagination ? { link: '<https://api.github.com/ignored>; rel="next"' } : {},
       });
@@ -62,6 +65,42 @@ const dispatch = (service: GithubActionsService, options: { excludedIds?: string
 });
 const identityError = (error: unknown) => error instanceof GithubActionsDispatchError
   && error.diagnosticCode === "workflow_run_identity_missing" && error.dispatchMayHaveOccurred;
+
+async function verifyAcceptedDiscoveryFailure(service: GithubActionsService, posts: () => number) {
+  let failure: GithubActionsDispatchError;
+  await assert.rejects(() => dispatch(service), (error: unknown) => {
+    assert.ok(error instanceof GithubActionsDispatchError, "accepted discovery errors must retain the typed dispatch boundary");
+    assert.equal(error.diagnosticCode, "workflow_run_identity_missing");
+    assert.equal(error.dispatchMayHaveOccurred, true, "an accepted POST cannot become safe to compensate");
+    failure = error;
+    return true;
+  });
+  assert.equal(posts(), 1, "malformed discovery must never redispatch the accepted operation");
+
+  // Exercise the production Railpack compensation gate with the actual error.
+  // The SDK service uses only a rejecting local port; no AWS client is created.
+  let providerCalls = 0;
+  const forbidden = async (): Promise<never> => { providerCalls += 1; throw new Error("Provider calls are forbidden in this fixture."); };
+  const port: RuntimeSecretMaterializationPort = {
+    describe: forbidden, create: forbidden, restore: forbidden, put: forbidden, activateVersion: forbidden, delete: forbidden,
+  };
+  const runtimeSecrets = Object.create(GithubActionsRuntimeSecretService.prototype) as GithubActionsRuntimeSecretService;
+  let portCalls = 0;
+  Object.defineProperty(runtimeSecrets, "port", { value: () => { portCalls += 1; return port; } });
+  const authority = Object.create(RailpackDeploymentService.prototype) as {
+    runtimeSecrets: GithubActionsRuntimeSecretService;
+    compensateProvisionalRuntimeSecrets(materializations: RuntimeSecretMaterialization[], remoteDispatchPossible: boolean): Promise<unknown>;
+  };
+  authority.runtimeSecrets = runtimeSecrets;
+  const candidate: RuntimeSecretMaterialization = {
+    secretArn: "arn:aws:secretsmanager:us-east-1:123456789012:secret:fixture-abcdef", secretName: "fixture",
+    secretNames: ["TOKEN"], valueFromByName: {}, versionToken: "a".repeat(64), provisionalChange: "created", previousVersionToken: null,
+  };
+  const remoteDispatchPossible = failure instanceof GithubActionsDispatchError && failure.dispatchMayHaveOccurred;
+  assert.deepEqual(await authority.compensateProvisionalRuntimeSecrets([candidate], remoteDispatchPossible), { skipped: "remote_dispatch_possible" });
+  assert.equal(portCalls, 0, "the actual Railpack gate must not enter runtime-secret compensation");
+  assert.equal(providerCalls, 0, "accepted dispatch uncertainty must perform zero secret provider calls");
+}
 
 async function verify() {
   await scenario({ receiptId: 10, pages: [[run(30, `DeployGuard ${otherOperationId}`), run(20)]] }, async (service) => {
@@ -103,6 +142,30 @@ async function verify() {
       assert.equal(posts(), 1, "transport and parse failures cannot make an accepted operation retryable");
     });
   }
+  const malformedListings: unknown[] = [
+    null, [], [run(20)], {}, { workflow_runs: {} }, { workflow_runs: null },
+    { workflow_runs: [null] }, { workflow_runs: [[]] }, { workflow_runs: [[run(20)]] },
+    ...[{}, [], [1], { valueOf: null, toString: null }, { count: { value: 1 } }, "1", null, false, -1, 0.5]
+      .map((total_count) => ({ workflow_runs: [run(20)], total_count })),
+    ...[{}, [], ["20"], { toString: null }, { valueOf: null, toString: null }, true, null, 0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]
+      .map((id) => ({ workflow_runs: [run(20), run(21, undefined, { id })], total_count: 2 })),
+    ...[{}, [], [new Date().toISOString()], null, 1, "not-a-date"]
+      .map((created_at) => ({ workflow_runs: [run(20, undefined, { created_at })] })),
+    ...[{ display_title: [`DeployGuard ${operationId}`] }, { event: {} }, { head_branch: ["main"] }]
+      .map((fields) => ({ workflow_runs: [run(20, undefined, fields)] })),
+  ];
+  for (const listing of malformedListings) {
+    await scenario({ rawListing: JSON.stringify(listing) }, verifyAcceptedDiscoveryFailure);
+  }
+  for (const unexpected of [new TypeError("PRIVATE_DISCOVERY_ERROR"), new GithubActionsDispatchError("unknown_github_error", "PRIVATE_DISCOVERY_ERROR")]) {
+    await scenario({}, async (service, posts) => {
+      service.findWorkflowRunForOperation = async () => { throw unexpected; };
+      await verifyAcceptedDiscoveryFailure(service, posts);
+    });
+  }
+  await scenario({ pages: [[run(20, undefined, { id: "20" })]] }, async (service) => {
+    assert.equal((await dispatch(service)).workflowRunId, "20", "valid string identities retain their exact value");
+  });
   await scenario({ totalCount: 1_000, pages: [[run(20)]] }, async (service) => {
     await assert.rejects(() => dispatch(service), identityError, "GitHub's capped search cannot prove uniqueness");
   });
@@ -113,7 +176,7 @@ async function verify() {
     await assert.rejects(() => dispatch(service, { operation: "not-an-operation" }), (error: unknown) => error instanceof GithubActionsDispatchError && error.diagnosticCode === "invalid_workflow_inputs" && !error.dispatchMayHaveOccurred);
     assert.equal(posts(), 0, "invalid operation identity must be rejected before remote dispatch");
   });
-  console.log("WORKFLOW_RUN_IDENTITY=PASS STALE_RECEIPT=1 UNTRUSTED_RECEIPT=1 OVERLAP=1 PAGINATION=1 AMBIGUITY=1 INTERRUPTED_RECOVERY=1 EXCLUSIONS=1 MISSING_IDENTITY=1 OBSERVATION_FAILURE=1 NO_REDISPATCH=1");
+  console.log(`WORKFLOW_RUN_IDENTITY=PASS STALE_RECEIPT=1 UNTRUSTED_RECEIPT=1 OVERLAP=1 PAGINATION=1 AMBIGUITY=1 INTERRUPTED_RECOVERY=1 EXCLUSIONS=1 MISSING_IDENTITY=1 OBSERVATION_FAILURE=1 NO_REDISPATCH=1 MALFORMED_LISTINGS=${malformedListings.length} UNEXPECTED_DISCOVERY_ERRORS=2 RAILPACK_COMPENSATION_CALLS=0 AWS_CALLS=0`);
 }
 
 void verify().catch((error) => { console.error(error); process.exitCode = 1; });

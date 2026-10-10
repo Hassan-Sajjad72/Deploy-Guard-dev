@@ -30,6 +30,11 @@ export class GithubActionsDispatchError extends Error {
   }
 }
 
+/** Invalid terminal evidence is distinct from a temporary GitHub outage. */
+export class GithubActionsArtifactValidationError extends GithubActionsDispatchError {
+  constructor(detail: string) { super("unknown_github_error", detail); }
+}
+
 export type GithubActionsDispatchEvidence = {
   classification: GithubActionsDiagnosticCode;
   httpStatus: number | null;
@@ -77,17 +82,24 @@ export function githubWorkflowDispatchInputs(inputs?: Record<string, string>) {
 }
 
 export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryBytes = 512 * 1024) {
+  const invalid = (): never => { throw new GithubActionsArtifactValidationError("The DeployGuard result artifact is invalid, ambiguous, or too large."); };
+  if (!Number.isSafeInteger(maxEntryBytes) || maxEntryBytes < 1 || maxEntryBytes > 32 * 1024 * 1024) invalid();
   const minimumEocd = 22;
   const searchStart = Math.max(0, archive.length - 65_557);
   let eocd = -1;
   for (let offset = archive.length - minimumEocd; offset >= searchStart; offset -= 1) {
-    if (archive.readUInt32LE(offset) === 0x06054b50) { eocd = offset; break; }
+    if (archive.readUInt32LE(offset) === 0x06054b50 && offset + minimumEocd + archive.readUInt16LE(offset + 20) === archive.length) { eocd = offset; break; }
   }
-  if (eocd < 0) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact is not a valid ZIP archive.");
+  if (eocd < 0 || archive.readUInt16LE(eocd + 4) !== 0 || archive.readUInt16LE(eocd + 6) !== 0) invalid();
   const entryCount = archive.readUInt16LE(eocd + 10);
+  if (entryCount === 0xffff || archive.readUInt16LE(eocd + 8) !== entryCount) invalid();
   let cursor = archive.readUInt32LE(eocd + 16);
+  const centralStart = cursor;
+  if (cursor + archive.readUInt32LE(eocd + 12) !== eocd) invalid();
+  let matched: { method: number; compressed: Buffer; uncompressedSize: number } | null = null;
   for (let index = 0; index < entryCount; index += 1) {
-    if (archive.readUInt32LE(cursor) !== 0x02014b50) break;
+    if (cursor + 46 > eocd || archive.readUInt32LE(cursor) !== 0x02014b50) invalid();
+    const flags = archive.readUInt16LE(cursor + 8);
     const method = archive.readUInt16LE(cursor + 10);
     const compressedSize = archive.readUInt32LE(cursor + 20);
     const uncompressedSize = archive.readUInt32LE(cursor + 24);
@@ -95,22 +107,61 @@ export function exactZipEntry(archive: Buffer, expectedName: string, maxEntryByt
     const extraLength = archive.readUInt16LE(cursor + 30);
     const commentLength = archive.readUInt16LE(cursor + 32);
     const localOffset = archive.readUInt32LE(cursor + 42);
+    if (cursor + 46 + nameLength + extraLength + commentLength > eocd || archive.readUInt16LE(cursor + 34) !== 0) invalid();
     const name = archive.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
     if (name === expectedName) {
-      if (uncompressedSize > maxEntryBytes || localOffset + 30 > archive.length || archive.readUInt32LE(localOffset) !== 0x04034b50) {
-        throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact is invalid or too large.");
-      }
+      if (matched || (flags & 1) !== 0 || ![0, 8].includes(method) || uncompressedSize > maxEntryBytes
+        || localOffset + 30 > centralStart || archive.readUInt32LE(localOffset) !== 0x04034b50
+        || archive.readUInt16LE(localOffset + 6) !== flags || archive.readUInt16LE(localOffset + 8) !== method) invalid();
       const localNameLength = archive.readUInt16LE(localOffset + 26);
       const localExtraLength = archive.readUInt16LE(localOffset + 28);
       const dataStart = localOffset + 30 + localNameLength + localExtraLength;
-      const compressed = archive.subarray(dataStart, dataStart + compressedSize);
-      const result = method === 0 ? compressed : method === 8 ? inflateRawSync(compressed) : null;
-      if (!result || result.length !== uncompressedSize) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact compression is unsupported.");
-      return result.toString("utf8");
+      if (dataStart + compressedSize > centralStart || localNameLength !== nameLength
+        || archive.subarray(localOffset + 30, localOffset + 30 + localNameLength).toString("utf8") !== expectedName
+        || (method === 0 && compressedSize !== uncompressedSize)) invalid();
+      // With data descriptors, sizes live in the central directory. Otherwise
+      // local and central declarations must agree before any decompression.
+      if ((flags & 8) === 0 && (archive.readUInt32LE(localOffset + 18) !== compressedSize
+        || archive.readUInt32LE(localOffset + 22) !== uncompressedSize)) invalid();
+      matched = { method, compressed: archive.subarray(dataStart, dataStart + compressedSize), uncompressedSize };
     }
     cursor += 46 + nameLength + extraLength + commentLength;
   }
-  return null;
+  if (cursor !== eocd) invalid();
+  if (!matched) return null;
+  let result: Buffer;
+  try {
+    result = matched.method === 0 ? matched.compressed : inflateRawSync(matched.compressed, { maxOutputLength: maxEntryBytes });
+  } catch { invalid(); }
+  if (result.length !== matched.uncompressedSize) invalid();
+  return result.toString("utf8");
+}
+
+async function boundedArtifactBytes(response: Response, maximum: number): Promise<Buffer> {
+  const tooLarge = () => new GithubActionsArtifactValidationError("The DeployGuard result artifact response is too large.");
+  if (Number(response.headers.get("content-length")) > maximum) {
+    await response.body?.cancel().catch(() => undefined);
+    throw tooLarge();
+  }
+  if (!response.body) throw new GithubActionsArtifactValidationError("The DeployGuard result artifact response has no body.");
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw new GithubActionsArtifactValidationError("The DeployGuard result artifact response is invalid.");
+      length += value.byteLength;
+      if (length > maximum) throw tooLarge();
+      chunks.push(Buffer.from(value));
+    }
+  } catch (error) {
+    // Cancellation failure must not replace the original bounded failure.
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally { reader.releaseLock(); }
+  return Buffer.concat(chunks, length);
 }
 
 // actions/upload-artifact preserves the file but strips the uploaded common
@@ -212,19 +263,32 @@ export class GithubActionsService {
     // A numeric receipt alone does not prove which operation owns the run.
     // Use the same exact-operation lookup for dispatch and interrupted recovery.
     let workflowRunId: string | null = null;
-    for (let attempt = 0; attempt < 10 && !workflowRunId; attempt += 1) {
-      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
-      workflowRunId = await this.findWorkflowRunForOperation(
-        input.repositoryFullName,
-        input.workflowRegistrationBranch,
-        operationId,
-        dispatchedAt,
-        token,
-        input.excludedWorkflowRunIds,
-      );
-    }
-    if (!workflowRunId) {
-      const detail = "GitHub accepted the workflow request without exposing a unique run for the immutable deployment operation.";
+    try {
+      for (let attempt = 0; attempt < 10 && !workflowRunId; attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
+        workflowRunId = await this.findWorkflowRunForOperation(
+          input.repositoryFullName,
+          input.workflowRegistrationBranch,
+          operationId,
+          dispatchedAt,
+          token,
+          input.excludedWorkflowRunIds,
+        );
+      }
+      if (!workflowRunId) {
+        const detail = "GitHub accepted the workflow request without exposing a unique run for the immutable deployment operation.";
+        throw new GithubActionsDispatchError(
+          "workflow_run_identity_missing",
+          detail,
+          this.failureEvidence("workflow_run_identity_missing", response.status, detail, workflowFile, input.repositoryFullName, input.workflowRegistrationBranch, inputNames, operationId, input.targetBranch),
+          true,
+        );
+      }
+    } catch (error) {
+      // POST already succeeded. Even an unexpected discovery error must not
+      // permit compensation of secrets that the accepted workflow may use.
+      if (error instanceof GithubActionsDispatchError && error.dispatchMayHaveOccurred) throw error;
+      const detail = "GitHub accepted the workflow request, but its immutable workflow run identity could not be verified.";
       throw new GithubActionsDispatchError(
         "workflow_run_identity_missing",
         detail,
@@ -328,20 +392,33 @@ export class GithubActionsService {
       if (!response.ok) {
         throw new GithubActionsDispatchError("unknown_github_error", "GitHub workflow-run identity reconciliation is temporarily unavailable.", null, true);
       }
-      let body: { total_count?: number; workflow_runs?: Array<{ id?: number | string; created_at?: string; display_title?: string; event?: string; head_branch?: string }> };
+      let body: unknown;
       try {
         body = await response.json();
       } catch {
         throw fail("GitHub did not return a valid workflow-run identity listing.");
       }
-      if (!Array.isArray(body?.workflow_runs)) throw fail("GitHub did not return a valid workflow-run identity listing.");
+      if (!body || typeof body !== "object" || Array.isArray(body)) throw fail("GitHub did not return a valid workflow-run identity listing.");
+      const listing = body as Record<string, unknown>;
+      if (!Array.isArray(listing.workflow_runs)) throw fail("GitHub did not return a valid workflow-run identity listing.");
+      const totalCount = listing.total_count;
+      if (totalCount !== undefined && (typeof totalCount !== "number" || !Number.isSafeInteger(totalCount) || totalCount < 0)) {
+        throw fail("GitHub did not return a valid workflow-run identity listing.");
+      }
       // GitHub caps filtered searches at 1,000 results, even when there are more.
-      if (Number(body.total_count) >= 1_000) throw fail("GitHub workflow-run discovery reached the search result limit; unique operation identity is unverified.");
-      for (const run of body.workflow_runs) {
-        if (!run || typeof run !== "object") throw fail("GitHub did not return a valid workflow-run identity listing.");
-        const id = String(run.id || "");
-        if (/^[1-9]\d*$/.test(id) && !excluded.has(id) && run.display_title === expectedTitle
-          && Date.parse(String(run.created_at || "")) >= floor
+      if (typeof totalCount === "number" && totalCount >= 1_000) throw fail("GitHub workflow-run discovery reached the search result limit; unique operation identity is unverified.");
+      for (const value of listing.workflow_runs) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw fail("GitHub did not return a valid workflow-run identity listing.");
+        const run = value as Record<string, unknown>;
+        const validId = typeof run.id === "string" ? /^[1-9]\d*$/.test(run.id)
+          : typeof run.id === "number" && Number.isSafeInteger(run.id) && run.id > 0;
+        if (!validId || typeof run.display_title !== "string" || typeof run.created_at !== "string" || !Number.isFinite(Date.parse(run.created_at))
+          || (run.event !== undefined && typeof run.event !== "string") || (run.head_branch !== undefined && typeof run.head_branch !== "string")) {
+          throw fail("GitHub did not return a valid workflow-run identity listing.");
+        }
+        const id = String(run.id);
+        if (!excluded.has(id) && run.display_title === expectedTitle
+          && Date.parse(run.created_at) >= floor
           && (run.event === undefined || run.event === "workflow_dispatch")
           && (run.head_branch === undefined || run.head_branch === branch)) matches.add(id);
       }
@@ -499,19 +576,32 @@ export class GithubActionsService {
 
   async getArtifactEntry(repository: string, workflowRunId: string, operationId: string, token: string, entryName: string, maxEntryBytes: number) {
     const name = `deployguard-result-${operationId}`;
-    const list = await fetch(`https://api.github.com/repos/${repository}/actions/runs/${workflowRunId}/artifacts?name=${encodeURIComponent(name)}&per_page=10`, { headers: this.headers(token) });
-    if (!list.ok) throw new GithubActionsDispatchError("unknown_github_error", "GitHub did not expose the DeployGuard result artifact.");
-    const body = await list.json() as { artifacts?: Array<{ id?: number; name?: string; expired?: boolean }> };
-    const artifacts = (body.artifacts || []).filter((artifact) => artifact.name === name && artifact.expired !== true && artifact.id);
+    const list = await fetch(`https://api.github.com/repos/${repository}/actions/runs/${workflowRunId}/artifacts?name=${encodeURIComponent(name)}&per_page=10`, { headers: this.headers(token), signal: AbortSignal.timeout(30_000) });
+    if (!list.ok) {
+      await list.body?.cancel().catch(() => undefined);
+      throw new GithubActionsDispatchError("unknown_github_error", "GitHub did not expose the DeployGuard result artifact.");
+    }
+    let body: { artifacts?: Array<{ id?: number; name?: string; expired?: boolean }> };
+    try { body = JSON.parse((await boundedArtifactBytes(list, 512 * 1024)).toString("utf8")); }
+    catch (error) {
+      if (error instanceof SyntaxError) throw new GithubActionsArtifactValidationError("The DeployGuard result artifact listing is malformed.");
+      throw error;
+    }
+    if (!Array.isArray(body?.artifacts) || /<[^>]+>;\s*rel="next"/.test(list.headers.get("link") || "")
+      || body.artifacts.some((artifact) => !artifact || typeof artifact.name !== "string" || typeof artifact.expired !== "boolean"
+        || !Number.isSafeInteger(artifact.id) || artifact.id < 1)) {
+      throw new GithubActionsArtifactValidationError("The DeployGuard result artifact listing is invalid or incomplete.");
+    }
+    const artifacts = body.artifacts.filter((artifact) => artifact.name === name && artifact.expired === false);
     if (artifacts.length === 0) return null;
-    if (artifacts.length !== 1) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact identity is ambiguous.");
-    const download = await fetch(`https://api.github.com/repos/${repository}/actions/artifacts/${artifacts[0].id}/zip`, { headers: this.headers(token), redirect: "follow" });
-    if (!download.ok) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact could not be downloaded.");
-    const contentLength = Number(download.headers.get("content-length") || 0);
+    if (artifacts.length !== 1) throw new GithubActionsArtifactValidationError("The DeployGuard result artifact identity is ambiguous.");
+    const download = await fetch(`https://api.github.com/repos/${repository}/actions/artifacts/${artifacts[0].id}/zip`, { headers: this.headers(token), redirect: "follow", signal: AbortSignal.timeout(30_000) });
+    if (!download.ok) {
+      await download.body?.cancel().catch(() => undefined);
+      throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact could not be downloaded.");
+    }
     const maxArchiveBytes = Math.min(Math.max(maxEntryBytes * 2, 2 * 1024 * 1024), 32 * 1024 * 1024);
-    if (contentLength > maxArchiveBytes) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact is too large.");
-    const archive = Buffer.from(await download.arrayBuffer());
-    if (archive.length > maxArchiveBytes) throw new GithubActionsDispatchError("unknown_github_error", "The DeployGuard result artifact is too large.");
+    const archive = await boundedArtifactBytes(download, maxArchiveBytes);
     return exactZipEntry(archive, entryName, maxEntryBytes);
   }
 

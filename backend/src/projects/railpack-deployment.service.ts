@@ -12,7 +12,7 @@ import { ProjectEnvironmentVariable } from "./project-environment-variable.entit
 import { CONTROL_PLANE_VERSION_MISMATCH, ControlPlaneCompatibilityError, GithubAppService } from "./github-app.service";
 import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
 import { GithubActionsAwsCapabilityService, WorkflowAwsCapabilityError } from "./github-actions-aws-capability.service";
-import { GithubActionsDispatchError, GithubActionsDispatchReceipt, GithubActionsService } from "./pipeline/github-actions.service";
+import { GithubActionsArtifactValidationError, GithubActionsDispatchError, GithubActionsDispatchReceipt, GithubActionsService } from "./pipeline/github-actions.service";
 import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
 import { Project } from "./project.entity";
 import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
@@ -1405,11 +1405,13 @@ export class RailpackDeploymentService {
             throw error;
           }
           if (!evidence) {
-            const pendingAttempts = Number(operation.metadata?.releaseEvidencePendingAttempts || 0) + 1;
-            const persistedPendingSince = typeof operation.metadata?.releaseEvidencePendingSince === "string" ? operation.metadata.releaseEvidencePendingSince : new Date().toISOString();
+            const previousAttempts = operation.metadata?.releaseEvidencePendingAttempts;
+            const pendingAttempts = (typeof previousAttempts === "number" && Number.isSafeInteger(previousAttempts) && previousAttempts >= 0 ? previousAttempts : 0) + 1;
+            const previousPendingSince = operation.metadata?.releaseEvidencePendingSince;
+            const persistedPendingSince = typeof previousPendingSince === "string" && Number.isFinite(Date.parse(previousPendingSince)) ? previousPendingSince : new Date().toISOString();
             const pendingSinceMs = Date.parse(persistedPendingSince);
             if (pendingAttempts >= 3 && Number.isFinite(pendingSinceMs) && Date.now() - pendingSinceMs >= 2 * 60_000) {
-              await this.persistTerminalEvidenceFailure(operation, new TerminalReleaseEvidenceError("The successful terminal workflow did not publish the required release result artifact after bounded reconciliation."));
+              await this.persistTerminalEvidenceFailure(operation, new TerminalReleaseEvidenceError("DeployGuard could not retrieve the required terminal release result artifact within bounded reconciliation."));
               return operation;
             }
             operation.currentStage = "release_evidence_pending";
@@ -1587,7 +1589,18 @@ export class RailpackDeploymentService {
   }
 
   private async releaseEvidence(repositoryFullName: string, operation: ProjectPipelineRun, token: string): Promise<Record<string, unknown> | null> {
-    const raw = await this.actions.getResultArtifact(repositoryFullName, operation.githubWorkflowRunId, operation.id, token);
+    let raw: string | null;
+    try {
+      raw = await this.actions.getResultArtifact(repositoryFullName, operation.githubWorkflowRunId, operation.id, token);
+    } catch (error) {
+      if (error instanceof GithubActionsArtifactValidationError) throw new TerminalReleaseEvidenceError(error.safeDetail);
+      // Retrieval failures may be temporary, but must share the same bounded
+      // reconciliation window as a missing artifact. Never promote a release
+      // or persist raw provider errors while its evidence is unavailable.
+      operation.metadata = { ...(operation.metadata || {}), releaseEvidenceReadUnavailable: true };
+      return null;
+    }
+    operation.metadata = { ...(operation.metadata || {}), releaseEvidenceReadUnavailable: false };
     if (!raw) return null;
     let artifact: Record<string, unknown>;
     try {
