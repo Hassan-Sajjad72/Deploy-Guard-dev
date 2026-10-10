@@ -90,7 +90,7 @@ export class ProjectDeletionService {
     const verification = this.assertReady(project, current);
     const active = await manager.getRepository(ProjectPipelineRun).count({ where: { projectId: project.id, status: In([PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING]) } });
     if (active) throw new ProjectDeletionIncompleteError("another lifecycle operation is active");
-    const generations = await manager.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName }, take: 1001 });
+    const generations = await manager.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id }, take: 1001 });
     const actual = generations.map((generation) => generation.id).sort();
     if (actual.length !== verification.generationIds.length || actual.some((id, index) => id !== verification.generationIds[index])) throw new ProjectDeletionIncompleteError("the persisted generation set changed after deletion verification");
     // assertReady already validated these immutable input bytes. Do not recover

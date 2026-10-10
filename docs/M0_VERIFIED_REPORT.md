@@ -1,6 +1,6 @@
 # M0 verified local report
 
-2026-10-10, Asia/Karachi. **M0 is not release-ready.** Local M0.1–M0.12 slices
+2026-10-10, Asia/Karachi. **M0 is not release-ready.** Local M0.1–M0.13 slices
 passed their checks. The owner approved the stricter v3 destroy contract and
 fail-closed historical deletion. M0.10 adds its backend guard; complete production
 ownership collection and workflow integration remain unresolved.
@@ -27,6 +27,7 @@ M0 maintenance, not unsigned future product milestones.
 | Deletion scope | v3 requires complete frozen generation/receipt identity and matching per-resource observations. Historical v2 flags cannot authorize admission, cleanup, state projection or success notifications. No mutable-context reconstruction. |
 | Cleanup concurrency | Pending terminal cleanup blocks new lifecycle admission. Actual DB deletion holds configuration/operation locks, revalidates eligibility, and rejects active operations or generation drift before cascading project authority. |
 | Durable cleanup authority | Admission and cleanup share one bounded reader. Actual retained journal receipts are restored before SNS/GitHub cleanup and again inside the locked final transaction; missing, corrupt, duplicated, changed or late-attempt authority blocks deletion. Network calls remain outside transactions. |
+| Canonical inventory minimum | Complete-family declarations cannot omit retained application/task revisions, pinned runtime secrets or independent database identities. Existing secret intent/owned receipts are validated, without retaining secret values. Whole-project deletion rejects other-environment history/configurations/generations rather than silently cascading their evidence. This is a minimum cross-check, not complete producer inventory certification. |
 | Dependency release gate | Targeted locked-version fixes, proxy/IP and bounded indexed-source-map regressions; backend/frontend full `npm audit` reports zero vulnerabilities, including development tooling. Registry failure or any finding fails the aggregate gate. |
 
 NestJS modular monolith, React/Vite, PostgreSQL and existing deployment contracts
@@ -41,7 +42,7 @@ transport is presented as a certified cloud workflow integration.
 | Check | Result / evidence type |
 | --- | --- |
 | Backend/front-end builds | PASS, local compilation/bundle |
-| Full pre-final gate after each final bounded slice | PASS; latest exit 0 in `/tmp/deployguard-m0-clean-dependencies-terraform1105-pre-final.log` |
+| Full pre-final gate after each final bounded slice | PASS; latest exit 0 in `/tmp/deployguard-m0-canonical-coverage-pre-final.log` |
 | Backend/full frontend regressions | PASS, current supported consumers and behavior |
 | PostgreSQL migrations/integration | PASS, 111 real migrations in disposable local DBs; isolation, constraints and cascades |
 | Cleanup DB contention | PASS, actual service/repositories and second PostgreSQL connection; shared admission lock and authority-row lock contention |

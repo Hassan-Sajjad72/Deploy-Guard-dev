@@ -227,3 +227,19 @@ on failed final revalidation. Provider calls remain outside transactions.
 Canonical revision/secret omission checks and complete production collection are
 still pending. Durable revalidation proves consistency with retained journals,
 not that a future producer has captured every resource. AWS remains unverified.
+
+## M0.13 — independent canonical minimum
+
+Admission and both cleanup boundaries additionally compare journals with all
+canonical historical application revisions, pinned runtime secrets and sealed
+independent database runtime identities. Existing secret receipts are validated
+through the production collector schema; unmatched intents and omitted owned
+identities block cleanup. Failed, unsealed planned DB configuration is not treated
+as proof of resource creation. Complete-family flags cannot waive these checks.
+
+Since finalization cascades the whole project, other-environment generations,
+configuration and explicit/malformed historical environments now block deletion;
+their evidence is never excluded and silently erased. Local fixtures and actual
+PostgreSQL boundary tests pass, as does the full pre-final gate. These are minimum
+coverage and lifecycle checks only. Full production ownership publication and
+workflow integration remain unresolved, and AWS verification remains pending.

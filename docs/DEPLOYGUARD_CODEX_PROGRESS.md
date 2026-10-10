@@ -849,3 +849,37 @@ Next bounded work: prove that complete journals cannot omit canonical historical
 service revisions or durable runtime-secret identities, then complete production
 ownership collection and workflow integration. Live AWS verification remains
 pending by owner direction, not silently treated as successful.
+
+## M0.13 — canonical inventory minimum and whole-project scope
+
+The durable reader now cross-checks full journals against every retained service
+revision and runtime configuration, all validated runtime-secret intent/owned
+receipts, and independent database identities. Each historical task revision must
+be included; latest/LIVE task identities cannot substitute for old ones. Empty
+resource journals with complete-family flags cannot erase canonical evidence.
+The check rejects missing identities rather than inventing deletion authority.
+Unsealed failed database configuration alone does not imply a database was created.
+
+Review found that finalization deletes the whole project, while the old reader
+excluded explicit other-environment history. The reader and finalization now
+inspect all project generations/configurations/history and fail closed on mixed
+or malformed environments. This is not a new cross-environment cleanup lifecycle.
+Real PostgreSQL tests prove rejection before provider work for canonical task
+drift, unresolved secret intents, owned secrets omitted from journals, and an
+unverified other-environment generation. Existing contention, receipt-integrity,
+post-provider drift, cascade, lifecycle and notification assertions remain.
+
+Focused checks passed. The full release gate exited 0 with fresh locked
+dependencies and Terraform 1.10.5:
+`/tmp/deployguard-m0-canonical-coverage-pre-final.log`. Compilation, audits,
+workflow lint, seven Terraform mock scenarios, local full-stack checks, 111
+migrations, lifecycle properties and architecture checks all passed. Final
+security, concurrency, error-handling and unrelated-diff review found no new
+dependency or product feature. The public workflow and certified bytes are
+unchanged. This cross-check establishes a minimum, not complete collection or
+real AWS absence. Production ownership transport/collection remains next.
+
+A read-only local reproduction also confirmed the next collector defect:
+`captureDeletionManifest` accepts an explicitly prod-tagged resource into a dev
+manifest when the project tag matches. This must be fixed and regression-tested
+before the collector is integrated. No AWS query or mutation occurred.
