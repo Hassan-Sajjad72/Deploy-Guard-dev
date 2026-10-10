@@ -194,7 +194,8 @@ async function verifyPostgresRetention() {
     database = new DataSource({ ...AppDataSource.options, host: postgres.getHost(), port: postgres.getPort(), username: postgres.getUsername(), password: postgres.getPassword(),
       database: postgres.getDatabase(), ssl: false, synchronize: false, migrations: [] } as any);
     await database.initialize();
-    assert.equal((await database.query("SELECT count(*)::int AS count FROM migrations"))[0].count, 111);
+    assert.equal((await database.query("SELECT count(*)::int AS count FROM migrations"))[0].count, 112);
+    assert.equal((await database.query("SELECT name FROM migrations ORDER BY timestamp DESC LIMIT 1"))[0].name, "OrganizationAwsAccountBindings1791580000000");
     const owner = (await database.query("INSERT INTO users (github_id,name,email,role) VALUES ('m0-aws-intake','Intake fixture','intake@example.invalid','developer') RETURNING id"))[0].id;
     await database.query("INSERT INTO projects (id,owner_user_id,name,repository_url,repository_full_name,target_branch,status,visibility) VALUES ($1,$2,'Intake fixture','https://github.com/fixture/ownership','fixture/ownership','main','configured','private')", [projectId, owner]);
     await database.query("INSERT INTO project_pipeline_runs (id,project_id,triggered_by_user_id,repository_url,repository_full_name,target_branch,status,current_stage,commit_sha,github_workflow_run_id,metadata) VALUES ($1,$2,$3,'https://github.com/fixture/ownership','fixture/ownership','main','failed','aws_runtime_verification',$4,'123',$5::jsonb)", [operationId, projectId, owner, operation.commitSha, JSON.stringify(operation.metadata)]);
@@ -282,7 +283,7 @@ async function verifyPostgresRetention() {
     assert.equal(await retainAwsOwnershipCollection(database, operation, contradictory), "conflict");
     assert.equal(await events.countBy({ pipelineRunId: operationId, source: AWS_RESOURCE_OWNERSHIP_SOURCE }), 2, "ambiguous retries must remain bounded");
     assert.equal(await database.getRepository(ProjectPipelineRun).countBy({ id: operationId }), 1, "failed attempt authority remains available");
-    console.log("AWS_OWNERSHIP_POSTGRES=PASS MIGRATIONS=111 CONCURRENT_IDEMPOTENCY=1 LOCKED_TRANSPORT=1 FAILED_ATTEMPT_RETAINED=1 CONFLICT_APPEND_ONLY=1 AWS_EXECUTION=NONE");
+    console.log("AWS_OWNERSHIP_POSTGRES=PASS MIGRATIONS=112 CONCURRENT_IDEMPOTENCY=1 LOCKED_TRANSPORT=1 FAILED_ATTEMPT_RETAINED=1 CONFLICT_APPEND_ONLY=1 AWS_EXECUTION=NONE");
   } finally { try { if (database?.isInitialized) await database.destroy(); } finally { await postgres.stop(); } }
 }
 

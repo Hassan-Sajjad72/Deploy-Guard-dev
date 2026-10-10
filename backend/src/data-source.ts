@@ -3,6 +3,9 @@ import { existsSync, readFileSync } from "fs";
 import { DataSource } from "typeorm";
 import { resolveBackendEnvFile } from "./config/backend-env-file";
 import { AuditLog } from "./audit-log/audit-log.entity";
+import { Organization } from "./aws-accounts/organization.entity";
+import { OrganizationMembership } from "./aws-accounts/organization-membership.entity";
+import { AwsAccountBinding } from "./aws-accounts/aws-account-binding.entity";
 import { ProjectCostEstimate } from "./finops/project-cost-estimate.entity";
 import { ProjectCostResourceBreakdown } from "./finops/project-cost-resource-breakdown.entity";
 import { ProjectCostSettings } from "./finops/project-cost-settings.entity";
@@ -129,6 +132,9 @@ export default new DataSource({
   entities: [
     User,
     AuditLog,
+    Organization,
+    OrganizationMembership,
+    AwsAccountBinding,
     Project,
     ProjectDeployableService,
     ProjectServiceRuntimeConfigRevision,

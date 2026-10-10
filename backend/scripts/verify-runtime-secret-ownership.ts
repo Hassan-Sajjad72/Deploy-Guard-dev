@@ -114,7 +114,8 @@ async function verifyPostgresRetention() {
     assert.equal(migration.status, 0, "isolated zero-to-head PostgreSQL migrations must succeed");
     database = new DataSource({ ...AppDataSource.options, host: postgres.getHost(), port: postgres.getPort(), username: postgres.getUsername(), password: postgres.getPassword(), database: postgres.getDatabase(), ssl: false, synchronize: false, migrations: [] } as any);
     await database.initialize();
-    assert.equal((await database.query("SELECT count(*)::int AS count FROM migrations"))[0].count, 111);
+    assert.equal((await database.query("SELECT count(*)::int AS count FROM migrations"))[0].count, 112);
+    assert.equal((await database.query("SELECT name FROM migrations ORDER BY timestamp DESC LIMIT 1"))[0].name, "OrganizationAwsAccountBindings1791580000000");
     const owner = (await database.query("INSERT INTO users (github_id,name,email,role) VALUES ('m0-ownership','Ownership fixture','ownership@example.invalid','developer') RETURNING id"))[0].id;
     await database.query("INSERT INTO projects (id,owner_user_id,name,repository_url,repository_full_name,target_branch,status,visibility) VALUES ($1,$2,'Ownership fixture','https://github.com/fixture/ownership','fixture/ownership','main','configured','private')", [projectId, owner]);
     const insertRun = async (id: string) => database!.query("INSERT INTO project_pipeline_runs (id,project_id,triggered_by_user_id,repository_url,repository_full_name,target_branch,status,current_stage,metadata) VALUES ($1,$2,$3,'https://github.com/fixture/ownership','fixture/ownership','main','failed','runtime_secret_materialization',$4::jsonb)", [id, projectId, owner, JSON.stringify({ executionEngine: "railpack", deploymentAction: "deploy" })]);
@@ -182,7 +183,7 @@ async function verifyPostgresRetention() {
     failing.config = service.config;
     failing.dataSource = { getRepository: () => ({ insert: async () => { throw new Error("PRIVATE_DATABASE_ERROR"); } }) };
     await assert.rejects(() => failing.retainRuntimeSecretOwnership(projectId, operationId, "dev", event("intent")), (error: any) => error instanceof RuntimeSecretOwnershipPersistenceError && !error.message.includes("PRIVATE_DATABASE_ERROR"));
-    console.log("RUNTIME_SECRET_OWNERSHIP_POSTGRES=PASS MIGRATIONS=111 APPEND_ONLY_ROWS=1 FAILURE_AND_RETRY_RETAINED=1 AMBIGUOUS_CREATE_INTENT_ONLY=1 POST_CREATE_COMPENSATION=1 AWS_EXECUTION=MOCKED");
+    console.log("RUNTIME_SECRET_OWNERSHIP_POSTGRES=PASS MIGRATIONS=112 APPEND_ONLY_ROWS=1 FAILURE_AND_RETRY_RETAINED=1 AMBIGUOUS_CREATE_INTENT_ONLY=1 POST_CREATE_COMPENSATION=1 AWS_EXECUTION=MOCKED");
   } finally {
     try { if (database?.isInitialized) await database.destroy(); }
     finally { await postgres.stop(); }

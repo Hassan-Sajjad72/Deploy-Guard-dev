@@ -156,7 +156,8 @@ async function verifyPostgresBoundary() {
     assert.equal(migration.status, 0, "disposable deletion fixture must migrate successfully from zero");
     database = new DataSource({ ...AppDataSource.options, host: postgres.getHost(), port: postgres.getPort(), username: postgres.getUsername(), password: postgres.getPassword(), database: postgres.getDatabase(), ssl: false, synchronize: false, migrations: [] } as any);
     await database.initialize();
-    assert.equal((await database.query("SELECT count(*)::int AS count FROM migrations"))[0].count, 111);
+    assert.equal((await database.query("SELECT count(*)::int AS count FROM migrations"))[0].count, 112);
+    assert.equal((await database.query("SELECT name FROM migrations ORDER BY timestamp DESC LIMIT 1"))[0].name, "OrganizationAwsAccountBindings1791580000000");
     const owner = (await database.query("INSERT INTO users (github_id,name,email,role) VALUES ('m0-deletion','Deletion fixture','deletion@example.invalid','developer') RETURNING id"))[0].id;
     await database.query("INSERT INTO projects (id,owner_user_id,name,repository_url,repository_full_name,target_branch,status,visibility) VALUES ($1,$2,'Deletion fixture','https://github.com/fixture/repository','fixture/repository','main','configured','private')", [projectId, owner]);
     const addGeneration = (id: string, ordinal: number) => database!.query("INSERT INTO project_deployment_generations (id,project_id,environment_name,ordinal,status,terraform_state_key) VALUES ($1,$2,'dev',$3,'retired','fixture.tfstate')", [id, projectId, ordinal]);
@@ -256,7 +257,7 @@ async function verifyPostgresBoundary() {
     assert.equal(await database.getRepository(Project).countBy({ id: projectId }), 0);
     assert.equal(await database.getRepository(ProjectPipelineRun).countBy({ projectId }), 0, "verified deletion must cascade operation authority");
     assert.equal(await database.getRepository(ProjectDeploymentGeneration).countBy({ projectId }), 0);
-    console.log("DESTROY_SCOPE_POSTGRES=PASS MIGRATIONS=111 ADMISSION_CONFLICT=1 CHANGED_GENERATIONS_BLOCKED=1 CONFIGURATION_LOCK=1 ROW_LOCK_CONTENTION=1 DURABLE_RECEIPTS_PRE_CLEANUP=1 DURABLE_RECEIPTS_PRE_CASCADE=1 CANONICAL_TASK_DRIFT=1 RUNTIME_SECRET_INTENT_AND_OWNED=1 CASCADE=1 AWS_EXECUTION=NONE");
+    console.log("DESTROY_SCOPE_POSTGRES=PASS MIGRATIONS=112 ADMISSION_CONFLICT=1 CHANGED_GENERATIONS_BLOCKED=1 CONFIGURATION_LOCK=1 ROW_LOCK_CONTENTION=1 DURABLE_RECEIPTS_PRE_CLEANUP=1 DURABLE_RECEIPTS_PRE_CASCADE=1 CANONICAL_TASK_DRIFT=1 RUNTIME_SECRET_INTENT_AND_OWNED=1 CASCADE=1 AWS_EXECUTION=NONE");
   } finally {
     try { if (database?.isInitialized) await database.destroy(); }
     finally { await postgres.stop(); }

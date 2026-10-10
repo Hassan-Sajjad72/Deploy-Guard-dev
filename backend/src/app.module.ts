@@ -2,6 +2,10 @@ import { MiddlewareConsumer, Module, NestModule, RequestMethod } from "@nestjs/c
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { AdminModule } from "./admin/admin.module";
+import { AwsAccountsModule } from "./aws-accounts/aws-accounts.module";
+import { Organization } from "./aws-accounts/organization.entity";
+import { OrganizationMembership } from "./aws-accounts/organization-membership.entity";
+import { AwsAccountBinding } from "./aws-accounts/aws-account-binding.entity";
 import { AiAnalysisMessage } from "./ai-troubleshooting/ai-analysis-message.entity";
 import { AiAnalysisResult } from "./ai-troubleshooting/ai-analysis-result.entity";
 import { AiAnalysisSession } from "./ai-troubleshooting/ai-analysis-session.entity";
@@ -90,7 +94,7 @@ import { BillingPayment } from "./billing/billing-payment.entity";
         // Historical deployment/audit rows remain readable. Registering an
         // entity does not activate its retired mutation provider.
         entities: [
-          User, AuditLog, Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, ProjectBuildTargetRevision, GithubAppInstallation, ProjectEnvironmentVariable,
+          User, AuditLog, Organization, OrganizationMembership, AwsAccountBinding, Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, ProjectBuildTargetRevision, GithubAppInstallation, ProjectEnvironmentVariable,
           ProjectDatabaseTier,
           ProjectServiceBinding, ProjectConfigurationSnapshot,
           ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
@@ -116,7 +120,7 @@ import { BillingPayment } from "./billing/billing-payment.entity";
         ssl: config.get<string>("DATABASE_SSL", "false") === "true" ? { rejectUnauthorized: false } : false,
       }),
     }),
-    AuthModule, UsersModule, AdminModule, AuditLogModule, ProjectsModule,
+    AuthModule, UsersModule, AdminModule, AuditLogModule, ProjectsModule, AwsAccountsModule,
     TerraformExportModule, AiTroubleshootingModule, ObservabilityModule, BillingModule,
   ],
   controllers: [HealthController],

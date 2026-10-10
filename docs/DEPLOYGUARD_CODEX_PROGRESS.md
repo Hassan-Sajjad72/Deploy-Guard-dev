@@ -1111,3 +1111,39 @@ design depends on which version the founder meant by "current PRD" approval.
 Asked that exact scope-version question; stop before silently adopting either
 ownership model. This is not a renewed M0 certification or a routine technical
 decision. No product code changes follow the passing single module certification.
+
+## S02.2 — organization-scoped pending AWS bindings (2026-10-10)
+
+Founder explicitly approves v1.1 as superseding baseline. Its original input
+(`940ab7fb...`) is preserved; canonical `docs/product/PRD_v1.1.md` differs only in
+approval metadata, with v1.0 historical. Existing navigation/skill links updated;
+FR/NFR/IH/AT roadmap ranges are complete and unique. No invented v1.0 BR/BO/AR/UX/ER
+IDs remain active. No repeated tool inventory or S02.1/M0 certification.
+
+Implemented the minimal S02 prerequisite for FR-003/FR-013/FR-022/FR-027/FR-028/
+FR-029: organization creation with owner membership, scoped signed-session APIs,
+pending customer binding registration and retained idempotent revocation.
+Distinct account/role/us-east-1 admission, server-generated unique external ID,
+cross-tenant/admin-bypass rejection, membership/user locking, transactional
+existing AuditLog writes, immutable binding/revoked records and guarded reversible
+additive migration. No credentials stored, no AWS SDK execution, no ACTIVE or
+VERIFIED status, no project/legacy resource reassignment. Agency project binding,
+full tenant administration and complete customer onboarding remain incomplete.
+
+Focused PostgreSQL/API check passes (`/tmp/deployguard-s02-binding-focused-v5.log`).
+Earlier focused failures retained: missing disposable encryption/session secret
+(v1); TypeORM join pagination used SQL rather than entity ordering (v2, fixed);
+lock observer cached PostgreSQL activity within its transaction (v3, refreshed;
+real lock/revocation assertions retained). v4 passes; v5 adds passing DB immutable
+identity, no resurrection and empty/nonempty migration rollback checks.
+Fresh isolated database bootstrap now has 112 migrations. Three affected M0
+consumer tests retain exact count assertions and additionally assert the new
+migration identity; all original lifecycle/ownership assertions remain intact.
+
+Skills: deployguard-build, codebase-design, writing-for-agents, skill-creator
+(baseline pointers only). No uninstalled plugin, new dependency or automatic gate.
+Source/security/concurrency review: no parallel deployment authority, provider
+calls, raw secrets, platform-admin tenant bypass, audit best-effort acceptance or
+revoked binding reactivation. Final complete module certification runs once after
+this checkpoint; repeat only identified failed checks, if any. Existing M0
+workflow/infrastructure/frontend/lock files are unchanged; reuse their evidence.
