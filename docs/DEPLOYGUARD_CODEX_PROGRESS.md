@@ -784,3 +784,68 @@ all unprovable historical destruction therefore fails closed. Next bounded work
 must revalidate frozen receipts against durable authority before external cleanup
 and again before the DB cascade, then address complete production collection and
 workflow integration. Live AWS verification remains pending by owner direction.
+
+## M0.11 — durable ownership revalidation at both cleanup boundaries
+
+Admission and deletion now reuse one bounded durable ownership reader. It covers
+every relevant operation, including failed attempts that never became generations;
+unknown historical environments are not silently excluded. Missing, duplicate,
+corrupt or changed journals cannot remain authoritative just because a previously
+frozen manifest hashes correctly.
+
+Deletion re-reads its locked persisted operation, active-operation and generation
+set, and every retained receipt before SNS/GitHub cleanup, then independently
+repeats these checks inside the locked final DB cascade. Provider calls remain
+outside DB transactions. Real PostgreSQL tests prove pre-cleanup rejection,
+post-provider receipt drift preserving project history for recovery, configuration
+lock/row contention and the eligible final cascade. No existing assertions were
+removed. Unexpected DB/provider details no longer become public cleanup errors.
+
+Focused build/v3/scope tests passed; the full gate exited 0 in
+`/tmp/deployguard-m0-durable-revalidation-pre-final.log`. Final source also passed
+the later fresh-dependency/Terraform-parity gate described below. This does not
+prove inventory completeness; canonical revision/secret cross-checking and the
+production collector remain pending. No AWS execution occurred.
+
+## M0.12 — dependency security and clean/version-parity verification
+
+A clean-checkout audit exposed seven backend production findings (including one
+critical and three high) and one frontend high finding. Additional full audit
+coverage exposed four high development-tooling packages. The locked dependency
+versions, including exact vulnerable parent pins, were traced before changes.
+The proxy/IP regression failed on the original library; the original source-map
+consumer also failed the required oversized-section rejection. No application
+exploit or production incident is claimed.
+
+Targeted lock refreshes stayed within existing declared major-version contracts,
+including compatible Nest/Smithy parents needed to obtain patched dependencies.
+No dependency, override or product feature was added. The source-map positive
+fixture initially exceeded the patched consumer's documented maximum; it was
+corrected to assert BOTH rejection above the bound and unchanged code with a
+nine-million-line accepted offset. The code-preservation and timeout assertions
+remain. Both actual-consumer regressions and both full audits now pass with zero
+vulnerabilities, including development tooling. They are mandatory aggregate
+checks; no severity threshold, advisory allowlist or failed-check suppression
+was introduced. Security changes are checkpointed in `54fe96a`.
+
+Default backend/frontend `npm ci` succeeded in a separate shallow local clone.
+A first full-history clone overflowed `/tmp` because Git history is 17 GB; Git
+removed its failed partial copy. A shallow clone on disk succeeded without user
+file cleanup. Only task-owned dependency symlinks were redirected to the fresh
+install; original workspace/dependencies were preserved. HashiCorp Terraform
+1.10.5 was fetched and its published SHA-256 verified, matching the workflow pin.
+
+The final full gate exited 0 with fresh dependencies and Terraform 1.10.5:
+`/tmp/deployguard-m0-clean-dependencies-terraform1105-pre-final.log`. Backend/frontend
+builds, workflow lint, seven Terraform mock scenarios, local browser/API tests,
+111-migration integration, actual receipt/lock-contention tests, architecture and
+regressions pass. Extra direct-ECS, requirements, billing/Stripe, Trivy/export and
+frontend checks passed. The first supplemental billing migration check selected
+default DB credentials; it failed authentication and was rerun successfully with
+explicit owned disposable-DB scope. The canonical environment check passed with a
+separate credential-free fixture. No check was skipped or assertion weakened.
+
+Next bounded work: prove that complete journals cannot omit canonical historical
+service revisions or durable runtime-secret identities, then complete production
+ownership collection and workflow integration. Live AWS verification remains
+pending by owner direction, not silently treated as successful.

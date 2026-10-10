@@ -20,7 +20,8 @@ import { effectiveServicePort } from "./railpack-release";
 import { GithubActionsRuntimeSecretService, RuntimeSecretMaterialization, RuntimeSecretMaterializationError, RuntimeSecretOwnershipRecorder } from "./github-actions-runtime-secret.service";
 import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
 import { RuntimeSecretOwnershipEvent, RuntimeSecretOwnershipPersistenceError, runtimeSecretOwnershipRecord } from "./runtime-secret-ownership";
-import { AWS_RESOURCE_OWNERSHIP_SOURCE, DestroyOwnership, DestroyOwnershipIncompleteError, freezeDestroyOwnership } from "./aws-resource-ownership";
+import { DestroyOwnership, DestroyOwnershipIncompleteError } from "./aws-resource-ownership";
+import { loadDestroyOwnership } from "./aws-resource-ownership-reader";
 import { isSupportedManagedDatabaseEngine, resolveManagedDatabaseUrlScheme } from "./managed-database-engine";
 import { aliasesFor, assertRailpackCapabilityDeclaration, railpackBuildCapabilities, RailpackCapabilityDeclarationError } from "./configuration-ownership";
 import { assertRailpackRuntimeConfiguration, DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH, immutableRailpackBuildCapabilityFingerprint, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
@@ -1157,18 +1158,9 @@ export class RailpackDeploymentService {
 
   private async destroyOwnershipForAdmission(manager: EntityManager, project: Project, environmentName: string, operationId: string): Promise<DestroyOwnership> {
     try {
-      const generations = await manager.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName }, take: 1001 });
-      const history = await manager.getRepository(ProjectPipelineRun).find({ where: { projectId: project.id }, take: 1001 });
-      if (generations.length > 1000 || history.length > 1000) throw new DestroyOwnershipIncompleteError();
-      const operations = history.filter((run) => run.metadata?.deploymentAction !== "destroy"
-        && ((run.metadata?.immutableDispatchInputs as Record<string, unknown> | undefined)?.environment_name === undefined
-          || (run.metadata?.immutableDispatchInputs as Record<string, unknown>)?.environment_name === environmentName));
-      if (!generations.length || generations.some((generation) => !generation.createdByOperationId || !operations.some((run) => run.id === generation.createdByOperationId))) throw new DestroyOwnershipIncompleteError();
-      const events = await manager.getRepository(ProjectPipelineEvent).find({ where: { projectId: project.id, source: AWS_RESOURCE_OWNERSHIP_SOURCE }, take: 1001 });
-      if (events.length > 1000) throw new DestroyOwnershipIncompleteError();
       const role = this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN").match(/^arn:aws:iam::(\d{12}):role\/.+$/);
       if (!role) throw new DestroyOwnershipIncompleteError();
-      return freezeDestroyOwnership({ projectId: project.id, operationId, environmentName, accountId: role[1], region: this.config.get<string>("AWS_REGION", "us-east-1"), generationIds: generations.map((generation) => generation.id).sort() }, operations, events, this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"));
+      return await loadDestroyOwnership(manager, { projectId: project.id, operationId, environmentName, accountId: role[1], region: this.config.get<string>("AWS_REGION", "us-east-1") }, this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"));
     } catch (error) {
       if (error instanceof DestroyOwnershipIncompleteError) throw new ConflictException(error.message);
       throw new ServiceUnavailableException("DG_DESTROY_OWNERSHIP_UNAVAILABLE: retained AWS ownership could not be read; no deletion was admitted.");

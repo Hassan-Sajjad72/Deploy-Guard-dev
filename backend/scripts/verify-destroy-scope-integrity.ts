@@ -11,6 +11,8 @@ import { ProjectDeletionIncompleteError, ProjectDeletionService } from "../src/p
 import { PipelineRunStatus, ProjectPipelineRun } from "../src/projects/project-pipeline-run.entity";
 import { Project } from "../src/projects/project.entity";
 import { ProjectDeploymentGeneration } from "../src/projects/project-deployment-generation.entity";
+import { ProjectPipelineEvent } from "../src/projects/project-pipeline-event.entity";
+import { AWS_RESOURCE_OWNERSHIP_SOURCE, ownershipSha256 } from "../src/projects/aws-resource-ownership";
 import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
 import { servicesBase64 } from "../src/projects/railpack-workflow-contract";
 import { destroyProofFixture } from "./fixtures/destroy-proof";
@@ -88,14 +90,19 @@ async function verify() {
   let persisted = operation();
   let activeOperations = 0;
   let persistedGenerations = [...generationIds];
+  let retainedEvents = structuredClone(proof.events);
+  let retainedOperations = [...proof.operations];
+  let externalCleanups = 0;
+  let invalidateAfterExternalCleanup = false;
   deletion.subscriptions = { find: async () => [] };
   deletion.projects = { count: async () => 1 };
-  deletion.sns = { deleteProjectResources: async () => undefined };
+  deletion.sns = { deleteProjectResources: async () => { externalCleanups++; if (invalidateAfterExternalCleanup) retainedEvents = []; } };
   deletion.githubApp = { removeManagedWorkflow: async () => { throw new Error("shared caller must be preserved"); } };
   deletion.dataSource = { transaction: async (callback: (manager: unknown) => Promise<unknown>) => callback({
     query: async () => undefined,
-    getRepository: (entity: unknown) => entity === ProjectDeploymentGeneration ? { find: async () => persistedGenerations.map((id) => ({ id })) }
-      : { count: async () => activeOperations, findOne: async (options: any) => {
+    getRepository: (entity: unknown) => entity === ProjectDeploymentGeneration ? { find: async () => persistedGenerations.map((id) => ({ id, createdByOperationId: id })) }
+      : entity === ProjectPipelineEvent ? { find: async () => retainedEvents }
+      : { find: async () => retainedOperations, count: async () => activeOperations, findOne: async (options: any) => {
       assert.deepEqual(options.lock, { mode: "pessimistic_write" }, "persisted eligibility must remain locked until deletion commits");
       return persisted;
     }, delete: async () => { deletes++; return { affected: 1 }; } },
@@ -112,6 +119,24 @@ async function verify() {
   await assert.rejects(() => deletion.finalize(project, operation()), /generation set changed/);
   assert.equal(deletes, 0, "new operations/generations cannot be erased by stale cleanup authority");
   persistedGenerations = [...generationIds];
+  for (const mutate of [
+    () => { retainedEvents = []; },
+    () => { retainedEvents[0].metadata.sha256 = "f".repeat(64); },
+    () => { retainedEvents.push(structuredClone(retainedEvents[0])); },
+    () => { retainedOperations.push({ ...proof.operations[0], id: foreignGeneration }); },
+    () => { retainedEvents[0].metadata.evidence.resources.push({ type: "aws_ecr_repository", id: "late-owned-repository" }); retainedEvents[0].metadata.sha256 = ownershipSha256(retainedEvents[0].metadata.evidence); },
+  ]) {
+    const externalBefore = externalCleanups;
+    mutate();
+    await assert.rejects(() => deletion.finalize(project, operation()), ProjectDeletionIncompleteError);
+    assert.equal(externalCleanups, externalBefore, "missing, corrupt, duplicated or changed durable authority must block SNS/GitHub cleanup");
+    assert.equal(deletes, 0);
+    retainedEvents = structuredClone(proof.events); retainedOperations = [...proof.operations];
+  }
+  invalidateAfterExternalCleanup = true;
+  await assert.rejects(() => deletion.finalize(project, operation()), ProjectDeletionIncompleteError);
+  assert.equal(deletes, 0, "the final locked transaction must independently restore receipts after external cleanup");
+  invalidateAfterExternalCleanup = false; retainedEvents = structuredClone(proof.events);
   assert.deepEqual(await deletion.finalize(project, operation()), { projectId, status: "deleted" });
   assert.equal(deletes, 1);
   console.log("DESTROY_SCOPE_INTEGRITY=PASS EXACT_FROZEN_GENERATIONS=1 MALFORMED_IDENTITIES_REJECTED=1 RETRY_REVALIDATED=1 TRANSACTION_REVALIDATED=1 CLEANUP_ADMISSION_BLOCKED=1 AWS_EXECUTION=NONE ABSENCE_PROOF=NOT_CERTIFIED");
@@ -131,14 +156,37 @@ async function verifyPostgresBoundary() {
     await database.query("INSERT INTO projects (id,owner_user_id,name,repository_url,repository_full_name,target_branch,status,visibility) VALUES ($1,$2,'Deletion fixture','https://github.com/fixture/repository','fixture/repository','main','configured','private')", [projectId, owner]);
     const addGeneration = (id: string, ordinal: number) => database!.query("INSERT INTO project_deployment_generations (id,project_id,environment_name,ordinal,status,terraform_state_key) VALUES ($1,$2,'dev',$3,'retired','fixture.tfstate')", [id, projectId, ordinal]);
     for (let index = 0; index < generationIds.length; index++) await addGeneration(generationIds[index], index + 1);
+    for (const row of proof.operations) {
+      await database.query("INSERT INTO project_pipeline_runs (id,project_id,triggered_by_user_id,repository_url,repository_full_name,target_branch,status,current_stage,commit_sha,metadata) VALUES ($1,$2,$3,'https://github.com/fixture/repository','fixture/repository','main','completed','runtime_verification',$4,$5::jsonb)", [row.id, projectId, owner, row.commitSha, JSON.stringify(row.metadata)]);
+      await database.query("UPDATE project_deployment_generations SET created_by_operation_id=$1 WHERE id=$1", [row.id]);
+    }
+    for (const row of proof.events) await database.query("INSERT INTO project_pipeline_events (pipeline_run_id,project_id,stage,status,message,source,metadata) VALUES ($1,$2,'ownership_retention','completed','Simulated identifier ownership',$3,$4::jsonb)", [row.pipelineRunId, projectId, row.source, JSON.stringify(row.metadata)]);
     await database.query("INSERT INTO project_pipeline_runs (id,project_id,triggered_by_user_id,repository_url,repository_full_name,target_branch,status,current_stage,commit_sha,generation_id,metadata,started_at) VALUES ($1,$2,$3,'https://github.com/fixture/repository','fixture/repository','main','completed','project_delete_cleanup',$4,$5,$6::jsonb,$7)", [operationId, projectId, owner, operation().commitSha, generationIds[0], JSON.stringify(operation().metadata), operation().startedAt]);
+    let externalCleanups = 0;
+    let invalidateAfterExternalCleanup = false;
     const deletion = new ProjectDeletionService(database, database.getRepository(Project), database.getRepository(NotificationSubscription),
-      { removeManagedWorkflow: async () => undefined } as any, { deleteProjectResources: async () => undefined } as any);
+      { removeManagedWorkflow: async () => undefined } as any, { deleteProjectResources: async () => {
+        externalCleanups++;
+        if (invalidateAfterExternalCleanup) await database!.query("UPDATE project_pipeline_events SET metadata=jsonb_set(metadata,'{sha256}',to_jsonb($1::text)) WHERE pipeline_run_id=$2 AND source=$3", ["f".repeat(64), proof.operations[0].id, AWS_RESOURCE_OWNERSHIP_SOURCE]);
+      } } as any);
     const persistedProject: any = { ...project, ownerUserId: owner };
     await addGeneration(foreignGeneration, 3);
     await assert.rejects(() => deletion.finalize(persistedProject, operation() as any), /generation set changed/);
     assert.equal(await database.getRepository(Project).countBy({ id: projectId }), 1);
     await database.query("DELETE FROM project_deployment_generations WHERE id=$1", [foreignGeneration]);
+
+    // Real persisted JSONB receipts must be re-read before provider work, not
+    // merely hashed once at admission and then trusted until project deletion.
+    await database.query("UPDATE project_pipeline_events SET metadata=jsonb_set(metadata,'{sha256}',to_jsonb($1::text)) WHERE pipeline_run_id=$2 AND source=$3", ["f".repeat(64), proof.operations[0].id, AWS_RESOURCE_OWNERSHIP_SOURCE]);
+    await assert.rejects(() => deletion.finalize(persistedProject, operation() as any), ProjectDeletionIncompleteError);
+    assert.equal(externalCleanups, 0, "corrupt durable receipts block all external cleanup");
+    const restore = () => database!.query("UPDATE project_pipeline_events SET metadata=$1::jsonb WHERE pipeline_run_id=$2 AND source=$3", [JSON.stringify(proof.events[0].metadata), proof.operations[0].id, AWS_RESOURCE_OWNERSHIP_SOURCE]);
+    await restore();
+    invalidateAfterExternalCleanup = true;
+    await assert.rejects(() => deletion.finalize(persistedProject, operation() as any), ProjectDeletionIncompleteError);
+    assert.equal(externalCleanups, 1);
+    assert.equal(await database.getRepository(Project).countBy({ id: projectId }), 1, "changed durable receipts after external cleanup must preserve project authority for recovery");
+    invalidateAfterExternalCleanup = false; await restore();
 
     const admission: any = Object.create(RailpackDeploymentService.prototype);
     admission.dataSource = database;
@@ -177,7 +225,7 @@ async function verifyPostgresBoundary() {
     assert.equal(await database.getRepository(Project).countBy({ id: projectId }), 0);
     assert.equal(await database.getRepository(ProjectPipelineRun).countBy({ projectId }), 0, "verified deletion must cascade operation authority");
     assert.equal(await database.getRepository(ProjectDeploymentGeneration).countBy({ projectId }), 0);
-    console.log("DESTROY_SCOPE_POSTGRES=PASS MIGRATIONS=111 ADMISSION_CONFLICT=1 CHANGED_GENERATIONS_BLOCKED=1 CONFIGURATION_LOCK=1 ROW_LOCK_CONTENTION=1 CASCADE=1 AWS_EXECUTION=NONE");
+    console.log("DESTROY_SCOPE_POSTGRES=PASS MIGRATIONS=111 ADMISSION_CONFLICT=1 CHANGED_GENERATIONS_BLOCKED=1 CONFIGURATION_LOCK=1 ROW_LOCK_CONTENTION=1 DURABLE_RECEIPTS_PRE_CLEANUP=1 DURABLE_RECEIPTS_PRE_CASCADE=1 CASCADE=1 AWS_EXECUTION=NONE");
   } finally {
     try { if (database?.isInitialized) await database.destroy(); }
     finally { await postgres.stop(); }

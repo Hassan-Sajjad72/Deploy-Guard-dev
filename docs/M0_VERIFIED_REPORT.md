@@ -1,11 +1,12 @@
 # M0 verified local report
 
-2026-10-10, Asia/Karachi. **M0 is not release-ready.** Local M0.1–M0.9 slices
-passed their checks; M0.10 also passed its final local gate. The owner approved the stricter v3 destroy contract and
+2026-10-10, Asia/Karachi. **M0 is not release-ready.** Local M0.1–M0.12 slices
+passed their checks. The owner approved the stricter v3 destroy contract and
 fail-closed historical deletion. M0.10 adds its backend guard; complete production
 ownership collection and workflow integration remain unresolved.
 Live AWS verification was explicitly deferred by the owner. No AWS API query or
-mutation, live workflow dispatch, push, merge or dependency upgrade was performed.
+mutation, live workflow dispatch, push or merge was performed. Targeted,
+same-major dependency security fixes were verified; no new dependency was added.
 
 ## Scope and verified changes
 
@@ -25,6 +26,8 @@ M0 maintenance, not unsigned future product milestones.
 | Manifest transport | Atomic, immutable, content-addressed local retention; exact receipt restoration/union; corrupt/missing/narrowed/conflicting/symlinked evidence fails closed. This is not production inventory persistence. |
 | Deletion scope | v3 requires complete frozen generation/receipt identity and matching per-resource observations. Historical v2 flags cannot authorize admission, cleanup, state projection or success notifications. No mutable-context reconstruction. |
 | Cleanup concurrency | Pending terminal cleanup blocks new lifecycle admission. Actual DB deletion holds configuration/operation locks, revalidates eligibility, and rejects active operations or generation drift before cascading project authority. |
+| Durable cleanup authority | Admission and cleanup share one bounded reader. Actual retained journal receipts are restored before SNS/GitHub cleanup and again inside the locked final transaction; missing, corrupt, duplicated, changed or late-attempt authority blocks deletion. Network calls remain outside transactions. |
+| Dependency release gate | Targeted locked-version fixes, proxy/IP and bounded indexed-source-map regressions; backend/frontend full `npm audit` reports zero vulnerabilities, including development tooling. Registry failure or any finding fails the aggregate gate. |
 
 NestJS modular monolith, React/Vite, PostgreSQL and existing deployment contracts
 remain. No Kestra, Kubernetes, microservices, features, new dependencies or schema
@@ -38,7 +41,7 @@ transport is presented as a certified cloud workflow integration.
 | Check | Result / evidence type |
 | --- | --- |
 | Backend/front-end builds | PASS, local compilation/bundle |
-| Full pre-final gate after each final bounded slice | PASS; latest exit 0 in `/tmp/deployguard-m0-v3-eligibility-final-pre-final.log` |
+| Full pre-final gate after each final bounded slice | PASS; latest exit 0 in `/tmp/deployguard-m0-clean-dependencies-terraform1105-pre-final.log` |
 | Backend/full frontend regressions | PASS, current supported consumers and behavior |
 | PostgreSQL migrations/integration | PASS, 111 real migrations in disposable local DBs; isolation, constraints and cascades |
 | Cleanup DB contention | PASS, actual service/repositories and second PostgreSQL connection; shared admission lock and authority-row lock contention |
@@ -47,6 +50,7 @@ transport is presented as a certified cloud workflow integration.
 | Terraform | PASS, fmt/validate and seven mocked product scenarios; no apply/destroy against AWS |
 | Lifecycle/property tests | PASS, 1,000 lifecycle model sequences and 250 runtime properties plus real method fixtures |
 | Architecture/dependency checks | PASS, zero dependency violations and no active legacy executable references |
+| Clean locked installation / dependency security | PASS, backend/frontend default `npm ci` in a separate shallow checkout; both full audits report 0 vulnerabilities; actual consumer regressions pass |
 | Additional checks outside aggregate | PASS, direct ECS redeploy/rollback mocks, requirements, export, billing/Stripe/migration, notifications, Trivy and extra frontend regressions; `/tmp/deployguard-m0-extra-checks.log` |
 | Root canonical environment | PASS unchanged against a separate credential-free fixture and owned local DB; initially failed with the unsuitable pin-only environment. No production environment was overwritten. |
 | Independent archive compatibility review | PASS, standard stored/deflated ZIPs including streamed data descriptors; injected HTTP only |
@@ -54,9 +58,11 @@ transport is presented as a certified cloud workflow integration.
 
 No failing check was disabled or assertion removed to obtain these results.
 Baseline defect reproductions and fixture-configuration failures remain recorded
-in the progress log. Checks used existing dependency installations through local
-symlinks, not a new clean `npm ci` reproducibility run. Local Terraform 1.15.8 is
-not the workflow's pinned 1.10.5; version-parity certification remains pending.
+in the progress log. The latest gate used fresh default `npm ci` installations
+from reviewed locks, through task-owned symlinks; original dependencies were not
+modified. Terraform 1.10.5 was fetched from HashiCorp with its published checksum
+verified and used for the entire latest gate, matching the workflow pin. Earlier
+gates used 1.15.8. This is local version parity, not AWS execution.
 There is no configured general TS/React lint task; available compilation,
 architecture checks, workflow lint and regression tests were run, not relabeled
 as a nonexistent lint result.
@@ -133,6 +139,8 @@ publication and AWS execution still require separate approval.
 Skills used: `aws-infrastructure-auditor` constrained exact ownership and evidence
 labels; `lifecycle-certifier` drove transition/retry checks;
 `architecture-consistency-auditor` constrained canonical contracts;
+`investigate` constrained dependency fixes to reproduced defects and audited,
+same-major versions, with failing-before/passing-after regression evidence;
 `review` drove adversarial security/concurrency/diff review and the explicit
 legacy-compatibility approval boundary. Local review is complete with the above
 critical concern; M0 completion/release approval is not claimed.

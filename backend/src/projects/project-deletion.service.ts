@@ -1,6 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { DataSource, In, Not, Repository } from "typeorm";
+import { DataSource, EntityManager, In, Not, Repository } from "typeorm";
+import { loadDestroyOwnership } from "./aws-resource-ownership-reader";
+import { assertDestroyOwnership, ownershipSha256 } from "./aws-resource-ownership";
+import { assertRailpackRuntimeConfiguration } from "./railpack-workflow-contract";
 import { NotificationSubscription } from "../notifications/notification-subscription.entity";
 import { SnsNotificationAdapter } from "../notifications/sns-notification.adapter";
 import { canonicalEnvironmentName } from "./canonical-environment";
@@ -38,6 +41,10 @@ export class ProjectDeletionService {
   async finalize(project: Project, destroy: ProjectPipelineRun) {
     this.assertReady(project, destroy);
     try {
+      // Re-read persisted eligibility and receipts before any SNS/GitHub cleanup.
+      // Network calls remain outside transactions. Pending cleanup blocks normal
+      // lifecycle admission; the final transaction independently revalidates.
+      await this.dataSource.transaction((manager) => this.assertPersistedReady(manager, project, destroy.id));
       const [subscriptions, sharedCallerUsers] = await Promise.all([
         this.subscriptions.find({
           where: { projectId: project.id },
@@ -56,20 +63,7 @@ export class ProjectDeletionService {
       }
 
       await this.dataSource.transaction(async (manager) => {
-        await acquireProjectConfigurationAdvisoryLock(manager, project.id, canonicalEnvironmentName(project));
-        await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-delete:${project.id}`]);
-        const current = await manager.getRepository(ProjectPipelineRun).findOne({
-          where: { id: destroy.id, projectId: project.id },
-          lock: { mode: "pessimistic_write" },
-        });
-        if (!current) throw new ProjectDeletionIncompleteError("the verified delete operation no longer exists");
-        const verification = this.assertReady(project, current);
-        const active = await manager.getRepository(ProjectPipelineRun).count({ where: { projectId: project.id, status: In([PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING]) } });
-        if (active) throw new ProjectDeletionIncompleteError("another lifecycle operation is active");
-        const generations = await manager.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName: canonicalEnvironmentName(project) }, select: { id: true } });
-        const expected = verification.generationIds;
-        const actual = generations.map((generation) => generation.id).sort();
-        if (actual.length !== expected.length || actual.some((id, index) => id !== expected[index])) throw new ProjectDeletionIncompleteError("the persisted generation set changed after deletion verification");
+        await this.assertPersistedReady(manager, project, destroy.id);
         await manager.query(
           `DELETE FROM audit_logs WHERE resource_id = $1 OR metadata->>'projectId' = $1`,
           [project.id],
@@ -81,8 +75,33 @@ export class ProjectDeletionService {
       return { projectId: project.id, status: "deleted" as const };
     } catch (error) {
       if (error instanceof ProjectDeletionIncompleteError) throw error;
-      throw new ProjectDeletionIncompleteError(error instanceof Error ? error.message : "project deletion did not complete");
+      throw new ProjectDeletionIncompleteError("persisted ownership or external project cleanup could not be verified");
     }
+  }
+
+  private async assertPersistedReady(manager: EntityManager, project: Project, operationId: string) {
+    const environmentName = canonicalEnvironmentName(project);
+    await acquireProjectConfigurationAdvisoryLock(manager, project.id, environmentName);
+    await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-delete:${project.id}`]);
+    const current = await manager.getRepository(ProjectPipelineRun).findOne({
+      where: { id: operationId, projectId: project.id }, lock: { mode: "pessimistic_write" },
+    });
+    if (!current) throw new ProjectDeletionIncompleteError("the verified delete operation no longer exists");
+    const verification = this.assertReady(project, current);
+    const active = await manager.getRepository(ProjectPipelineRun).count({ where: { projectId: project.id, status: In([PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING]) } });
+    if (active) throw new ProjectDeletionIncompleteError("another lifecycle operation is active");
+    const generations = await manager.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName }, take: 1001 });
+    const actual = generations.map((generation) => generation.id).sort();
+    if (actual.length !== verification.generationIds.length || actual.some((id, index) => id !== verification.generationIds[index])) throw new ProjectDeletionIncompleteError("the persisted generation set changed after deletion verification");
+    // assertReady already validated these immutable input bytes. Do not recover
+    // missing authority from current config or from the proof's resource list.
+    const inputs = current.metadata!.immutableDispatchInputs as Record<string, string>;
+    const runtime = JSON.parse(Buffer.from(inputs.services_base64, "base64").toString("utf8"));
+    assertRailpackRuntimeConfiguration(runtime);
+    const frozen = runtime.projectDeletion?.ownership;
+    assertDestroyOwnership(frozen);
+    const retained = await loadDestroyOwnership(manager, frozen.manifest.scope, inputs.terraform_state_bucket, generations);
+    if (ownershipSha256(retained) !== ownershipSha256(frozen)) throw new ProjectDeletionIncompleteError("the retained ownership receipts changed after deletion verification");
   }
 
   private assertReady(project: Project, destroy: ProjectPipelineRun) {

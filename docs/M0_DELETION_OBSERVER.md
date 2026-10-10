@@ -213,3 +213,17 @@ the changed executable workflow are still pending. The existing dispatched
 workflow and certified fingerprints remain unchanged. Legacy records are not
 backfilled or granted authority by a JSON version change. No AWS execution or
 publication is authorized by this approval.
+
+## M0.11 — durable cleanup revalidation
+
+The same bounded authority reader now serves admission and cleanup. Before any
+SNS/GitHub cleanup and again under the final configuration/operation DB locks,
+the service restores all retained operation journals and compares their complete
+normalized union/receipts to the immutable frozen ownership. Missing, corrupt,
+duplicate or changed records and late failed attempts block cleanup. Actual
+PostgreSQL tests exercise receipt drift at both boundaries and preserve history
+on failed final revalidation. Provider calls remain outside transactions.
+
+Canonical revision/secret omission checks and complete production collection are
+still pending. Durable revalidation proves consistency with retained journals,
+not that a future producer has captured every resource. AWS remains unverified.
