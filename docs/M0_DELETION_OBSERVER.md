@@ -105,6 +105,54 @@ included in `test:pre-final-certification` so the new regressions cannot be
 omitted from that gate. Tests cover real temporary filesystem operations and
 concurrent CLI publication; AWS observation remains injected/mocked.
 
+## M0.5 — production runtime-secret ownership journal
+
+The actual `RailpackDeploymentService.dispatch` path now supplies a mandatory
+durable recorder to `GithubActionsRuntimeSecretService.materialize`. The recorder
+inserts new rows in existing `project_pipeline_events` (source
+`runtime_secret_ownership`); there is no schema migration or second release
+authority. Rows contain identifier-only
+`deployguard.runtime-secret-ownership/v1` evidence and a SHA-256 receipt. Hashing
+sorts the flat evidence keys so PostgreSQL JSONB ordering does not invalidate it.
+
+- `intent` is committed before provider work. It retains project, operation,
+  service, environment, configured AWS account/region, exact secret name and
+  immutable version token. A create whose response is lost leaves an intent,
+  **not** an invented owned ARN or deletion authority.
+- `owned` is committed after creation returns its ARN or an existing secret's
+  exact namespace/ownership tags are validated, before any existing-secret
+  restore/version mutation. ARN account/region/name must match the admitted scope.
+  This proves a recorded identity, **not** materialization success or absence.
+- Rows are inserted, never rewritten by this collector, and survive run-metadata
+  replacement, terminal failure, compensation and a new retry operation. As with
+  existing event history, they cascade only when verified control-plane deletion
+  removes their project/operation; database administrators are not cryptographically
+  prevented from editing them. Hashes are integrity receipts, not signatures.
+- Persistence/scope failure blocks dispatch. The failure is platform-owned and
+  `NOT_SAFE_YET`; restore persistence/scope and reconcile any ambiguous provider
+  write first. Secret values, environment payloads, raw database errors and raw
+  provider exceptions do not enter the journal or public diagnostic.
+- A valid post-create identity remains compensable when receipt insertion fails;
+  an invalid/cross-account identity never becomes a compensating-delete candidate.
+  Ambiguous version writes retain their prior-version candidate before the write.
+  Existing compensation stays disabled after possible remote workflow acceptance.
+
+`npm --prefix backend run test:runtime-secret-ownership` exercises real PostgreSQL
+after all 111 migrations, actual journal inserts, JSONB receipt stability, failure
+and retry retention, an ambiguous mocked create, and a database-triggered receipt
+failure after mocked creation. Provider calls and compensation are injected;
+these tests do not change AWS resources. The check is part of the pre-final gate.
+
+This closes one production collector boundary only. No historical backfill,
+Terraform/ECR/direct-ECS collector, complete inventory reader, or destroy
+finalization integration is implemented here. The local manifest transport from
+M0.4 remains separate: a future complete collector must validate these journal
+receipts and translate eligible identities into retained manifests. An intent
+requires exact-name ownership reconciliation; it must never be converted to an
+owned-resource manifest merely because creation was attempted. Legacy operations
+without journals cannot claim complete coverage. Existing destroy-result/v2
+success flags remain unverified until the complete observer gate is integrated.
+
 ## Remaining release blocker / next bounded integration
 
 The existing destroy workflow still constructs its v2 success booleans without

@@ -17,7 +17,9 @@ import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.en
 import { Project } from "./project.entity";
 import { RepositorySourceError, RepositorySourceService } from "./repository-source.service";
 import { effectiveServicePort } from "./railpack-release";
-import { GithubActionsRuntimeSecretService, RuntimeSecretMaterialization, RuntimeSecretMaterializationError } from "./github-actions-runtime-secret.service";
+import { GithubActionsRuntimeSecretService, RuntimeSecretMaterialization, RuntimeSecretMaterializationError, RuntimeSecretOwnershipRecorder } from "./github-actions-runtime-secret.service";
+import { ProjectPipelineEvent } from "./project-pipeline-event.entity";
+import { RuntimeSecretOwnershipEvent, RuntimeSecretOwnershipPersistenceError, runtimeSecretOwnershipRecord } from "./runtime-secret-ownership";
 import { isSupportedManagedDatabaseEngine, resolveManagedDatabaseUrlScheme } from "./managed-database-engine";
 import { aliasesFor, assertRailpackCapabilityDeclaration, railpackBuildCapabilities, RailpackCapabilityDeclarationError } from "./configuration-ownership";
 import { assertRailpackRuntimeConfiguration, DEPLOYGUARD_PLATFORM_HEALTH_CHECK_PATH, immutableRailpackBuildCapabilityFingerprint, immutableRailpackDispatchFingerprint, RAILPACK_RESULT_CONTRACT_VERSION, RailpackRuntimeConfiguration, RailpackWorkflowInputs, servicesBase64 } from "./railpack-workflow-contract";
@@ -419,7 +421,8 @@ export class RailpackDeploymentService {
       await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled });
       operation.currentStage = action === "deploy" ? "runtime_secret_materialization" : "runtime_configuration";
       await this.runs.save(operation);
-      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration, provisionalRuntimeSecrets, requirementAdmission);
+      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration, provisionalRuntimeSecrets, requirementAdmission,
+        (event) => this.retainRuntimeSecretOwnership(project.id, operationId, environmentName, event));
       // A direct ECS release is deliberately limited to an already-LIVE
       // topology.  Any first deployment or topology change remains on the
       // existing Terraform bootstrap path until that path has made it LIVE.
@@ -486,6 +489,19 @@ export class RailpackDeploymentService {
     if (!materializations.length) return null;
     if (remoteDispatchPossible) return { skipped: "remote_dispatch_possible" };
     return this.runtimeSecrets.compensate(materializations);
+  }
+
+  private async retainRuntimeSecretOwnership(projectId: string, operationId: string, environmentName: string, event: RuntimeSecretOwnershipEvent) {
+    let identityValidated = false;
+    try {
+      const role = this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN");
+      const accountId = role.match(/^arn:aws:iam::(\d{12}):role\/[A-Za-z0-9+=,.@_/-]+$/)?.[1] || "";
+      const row = runtimeSecretOwnershipRecord(event, { projectId, operationId, environmentName, accountId, region: this.config.get<string>("AWS_REGION", "us-east-1") });
+      identityValidated = true;
+      // Independent rows survive mutable run metadata saves and terminal failure
+      // reconciliation. Never mark this intent or receipt as absence evidence.
+      await this.dataSource.getRepository(ProjectPipelineEvent).insert(row);
+    } catch { throw new RuntimeSecretOwnershipPersistenceError(identityValidated); }
   }
 
   private async persistAcceptedWorkflowDispatch(operation: ProjectPipelineRun, receipt: GithubActionsDispatchReceipt) {
@@ -932,6 +948,14 @@ export class RailpackDeploymentService {
     if (error instanceof WorkflowAwsCapabilityError) {
       return { stage: stage || "aws_capability_verification", message: `AWS platform capability verification failed: ${error.missingCapabilities.join(", ") || "required capability unavailable"}.`, evidence: { classification: "platform_configuration", missingCapabilities: error.missingCapabilities } };
     }
+    if (error instanceof RuntimeSecretOwnershipPersistenceError) {
+      return {
+        stage: "runtime_secret_materialization",
+        message: `${error.message} DG_FAILURE code=${error.diagnosticCode} stage=runtime_secret_materialization`,
+        evidence: { classification: "platform_ownership_persistence", code: error.diagnosticCode },
+        ownership: { failureOwner: "DEPLOYGUARD_PLATFORM" as const, externalProvider: null, failureCode: error.diagnosticCode, failureServiceId: null },
+      };
+    }
     if (error instanceof RuntimeSecretMaterializationError) {
       return {
         stage: "runtime_secret_materialization",
@@ -1120,7 +1144,7 @@ export class RailpackDeploymentService {
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [], requirementAdmission: RequirementAdmission | null = null): Promise<RailpackRuntimeConfiguration> {
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [], requirementAdmission: RequirementAdmission | null = null, ownershipRecorder?: RuntimeSecretOwnershipRecorder): Promise<RailpackRuntimeConfiguration> {
     if (action !== "deploy") {
       if (!target?.services.length) throw new ServiceUnavailableException("The lifecycle target does not contain canonical service revisions.");
       const services = target.services.map((service) => ({
@@ -1190,8 +1214,21 @@ export class RailpackDeploymentService {
       const railpackCapabilities = railpackBuildCapabilities(buildEnvironment);
       const railpackBuildCapabilityFingerprint = Object.keys(railpackCapabilities).length ? immutableRailpackBuildCapabilityFingerprint(buildEnvironment) : undefined;
       const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, servicePort, buildEnvironment, railpackBuildCapabilityFingerprint, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(servicePort), HOST: "0.0.0.0" } })).digest("hex");
-      const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues: allSecretValues });
-      if (materialized?.provisionalChange) provisionalRuntimeSecrets.push(materialized);
+      const trackCandidate = (candidate?: RuntimeSecretMaterialization) => {
+        if (candidate?.provisionalChange && !provisionalRuntimeSecrets.some((prior) => prior.secretArn === candidate.secretArn && prior.versionToken === candidate.versionToken)) provisionalRuntimeSecrets.push(candidate);
+      };
+      const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues: allSecretValues }, ownershipRecorder ? async (event, candidate) => {
+        try {
+          await ownershipRecorder(event, candidate);
+          trackCandidate(candidate);
+        } catch (error) {
+          // A validated identity may be compensated if storage failed after
+          // creation. A rejected/cross-scope identity is never deletion authority.
+          if (error instanceof RuntimeSecretOwnershipPersistenceError && error.identityValidated) trackCandidate(candidate);
+          throw error;
+        }
+      } : undefined);
+      trackCandidate(materialized);
       const materializedReferences = materialized?.valueFromByName || {};
       const buildSecretReferences = Object.fromEntries([...buildSecretNames].sort().map((name) => [name, materializedReferences[name]]));
       const secretReferences = Object.fromEntries([...runtimeSecretNames].sort().map((name) => [name, materializedReferences[name]]));

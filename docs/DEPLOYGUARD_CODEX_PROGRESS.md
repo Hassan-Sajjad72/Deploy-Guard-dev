@@ -9,7 +9,7 @@ Updated: 2026-10-10 (Asia/Karachi).
 - Worktree: `/tmp/deployguard-m0-kGHmNq/checkout`; original worktree's deletions, untracked specification and document files were preserved.
 - Specification reviewed: owner-provided `backend/MASTER-PLAN.md`, v2.1, in the original worktree. It is untracked there and absent from the published baseline. Charter, R0/working rules, M0, dependencies, reporting and as-is sections informed this slice.
 - The specification records R0 as NOT SIGNED OFF. The owner's current message explicitly authorizes existing-system stabilization. This run treats that as authority for M0 maintenance only, not approval of the future product decisions or M1–M19 implementation.
-- Milestone: **M0 in progress; M0.1–M0.4 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
+- Milestone: **M0 in progress; M0.1–M0.5 locally verified**. The latest appended section owns current status. Earlier sections retain historical failures and next steps, superseded by later evidence; full M0 and AWS cleanup are not certified.
 - No AWS API mutation, live workflow dispatch, Terraform apply/destroy, production DB access, dependency upgrade, schema migration or feature work was executed. GitHub reads for immutable action checks and local mocked provider tests are identified separately below.
 - Tools: Node `v22.23.2`, npm `10.9.8`, Terraform `v1.15.8`; existing backend/frontend lockfiles retained. Installed dependencies were reused through local symlinks; this was not a fresh npm-ci reproducibility certification. Workflow Terraform remains pinned to `1.10.5`, so local Terraform-version parity is unverified.
 
@@ -446,3 +446,151 @@ blocker. Publishing a changed workflow/certified commit and an approved disposab
 AWS exercise remain prerequisites; no push, cloud mutation or destructive AWS
 operation occurred. Intelligence Harness and multi-client work remain gated by
 completed M0, approved requirements, M0S safety and tenant/ownership evidence.
+
+## M0.5 — production runtime-secret ownership collection (2026-10-10)
+
+Status: **PASS — local production-path integration and regression gates;
+AWS resource cleanup UNVERIFIED**.
+
+Baseline: `5a3ff8f8908ef5e6cd89ff1a19e8f02b5458789f`; isolated branch
+`codex/m0-workflow-identity-20261010`, `/tmp/deployguard-m0-kGHmNq/checkout`.
+Read-only remote check reconfirmed `origin/version1` at
+`3ac3d951f9a339a177a627acd306fc54bc6b8ac1`. The owner's original worktree and
+its existing deletions/untracked files remain untouched. Work is authorized M0
+maintenance only; future requirements are not treated as approved.
+
+### Bounded defect / implementation
+
+The production backend materialized runtime secrets before workflow dispatch,
+but only kept provisional mutations in an in-memory compensation array. No
+durable exact-name intent or owned ARN was recorded on that path. The executed
+baseline fixture created a secret and failed its expected recorder assertion
+with `[]` instead of `["intent", "owned"]`. Provider-response uncertainty and
+process interruption therefore lacked durable ownership-attempt evidence.
+
+This slice closes **runtime-secret collection only**, not the whole resource
+inventory or destroy gate. The infrastructure auditor and lifecycle certifier
+skills required immutable operation/service scope, explicit intent-vs-owned
+classification, fail-closed persistence, compensation safety and separate local
+versus AWS evidence. Current source (schema v3 / release-result v5) supersedes
+the skills' stale test1 architecture reference.
+
+- `GithubActionsRuntimeSecretService.materialize` requires a recorder. The
+  low-level materializer emits `intent` before any provider work, retains an
+  existing owned identity before restore/version writes, and records a newly
+  returned ARN before continuing. No secret values are sent to the recorder.
+- `RailpackDeploymentService.dispatch` supplies the durable recorder, which
+  inserts identifier-only evidence and SHA-256 receipts in existing
+  `project_pipeline_events` with source `runtime_secret_ownership`. This reuses
+  the existing PostgreSQL model, without migrations, dependencies or a competing
+  release authority. Inserted rows survive mutable operation-metadata writes,
+  terminal failure, compensation and subsequent retry. Existing control-plane
+  cascade semantics remain; these hashes are not signatures/admin tamper proof.
+- `runtime-secret-ownership.ts` validates exact project/operation/service,
+  environment, role-derived account, region, secret namespace and physical ARN.
+  It rejects unknown payload fields and version-qualified/cross-scope ARNs.
+  Receipt hashing sorts keys for actual PostgreSQL JSONB round trips.
+- A lost create response leaves only an intent; no ARN or absence proof is
+  fabricated. Valid post-create identities remain compensable if receipt
+  insertion fails. Invalid identities do not enter the compensation list.
+  Prior-version candidates are tracked before writes whose responses may be
+  ambiguous; compensation still stops after possible remote workflow acceptance.
+- Storage/validation failures are platform-owned
+  `DG_RUNTIME_SECRET_OWNERSHIP_PERSISTENCE_FAILED`, not AWS failures. The existing
+  diagnostic catalogue marks retry `NOT_SAFE_YET` until persistence/scope and any
+  ambiguous write are reconciled. Raw storage errors are not public diagnostics.
+- Added `test:runtime-secret-ownership` to the pre-final aggregate and extended
+  the actual admission/dispatch fixture to require and execute the recorder.
+  Existing admission, service isolation, immutable snapshot, compensation and
+  lifecycle assertions were retained. The production collector tests use
+  injected provider calls, not live AWS execution.
+
+NestJS/React, GitHub Actions, Railpack, Terraform and ECS contracts are preserved.
+No workflow, Terraform, immutable caller pin, cloud executable fingerprint,
+destroy parser/finalizer, product feature or AWS resource changed in this slice.
+
+### Verification
+
+New collector check: **PASS**, using real disposable PostgreSQL after all 111
+migrations and mocked Secrets Manager. It exercises actual journal inserts,
+JSONB hash stability, failed-operation metadata replacement, a real retry,
+ambiguous create/version writes, a database-triggered post-create insert failure,
+exact compensation, and exclusion of cross-account compensation candidates.
+
+```text
+RUNTIME_SECRET_OWNERSHIP_UNIT=PASS INTENT_BEFORE_PROVIDER=1 OWNED_BEFORE_EXISTING_MUTATION=1 SECRET_VALUES_RETAINED=0 FAILURE_OWNER=PLATFORM
+RUNTIME_SECRET_OWNERSHIP_POSTGRES=PASS MIGRATIONS=111 APPEND_ONLY_ROWS=1 FAILURE_AND_RETRY_RETAINED=1 AMBIGUOUS_CREATE_INTENT_ONLY=1 POST_CREATE_COMPENSATION=1 AWS_EXECUTION=MOCKED
+```
+
+Evidence: `/tmp/deployguard-m0-secret-ownership.log`,
+`/tmp/deployguard-m0-secret-ownership-confirm.log`,
+`/tmp/deployguard-m0-secret-ownership-final.log`. Backend builds and focused
+service-isolation/dispatch-state checks passed. The backend was rebuilt after
+the final production changes, before the aggregate browser API started.
+
+Supplementary direct ECS redeploy/rollback, deployment requirements, Terraform
+export, billing migration/subscriptions/Stripe, notifications, Trivy, canonical
+backend environment, frontend session refresh/billing UI and synthetic live-app
+runner checks: **PASS**. The billing check used all 111 migrations on a separately
+labelled, localhost-only disposable fixture. No production/shared database was
+used. Fixture credentials are local-only, AWS credential fields empty, and
+notifications disabled. Migration evidence:
+`/tmp/deployguard-m0-ownership-migrations.log`; Trivy output:
+`/tmp/deployguard-m0-ownership-supplemental.log`.
+
+`npm --prefix backend run test:pre-final-certification`: **PASS, exit 0**.
+Evidence: `/tmp/deployguard-m0-ownership-pre-final.log`.
+
+```text
+POSTGRES_MIGRATIONS_FROM_ZERO=PASS COUNT=111
+7 passed (19.5s)
+PLAYWRIGHT_FULL_STACK=PASS API_MUTATIONS=9 BROWSER_SURFACES=5 GITHUB_SELECTION=EXPECTED_BLOCKER
+POSTGRES_INTEGRATION=PASS MIGRATIONS_FROM_ZERO=1 SERVICE_ENV_ISOLATION=1 DATABASE_ATTACHMENT=1 CASCADE=1 LIVE_UNIQUENESS=1
+GITHUB_WORKFLOW_LINT=PASS WORKFLOWS=1 ACTIONLINT=1.7.12 SHELLCHECK=0.11.0
+LIFECYCLE_PROPERTY_TESTS=PASS SEED=20260831 RUNS=1000 RUNTIME_RUNS=250
+UUID_ADMISSION_CONTRACT=PASS ACTIVE_CONTROLLERS=5
+```
+
+The aggregate passed backend/frontend builds, all full-local consumers, Docker
+fallback security/executable build, independent observer/retention checks, the
+new PostgreSQL collector gate, real local API/browser/persistence checks, API
+equivalence, workflow lint/contracts, seven mocked Terraform matrix tests,
+lifecycle properties, architecture boundaries (309 modules / 1145 dependencies,
+zero violations), and configuration admission. All nine dispatched executable
+fingerprints still match the unchanged pin. No assertion was disabled and no
+security requirement relaxed. No AWS end-to-end execution occurred; local
+Terraform remains 1.15.8 versus workflow pin 1.10.5, so tool-version parity is
+still unverified. Testcontainers fixtures stopped through their own cleanup.
+The exact labelled `deployguard-m0-ownership-20261010` fixture container and its
+own anonymous volume were removed after verification; existing containers were
+preserved. The ignored worktree environment was restored to its credential-free
+workflow pin. No user data or live infrastructure was deleted.
+
+### Resource and lifecycle evidence
+
+| Resource family | Canonical owner | Expected action | Observed result / cleanup evidence | Status |
+| --- | --- | --- | --- | --- |
+| Application/build runtime secrets | Admitted project/service/operation and validated exact namespace | Commit intent; retain owned ARN; preserve through failure/retry | Actual PostgreSQL rows and integrity receipts; mocked provider/compensation only | PASS local integration; AWS UNVERIFIED |
+| Terraform/ECR/direct-ECS resources and running tasks | Existing immutable lifecycle ownership | Collect every create/partial failure before final deletion verification | Not implemented by this secret-only slice | UNVERIFIED |
+
+| Action | Admission identity | Workflow/result contract | Expected / actual transition | External execution | Status |
+| --- | --- | --- | --- | --- | --- |
+| Deploy/retry pre-dispatch secret materialization | Immutable admitted operation/service snapshot | Schema v3 and release-result v5 unchanged | Evidence persistence failure blocks dispatch; provider uncertainty retains intent | Real local PostgreSQL; mocked AWS only | PASS local integration; AWS UNVERIFIED |
+| Destroy/rollback | Historical immutable generation/service set | Existing destroy-result/v2 / release-result/v5 unchanged | No new finalization or cleanup authority granted | No dispatch or cloud execution | UNVERIFIED externally |
+
+### Remaining defects / next bounded milestone
+
+Collect Terraform partial-state, exact ECR repositories and direct/historical ECS
+task definitions for every workflow attempt; persist those artifacts into canonical
+operation history even after failure. Add running-task and full generation/service
+coverage before claiming a complete deletion manifest. Legacy operations without
+ownership journals remain incomplete; do not backfill them using mutable current
+configuration or turn intents into owned identity without exact-name/tag proof.
+
+Then wire the complete retained inventory into independent observation and gate
+destroy finalization. Existing optimistic v2 success booleans still lack that
+gate. Real AWS lifecycle remains **UNVERIFIED**; Terraform tool-version parity,
+published workflow SHA/fingerprints and approved disposable account/region/spend/
+teardown remain prerequisites for external execution. No push or AWS mutation
+occurred. Intelligence Harness and multi-client work remain gated by complete M0,
+requirements sign-off, M0S controls and tenant/resource ownership certification.

@@ -13,6 +13,7 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { isCanonicalEnvironmentName } from "./canonical-environment";
+import { RuntimeSecretOwnershipEvent, RuntimeSecretOwnershipPersistenceError } from "./runtime-secret-ownership";
 
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GENERATION_ID = PROJECT_ID;
@@ -36,6 +37,8 @@ export type RuntimeSecretMaterialization = {
   provisionalChange: "created" | "version_activated" | null;
   previousVersionToken: string | null;
 };
+
+export type RuntimeSecretOwnershipRecorder = (event: RuntimeSecretOwnershipEvent, compensationCandidate?: RuntimeSecretMaterialization) => Promise<void>;
 
 export class RuntimeSecretMaterializationError extends Error {
   readonly diagnosticCode = "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED";
@@ -75,7 +78,7 @@ export class RuntimeSecretMaterializer {
     environment: string;
     configurationFingerprint: string;
     secretValues: Record<string, string>;
-  }): Promise<RuntimeSecretMaterialization | null> {
+  }, recordOwnership?: RuntimeSecretOwnershipRecorder): Promise<RuntimeSecretMaterialization | null> {
     this.assertInput(input);
     const secretNames = Object.keys(input.secretValues).sort();
     if (!secretNames.length) return null;
@@ -95,6 +98,16 @@ export class RuntimeSecretMaterializer {
       SecretPurpose: "application_runtime",
     };
 
+    const ownership = { projectId: input.projectId, operationId: input.generationId, serviceId: serviceScope, environmentName: input.environment, secretName, versionToken };
+    // Commit intent before any provider mutation. If create's response is lost,
+    // this exact name remains UNVERIFIED, not an inferred ARN/deletion authority.
+    await recordOwnership?.({ ...ownership, phase: "intent" });
+    const candidate = (arn: string, change: RuntimeSecretMaterialization["provisionalChange"], previous: string | null): RuntimeSecretMaterialization => ({
+      secretArn: arn, secretName, secretNames,
+      valueFromByName: Object.fromEntries(secretNames.map((name) => [name, `${arn}:${name}::${versionToken}`])),
+      versionToken, provisionalChange: change, previousVersionToken: previous,
+    });
+
     let description = await this.port.describe(secretName);
     let arn: string;
     let provisionalChange: RuntimeSecretMaterialization["provisionalChange"] = null;
@@ -102,8 +115,11 @@ export class RuntimeSecretMaterializer {
     if (!description) {
       arn = await this.port.create(secretName, secretString, versionToken, tags);
       provisionalChange = "created";
+      await recordOwnership?.({ ...ownership, phase: "owned", secretArn: arn }, candidate(arn, "created", null));
     } else {
       this.assertOwnership(description, secretName, tags);
+      // Existing owned identity is retained before restore/put/stage mutation.
+      await recordOwnership?.({ ...ownership, phase: "owned", secretArn: description.arn });
       if (description.deletionDate) {
         await this.port.restore(description.arn);
         description = await this.waitUntilActive(secretName, tags);
@@ -114,6 +130,9 @@ export class RuntimeSecretMaterializer {
         const previous = Object.entries(description.versions)
           .find(([, versionStages]) => versionStages.includes("AWSCURRENT"))?.[0] || "";
         if (!previous) throw new Error("Managed runtime secret has no unambiguous AWSCURRENT version.");
+        // Retain the compensation candidate BEFORE a write whose response may
+        // be lost. No secret value is included in this callback.
+        await recordOwnership?.({ ...ownership, phase: "owned", secretArn: arn }, candidate(arn, "version_activated", previous));
         if (stages.length) {
           await this.port.activateVersion(arn, versionToken, previous);
         } else {
@@ -124,17 +143,8 @@ export class RuntimeSecretMaterializer {
       }
     }
 
-    return {
-      secretArn: arn,
-      secretName,
-      secretNames,
-      // ECS accepts ARN:json-key:version-stage:version-id. Leaving both
-      // version selectors empty would make rollback follow mutable AWSCURRENT.
-      valueFromByName: Object.fromEntries(secretNames.map((name) => [name, `${arn}:${name}::${versionToken}`])),
-      versionToken,
-      provisionalChange,
-      previousVersionToken,
-    };
+    // ECS references always pin the immutable version, never AWSCURRENT.
+    return candidate(arn, provisionalChange, previousVersionToken);
   }
 
   async compensate(materialization: RuntimeSecretMaterialization) {
@@ -213,11 +223,13 @@ export class GithubActionsRuntimeSecretService {
     environment: string;
     configurationFingerprint: string;
     secretValues: Record<string, string>;
-  }) {
+  }, recordOwnership: RuntimeSecretOwnershipRecorder) {
+    if (typeof recordOwnership !== "function") throw new RuntimeSecretOwnershipPersistenceError();
     const port = this.port();
     try {
-      return await new RuntimeSecretMaterializer(port).materialize(input);
-    } catch {
+      return await new RuntimeSecretMaterializer(port).materialize(input, recordOwnership);
+    } catch (error) {
+      if (error instanceof RuntimeSecretOwnershipPersistenceError) throw error;
       throw new RuntimeSecretMaterializationError();
     }
   }

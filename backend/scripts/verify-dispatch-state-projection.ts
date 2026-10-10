@@ -28,6 +28,7 @@ import { ProjectConfigurationSnapshot } from "../src/projects/project-configurat
 import { BuildTargetResolutionError } from "../src/projects/build-target-resolver.service";
 import { RuntimeSecretMaterializationError } from "../src/projects/github-actions-runtime-secret.service";
 import { FailureDiagnosticService } from "../src/projects/failure-diagnostics/failure-diagnostic.service";
+import { ProjectPipelineEvent } from "../src/projects/project-pipeline-event.entity";
 
 const user = { id: 7 } as any;
 const project = {
@@ -386,6 +387,7 @@ async function verifyUnsupportedDeploymentContractBlocksBeforeWorkflowOrAws() {
 async function verifyAtomicAdmissionAndImmutableConfiguration() {
   const operations: any[] = [];
   const snapshots: any[] = [];
+  const ownershipEvents: any[] = [];
   const service = Object.create(RailpackDeploymentService.prototype) as any;
   service.managedDatabaseReconciliation = { reconcile: async () => ({ state: "HEALTHY", deploymentAllowed: true, resetAllowed: false, recoveryAvailable: false, title: "healthy", message: "healthy", tierUpdatedAt: null, identity: { environment: "dev", activeGenerationId: null }, evidence: { managed: true, persistenceEnabled: true, expectedStorageIdentity: false, bindingStatus: "pending", bindingFileSystemId: null, bindingAccessPointId: null, currentFileSystem: null, accessPoint: null, passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null } }) };
   const serviceRow: any = { id: project.applicationEntryPointServiceId, projectId: project.id, name: "Web", serviceDirectory: "apps/a", servicePort: 3000, position: 0 };
@@ -406,6 +408,10 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   };
   let lockTail = Promise.resolve();
   service.dataSource = {
+    getRepository: (entity: unknown) => {
+      assert.equal(entity, ProjectPipelineEvent);
+      return { insert: async (row: any) => { ownershipEvents.push(row); return { identifiers: [{ id: row.id }] }; } };
+    },
     transaction: async (callback: any) => {
       let release = () => undefined;
       let acquired = false;
@@ -477,10 +483,16 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
     assert.deepEqual(subjects, ["repo:example@1/application@2:*", "repo:example/application:*"], "dispatch waits on both verified exact OIDC subjects");
   } };
   const materializedSecrets: any[] = [];
-  service.runtimeSecrets = { materialize: async (input: any) => {
+  service.runtimeSecrets = { materialize: async (input: any, recordOwnership: any) => {
     materializedSecrets.push(input);
     const versionToken = "f".repeat(64);
-    return { versionToken, secretNames: ["TOKEN"], valueFromByName: { TOKEN: `arn:aws:secretsmanager:us-east-1:123456789012:secret:fixture:TOKEN::${versionToken}` } };
+    assert.equal(typeof recordOwnership, "function", "the production dispatch path must provide a durable ownership recorder");
+    const secretName = `deployguard/${input.projectId}/${input.environment}/services/${input.serviceId}/runtime`;
+    const evidence = { projectId: input.projectId, operationId: input.generationId, serviceId: input.serviceId, environmentName: input.environment, secretName, versionToken };
+    await recordOwnership({ ...evidence, phase: "intent" });
+    const secretArn = `arn:aws:secretsmanager:us-east-1:123456789012:secret:${secretName}-abcdef`;
+    await recordOwnership({ ...evidence, phase: "owned", secretArn });
+    return { versionToken, secretArn, secretName, provisionalChange: null, previousVersionToken: null, secretNames: ["TOKEN"], valueFromByName: { TOKEN: `${secretArn}:TOKEN::${versionToken}` } };
   } };
   service.runtimeConfigRevisions = { create: (row: any) => row, save: async (row: any) => ({ ...row, id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }) };
   service.awsCapabilities = { ensure: async () => undefined };
@@ -510,6 +522,9 @@ async function verifyAtomicAdmissionAndImmutableConfiguration() {
   assert.equal(snapshots.length, 1);
   assert.doesNotMatch(JSON.stringify(snapshots[0].sanitizedManifest), /secret-a/, "sanitized snapshot metadata contains no plaintext secret value");
   assert.equal(snapshots[0].encryptedSecretPayload, "encrypted-snapshot-payload");
+  assert.deepEqual(ownershipEvents.map((row) => row.status), ["intent", "owned"]);
+  assert.ok(ownershipEvents.every((row) => row.pipelineRunId === operations[0].id && row.projectId === project.id));
+  assert.doesNotMatch(JSON.stringify(ownershipEvents), /secret-a|secret-b|secretValues/);
 
   const migration = readFileSync(join(__dirname, "../src/migrations/1787356821000-EnforceSingleActiveRailpackOperation.ts"), "utf8");
   assert.match(migration, /CREATE UNIQUE INDEX "UQ_project_active_railpack_operation"/);
