@@ -188,3 +188,130 @@ assertions. Then separately persist complete pre-destroy ownership evidence acro
 partial failures/retries and gate workflow finalization on independent absence
 observations. Publication, SHA-256 certification refresh, exact fixture caller pin,
 and approved AWS execution follow only after local contracts pass.
+
+## M0.3 — remaining certification consumers closed (2026-10-10)
+
+Status: DONE_WITH_CONCERNS. This bounded local test-consumer milestone is complete;
+M0 as a whole and real AWS cleanup certification are not complete. The earlier
+AGENTS.md instructions were revoked by the user for this continuation. The
+original M0 architecture, no-feature, security, and live-AWS safety requirements
+remain in force. Work continued from `0631d2963dc327ecef09ff3a64865e489eeb5bcb`
+on `codex/m0-workflow-identity-20261010`, isolated from the original worktree.
+
+### Debug report
+
+**Symptom:** two backend certification consumers and seven browser tests failed
+against removed UI paths, selectors, and labels. Zero-to-head migrations were
+reported with a hardcoded obsolete count.
+
+**Root cause:** tests still assumed Sidebar/Dashboard ownership, an inline
+infrastructure pipeline, and project-editing forms in Settings. The supported
+frontend uses AppHeader, evidence-driven topology and metric labels, creation
+inputs on the deployment page, and notification/lifecycle-only Settings. The
+existing backend configuration APIs remain supported. A later database fixture
+failure expected disabled persistence without requesting it; managed persistence
+defaults to enabled.
+
+**Scope / files changed:**
+
+- `backend/scripts/verify-developer-runtime-experience.ts`: verifies source/build
+  stages on their current owning surface, stable source identity, every topology
+  inspector, immutable service identity, joint ECS/ALB health, exact resource
+  disclosure, and metric-key-to-label mappings. Observation, provider-error,
+  secret redaction, cost authority, and exact-plan assertions remain intact.
+- `backend/scripts/verify-product-maturity-certification.ts`: follows the mounted
+  AppHeader navigation and Projects polling owner; checks canonical failure stage
+  labels and provider-reported Stripe test mode. Workspace reconciliation,
+  observation coalescing, query throttling, protected billing, and retired-route
+  assertions remain intact.
+- `frontend/e2e/full-stack.spec.js`: selects controls by exact accessible names,
+  verifies canonical multi-service directory/entrypoint payloads, retained tree
+  expansion/search/scrolling/race/manual-entry behavior, and exact level-one page
+  headings before and after reload. Existing configuration mutations use the
+  real Nest API and real PostgreSQL rather than removed Settings forms. All nine
+  mutation contracts, response masking, selected-service deletion rejection,
+  destroy confirmation, rollback candidates, current/detailed-state agreement,
+  and read-only/deploy authorization checks remain. Read-only assertions now
+  inspect real disabled email/archive controls rather than an absent retired
+  button. Managed persistence's enabled default is asserted; the final fixture
+  explicitly requests disabled persistence, preserving its existing exact SQL
+  assertion. This is **not** browser proof for retired configuration forms.
+- `backend/scripts/run-real-full-stack-certification.ts`: counts actual recorded
+  migrations and labels measured configuration work as API mutations, not browser
+  mutations. Existing encryption-at-rest, service isolation, database attachment,
+  foreign-key/uniqueness, immutable release, retry-history and cascade assertions
+  were not removed or weakened. Release/destroy records inserted by this harness
+  are synthetic persistence fixtures, not AWS execution evidence.
+- This progress report.
+
+No production UI/backend, Terraform, workflow, dependency, or deployment
+fingerprint changed. The investigate skill required reproduced failures and
+current ownership tracing before adapting the consumers; it kept production
+changes out of this test-only slice.
+
+### Executed verification
+
+Before edits, both failing backend checks reproduced their original failures.
+The previous seven browser failures were supported by retained logs and traces.
+The first repaired browser run passed six tests; the seventh exposed ambiguous
+heading matching, fixed with exact level-one assertions. The next run passed all
+seven browser tests and exposed the implicit persistence fixture mismatch. The
+final clean aggregate passed both browser and subsequent real database checks.
+
+`npm --prefix backend run test:pre-final-certification`: **PASS, exit 0**.
+Selected literal output from `/tmp/deployguard-m0-consumers-pre-final.log`:
+
+```text
+POSTGRES_MIGRATIONS_FROM_ZERO=PASS COUNT=111
+7 passed (20.5s)
+PLAYWRIGHT_FULL_STACK=PASS API_MUTATIONS=9 BROWSER_SURFACES=5 GITHUB_SELECTION=EXPECTED_BLOCKER
+POSTGRES_INTEGRATION=PASS MIGRATIONS_FROM_ZERO=1 SERVICE_ENV_ISOLATION=1 DATABASE_ATTACHMENT=1 CASCADE=1 LIVE_UNIQUENESS=1
+CROSS_PAGE_DATA_CONSISTENCY=PASS OVERVIEW_PIPELINE_INFRASTRUCTURE_MONITORING_SETTINGS=1
+GITHUB_WORKFLOW_LINT=PASS WORKFLOWS=1 ACTIONLINT=1.7.12 SHELLCHECK=0.11.0
+LIFECYCLE_PROPERTY_TESTS=PASS SEED=20260831 RUNS=1000 RUNTIME_RUNS=250
+UUID_ADMISSION_CONTRACT=PASS ACTIVE_CONTROLLERS=5
+```
+
+The same clean gate passed backend/frontend builds, all 24 frontend local checks
+(including modal browser certification), all full-local backend consumers, API
+equivalence, Terraform fmt/validate and 7 mocked matrix tests, lifecycle identity
+and state tests, architecture checks (308 modules, 1140 dependencies, zero
+violations), and configuration admission. No assertion was disabled and no
+failing check was skipped.
+
+Remaining registered non-wrapper backend checks were also executed: independent
+AWS deletion observer, direct ECS redeploy/rollback, deployment requirements,
+Terraform export, billing subscriptions, Stripe billing, notifications, Trivy
+controls, and billing migration: **PASS**. Additional frontend session-refresh
+and billing/Trivy checks, root canonical environment verification, and live-app
+runner **fixture** verification: **PASS**. Together these cover all 44 registered
+non-wrapper backend checks. Billing verification ran against the separately
+migrated disposable local database with its required long fixture session secret.
+
+Evidence: `/tmp/deployguard-m0-consumers-pre-final.log`,
+`/tmp/deployguard-m0-consumer-runtime-before.log`,
+`/tmp/deployguard-m0-consumer-maturity-before.log`,
+`/tmp/deployguard-m0-consumer-runtime-after.log`,
+`/tmp/deployguard-m0-consumer-maturity-after.log`,
+`/tmp/deployguard-m0-consumers-full-stack.log`,
+`/tmp/deployguard-m0-consumers-full-stack-confirm.log`, and
+`/tmp/deployguard-m0-consumers-migrations.log`. Temporary containers and ignored
+environment fixtures were restricted to this local checkout; original data and
+running services were not changed.
+
+### Remaining concerns / next bounded step
+
+- Real GitHub repository selection: EXPECTED BLOCKER; no GitHub App installation
+  is connected for the isolated fixture user. The supported connection/admission
+  UI was verified, but real GitHub execution was not certified.
+- AWS_E2E_STATUS: UNVERIFIED. No live AWS resource operations were performed.
+  Existing destroy success flags are still not gated by the independent observer.
+- Next: retain complete, immutable owned-resource manifests across partial
+  failure/retry, then separately gate destroy finalization on independent exact
+  absence observations. See `docs/M0_DELETION_OBSERVER.md`. Only after that
+  integration passes contracts should changed cloud executable fingerprints be
+  certified, the control-plane commit published, and a fixture pinned to its exact
+  40-character SHA for an explicitly approved disposable AWS exercise.
+- Intelligence Harness and multi-client implementation remain gated. Green local
+  consumers satisfy one prerequisite, not durable evidence completeness,
+  tenant-boundary proof, release publication, or real AWS lifecycle certification.

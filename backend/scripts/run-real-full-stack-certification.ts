@@ -142,9 +142,11 @@ async function main() {
     PORT: String(apiPort), FRONTEND_URL: `http://127.0.0.1:${frontendPort}`,
   };
   checked("npm", ["run", "migration:run"], backendRoot, env, false);
-  console.log("POSTGRES_MIGRATIONS_FROM_ZERO=PASS COUNT=101");
   databaseClient = new Client({ host: postgres.getHost(), port: postgres.getPort(), user: postgres.getUsername(), password: postgres.getPassword(), database: postgres.getDatabase() });
   await databaseClient.connect();
+  const migrations = await databaseClient.query(`SELECT count(*)::int AS count FROM migrations`);
+  assert.ok(migrations.rows[0].count > 0, "zero-to-head migration execution must persist real evidence");
+  console.log(`POSTGRES_MIGRATIONS_FROM_ZERO=PASS COUNT=${migrations.rows[0].count}`);
   const users = await seed(databaseClient);
   checked("npm", ["run", "build"], backendRoot, env);
   const api = start("node", ["dist/src/main"], backendRoot, env);
@@ -158,7 +160,8 @@ async function main() {
   checked(join(frontendRoot, "node_modules", ".bin", "playwright"), ["test", "--config", "playwright.config.js"], frontendRoot, playwrightEnv);
   const result = JSON.parse(readFileSync(resultPath, "utf8"));
   await verifyPersistence(databaseClient, result);
-  console.log(`PLAYWRIGHT_FULL_STACK=PASS MUTATIONS=${result.browserMutations} SURFACES=${result.crossPageSurfaces} GITHUB_SELECTION=${result.githubSelection}`);
+  assert.equal(result.apiMutations, 9, "all existing API mutation contracts must pass; they are not browser mutation proof");
+  console.log(`PLAYWRIGHT_FULL_STACK=PASS API_MUTATIONS=${result.apiMutations} BROWSER_SURFACES=${result.crossPageSurfaces} GITHUB_SELECTION=${result.githubSelection}`);
   console.log("POSTGRES_INTEGRATION=PASS MIGRATIONS_FROM_ZERO=1 SERVICE_ENV_ISOLATION=1 DATABASE_ATTACHMENT=1 CASCADE=1 LIVE_UNIQUENESS=1");
   console.log("CROSS_PAGE_DATA_CONSISTENCY=PASS OVERVIEW_PIPELINE_INFRASTRUCTURE_MONITORING_SETTINGS=1");
 }
