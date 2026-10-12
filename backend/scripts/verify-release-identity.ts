@@ -19,9 +19,12 @@ assert.throws(() => canonicalDeployguardReusableWorkflow(new ConfigService({})),
 assert.equal(canonicalDeployguardReusableWorkflow(new ConfigService({ DEPLOYGUARD_REUSABLE_WORKFLOW: release })), release);
 assert.match(renderDeployguardCallerWorkflow(release), new RegExp(`uses: ${release}`), "caller workflow must use the configured canonical release identity exactly");
 assert.equal(configured, release, "active backend runtime configuration must use the exact immutable workflow reference under certification");
+// A workflow declaring the customer contract also pins its runtime inputs, outputs and session helper (as production fetches them).
+const customerControlPlanePaths = ["infrastructure/railpack-runtime/variables.tf", "infrastructure/railpack-runtime/outputs.tf", "infrastructure/railpack-runtime/prepare-customer-session.sh"];
 const controlPlanePaths = [
   ".github/workflows/deployguard-reusable.yml",
   ...Object.values(CONTROL_PLANE_EXECUTABLE_PATHS),
+  ...customerControlPlanePaths,
 ] as const;
 const atConfiguredRelease = Object.fromEntries(controlPlanePaths.map((path) => {
   const result = spawnSync("git", ["show", `${canonicalSha}:${path}`], { cwd: repositoryRoot, encoding: "utf8" });
@@ -43,6 +46,9 @@ const certification = assertReusableWorkflowCompatibility(
     fallbackContract: atConfiguredRelease["infrastructure/docker-fallback/fallback-contract.mjs"],
     fallbackTemplate: atConfiguredRelease["infrastructure/docker-fallback/node22-npm-workspace.Dockerfile"],
     fallbackManifest: atConfiguredRelease["infrastructure/docker-fallback/templates.json"],
+    runtimeVariables: atConfiguredRelease["infrastructure/railpack-runtime/variables.tf"],
+    runtimeOutputs: atConfiguredRelease["infrastructure/railpack-runtime/outputs.tf"],
+    customerCredentialHelper: atConfiguredRelease["infrastructure/railpack-runtime/prepare-customer-session.sh"],
   },
 );
 assert.equal(certification.sha, canonicalSha);
