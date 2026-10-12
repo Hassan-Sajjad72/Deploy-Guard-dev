@@ -125,7 +125,7 @@ async function main() {
   };
   let currentEvent = event("evt_unused", "customer.created", { id: "cus_unused" } as any);
   (provider as any).verifyWebhook = () => currentEvent;
-  const billing = new BillingService(accounts as any, subscriptions as any, checkouts as any, invoices as any, payments as any, webhooks as any, source, provider, entitlementStub, {} as any, { record: async () => undefined } as any, new ConfigService(baseConfig));
+  const billing = new BillingService(accounts as any, subscriptions as any, checkouts as any, invoices as any, payments as any, webhooks as any, source, provider, entitlementStub, {} as any, { record: async () => undefined } as any, new ConfigService(baseConfig), { dispatchAccount: async () => undefined } as any);
 
   const firstCheckout = await billing.createCheckout(user, "pro");
   assert.equal(accounts.rows.length, 1);

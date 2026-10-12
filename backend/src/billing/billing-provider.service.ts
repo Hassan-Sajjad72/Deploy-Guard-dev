@@ -45,34 +45,34 @@ export class BillingProviderService {
     };
   }
 
-  async createCustomer(user: User) {
+  async createCustomer(user: User, organizationId?: string) {
     const status = this.status();
     if (!status.configured) throw new BadRequestException(this.unavailableMessage(status));
-    const existing = await this.stripe().customers.search({ query: `metadata['deployguardUserId']:'${user.id}'`, limit: 2 });
+    const existing = await this.stripe().customers.search({ query: organizationId ? `metadata['deployguardOrganizationId']:'${organizationId}'` : `metadata['deployguardUserId']:'${user.id}'`, limit: 2 });
     if (existing.data.length > 1) throw new BadRequestException("Multiple Stripe customers are linked to this DeployGuard account; resolve the sandbox customer identity before checkout.");
     if (existing.data[0]) return existing.data[0];
     return this.stripe().customers.create({
       email: user.email || undefined,
       name: user.name || undefined,
-      metadata: { deployguardUserId: String(user.id), deployguardEnvironment: "test" },
-    }, { idempotencyKey: `deployguard-customer-${user.id}` });
+      metadata: { deployguardUserId: String(user.id), ...(organizationId ? { deployguardOrganizationId: organizationId } : {}), deployguardEnvironment: "test" },
+    }, { idempotencyKey: `deployguard-customer-${organizationId || user.id}` });
   }
 
-  async createCheckout(orderId: string, plan: Exclude<BillingPlan, "free">, user: User, customerId: string): Promise<StripeCheckout> {
+  async createCheckout(orderId: string, plan: Exclude<BillingPlan, "free">, user: User, customerId: string, organizationId?: string): Promise<StripeCheckout> {
     const status = this.status();
     if (!status.configured) throw new BadRequestException(this.unavailableMessage(status));
     const frontend = this.frontendUrl();
     const priceId = this.priceIdForPlan(plan);
     const metadata = {
-      deployguardUserId: String(user.id), deployguardPlan: plan,
+      deployguardUserId: String(user.id), ...(organizationId ? { deployguardOrganizationId: organizationId } : {}), deployguardPlan: plan,
       deployguardOrderId: orderId, deployguardAction: "plan_upgrade",
     };
     const session = await this.stripe().checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
-      client_reference_id: String(user.id),
-      success_url: `${frontend}/billing?checkout=returned&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${frontend}/billing?checkout=cancelled`,
+      client_reference_id: organizationId || String(user.id),
+      success_url: `${frontend}/billing?checkout=returned${organizationId ? `&organizationId=${organizationId}` : ""}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${frontend}/billing?checkout=cancelled${organizationId ? `&organizationId=${organizationId}` : ""}`,
       line_items: [{ quantity: 1, price: priceId }],
       metadata,
       subscription_data: { metadata },
@@ -90,10 +90,10 @@ export class BillingProviderService {
     return this.stripe().subscriptions.retrieve(subscriptionId, { expand: ["items.data.price"] });
   }
 
-  async createPortal(customerId: string) {
+  async createPortal(customerId: string, organizationId?: string) {
     const status = this.status();
     if (!status.configured) throw new BadRequestException(this.unavailableMessage(status));
-    return this.stripe().billingPortal.sessions.create({ customer: customerId, return_url: `${this.frontendUrl()}/billing` });
+    return this.stripe().billingPortal.sessions.create({ customer: customerId, return_url: `${this.frontendUrl()}/billing${organizationId ? `?organizationId=${organizationId}` : ""}` });
   }
 
   verifyWebhook(rawBody: Buffer, signature: string): VerifiedStripeEvent {

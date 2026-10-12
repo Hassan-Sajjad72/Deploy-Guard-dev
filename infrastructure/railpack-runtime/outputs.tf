@@ -5,6 +5,9 @@ output "vpc_id" { value = var.vpc_id }
 output "public_subnet_ids" { value = var.public_subnet_ids }
 output "services" {
   value = { for id, service in var.services : id => {
+    desired_count                  = var.application_workload == null ? 1 : var.application_workload.replicas
+    cpu                            = var.application_workload == null ? 512 : var.application_workload.cpu
+    memory_mib                     = var.application_workload == null ? 1024 : var.application_workload.memory_mib
     name                           = service.name
     image                          = service.image
     runtime_config_revision_id     = service.runtime_config_revision_id

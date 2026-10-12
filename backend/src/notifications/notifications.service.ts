@@ -1,3 +1,4 @@
+import { canAccessProject } from "../workspaces/project-access";
 import { ForbiddenException, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Request } from "express";
@@ -180,7 +181,7 @@ export class NotificationsService {
   }
   private async manage(user: User, projectId: string) {
     const project = await this.projectRepo.findOne({ where: { id: projectId } });
-    if (!project || user.role === UserRole.READONLY || (user.role !== UserRole.ADMIN && project.ownerUserId !== user.id)) throw new ForbiddenException("Insufficient permissions");
+    if (!project || user.role === UserRole.READONLY || (!canAccessProject(user, project, true))) throw new ForbiddenException("Insufficient permissions");
     return project;
   }
 }

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Request } from "express";
-import { Brackets, Repository } from "typeorm";
+import { Brackets, EntityManager, Repository } from "typeorm";
 import { User } from "../users/user.entity";
 import { AuditLogQueryDto } from "./dto/audit-log-query.dto";
 import { AuditLog } from "./audit-log.entity";
@@ -40,8 +40,9 @@ export class AuditLogService {
     private readonly auditLogRepository: Repository<AuditLog>
   ) {}
 
-  async record(input: RecordAuditLogInput): Promise<void> {
+  async record(input: RecordAuditLogInput, manager?: EntityManager): Promise<void> {
     try {
+      const repository = manager ? manager.getRepository(AuditLog) : this.auditLogRepository;
       const actorUser = input.actorUser;
       const resourceId = input.resourceId === undefined || input.resourceId === null
         ? null
@@ -49,7 +50,7 @@ export class AuditLogService {
       const metadata = { ...(input.metadata || {}) };
       if (input.resourceType === "project" && resourceId && !metadata.projectId) metadata.projectId = resourceId;
       if (input.resourceType === "pipeline_run" && resourceId && !metadata.pipelineRunId) metadata.pipelineRunId = resourceId;
-      const auditLog = this.auditLogRepository.create({
+      const auditLog = repository.create({
         actorUserId: actorUser?.id || null,
         actorEmail: actorUser?.email || input.actorEmail?.trim().toLowerCase() || null,
         actorRole: actorUser?.role || null,
@@ -65,8 +66,9 @@ export class AuditLogService {
           : null,
       });
 
-      await this.auditLogRepository.save(auditLog);
+      await repository.save(auditLog);
     } catch (error) {
+      if (manager) throw error;
       this.logger.error("Failed to record audit log", error as Error);
     }
   }
@@ -81,11 +83,13 @@ export class AuditLogService {
       .take(limit);
 
     if (user.role !== "admin") {
-      const projectScope = user.role === "readonly"
-        ? `(project.owner_user_id = :currentUserId OR project.visibility = 'workspace')`
-        : "project.owner_user_id = :currentUserId";
+      const projectScope = `(project.organization_id IS NULL AND project.owner_user_id = :currentUserId)
+        OR EXISTS (SELECT 1 FROM organization_memberships membership WHERE membership.organization_id = project.organization_id AND membership.user_id = :currentUserId)`;
       queryBuilder.andWhere(
-        `(auditLog.actorUserId = :currentUserId OR auditLog.metadata ->> 'projectId' IN (SELECT project.id::text FROM projects project WHERE project.status <> 'archived' AND ${projectScope}))`,
+        `((auditLog.actorUserId = :currentUserId AND auditLog.resourceType NOT IN ('project', 'pipeline_run', 'organization') AND auditLog.metadata ->> 'projectId' IS NULL AND auditLog.metadata ->> 'organizationId' IS NULL)
+          OR auditLog.metadata ->> 'projectId' IN (SELECT project.id::text FROM projects project WHERE ${projectScope})
+          OR auditLog.resourceType = 'organization' AND auditLog.resourceId IN (SELECT organization_id::text FROM organization_memberships WHERE user_id = :currentUserId)
+          OR auditLog.metadata ->> 'organizationId' IN (SELECT organization_id::text FROM organization_memberships WHERE user_id = :currentUserId))`,
         { currentUserId: user.id }
       );
     } else if (query.actorUserId) {
@@ -205,7 +209,8 @@ export class AuditLogService {
       return Object.entries(value as Record<string, unknown>).reduce(
         (masked, [key, nestedValue]) => {
           const normalizedKey = key.toLowerCase();
-          const isSensitive = SENSITIVE_KEYS.some((sensitiveKey) =>
+          const environmentIdentity = ["environment", "environmentName"].includes(key) && typeof nestedValue === "string" && /^[a-z0-9][a-z0-9-]{0,39}$/.test(nestedValue);
+          const isSensitive = !environmentIdentity && SENSITIVE_KEYS.some((sensitiveKey) =>
             normalizedKey.includes(sensitiveKey.toLowerCase())
           );
 

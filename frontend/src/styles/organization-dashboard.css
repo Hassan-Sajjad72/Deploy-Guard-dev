@@ -1,0 +1,8 @@
+.organization-dashboard { display: grid; gap: var(--s-3); margin-bottom: var(--s-5); }
+.organization-dashboard-filters { display: flex; flex-wrap: wrap; gap: var(--s-3); }
+.organization-dashboard-filters label { display: grid; gap: var(--s-1); flex: 1 1 180px; min-width: 0; }
+.organization-dashboard-filters select { width: 100%; min-width: 0; }
+.organization-dashboard-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: var(--s-3); margin: 0; }
+.organization-dashboard-totals dt, .project-dashboard-evidence { color: var(--text-2); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.organization-dashboard-totals dd { font-size: var(--text-xl); margin: var(--s-1) 0 0; font-variant-numeric: tabular-nums; }
+.project-dashboard-evidence { display: block; }

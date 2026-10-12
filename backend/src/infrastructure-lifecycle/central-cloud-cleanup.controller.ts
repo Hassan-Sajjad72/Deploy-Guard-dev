@@ -8,7 +8,7 @@ import { EmergencyCleanupService } from "./emergency-cleanup.service";
 import { CentralCloudResourceQueryDto, ExecuteCentralCleanupDto, IssueCentralCleanupChallengeDto, MarkCentralManualReviewDto, MarkProjectCleanupCompleteDto, RetryCentralProjectDestroyDto } from "./dto/central-cloud-cleanup.dto";
 
 @Controller("api/admin/cloud-cleanup")
-@UseGuards(requireRole([UserRole.ADMIN]))
+@UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
 export class CentralCloudCleanupController {
   constructor(private readonly inventory: CentralCloudInventoryService, private readonly cleanup: CentralCloudCleanupService, private readonly emergency: EmergencyCleanupService) {}
 

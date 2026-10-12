@@ -26,6 +26,8 @@ export class AdminAuthController {
   @Post("logout")
   @HttpCode(HttpStatus.OK)
   async logout(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    const token = request.headers.cookie?.split(";").map((cookie) => cookie.trim()).find((cookie) => cookie.startsWith(`${ADMIN_SESSION_COOKIE_NAME}=`))?.slice(ADMIN_SESSION_COOKIE_NAME.length + 1);
+    await this.auth.revokeSessionToken(token, "admin");
     response.clearCookie(ADMIN_SESSION_COOKIE_NAME, this.cookieOptions());
     if (request.user) await this.audit.record({ actorUser: request.user, action: "ADMIN_AUTH_LOGOUT", resourceType: "auth", resourceId: request.user.id, status: "success", metadata: { provider: "admin_password" }, req: request });
     return { message: "Admin logged out successfully" };

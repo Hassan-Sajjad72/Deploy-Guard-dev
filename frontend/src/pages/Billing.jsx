@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getWorkspaces } from "../api/workspaceApi.js";
 import { createBillingCheckout, createBillingPortal, downloadBillingInvoice, getBillingInvoice, getBillingSummary } from "../api/platformApi.js";
 import ErrorState from "../components/common/ErrorState.jsx";
 import LoadingState from "../components/common/LoadingState.jsx";
@@ -32,8 +33,12 @@ export default function Billing() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [checkingReturn, setCheckingReturn] = useState(returned);
-  const load = useCallback(async () => { try { const next = await getBillingSummary(); setSummary(next); setError(""); return next; } catch (caught) { setError(caught.message || "Subscription details are unavailable."); return null; } }, []);
-  useEffect(() => { void load(); }, [load]);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [organizationId, setOrganizationId] = useState(() => new URLSearchParams(window.location.search).get("organizationId") || "");
+  const request = useRef(0);
+  const load = useCallback(async () => { const current = ++request.current; try { const next = await getBillingSummary(organizationId); if (current === request.current) { setSummary(next); setError(""); } return next; } catch (caught) { if (current === request.current) setError(caught.message || "Subscription details are unavailable."); return null; } }, [organizationId]);
+  useEffect(() => { let active = true; getWorkspaces().then((result) => { if (active) setWorkspaces(result.workspaces.filter((item) => ["owner", "admin"].includes(item.role))); }).catch((caught) => { if (active) setError(caught.message); }); return () => { active = false; }; }, []);
+  useEffect(() => { setSummary(null); setInvoice(null); setError(""); void load(); return () => { request.current++; }; }, [load]);
   useEffect(() => {
     if (!returned) return;
     let attempts = 0;
@@ -53,34 +58,38 @@ export default function Billing() {
 
   async function upgrade(plan) {
     setBusy(plan); setError("");
-    try { const checkout = await createBillingCheckout(plan); window.location.assign(checkout.checkoutUrl); }
+    try { const checkout = await createBillingCheckout(plan, organizationId); window.location.assign(checkout.checkoutUrl); }
     catch (caught) { setError(caught.message || "Stripe checkout could not be opened."); setBusy(""); }
   }
   async function manageBilling() {
     setBusy("portal"); setError("");
-    try { const portal = await createBillingPortal(); window.location.assign(portal.portalUrl); }
+    try { const portal = await createBillingPortal(organizationId); window.location.assign(portal.portalUrl); }
     catch (caught) { setError(caught.message || "The Stripe billing portal could not be opened."); setBusy(""); }
   }
-  async function viewInvoice(id) { setBusy(id); try { setInvoice(await getBillingInvoice(id)); } catch (caught) { setError(caught.message || "Invoice is unavailable."); } finally { setBusy(""); } }
+  async function viewInvoice(id) { setBusy(id); try { setInvoice(await getBillingInvoice(id, organizationId)); } catch (caught) { setError(caught.message || "Invoice is unavailable."); } finally { setBusy(""); } }
   async function download(item) { setBusy(`pdf:${item.id}`); try { await downloadBillingInvoice(item); } catch (caught) { setError(caught.message || "Invoice download failed."); } finally { setBusy(""); } }
 
-  if (!summary) return error ? <div className="page"><ErrorState message={error} onRetry={load} title="Plan details could not be loaded" /></div> : <LoadingState message="Loading your plan…" />;
+  const workspaceControl = <div className="field"><label htmlFor="billing-workspace">Billing workspace</label><select id="billing-workspace" value={organizationId} disabled={Boolean(busy)} onChange={(event) => setOrganizationId(event.target.value)}><option value="">Personal workspace</option>{workspaces.filter((item) => item.kind !== "personal").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>;
+  if (!summary) return <div className="page"><PageHeader title="Plan & usage" />{workspaceControl}{error ? <ErrorState message={error} onRetry={load} title="Plan details could not be loaded" /> : <LoadingState message="Loading your plan…" />}</div>;
   const usage = summary.workspaceUsage || {};
   const limits = usage.limits || {};
   const canUpgrade = ["admin", "developer"].includes(user?.role);
-  const overLimit = usage.overLimit?.currentProjects || usage.overLimit?.liveProjects;
+  const projectsOverLimit = limits.currentProjects != null && usage.overLimit?.currentProjects;
+  const liveOverLimit = limits.liveProjects != null && usage.overLimit?.liveProjects;
+  const overLimit = projectsOverLimit || liveOverLimit;
   const stripeConfigured = Boolean(summary.provider?.configured);
   const checkoutAllowed = canUpgrade && summary.billing?.enabled && !summary.providerSubscriptionId && stripeConfigured;
   const planOffer = (id) => id === "pro" ? summary.plan === "free" : id === "pro_plus" ? summary.plan !== "pro_plus" : false;
   const planLine = summary.plan === "free" && summary.trial?.startedAt
     ? `Trial ${summary.trial?.expired ? "ended" : "active"}${summary.trial?.endsAt ? ` · ${summary.trial?.expired ? "ended" : "ends"} ${formatDateTime(summary.trial.endsAt)}` : ""}`
-    : summary.plan !== "free" && summary.billingPeriodEnd ? `Renews ${formatDateTime(summary.billingPeriodEnd)}` : `$${summary.pricing?.monthlyUsd || 0} per month`;
+    : summary.plan !== "free" && summary.billingPeriodEnd ? `${summary.subscriptionProvider === "b2b" ? "Period ends" : "Renews"} ${formatDateTime(summary.billingPeriodEnd)}` : `$${summary.pricing?.monthlyUsd || 0} per month`;
   return <div className="page billing-page" data-billing-mode={summary.billing?.mode || "disabled"}>
     <PageHeader description="Your plan, what you are using, and your invoices." title="Plan & usage" />
+    {workspaceControl}
     {error ? <ErrorState message={error} onRetry={load} title="The billing action did not complete" /> : null}
-    {!summary.billing?.enabled ? <Callout title="Billing is off" tone="info"><p>Projects and deployments are not limited by plan in this environment.</p></Callout> : null}
+    {!summary.billing?.enabled ? <Callout title="Billing is off" tone="info"><p>Subscription plan limits are disabled in this environment. Reviewed workspace limits and AI safety budgets still apply.</p></Callout> : null}
     {returned && summary.plan === "free" ? <Callout actions={<Button onClick={() => void load()} size="sm">Refresh</Button>} title="Payment verification pending" tone="info"><p>{checkingReturn ? "Checking for Stripe confirmation automatically…" : "The plan has not updated yet. Refresh again or contact support if the payment completed."}</p></Callout> : null}
-    {overLimit ? <Callout title="Over your plan's limit" tone="danger"><p>Existing projects keep running. {summary.enforcement?.enabled ? "New projects and deployments are blocked until usage is back within the limit or you upgrade." : "New deployments are still allowed while limits are only being observed."}</p></Callout> : null}
+    {overLimit ? <Callout title="Over your workspace limit" tone="danger"><p>Existing projects keep running. {usage.hasApprovedProjectLimit && usage.overLimit?.currentProjects ? "New projects are blocked by the reviewed workspace project limit. Review workspace entitlements before adding capacity." : summary.enforcement?.enabled ? "New projects and deployments are blocked until usage is back within the limit or you upgrade." : "Subscription limits are currently being observed."}</p></Callout> : null}
 
     <section aria-label="Current plan and usage" className="panel billing-current">
       <div className="billing-plan">
@@ -88,7 +97,7 @@ export default function Billing() {
         <p className="secondary">{planLine}</p>
         <div className="actions">{summary.status && summary.status !== "unknown" ? <Status tone={summary.status === "active" ? "success" : statusTone(summary.status)}>{title(summary.status)}</Status> : null}{canUpgrade && summary.customerPortalAvailable ? <Button aria-busy={busy === "portal" || undefined} disabled={Boolean(busy)} external onClick={() => void manageBilling()} size="sm">{busy === "portal" ? "Opening…" : "Manage billing"}</Button> : null}</div>
       </div>
-      <div className="billing-usage"><Usage label="Projects" limit={limits.currentProjects} over={usage.overLimit?.currentProjects} used={usage.currentProjects ?? 0} /><Usage label="Live apps" limit={limits.liveProjects} over={usage.overLimit?.liveProjects} used={usage.liveProjects ?? 0} /></div>
+      <div className="billing-usage"><Usage label="Projects" limit={limits.currentProjects} over={projectsOverLimit} used={usage.currentProjects ?? 0} /><Usage label="Live apps" limit={limits.liveProjects} over={liveOverLimit} used={usage.liveProjects ?? 0} /></div>
     </section>
 
     <section aria-labelledby="billing-plans" className="section">
@@ -103,9 +112,10 @@ export default function Billing() {
 
     <section aria-labelledby="billing-invoices" className="section">
       <div className="section-head"><h2 id="billing-invoices">Invoices</h2></div>
-      {summary.invoices?.length ? <DataTable caption="Invoices" label="Invoices"><thead><tr><th>Invoice</th><th>Plan</th><th>Paid</th><th>Amount</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{summary.invoices.map((item) => <tr key={item.id}>
+      {summary.invoices?.length ? <DataTable caption="Invoices" label="Invoices"><thead><tr><th>Invoice</th><th>Plan</th><th>Due</th><th>Paid</th><th>Amount</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{summary.invoices.map((item) => <tr key={item.id}>
         <td data-label="Invoice"><span className="mono">{item.invoiceNumber}</span></td>
         <td data-label="Plan">{title(item.plan)}</td>
+        <td data-label="Due">{formatDateTime(item.dueAt)}</td>
         <td data-label="Paid">{formatDateTime(item.paidAt)}</td>
         <td data-label="Amount" className="num">{money(item.amountDue, item.currency)}</td>
         <td data-label="Status"><Status tone={statusTone(item.status)}>{title(item.status)}</Status></td>

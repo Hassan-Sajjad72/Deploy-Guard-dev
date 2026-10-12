@@ -1,8 +1,8 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { ConfigService } from "@nestjs/config";
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "crypto";
 import { User, UserRole } from "./user.entity";
 
 /**
@@ -185,7 +185,11 @@ export class UsersService {
    * SQL equivalent: SELECT * FROM users WHERE id = $1
    */
   async findById(id: number): Promise<User | null> {
-    return this.userRepository.findOne({ where: { id } });
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (user) user.organizationMemberships = await this.userRepository.manager.query(
+      `SELECT membership.organization_id AS "organizationId", membership.role, organization.archived_at AS "archivedAt" FROM organization_memberships membership JOIN organizations organization ON organization.id = membership.organization_id WHERE membership.user_id = $1`, [id],
+    );
+    return user;
   }
 
   /**
@@ -205,37 +209,27 @@ export class UsersService {
    * ----------
    * Admin-only user management calls this to change a user's RBAC role.
    */
-  async updateRole(id: number, role: UserRole, actorUserId?: number): Promise<User> {
-    const user = await this.findById(id);
-
-    if (!user) {
-      throw new NotFoundException("User not found");
-    }
-
-    if (role === UserRole.ADMIN && user.githubId) {
-      throw new BadRequestException("GitHub-linked users cannot be administrators");
-    }
-
-    if (
-      actorUserId === user.id &&
-      user.role === UserRole.ADMIN &&
-      role !== UserRole.ADMIN
-    ) {
-      throw new BadRequestException("Administrators cannot remove their own admin access");
-    }
-
-    if (user.role === UserRole.ADMIN && role !== UserRole.ADMIN) {
-      const adminCount = await this.userRepository.count({
-        where: { role: UserRole.ADMIN },
-      });
-      if (adminCount <= 1) {
-        throw new BadRequestException("The last administrator cannot be demoted");
+  async updateRole(id: number, role: UserRole, actorUserId?: number, reason?: string): Promise<User> {
+    if (!reason?.trim() || reason.length > 1000 || !Object.values(UserRole).includes(role)) throw new BadRequestException("A valid role and account-change reason are required");
+    return this.userRepository.manager.transaction(async (manager) => {
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtext('deployguard-internal-administrators'))`);
+      const [authorized] = await manager.query(`SELECT actor.id FROM users actor JOIN admin_identity_verifications verification ON verification.user_id=actor.id WHERE actor.id=$1 AND actor.role='admin' AND actor.github_id IS NULL AND actor.internal_admin_role='super_admin' AND actor.disabled_at IS NULL AND verification.expires_at>NOW()`, [actorUserId]);
+      if (!authorized) throw new ForbiddenException("A recently verified super administrator is required");
+      const repository = manager.getRepository(User);
+      const user = await repository.findOne({ where: { id } });
+      if (!user) throw new NotFoundException("User not found");
+      if (role === UserRole.ADMIN && user.githubId) throw new BadRequestException("GitHub-linked users cannot be administrators");
+      if (actorUserId === user.id && user.role === UserRole.ADMIN && role !== UserRole.ADMIN) throw new BadRequestException("Administrators cannot remove their own admin access");
+      if (user.internalAdminRole === "super_admin" && role !== UserRole.ADMIN) {
+        const [{ count }] = await manager.query(`SELECT COUNT(*)::int AS count FROM users WHERE internal_admin_role='super_admin' AND disabled_at IS NULL`);
+        if (count <= 1) throw new BadRequestException("The last active super administrator cannot be demoted");
       }
-    }
-
-    user.role = role;
-
-    return this.userRepository.save(user);
+      user.role = role;
+      user.internalAdminRole = role === UserRole.ADMIN ? user.internalAdminRole || "support" : null;
+      await repository.save(user);
+      await manager.query(`INSERT INTO admin_privileged_events(id,actor_user_id,target_user_id,action,reason,outcome) VALUES($1,$2,$3,'ACCOUNT_ROLE_CHANGED',$4,$5::jsonb)`, [randomUUID(), actorUserId, id, reason.trim(), JSON.stringify({ role, internalAdminRole: user.internalAdminRole })]);
+      return user;
+    });
   }
 
   async markLoggedIn(user: User): Promise<User> {

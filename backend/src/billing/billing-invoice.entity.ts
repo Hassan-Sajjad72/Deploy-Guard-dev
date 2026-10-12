@@ -3,6 +3,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 @Entity("billing_invoices")
 export class BillingInvoice {
   @PrimaryGeneratedColumn("uuid") id: string;
+  @Index() @Column({ name: "organization_id", type: "uuid", nullable: true }) organizationId: string | null;
   @Index() @Column({ name: "user_id" }) userId: number;
   @Index({ unique: true }) @Column({ name: "provider_invoice_id" }) providerInvoiceId: string;
   @Index({ unique: true }) @Column({ name: "invoice_number" }) invoiceNumber: string;
@@ -16,6 +17,9 @@ export class BillingInvoice {
   @Column({ nullable: true, name: "hosted_invoice_url" }) hostedInvoiceUrl: string | null;
   @Column({ nullable: true, name: "invoice_pdf_url" }) invoicePdfUrl: string | null;
   @Column({ nullable: true, name: "issued_at", type: "timestamptz" }) issuedAt: Date | null;
+  @Column({ nullable: true, name: "due_at", type: "timestamptz" }) dueAt: Date | null;
+  @Column({ nullable: true, name: "reconciliation_reason" }) reconciliationReason: string | null;
+  @Column({ nullable: true, name: "adjustment_of_invoice_id", type: "uuid" }) adjustmentOfInvoiceId: string | null;
   @Column({ nullable: true, name: "paid_at", type: "timestamptz" }) paidAt: Date | null;
   @Column({ nullable: true, name: "billing_period_start", type: "timestamptz" }) billingPeriodStart: Date | null;
   @Column({ nullable: true, name: "billing_period_end", type: "timestamptz" }) billingPeriodEnd: Date | null;

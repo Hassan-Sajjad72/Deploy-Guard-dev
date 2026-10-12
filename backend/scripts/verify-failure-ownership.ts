@@ -55,12 +55,12 @@ assert.equal(classifyStructuredFailure("workflow_dispatch", "provider unavailabl
 assert.equal(classifyStructuredFailure("railpack_build", "Railpack said something ambiguous").failureOwner, "UNVERIFIED");
 const root = join(__dirname, "..", "..");
 const ai = readFileSync(join(root, "backend/src/ai-troubleshooting/ai-evidence-preprocessor.service.ts"), "utf8");
-const pipeline = readFileSync(join(root, "frontend/src/components/projects/PipelineRecoveryPanel.jsx"), "utf8");
+// Pipeline recovery was consolidated into Troubleshoot; the overview carries the owner and links there.
+const overview = readFileSync(join(root, "frontend/src/utils/overviewLifecyclePresentation.js"), "utf8");
 const troubleshooting = readFileSync(join(root, "frontend/src/pages/ProjectTroubleshooting.jsx"), "utf8");
 assert.match(ai, /failureOwner[\s\S]{0,200}authoritative[\s\S]{0,200}never replace/i);
-for (const ui of [pipeline, troubleshooting]) {
-  assert.match(ui, /failureOwner/);
-  assert.match(ui, /failureCode/);
-  assert.match(ui, /failureService/);
-}
+assert.match(troubleshooting, /failureOwner/);
+assert.match(troubleshooting, /failureCode/);
+assert.match(troubleshooting, /failureService/);
+assert.match(overview, /failureOwner/);
 console.log("FAILURE_OWNERSHIP=PASS DETERMINISTIC=1 UNVERIFIED_SUPPORTED=1 AI_OVERRIDE=0");

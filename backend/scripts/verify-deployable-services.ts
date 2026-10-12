@@ -16,7 +16,7 @@ const serviceDto = readFileSync(join(root, "backend/src/projects/dto/deployable-
 const projectEntity = readFileSync(join(root, "backend/src/projects/project.entity.ts"), "utf8");
 const entrypointMigration = readFileSync(join(root, "backend/src/migrations/1787356818000-ProjectApplicationEntrypoint.ts"), "utf8");
 const newProject = readFileSync(join(root, "frontend/src/pages/NewProject.jsx"), "utf8");
-const newProjectStyles = readFileSync(join(root, "frontend/src/styles.css"), "utf8");
+const newProjectStyles = readFileSync(join(root, "frontend/src/styles/pages/deploy.css"), "utf8");
 const source = readFileSync(join(root, "backend/src/projects/repository-source.service.ts"), "utf8");
 const workspacePackage = JSON.parse(readFileSync(join(root, "backend/fixtures/railpack-native-workspace/package.json"), "utf8")) as { workspaces: string[]; scripts: { start: string } };
 
@@ -66,12 +66,12 @@ assert.match(newProject, /onValueChange\(directory\)/);
 assert.match(newProject, /Expand/);
 assert.match(newProject, /Repository root/);
 assert.match(newProject, /services\.map\(\(\{ key, name, serviceDirectory \}\)/);
-assert.match(newProjectStyles, /max-height:280px;overflow-y:auto/);
+assert.match(newProjectStyles, /\.service-directory-tree \{[^}]*max-height: 280px;\s*overflow: auto;/);
 assert.doesNotMatch(newProject, /DIRECTORY_SUGGESTION_LIMIT|matchingDirectories|\.slice\(0,\s*\d+\)/);
 assert.doesNotMatch(newProject, /manualEntry|Exact directory path|Selected path|Enter path manually|Use this directory|Selected directory:|service-directory-breadcrumbs|immediateChildDirectories/);
 assert.doesNotMatch(newProject, /<span>Search directory suggestions<\/span>|<span>Directory suggestions<\/span>/);
-assert.match(newProject, /\+ Add Service/);
-assert.match(newProject, /Application service/);
+assert.match(newProject, />Add service<\/Button>/);
+assert.match(newProject, /<span>Public service<\/span>/);
 assert.match(newProject, /applicationEntryPointServiceId/);
 assert.match(projectEntity, /applicationEntryPointServiceId: string \| null/);
 assert.match(entrypointMigration, /HAVING COUNT\(\*\) = 1/);

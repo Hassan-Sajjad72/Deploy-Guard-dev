@@ -1,3 +1,10 @@
+import { planFingerprint } from "../planning/deployment-plan";
+import { CustomerAwsSessionService } from "../planning/customer-aws-session.service";
+import { CustomerPlanAdmissionService } from "./customer-plan-admission.service";
+import { CustomerWorkflowBindingService } from "./customer-workflow-binding.service";
+import type { CustomerExecutionContext } from "./customer-execution-context";
+import { canAccessProject } from "../workspaces/project-access";
+import { assertLegacyExecutionScope } from "./customer-execution-boundary";
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -136,10 +143,65 @@ export class RailpackDeploymentService {
     private readonly failureDiagnostics: FailureDiagnosticService,
     private readonly entitlements: EntitlementService,
     private readonly notifications?: NotificationDispatcherService,
+    private readonly customerSessions?: CustomerAwsSessionService,
+    private readonly customerAdmission?: CustomerPlanAdmissionService,
+    private readonly customerBinding?: CustomerWorkflowBindingService,
   ) {}
 
+  async deployApproved(user: User, projectId: string, planId: string, fingerprint: string) {
+    if (!this.customerSessions || !this.customerAdmission || !this.customerBinding) throw new ServiceUnavailableException("Customer deployment execution is unavailable.");
+    const project = await this.project(user, projectId);
+    const scope = await this.dataSource.transaction((manager) => this.customerAdmission!.context(manager, user, project, planId, fingerprint));
+    let target: RollbackTargetIdentity | null = null;
+    if (scope.retry) {
+      const failed = await this.customerRetryTarget(project, scope.retry.failedOperationId);
+      if (failed.failureFingerprint !== scope.retry.failureFingerprint || failed.operation.commitSha !== scope.sourceSha) throw new ConflictException("The reviewed customer retry target changed.");
+    } else if (scope.deploymentAction === "deploy") {
+      const credential = await this.githubApp.tokenForRepository(project.ownerUserId, project.repositoryFullName, project.githubInstallationId);
+      const sourceSha = await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
+      if (sourceSha.toLowerCase() !== scope.sourceSha.toLowerCase()) throw new ConflictException("Repository source changed after deployment approval.");
+    } else {
+      const current = await this.customerLifecycleTarget(project, scope.deploymentAction, scope.lifecycle?.targetOperationId);
+      if (!scope.lifecycle || current.lifecycle.targetFingerprint !== scope.lifecycle.targetFingerprint || current.lifecycle.liveGenerationId !== scope.lifecycle.liveGenerationId || current.target.sourceSha !== scope.sourceSha) throw new ConflictException("The retained customer lifecycle target changed after approval.");
+      target = current.target;
+    }
+    return this.customerSessions.withApprovedDeploymentSession(scope, (context) => this.dispatch(user, projectId, scope.deploymentAction, target, scope.retry?.failedOperationId || null, scope.retry ? "RETRY" : "DEPLOY", null, null, undefined, scope.sourceSha, undefined, context));
+  }
+
+  async customerRetryTarget(project: Project, failedOperationId: string) {
+    const operation = await this.runs.findOneBy({ id: failedOperationId, projectId: project.id });
+    const ownership = operation?.metadata?.customerExecution as Record<string, unknown> | undefined;
+    const diagnostic = operation ? currentFailureDiagnostic(operation) : null;
+    if (project.executionMode !== "customer" || !operation || operation.status !== PipelineRunStatus.FAILED || operation.metadata?.deploymentAction !== "deploy" || operation.metadata?.executionEngine !== "railpack" || ownership?.organizationId !== project.organizationId || ownership?.environment !== canonicalEnvironmentName(project) || !/^[0-9a-f]{40}$/i.test(operation.commitSha || "") || diagnostic?.retryDecision !== "SAFE_NOW") throw new ConflictException("The exact failed customer deployment is not currently safe to retry. Resolve its failure or create a new deployment plan.");
+    return { operation, ownership, failureFingerprint: planFingerprint({ operationId: operation.id, status: operation.status, stage: operation.currentStage, failureCode: operation.failureCode, diagnostic }) };
+  }
+
+  async customerLifecycleTarget(project: Project, action: "rollback" | "destroy", requestedOperationId?: string) {
+    if (project.executionMode !== "customer" || !project.organizationId) throw new ConflictException("Customer lifecycle review requires customer ownership.");
+    const environmentName = canonicalEnvironmentName(project);
+    const route = await this.dataSource.getRepository(ProjectEnvironmentRoute).findOneBy({ projectId: project.id, environmentName });
+    if (!route?.liveGenerationId) throw new ConflictException("A verified live customer release is required for lifecycle review.");
+    const release = action === "destroy" ? await this.authoritativeDestroyRelease(project, environmentName, route.liveGenerationId)
+      : await this.releases.findOne({ where: { projectId: project.id, environmentName, deployedByPipelineRunId: requestedOperationId || "", status: StableReleaseStatus.ROLLBACK_TARGET } });
+    if (!release || release.metadata?.releaseEvidenceVerified !== true || !release.deployedByPipelineRunId || !release.generationId) throw new ConflictException("The requested release is not a verified retained lifecycle target.");
+    const target = action === "destroy" ? await this.destroyTarget(release) : await this.rollbackTarget(release);
+    const operation = await this.runs.findOneBy({ id: release.deployedByPipelineRunId, projectId: project.id });
+    const ownership = operation?.metadata?.customerExecution as Record<string, unknown> | undefined;
+    if (!operation || !ownership || ownership.organizationId !== project.organizationId || ownership.environment !== environmentName || typeof ownership.planId !== "string" || typeof ownership.planFingerprint !== "string" || target.services.some((service) => !service.imageUri.startsWith(`${ownership.accountId}.dkr.ecr.${ownership.region}.amazonaws.com/`) || !service.taskDefinitionArn?.startsWith(`arn:aws:ecs:${ownership.region}:${ownership.accountId}:task-definition/`))) throw new ConflictException("Retained release account, region and operation ownership cannot be proved.");
+    if (action === "destroy") {
+      const generations = await this.dataSource.getRepository(ProjectDeploymentGeneration).find({ where: { projectId: project.id, environmentName } });
+      for (const generation of generations) {
+        if (!generation.createdByOperationId) throw new ConflictException("Cleanup generation origin is unavailable.");
+        const origin = await this.runs.findOneBy({ id: generation.createdByOperationId, projectId: project.id });
+        const identity = origin?.metadata?.customerExecution as Record<string, unknown> | undefined;
+        if (!identity || identity.organizationId !== ownership.organizationId || identity.bindingId !== ownership.bindingId || identity.accountId !== ownership.accountId || identity.region !== ownership.region || identity.environment !== environmentName) throw new ConflictException("Cleanup includes a generation without exact customer account ownership proof.");
+      }
+    }
+    return { target, operation, ownership, lifecycle: { action, targetOperationId: release.deployedByPipelineRunId, targetReleaseId: release.id, targetGenerationId: release.generationId, targetFingerprint: planFingerprint(target), liveGenerationId: route.liveGenerationId } };
+  }
+
   async deploy(user: User, projectId: string) { return this.dispatch(user, projectId, "deploy", null, null, "DEPLOY"); }
-  async retry(user: User, projectId: string) {
+  async retry(user: User, projectId: string, beforeAdmission?: (manager: EntityManager, project: Project) => Promise<void>) {
     const project = await this.project(user, projectId);
     const previous = await this.runs.findOne({ where: { projectId, status: PipelineRunStatus.FAILED }, order: { createdAt: "DESC" } });
     const action = previous?.metadata?.deploymentAction === "destroy" ? "destroy"
@@ -190,7 +252,7 @@ export class RailpackDeploymentService {
     }
     const rollbackTarget = action === "rollback" ? this.persistedRollbackTarget(previous) : null;
     const retrySourceSha = action === "deploy" ? previous.commitSha : null;
-    return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null, action === "deploy" ? "RETRY" : "DEPLOY", null, null, undefined, retrySourceSha);
+    return this.dispatch(user, projectId, action, rollbackTarget, previous?.id || null, action === "deploy" ? "RETRY" : "DEPLOY", null, null, undefined, retrySourceSha, beforeAdmission);
   }
   async resetAndDeployFresh(user: User, projectId: string, confirmationPhrase: string, _request?: unknown) {
     const project = await this.project(user, projectId);
@@ -228,7 +290,7 @@ export class RailpackDeploymentService {
       deployedAt: target.deployedAt,
     }] };
   }
-  async rollback(user: User, projectId: string, targetOperationId: string) {
+  async rollback(user: User, projectId: string, targetOperationId: string, beforeAdmission?: (manager: EntityManager, project: Project) => Promise<void>) {
     const project = await this.project(user, projectId);
     const target = await this.releases.findOne({ where: {
       projectId,
@@ -237,7 +299,7 @@ export class RailpackDeploymentService {
       status: StableReleaseStatus.ROLLBACK_TARGET,
     } });
     if (!target) throw new NotFoundException("The selected rollback release is no longer the immediate rollback target.");
-    return this.dispatch(user, projectId, "rollback", await this.rollbackTarget(target));
+    return this.dispatch(user, projectId, "rollback", await this.rollbackTarget(target), null, "DEPLOY", null, null, undefined, null, beforeAdmission);
   }
   async latest(user: User, projectId: string) {
     await this.reconcileActive(user, projectId);
@@ -335,12 +397,14 @@ export class RailpackDeploymentService {
     return new Date().toISOString();
   }
 
-  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null, requestedMode: DeployAdmissionContext["requestedMode"] = "DEPLOY", resetAt: string | null = null, reconciled?: ManagedDatabaseReconciliationReport | null, request?: unknown, admittedSourceSha: string | null = null) {
+  private async dispatch(user: User, projectId: string, action: "deploy" | "rollback" | "destroy", rollbackTarget: RollbackTargetIdentity | null = null, retryOfOperationId: string | null = null, requestedMode: DeployAdmissionContext["requestedMode"] = "DEPLOY", resetAt: string | null = null, reconciled?: ManagedDatabaseReconciliationReport | null, request?: unknown, admittedSourceSha: string | null = null, beforeAdmission?: (manager: EntityManager, project: Project) => Promise<void>, customer?: CustomerExecutionContext) {
     const authorizedProject = await this.project(user, projectId);
+    if (!customer) assertLegacyExecutionScope(authorizedProject);
+    else if (authorizedProject.executionMode !== "customer" || customer.projectId !== projectId || action !== customer.deploymentAction) throw new ConflictException("Customer execution scope does not match this deployment.");
     // Capture the immutable local configuration first.  Source compatibility is
     // the pre-cloud boundary; managed DB reconciliation happens only after it.
     let deployAdmission: DeployAdmissionContext | null = null;
-    const admission = await this.admitLifecycleOperation(user, authorizedProject, action, rollbackTarget, retryOfOperationId, null);
+    const admission = await this.admitLifecycleOperation(user, authorizedProject, action, rollbackTarget, retryOfOperationId, null, beforeAdmission, customer);
     if ("active" in admission) return { deployment: { state: "no_op", message: "A deployment is already progressing.", operation: admission.active } };
     const { operation, configuration } = admission;
     const project = configuration.project;
@@ -356,10 +420,11 @@ export class RailpackDeploymentService {
       await this.runs.save(operation);
       operation.currentStage = "github_authentication";
       await this.runs.save(operation);
-      const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
+      const credential = await this.githubApp.tokenForRepository(customer ? project.ownerUserId : user.id, project.repositoryFullName, project.githubInstallationId);
       operation.currentStage = "source_resolution";
       await this.runs.save(operation);
       const destroyRelease = action === "destroy" ? await this.authoritativeDestroyRelease(project, environmentName, operation.generationId) : null;
+      if (customer?.lifecycle) { const current = await this.customerLifecycleTarget(project, customer.deploymentAction as "rollback" | "destroy", customer.lifecycle.targetOperationId); if (planFingerprint(current.lifecycle) !== planFingerprint(customer.lifecycle)) throw new ConflictException("Customer lifecycle ownership changed before execution."); }
       const sourceSha = action === "rollback" ? rollbackTarget?.sourceSha || ""
         : action === "destroy" ? destroyRelease?.commitSha || ""
           : admittedSourceSha || await this.source.resolveSourceSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, accessToken: credential.token });
@@ -371,6 +436,7 @@ export class RailpackDeploymentService {
         operation.currentStage = "build_target_resolution";
         await this.runs.save(operation);
         const resolved = await this.source.resolveBuildTargetsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, services: configuredServices, accessToken: credential.token });
+        if (customer && JSON.stringify(resolved.targets.map((item) => ({ serviceId: item.serviceId, fingerprint: item.target.fingerprint })).sort((a,b) => a.serviceId.localeCompare(b.serviceId))) !== JSON.stringify([...customer.buildTargetFingerprints].sort((a,b) => a.serviceId.localeCompare(b.serviceId)))) throw new ConflictException("Canonical build targets changed after plan approval.");
         const targetRevisions = await this.persistBuildTargetRevisions(project.id, operation.id, sourceSha, resolved.targets);
         const targetsByService = new Map(targetRevisions.map((revision) => [revision.serviceId, revision]));
         operation.metadata = { ...(operation.metadata || {}), buildTargetRevisionIds: targetRevisions.map((revision) => revision.id).sort(), buildTargetFingerprints: targetRevisions.map((revision) => ({ serviceId: revision.serviceId, fingerprint: revision.fingerprint })).sort((a, b) => a.serviceId.localeCompare(b.serviceId)) };
@@ -388,11 +454,13 @@ export class RailpackDeploymentService {
         operation.currentStage = "deployment_requirement_admission";
         await this.runs.save(operation);
         requirementAdmission = await this.source.resolveRequirementsAtExactSha({ repositoryUrl: project.repositoryUrl, branch: project.targetBranch, sourceSha, targets: resolved.targets, variables: configuration.variables.map(({ serviceId, key, isSecret, scope }) => ({ serviceId, key, isSecret, scope })), managedDatabase: configuration.managedDatabase?.attachedServiceId && isSupportedManagedDatabaseEngine(configuration.managedDatabase.engine) ? { engine: configuration.managedDatabase.engine, attachedServiceId: configuration.managedDatabase.attachedServiceId } : null, accessToken: credential.token });
+        if (customer && requirementAdmission.fingerprint !== customer.requirementFingerprint) throw new ConflictException("Deployment requirements differ from the approved plan.");
+        if (customer) await this.customerBinding!.verifyInfrastructure(customer);
         await this.sealRequirementAdmission(operation, configuration, targetRevisions, sourceSha, requirementAdmission);
         if (requirementAdmission.status !== "READY") throw new DeploymentRequirementAdmissionError(requirementAdmission);
         operation.currentStage = "managed_database_reconciliation";
         await this.runs.save(operation);
-        const report = reconciled || await this.managedDatabaseReconciliation.reconcile(project);
+        const report = reconciled || await this.managedDatabaseReconciliation.reconcile(project, customer);
         const effectiveResetAt = requestedMode === "RESET_FRESH" && !resetAt ? this.resetFreshAt(report) : resetAt;
         deployAdmission = await this.managedDatabaseAdmission(project, requestedMode, effectiveResetAt, report);
         if (deployAdmission.resetDatabaseIdentity) {
@@ -405,36 +473,42 @@ export class RailpackDeploymentService {
       }
       operation.currentStage = "caller_reconciliation";
       await this.runs.save(operation);
-      const caller = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.githubInstallationId);
+      const caller = await this.githubApp.ensureWorkflow(customer ? project.ownerUserId : user.id, project.repositoryFullName, project.githubInstallationId, Boolean(customer));
       operation.currentStage = "oidc_authorization";
       await this.runs.save(operation);
-      const oidcTrustSubjects = await this.githubApp.oidcTrustSubjects(user.id, project.repositoryFullName, project.githubInstallationId);
-      await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, oidcTrustSubjects);
+      const oidcTrustSubjects = customer
+        ? await this.githubApp.customerOidcSubjects(project.ownerUserId, project.repositoryFullName, project.githubInstallationId, controlPlaneSha)
+        : await this.githubApp.oidcTrustSubjects(user.id, project.repositoryFullName, project.githubInstallationId);
+      if (!customer) await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, oidcTrustSubjects);
       const immutableTarget = action === "destroy" && destroyRelease ? await this.destroyTarget(destroyRelease) : rollbackTarget;
       const managedDatabaseEnabled = action === "deploy"
         ? Boolean(configuration.managedDatabase)
         : Boolean(immutableTarget?.services.some((service) => service.runtimeConfiguration.databaseAttached));
       operation.currentStage = "aws_capability_verification";
       await this.runs.save(operation);
-      await this.awsCapabilities.ensure({ action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled });
+      const capabilityInput = { action, projectId: project.id, environmentName, generationId: operationId, managedDatabaseEnabled };
+      if (customer) await this.awsCapabilities.ensureCustomer(capabilityInput, customer);
+      else await this.awsCapabilities.ensure(capabilityInput);
       operation.currentStage = action === "deploy" ? "runtime_secret_materialization" : "runtime_configuration";
       await this.runs.save(operation);
-      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration, provisionalRuntimeSecrets, requirementAdmission);
+      const runtime = await this.runtimeConfiguration(project, environmentName, operationId, sourceSha, action, immutableTarget, configuration, provisionalRuntimeSecrets, requirementAdmission, customer);
       // A direct ECS release is deliberately limited to an already-LIVE
       // topology.  Any first deployment or topology change remains on the
       // existing Terraform bootstrap path until that path has made it LIVE.
-      const releaseOnly = action === "deploy"
+      const releaseOnly = customer ? false : action === "deploy"
         ? await this.releaseOnlyRedeployEligible(project.id, environmentName, configuration, runtime)
         : action === "rollback"
           ? await this.directEcsRollbackEligible(project.id, environmentName, rollbackTarget, runtime)
           : false;
+      const customerBinding = customer ? await this.customerBinding!.materialize(customer, oidcTrustSubjects, servicesBase64(runtime), controlPlaneSha) : null;
       const inputs: RailpackWorkflowInputs = {
         deployment_action: action, deployment_operation_id: operationId, project_id: project.id, environment_name: environmentName,
         repository_full_name: project.repositoryFullName, repository_branch: project.targetBranch, commit_sha: sourceSha,
         services_base64: servicesBase64(runtime), infrastructure_namespace: `/deployguard/${project.id}/${environmentName}`,
-        aws_region: this.config.get<string>("AWS_REGION", "us-east-1"), aws_role_arn: this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"),
-        vpc_id: this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
-        terraform_state_bucket: this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"),
+        aws_region: customer?.region || this.config.get<string>("AWS_REGION", "us-east-1"), aws_role_arn: customerBinding?.controlRoleArn || this.required("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN"),
+        vpc_id: customer?.vpcId || this.required("DEPLOYGUARD_VPC_ID"), public_subnet_ids: customer?.publicSubnetIds.join(",") || this.required("DEPLOYGUARD_PUBLIC_SUBNET_IDS"),
+        terraform_state_bucket: customer?.terraformStateBucket || this.required("DEPLOYGUARD_TERRAFORM_STATE_BUCKET"),
+        ...(customer && customerBinding ? { customer_binding_secret_arn: customerBinding.arn, customer_account_id: customer.accountId, approved_plan_id: customer.planId, approved_plan_fingerprint: customer.planFingerprint, workload_base64: Buffer.from(JSON.stringify({ contractVersion: "deployguard.customer-workload/v1", organizationId: customer.organizationId, bindingId: customer.bindingId, bindingVersion: customer.bindingVersion, roleArn: customer.roleArn, executionRolePermissionsBoundaryArn: customer.executionRolePermissionsBoundaryArn, projectId: customer.projectId, operationId: customer.operationId, sourceSha: customer.sourceSha, environment: customer.environmentName, cpu: customer.assumptions.cpu, memoryMiB: customer.assumptions.memoryMiB, replicas: customer.assumptions.replicas })).toString("base64") } : {}),
         control_plane_sha: controlPlaneSha, result_contract_version: RAILPACK_RESULT_CONTRACT_VERSION,
         release_only: releaseOnly ? "true" : "false",
         trivy_enabled: getTrivyConfig(this.config).enabled ? "true" : "false",
@@ -444,6 +518,13 @@ export class RailpackDeploymentService {
       operation.currentStage = "workflow_dispatch";
       operation.metadata = { ...(operation.metadata || {}), dispatchState: "dispatching", configuredControlPlaneSha: inputs.control_plane_sha, workflowRegistrationBranch: caller.registrationBranch, releaseStrategy: releaseOnly ? "direct_ecs" : "terraform_bootstrap", immutableDispatchInputs: inputs, immutableDispatchFingerprint: immutableRailpackDispatchFingerprint(inputs) };
       await this.runs.save(operation);
+      if (customer) await this.dataSource.transaction(async (manager) => {
+        await acquireProjectConfigurationAdvisoryLock(manager, project.id, environmentName);
+        const freshProject = await manager.getRepository(Project).findOneByOrFail({ id: project.id });
+        await this.customerAdmission!.context(manager, user, freshProject, customer.planId, customer.planFingerprint);
+        if (customer.retry && (await this.customerRetryTarget(freshProject, customer.retry.failedOperationId)).failureFingerprint !== customer.retry.failureFingerprint) throw new ConflictException("Customer retry evidence changed before dispatch.");
+        if (customer.lifecycle) { const current = await this.customerLifecycleTarget(freshProject, customer.deploymentAction as "rollback" | "destroy", customer.lifecycle.targetOperationId); if (planFingerprint(current.lifecycle) !== planFingerprint(customer.lifecycle)) throw new ConflictException("Customer lifecycle target changed before dispatch."); }
+      });
       const dispatched = await this.actions.triggerWorkflow({ repositoryFullName: project.repositoryFullName, targetBranch: project.targetBranch, workflowRegistrationBranch: caller.registrationBranch, token: credential.token, inputs });
       if (!await this.persistAcceptedWorkflowDispatch(operation, dispatched.receipt)) {
         // The durable dispatch intent contains the operation-id run name and
@@ -458,7 +539,7 @@ export class RailpackDeploymentService {
         await this.preserveAmbiguousWorkflowDispatch(operation, error);
         return { deployment: { state: "accepted", message: "GitHub may have accepted the deployment; DeployGuard is reconciling its immutable workflow run identity.", operation } };
       }
-      const cleanup = await this.compensateProvisionalRuntimeSecrets(provisionalRuntimeSecrets, remoteDispatchPossible);
+      const cleanup = await this.compensateProvisionalRuntimeSecrets(provisionalRuntimeSecrets, remoteDispatchPossible, customer);
       const failure = this.dispatchFailure(error, operation.currentStage);
       const ownership = failure.ownership || classifyStructuredFailure(failure.stage, `${failure.message} ${JSON.stringify(failure.evidence)}`);
       operation.githubWorkflowStatus = "not_dispatched";
@@ -482,10 +563,10 @@ export class RailpackDeploymentService {
     return { deployment: { state: "accepted", message: "Railpack deployment dispatched to GitHub Actions.", operation } };
   }
 
-  private async compensateProvisionalRuntimeSecrets(materializations: RuntimeSecretMaterialization[], remoteDispatchPossible: boolean) {
+  private async compensateProvisionalRuntimeSecrets(materializations: RuntimeSecretMaterialization[], remoteDispatchPossible: boolean, customer?: CustomerExecutionContext) {
     if (!materializations.length) return null;
     if (remoteDispatchPossible) return { skipped: "remote_dispatch_possible" };
-    return this.runtimeSecrets.compensate(materializations);
+    return this.runtimeSecrets.compensate(materializations, customer);
   }
 
   private async persistAcceptedWorkflowDispatch(operation: ProjectPipelineRun, receipt: GithubActionsDispatchReceipt) {
@@ -559,6 +640,8 @@ export class RailpackDeploymentService {
     rollbackTarget: RollbackTargetIdentity | null,
     retryOfOperationId: string | null,
     deployAdmission: DeployAdmissionContext | null,
+    beforeAdmission?: (manager: EntityManager, project: Project) => Promise<void>,
+    customer?: CustomerExecutionContext,
   ): Promise<LifecycleAdmission | { active: ProjectPipelineRun }> {
     try {
       return await this.dataSource.transaction(async (manager) => {
@@ -566,14 +649,26 @@ export class RailpackDeploymentService {
         await acquireProjectConfigurationAdvisoryLock(manager, authorizedProject.id, environmentName);
         const project = await manager.getRepository(Project).findOne({ where: { id: authorizedProject.id } });
         if (!project) throw new NotFoundException("Project not found.");
-        if (project.ownerUserId !== user.id) throw new ForbiddenException("Project operations are restricted to the project owner.");
+        if (!customer) assertLegacyExecutionScope(project);
+        else {
+          const current = await this.customerAdmission!.context(manager, user, project, customer.planId, customer.planFingerprint);
+          if (current.operationId !== customer.operationId || current.configurationFingerprint !== customer.configurationFingerprint) throw new ConflictException("Approved customer operation changed during admission.");
+          if (current.lifecycle) {
+            const freshTarget = await this.customerLifecycleTarget(project, current.lifecycle.action, current.lifecycle.targetOperationId);
+            if (planFingerprint(freshTarget.lifecycle) !== planFingerprint(current.lifecycle)) throw new ConflictException("Approved customer lifecycle target changed during admission.");
+          }
+          if (current.retry && (await this.customerRetryTarget(project, current.retry.failedOperationId)).failureFingerprint !== current.retry.failureFingerprint) throw new ConflictException("Approved customer retry evidence changed during admission.");
+        }
+        if (!canAccessProject(user, project, true)) throw new ForbiddenException("Project operations are restricted to the project owner.");
         if (!project.repositoryFullName) throw new ServiceUnavailableException("Project repository identity is unavailable.");
+        if (beforeAdmission) await beforeAdmission(manager, project);
         const runs = manager.getRepository(ProjectPipelineRun);
+        if (customer) { const prior = await runs.findOneBy({ id: customer.operationId, projectId: project.id }); if (prior) return { active: prior }; }
         const active = await runs.findOne({ where: { projectId: project.id, status: In(ACTIVE) }, order: { createdAt: "DESC" } });
         if (active) return { active };
         // Prototype-only certification fixtures predate the injected billing
         // provider; production construction requires it through Nest.
-        if (action === "deploy" && this.entitlements) await this.entitlements.assertCanDeployProject(user.id, project.id, manager);
+        if (action === "deploy" && this.entitlements) await this.entitlements.assertCanDeployProject(user.id, project.id, manager, project.organizationId);
 
         if (action === "deploy" && deployAdmission?.resetDatabaseIdentity) {
           await this.reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission);
@@ -596,7 +691,7 @@ export class RailpackDeploymentService {
             throw new ServiceUnavailableException(error instanceof Error ? error.message : "Select an application service before deploying this project.");
           }
         }
-        const operationId = randomUUID();
+        const operationId = customer?.operationId || randomUUID();
         const attempt = await runs.count({ where: { projectId: project.id } }) + 1;
         const destroyRoute = action === "destroy"
           ? await manager.getRepository(ProjectEnvironmentRoute).findOne({ where: { projectId: project.id, environmentName } })
@@ -608,6 +703,7 @@ export class RailpackDeploymentService {
           metadata: {
             executionEngine: "railpack", deploymentAction: action, dispatchState: "dispatching", requestedAt: new Date().toISOString(), attempt,
             applicationEntryPointServiceId: configuration.applicationEntryPointServiceId,
+            ...(customer ? { customerExecution: { planId: customer.planId, planFingerprint: customer.planFingerprint, organizationId: customer.organizationId, bindingId: customer.bindingId, bindingVersion: customer.bindingVersion, accountId: customer.accountId, roleArn: customer.roleArn, region: customer.region, environment: customer.environmentName } } : {}),
             ...(deployAdmission ? {
               requestedDeploymentMode: deployAdmission.requestedMode,
               deploymentRecoveryMode: deployAdmission.recoveryDecision?.deploymentMode || null,
@@ -1120,7 +1216,7 @@ export class RailpackDeploymentService {
     };
   }
 
-  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [], requirementAdmission: RequirementAdmission | null = null): Promise<RailpackRuntimeConfiguration> {
+  private async runtimeConfiguration(project: Project, environmentName: string, operationId: string, sourceSha: string, action: "deploy" | "rollback" | "destroy", target: RollbackTargetIdentity | null, admitted: AdmittedDeploymentConfiguration | null = null, provisionalRuntimeSecrets: RuntimeSecretMaterialization[] = [], requirementAdmission: RequirementAdmission | null = null, customer?: CustomerExecutionContext): Promise<RailpackRuntimeConfiguration> {
     if (action !== "deploy") {
       if (!target?.services.length) throw new ServiceUnavailableException("The lifecycle target does not contain canonical service revisions.");
       const services = target.services.map((service) => ({
@@ -1190,7 +1286,7 @@ export class RailpackDeploymentService {
       const railpackCapabilities = railpackBuildCapabilities(buildEnvironment);
       const railpackBuildCapabilityFingerprint = Object.keys(railpackCapabilities).length ? immutableRailpackBuildCapabilityFingerprint(buildEnvironment) : undefined;
       const configurationFingerprint = createHash("sha256").update(JSON.stringify({ projectId: project.id, serviceId: service.id, environmentName, servicePort, buildEnvironment, railpackBuildCapabilityFingerprint, environment, secretValueDigests, databaseConfiguration, platform: { PORT: String(servicePort), HOST: "0.0.0.0" } })).digest("hex");
-      const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues: allSecretValues });
+      const materialized = await this.runtimeSecrets.materialize({ projectId: project.id, serviceId: service.id, generationId: operationId, environment: environmentName, configurationFingerprint, secretValues: allSecretValues }, customer);
       if (materialized?.provisionalChange) provisionalRuntimeSecrets.push(materialized);
       const materializedReferences = materialized?.valueFromByName || {};
       const buildSecretReferences = Object.fromEntries([...buildSecretNames].sort().map((name) => [name, materializedReferences[name]]));
@@ -1866,7 +1962,7 @@ export class RailpackDeploymentService {
       route.candidateGenerationId = null;
       route.metadata = { ...route.metadata, lastPromotionOperationId: current.id, runtimeIdentity };
       await routes.save(route);
-      if (this.entitlements) await this.entitlements.recordSuccessfulLiveDeployment(project.ownerUserId, project.id, generation.activatedAt || new Date(), manager);
+      if (this.entitlements) await this.entitlements.recordSuccessfulLiveDeployment(project.ownerUserId, project.id, generation.activatedAt || new Date(), manager, project.organizationId);
 
       await materializeStableRelease(manager, {
         projectId: project.id,
@@ -1984,5 +2080,5 @@ export class RailpackDeploymentService {
 
   private required(key: string) { const value = this.config.get<string>(key, "").trim(); if (!value) throw new ServiceUnavailableException(`Platform configuration is missing: ${key}.`); return value; }
   private controlPlaneSha() { const match = this.required("DEPLOYGUARD_REUSABLE_WORKFLOW").match(/@([0-9a-f]{40})$/); if (!match) throw new ServiceUnavailableException("DeployGuard reusable workflow must be pinned to an exact control-plane SHA."); return match[1]; }
-  private async project(user: User, projectId: string) { const project = await this.projects.findOne({ where: { id: projectId } }); if (!project) throw new NotFoundException("Project not found."); if (project.ownerUserId !== user.id) throw new ForbiddenException("Project operations are restricted to the project owner."); if (!project.repositoryFullName) throw new ServiceUnavailableException("Project repository identity is unavailable."); return project; }
+  private async project(user: User, projectId: string) { const project = await this.projects.findOne({ where: { id: projectId } }); if (!project) throw new NotFoundException("Project not found."); if (!canAccessProject(user, project, true)) throw new ForbiddenException("Project operations are restricted to the project owner."); if (!project.repositoryFullName) throw new ServiceUnavailableException("Project repository identity is unavailable."); return project; }
 }

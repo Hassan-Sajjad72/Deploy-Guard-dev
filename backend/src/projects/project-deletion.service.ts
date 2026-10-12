@@ -58,10 +58,6 @@ export class ProjectDeletionService {
           where: { id: destroy.id, projectId: project.id },
         });
         if (!current) throw new ProjectDeletionIncompleteError("the verified delete operation no longer exists");
-        await manager.query(
-          `DELETE FROM audit_logs WHERE resource_id = $1 OR metadata->>'projectId' = $1`,
-          [project.id],
-        );
         const deleted = await manager.getRepository(Project).delete({ id: project.id });
         if (deleted.affected !== 1) throw new ProjectDeletionIncompleteError("the project record was not deleted exactly once");
       });

@@ -89,8 +89,9 @@ async function verifyOverviewCountsOnlyActiveProjects() {
     } } as never,
     {} as never,
     {} as never,
+    {} as never,
   );
-  const overview = await controller.overview({ user: { id: 1, role: UserRole.ADMIN } } as never);
+  const overview = await controller.overview({ user: { id: 1, role: UserRole.ADMIN, internalAdminRole: "super_admin" } } as never);
   const operationQuery = queries.find((sql) => sql.includes('FROM "project_pipeline_runs"'));
   assert.ok(operationQuery, "the overview must query operation counts");
   assert.match(operationQuery, /JOIN "projects"/i, "operation counts must be correlated to projects");

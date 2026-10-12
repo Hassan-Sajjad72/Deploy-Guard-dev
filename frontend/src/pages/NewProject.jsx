@@ -1,3 +1,4 @@
+import { getAgencyPortfolio, getAwsBindings, getWorkspaces } from "../api/workspaceApi.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { bulkUpsertProjectServiceEnvVars, connectGithubAppInstallation, createProject, deployGithubActionsDeployment, getGithubConnectionStatus, getGithubRepositories, getGithubRepositoryDirectories, inspectGithubRepository, updateProject, updateProjectBranch, updateProjectDatabaseTier } from "../api/projectApi.js";
@@ -134,6 +135,30 @@ export default function NewProject() {
   const selectionGate = useRef(createDeploymentSelectionGate());
   const [status, setStatus] = useState(null);
   const [repositories, setRepositories] = useState([]);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [organizationId, setOrganizationId] = useState("");
+  const [environmentName, setEnvironmentName] = useState("dev");
+  const environmentValid = /^[a-z0-9][a-z0-9-]{0,39}$/.test(environmentName);
+  const [awsBindings, setAwsBindings] = useState([]);
+  const [awsBindingId, setAwsBindingId] = useState("");
+  const [bindingsError, setBindingsError] = useState("");
+  const [portfolio, setPortfolio] = useState({ clients: [], engagements: [] });
+  const [engagementId, setEngagementId] = useState("");
+  const [portfolioError, setPortfolioError] = useState("");
+  const agencyWorkspace = workspaces.find((item) => item.id === organizationId)?.kind === "agency";
+  const selectedWorkspaceId = organizationId || workspaces.find((item) => item.kind === "personal")?.id;
+  useEffect(() => {
+    let active = true;
+    setAwsBindings([]); setAwsBindingId(""); setBindingsError("");
+    if (selectedWorkspaceId && !agencyWorkspace) getAwsBindings(selectedWorkspaceId).then((result) => { if (active) setAwsBindings(result.bindings); }).catch((caught) => { if (active) setBindingsError(caught.message); });
+    return () => { active = false; };
+  }, [selectedWorkspaceId, agencyWorkspace]);
+  useEffect(() => {
+    let active = true;
+    setPortfolio({ clients: [], engagements: [] }); setEngagementId(""); setPortfolioError("");
+    if (agencyWorkspace) getAgencyPortfolio(organizationId).then((result) => { if (active) setPortfolio(result); }).catch((caught) => { if (active) setPortfolioError(caught.message); });
+    return () => { active = false; };
+  }, [organizationId, agencyWorkspace]);
   const [repository, setRepository] = useState("");
   const [branch, setBranch] = useState("");
   const [branches, setBranches] = useState([]);
@@ -156,10 +181,12 @@ export default function NewProject() {
   const hasServiceErrors = parsedServices.some(({ parsed }) => parsed.errors.length) || services.some((service) => !service.name.trim() || !service.serviceDirectory.trim()) || new Set(services.map((service) => service.name.trim().toLowerCase())).size !== services.length || (services.length > 1 && !services.some((service) => service.key === applicationEntryPointServiceId));
   const currentSelection = deploymentSelectionKey(repository, branch);
   const deployable = Boolean(readiness?.project?.id && readiness.selection === currentSelection && readiness.deployAllowed === true && ["ready", "warning"].includes(readiness.level));
+  const needsPlan = Boolean(readiness?.project?.executionMode === "customer" && readiness.selection === currentSelection);
   const journey = deploymentJourney(repository, branch, readiness, working, deployable);
 
   async function refresh() {
-    const [connection, list] = await Promise.all([getGithubConnectionStatus(), getGithubRepositories()]);
+    const [connection, list, workspaceList] = await Promise.all([getGithubConnectionStatus(), getGithubRepositories(), getWorkspaces()]);
+    setWorkspaces(workspaceList.workspaces || []);
     setStatus(connection);
     setRepositories(list.repositories || []);
   }
@@ -269,7 +296,7 @@ export default function NewProject() {
   }
 
   async function reviewReadiness() {
-    if (!repository || !branch || hasServiceErrors) return;
+    if (!repository || !branch || hasServiceErrors || !environmentValid) return;
     const requestedRepository = repository;
     const requestedBranch = branch;
     const ticket = selectionGate.current.begin(requestedRepository, requestedBranch);
@@ -279,13 +306,17 @@ export default function NewProject() {
     let existingProjectSettingsId = null;
     try {
       let project; let existingProject = false;
+      const engagement = agencyWorkspace ? portfolio.engagements.find((item) => item.id === engagementId && !item.archivedAt && portfolio.clients.some((client) => client.id === item.clientId && !client.archivedAt)) : null;
+      if (agencyWorkspace && !engagement) throw new Error("Select an active client engagement before creating an agency project.");
       try {
-        project = (await createProject({ repositoryFullName: requestedRepository, targetBranch: requestedBranch, name: requestedRepository.split("/").pop(), applicationEntryPointServiceId: services.length === 1 ? services[0].key : applicationEntryPointServiceId, services: services.map(({ key, name, serviceDirectory }) => ({ id: key, name, serviceDirectory })) })).project;
+        project = (await createProject({ ...(organizationId ? { organizationId } : {}), environmentName, ...(engagement ? { clientId: engagement.clientId, engagementId: engagement.id, awsAccountBindingId: engagement.awsAccountBindingId } : awsBindingId ? { awsAccountBindingId: awsBindingId } : {}), repositoryFullName: requestedRepository, targetBranch: requestedBranch, name: requestedRepository.split("/").pop(), applicationEntryPointServiceId: services.length === 1 ? services[0].key : applicationEntryPointServiceId, services: services.map(({ key, name, serviceDirectory }) => ({ id: key, name, serviceDirectory })) })).project;
       } catch (caught) {
         if (caught.code === "EXISTING_PROJECT" || caught.payload?.code === "EXISTING_PROJECT") { project = caught.payload.existingProject; existingProject = true; }
         else throw caught;
       }
       if (!isCurrent()) return;
+      if (engagement && (project.engagementId !== engagement.id || project.clientId !== engagement.clientId || project.awsAccountBindingId !== engagement.awsAccountBindingId)) throw new Error("Existing project ownership does not match the selected client engagement.");
+      if (existingProject && ((project.environmentName || "dev") !== environmentName || (awsBindingId && project.awsAccountBindingId !== awsBindingId))) throw new Error("Existing project environment or AWS account does not match your selection. Review its settings before continuing.");
       if (String(project.repositoryFullName || "").toLowerCase() !== requestedRepository.toLowerCase()) {
         throw new Error("The existing project belongs to a different repository. Review readiness again.");
       }
@@ -321,6 +352,10 @@ export default function NewProject() {
       if (!isCurrent()) return;
       setSavedEnvironmentCount(savedCount); setIgnoredEnvironmentNames([...new Set(ignored)].sort());
       setServices((current) => current.map((service) => ({ ...service, envPaste: "" })));
+      if (project.executionMode === "customer") {
+        setReadiness({ level: "input_required", deployAllowed: false, requiredInputs: [], message: "Configuration saved. Review a customer AWS account, workload assumptions and deployment plan before deployment.", project, selection: ticket.selection });
+        return;
+      }
       setReadiness({ level: "ready", deployAllowed: true, requiredInputs: [], message: "Repository, branch, and optional environment are ready for deployment.", project, selection: ticket.selection });
     } catch (caught) {
       if (isCurrent()) setReadiness({ level: "blocked", message: safeMessage(caught), selection: ticket.selection, existingProjectSettingsId });
@@ -349,7 +384,7 @@ export default function NewProject() {
   const stepState = (index) => journey[index]?.state || "waiting";
   const StepHead = ({ index, id, title, description, action }) => <header className="np-step-head"><span aria-hidden="true" className={`np-step-mark is-${stepState(index)}`}>{stepState(index) === "complete" ? <AppIcon name="check" size={13} /> : index + 1}</span><div><h2 id={id}>{title}</h2>{description ? <p>{description}</p> : null}</div>{action}</header>;
   return <div className="page page-narrow deploy-page">
-    <PageHeader description="Pick a repository and branch, set up its services, then deploy. You can change any of this later in Settings." title="Deploy a repository" />
+    <PageHeader description="Pick a repository and branch, configure its services, then review the AWS deployment plan." title="Deploy a repository" />
     {!status?.connected ? <section className="panel panel-pad np-connect">
       <span aria-hidden="true" className="empty-icon"><AppIcon name="github" size={22} /></span>
       <div><h2>Connect GitHub</h2><p>{status?.message || "Install the DeployGuard GitHub App on the account or organization that owns your repository. DeployGuard only sees the repositories you grant."}</p></div>
@@ -360,6 +395,12 @@ export default function NewProject() {
 
       <section aria-labelledby="np-source" className="panel np-step">
         <StepHead description="Only repositories you granted to the DeployGuard GitHub App are listed." id="np-source" index={0} title="Source" />
+        <label className="field"><span>Workspace</span><select disabled={Boolean(working) || Boolean(readiness?.project)} value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">Personal workspace</option>{workspaces.filter((item) => !item.archivedAt && item.kind !== "personal" && ["owner", "admin", "engineer"].includes(item.role)).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        {agencyWorkspace ? <label className="field"><span>Client engagement</span><select required disabled={Boolean(working) || Boolean(readiness?.project)} value={engagementId} onChange={(event) => setEngagementId(event.target.value)}><option value="">Select a client engagement</option>{portfolio.engagements.filter((item) => !item.archivedAt && portfolio.clients.some((client) => client.id === item.clientId && !client.archivedAt)).map((item) => <option key={item.id} value={item.id}>{portfolio.clients.find((client) => client.id === item.clientId)?.name} · {item.name}</option>)}</select><small>Create client engagements in <Link to="/workspaces">Workspaces</Link>.</small></label> : null}
+        {portfolioError ? <Callout tone="danger"><p role="alert">{portfolioError}</p></Callout> : null}
+        <label className="field"><span>Deployment environment</span><input value={environmentName} onChange={(event) => setEnvironmentName(event.target.value)} required pattern="[a-z0-9][a-z0-9-]{0,39}" maxLength={40} disabled={Boolean(working) || Boolean(readiness?.project)} /><small>Choose a name such as dev, staging or production. Plans and approvals apply to this environment.</small></label>
+        {!agencyWorkspace ? <label className="field"><span>Customer AWS account</span><select aria-label="Customer AWS account" value={awsBindingId} onChange={(event) => setAwsBindingId(event.target.value)} disabled={Boolean(working) || Boolean(readiness?.project)}><option value="">Choose during deployment planning</option>{awsBindings.filter((item) => item.verificationStatus !== "revoked").map((item) => <option key={item.id} value={item.id}>{item.accountId} · {item.verificationStatus}</option>)}</select><small>Manage authorized accounts in <Link to="/workspaces">Workspaces</Link>.</small></label> : null}
+        {bindingsError ? <Callout tone="warning"><p>Account bindings could not be loaded: {bindingsError}. You can analyze the repository and select an account during planning.</p></Callout> : null}
         <div className="field-row"><label className="field"><span>Repository</span><select disabled={working === "deploy"} name="repository" onChange={(event) => void chooseRepository(event.target.value)} value={repository}><option value="">Select a repository</option>{repositories.map((item) => <option key={item.id || item.fullName} value={item.fullName}>{item.fullName}</option>)}</select></label><label className="field"><span>Branch</span><select disabled={!repository || working === "deploy"} name="branch" onChange={(event) => void changeBranch(event.target.value)} value={branch}><option value="">{repository ? "Select a branch" : "Choose a repository first"}</option>{branches.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div>
       </section>
 
@@ -375,9 +416,9 @@ export default function NewProject() {
       </section>
 
       <section aria-labelledby="np-database" className="panel np-step">
-        <StepHead description="DeployGuard can run one database for you, or your app can keep using its own." id="np-database" index={2} title="Database" />
+        <StepHead description="Choose an existing database or plan a compatible managed database. Provisioning requires an approved deployment plan." id="np-database" index={2} title="Database" />
         <div className="field-row"><label className="field"><span>Database</span><select disabled={Boolean(working)} name="databaseEngine" onChange={(event) => setDatabase((current) => event.target.value === "none" ? { ...current, provider: "none" } : { ...current, provider: "managed", engine: event.target.value })} value={database.provider === "managed" ? database.engine : "none"}><option value="none">None — my app uses its own database</option><option value="postgres">PostgreSQL (managed)</option><option value="mysql">MySQL (managed)</option><option value="mongodb">MongoDB (managed)</option></select><small className="field-hint">{database.provider === "managed" ? "DeployGuard runs it on persistent storage and connects it for you." : "Your app uses whatever connection variables you provide, such as DATABASE_URL."}</small></label>{database.provider === "managed" && services.length > 1 ? <label className="field"><span>Connect to</span><select disabled={Boolean(working)} name="databaseService" onChange={(event) => setDatabase((current) => ({ ...current, attachedServiceKey: event.target.value }))} value={database.attachedServiceKey || services[0].key}>{services.map((service) => <option key={service.key} value={service.key}>{service.name}</option>)}</select></label> : null}</div>
-        {database.provider === "managed" && ["mysql", "mongodb"].includes(database.engine) ? <Callout tone="warning"><p>{DATABASE_NAMES[database.engine]} has not yet completed live AWS certification. PostgreSQL is the proven option.</p></Callout> : null}
+        {database.provider === "managed" && ["mysql", "mongodb"].includes(database.engine) ? <Callout tone="warning"><p>{DATABASE_NAMES[database.engine]} has not yet completed live AWS certification. Database compatibility and customer AWS authority are checked during deployment planning.</p></Callout> : null}
         {database.provider === "managed" && services.length === 1 ? <p className="field-hint">The database connects to {services[0]?.name || "Web"}. Database variables you pasted for that service are managed by DeployGuard and will be ignored.</p> : null}
       </section>
 
@@ -387,7 +428,7 @@ export default function NewProject() {
         {savedEnvironmentCount ? <Callout tone="success"><p>{savedEnvironmentCount} environment value{savedEnvironmentCount === 1 ? " was" : "s were"} saved; values are not displayed.</p></Callout> : null}
         {deployable ? <dl className="deploy-review-summary facts-list" aria-label="Deployment review"><div><dt>Source</dt><dd>{repository} · {branch}</dd></div><div><dt>Services</dt><dd>{services.map((service) => `${service.name} (${service.serviceDirectory})`).join(", ")}</dd></div><div><dt>Ports</dt><dd>Detected automatically from each service</dd></div><div><dt>Public service</dt><dd>{services.length === 1 ? services[0].name : services.find((service) => service.key === applicationEntryPointServiceId)?.name || "—"}</dd></div><div><dt>Database</dt><dd>{database.provider === "managed" ? `${DATABASE_NAMES[database.engine] || database.engine} (managed), connected to ${services.find((service) => service.key === attachedDatabaseServiceKey)?.name || "—"}` : "Your own, through environment variables"}</dd></div></dl> : null}
         {readiness && readiness.level !== "ready" ? <Callout actions={readiness.existingProjectSettingsId ? <Link className="btn btn-sm" to={`/projects/${readiness.existingProjectSettingsId}`}>View existing project</Link> : null} title={readiness.level === "warning" ? "Ready, with warnings" : readiness.level === "input_required" ? "More configuration is needed" : "This can't be deployed yet"} tone={readiness.level === "warning" || readiness.level === "input_required" ? "warning" : "danger"}><p>{readiness.message}</p>{readiness.requiredInputs?.length ? <p>Provide: {readiness.requiredInputs.join(", ")}.</p> : null}</Callout> : null}
-        <div aria-label="Deployment actions" className="actions actions-end np-actions" role="group">{deployable ? <button aria-busy={working === "deploy" || undefined} className="button btn btn-primary" disabled={Boolean(working)} onClick={() => void deploy()} type="button"><AppIcon name="deploy" size={16} />{working === "deploy" ? "Starting deployment…" : "Deploy"}</button> : <button aria-busy={working === "review" || undefined} className="button btn btn-primary" disabled={Boolean(working) || !repository || !branch || hasServiceErrors} onClick={() => void reviewReadiness()} type="button">{working === "review" ? "Saving…" : "Continue"}</button>}</div>
+        <div aria-label="Deployment actions" className="actions actions-end np-actions" role="group">{needsPlan ? <Link className="btn btn-primary" to={`/projects/${readiness.project.id}/planning`}>Review deployment plan</Link> : deployable ? <button aria-busy={working === "deploy" || undefined} className="button btn btn-primary" disabled={Boolean(working)} onClick={() => void deploy()} type="button"><AppIcon name="deploy" size={16} />{working === "deploy" ? "Starting deployment…" : "Deploy"}</button> : <button aria-busy={working === "review" || undefined} className="button btn btn-primary" disabled={Boolean(working) || !repository || !branch || hasServiceErrors || !environmentValid} onClick={() => void reviewReadiness()} type="button">{working === "review" ? "Saving…" : "Continue"}</button>}</div>
       </section>
     </div>}
   </div>;

@@ -1,12 +1,18 @@
+import { canAccessProject } from "../workspaces/project-access";
+import { validateAgencyProjectScope } from "../workspaces/agency-project-scope";
+import { ensurePersonalWorkspace } from "../workspaces/personal-workspace";
+import { AwsAccountBinding } from "../workspaces/aws-account-binding.entity";
+import { OrganizationLimitsService } from "../billing/organization-limits.service";
 import {
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
   BadRequestException,
+  Optional,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { EntityManager, Not, Repository } from "typeorm";
+import { EntityManager, In, Not, Repository } from "typeorm";
 import { DataSource } from "typeorm";
 import { ConfigService } from "@nestjs/config";
 import { createHash } from "crypto";
@@ -61,6 +67,7 @@ export class ProjectsService {
     private readonly projectActivity: ProjectActivityService,
     private readonly githubApp: GithubAppService,
     private readonly entitlements: EntitlementService,
+    @Optional() private readonly organizationLimits?: OrganizationLimitsService,
   ) {}
 
   async githubConnectionStatus(user: User) {
@@ -143,18 +150,11 @@ export class ProjectsService {
   }
 
   async listProjects(user: User) {
-    const where =
-      user.role === UserRole.ADMIN
-        ? { status: Not(ProjectStatus.ARCHIVED) }
-        : user.role === UserRole.DEVELOPER
-          ? { ownerUserId: user.id, status: Not(ProjectStatus.ARCHIVED) }
-          : [
-              { ownerUserId: user.id, status: Not(ProjectStatus.ARCHIVED) },
-              {
-                visibility: ProjectVisibility.WORKSPACE,
-                status: Not(ProjectStatus.ARCHIVED),
-              },
-            ];
+    const organizationIds = (user.organizationMemberships || []).map((membership) => membership.organizationId);
+    const where = [
+      { ownerUserId: user.id, status: Not(ProjectStatus.ARCHIVED) },
+      ...(organizationIds.length ? [{ organizationId: In(organizationIds), status: Not(ProjectStatus.ARCHIVED) }] : []),
+    ];
 
     const [projects, activities] = await Promise.all([
       this.projectRepository.find({ where, relations: { services: true } }),
@@ -162,6 +162,7 @@ export class ProjectsService {
     ]);
     const byProject = new Map(activities.map((activity) => [activity.projectId, activity]));
     return projects
+      .filter((project) => canAccessProject(user, project))
       .sort((left, right) => {
         const leftActivity = byProject.get(left.id);
         const rightActivity = byProject.get(right.id);
@@ -183,11 +184,21 @@ export class ProjectsService {
     const environmentName = dto.environmentName || "dev";
     await this.assertGithubBranchHasCommit(user, metadata.fullName, targetBranch);
     const creation = await this.dataSource.transaction(async (manager) => {
-      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-create:${user.id}`]);
+      const organizationId = dto.organizationId || await ensurePersonalWorkspace(manager, user);
+      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-create:${organizationId}`]);
+      const membership = await manager.query(`SELECT role FROM organization_memberships WHERE organization_id = $1 AND user_id = $2`, [organizationId, user.id]);
+      if (!membership.length || !["owner", "admin", "engineer"].includes(membership[0].role)) throw new ForbiddenException("Workspace access required.");
+      user.organizationMemberships = [...(user.organizationMemberships || []).filter((item) => item.organizationId !== organizationId), { organizationId, role: membership[0].role }];
+      const awsAccountBindingId = await validateAgencyProjectScope(manager, organizationId, dto, true) || dto.awsAccountBindingId || null;
+      if (awsAccountBindingId) {
+        const binding = await manager.getRepository(AwsAccountBinding).findOneBy({ id: awsAccountBindingId, organizationId });
+        if (!binding || binding.verificationStatus === "revoked") throw new BadRequestException("An active AWS account binding in this workspace is required.");
+      }
       const repository = manager.getRepository(Project);
       const existing = await repository.createQueryBuilder("project")
         .leftJoinAndSelect("project.services", "services")
-        .where("project.ownerUserId = :userId", { userId: user.id })
+        .where("project.organizationId = :organizationId", { organizationId })
+        .andWhere("project.engagementId IS NOT DISTINCT FROM :engagementId", { engagementId: dto.engagementId || null })
         .andWhere("(project.githubRepositoryId = :githubRepositoryId OR lower(project.repositoryFullName) = lower(:repositoryFullName))", { githubRepositoryId: metadata.id || null, repositoryFullName: metadata.fullName })
         .andWhere("project.targetBranch = :targetBranch", { targetBranch })
         .andWhere("project.environmentName = :environmentName", { environmentName })
@@ -204,10 +215,15 @@ export class ProjectsService {
           environmentName,
         });
       }
-      await this.entitlements.assertCanCreateProject(user.id, manager);
+      await this.entitlements.assertCanCreateProject(user.id, manager, organizationId);
       const configuredServices = this.normalizeServices(dto.services);
       const project = repository.create({
         ownerUserId: user.id,
+        organizationId,
+        awsAccountBindingId,
+        clientId: dto.clientId || null,
+        engagementId: dto.engagementId || null,
+        executionMode: "customer",
         name: String(dto.name || metadata.name).trim(),
         description: dto.description !== undefined ? dto.description.trim() || null : metadata.description,
         repositoryUrl: this.normalizeRepositoryUrl(metadata.url),
@@ -221,6 +237,10 @@ export class ProjectsService {
         status: ProjectStatus.CREATED,
       });
       const saved = await repository.save(project);
+      if (this.organizationLimits) {
+        await this.organizationLimits.recordUsage(manager, organizationId, "projects", `project-created:${saved.id}`);
+        await this.organizationLimits.recordUsage(manager, organizationId, "environments", `project-environment-created:${saved.id}:${saved.environmentName}`);
+      }
       const services = configuredServices.map((service, position) => manager.getRepository(ProjectDeployableService).create({
         ...(service.id ? { id: service.id } : {}),
         projectId: saved.id,
@@ -427,13 +447,14 @@ export class ProjectsService {
     this.assertCanManage(user, project);
     const metadata = await this.inspectGithubRepository(user, dto.repositoryUrl);
     const nextBranch = metadata.branches.includes(project.targetBranch) ? project.targetBranch : metadata.defaultBranch;
-    await this.assertProjectIdentityAvailable(project.ownerUserId, metadata.id || null, metadata.fullName, nextBranch, project.environmentName || "dev", project.id);
     const savedProject = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
       const repository = manager.getRepository(Project);
       const current = await repository.findOne({ where: { id: projectId } });
       if (!current || current.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
       this.assertCanManage(user, current);
+      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-create:${current.organizationId || current.ownerUserId}`]);
+      await this.assertProjectIdentityAvailable(current, metadata.id || null, metadata.fullName, nextBranch, current.environmentName || "dev", current.id, manager);
       current.repositoryUrl = this.normalizeRepositoryUrl(metadata.url);
       current.githubRepositoryId = metadata.id || null;
       current.repositoryFullName = metadata.fullName;
@@ -483,13 +504,14 @@ export class ProjectsService {
     this.assertCanManage(user, project);
     const details = await this.inspectGithubRepository(user, project.repositoryFullName);
     await this.assertGithubBranchHasCommit(user, details.fullName, dto.targetBranch);
-    await this.assertProjectIdentityAvailable(project.ownerUserId, details.id || project.githubRepositoryId, details.fullName, dto.targetBranch, project.environmentName || "dev", project.id);
     const savedProject = await this.dataSource.transaction(async (manager) => {
       await acquireProjectConfigurationAdvisoryLock(manager, projectId, canonicalEnvironmentName(project));
       const repository = manager.getRepository(Project);
       const current = await repository.findOne({ where: { id: projectId } });
       if (!current || current.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
       this.assertCanManage(user, current);
+      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`project-create:${current.organizationId || current.ownerUserId}`]);
+      await this.assertProjectIdentityAvailable(current, details.id || current.githubRepositoryId, details.fullName, dto.targetBranch, current.environmentName || "dev", current.id, manager);
       current.targetBranch = dto.targetBranch;
       current.status = ProjectStatus.CONFIGURED;
       const saved = await repository.save(current);
@@ -829,32 +851,11 @@ export class ProjectsService {
   }
 
   private assertCanView(user: User, project: Project) {
-    if (user.role === UserRole.ADMIN) {
-      return;
-    }
-
-    if (project.ownerUserId === user.id) {
-      return;
-    }
-
-    if (
-      user.role === UserRole.READONLY &&
-      project.visibility === ProjectVisibility.WORKSPACE
-    ) {
-      return;
-    }
-
-    throw new ForbiddenException("Insufficient permissions");
+    if (!canAccessProject(user, project)) throw new ForbiddenException("Insufficient permissions");
   }
 
   private assertCanManage(user: User, project: Project) {
-    this.assertCanWrite(user);
-
-    if (project.ownerUserId === user.id) {
-      return;
-    }
-
-    throw new ForbiddenException("Insufficient permissions");
+    if (!canAccessProject(user, project, true)) throw new ForbiddenException("Insufficient permissions");
   }
 
   private async assertEnvKeyAvailable(
@@ -871,9 +872,10 @@ export class ProjectsService {
     }
   }
 
-  private async assertProjectIdentityAvailable(ownerUserId: number, githubRepositoryId: string | null, repositoryFullName: string, targetBranch: string, environmentName: string, excludeProjectId?: string) {
-    const query = this.projectRepository.createQueryBuilder("project")
-      .where("project.ownerUserId = :ownerUserId", { ownerUserId })
+  private async assertProjectIdentityAvailable(project: Pick<Project, "ownerUserId" | "organizationId" | "engagementId">, githubRepositoryId: string | null, repositoryFullName: string, targetBranch: string, environmentName: string, excludeProjectId?: string, manager?: EntityManager) {
+    const query = (manager?.getRepository(Project) || this.projectRepository).createQueryBuilder("project")
+      .where(project.organizationId ? "project.organizationId = :organizationId" : "project.organizationId IS NULL AND project.ownerUserId = :ownerUserId", project.organizationId ? { organizationId: project.organizationId } : { ownerUserId: project.ownerUserId })
+      .andWhere("project.engagementId IS NOT DISTINCT FROM :engagementId", { engagementId: project.engagementId || null })
       .andWhere("(project.githubRepositoryId = :githubRepositoryId OR lower(project.repositoryFullName) = lower(:repositoryFullName))", { githubRepositoryId, repositoryFullName })
       .andWhere("project.targetBranch = :targetBranch", { targetBranch })
       .andWhere("project.environmentName = :environmentName", { environmentName })
@@ -949,6 +951,11 @@ export class ProjectsService {
     return {
       id: project.id,
       ownerUserId: String(project.ownerUserId),
+      organizationId: project.organizationId,
+      clientId: project.clientId || null,
+      engagementId: project.engagementId || null,
+      awsAccountBindingId: project.awsAccountBindingId || null,
+      executionMode: project.executionMode,
       name: project.name,
       description: project.description,
       repositoryUrl: project.repositoryUrl,
@@ -962,9 +969,7 @@ export class ProjectsService {
       services: (project.services || []).sort((left, right) => left.position - right.position).map((service) => ({ id: service.id, name: service.name, serviceDirectory: service.serviceDirectory, servicePort: service.servicePort, position: service.position, ...(service.buildTargetOverride ? { buildTargetOverride: service.buildTargetOverride } : {}) })),
       status: project.status,
       visibility: project.visibility,
-      canManage:
-        project.ownerUserId === user.id &&
-        [UserRole.ADMIN, UserRole.DEVELOPER].includes(user.role),
+      canManage: canAccessProject(user, project, true),
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
       activity: activity ? {

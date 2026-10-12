@@ -1,0 +1,12 @@
+import { apiRequest } from "./client.js";
+const base = (projectId) => `/api/projects/${encodeURIComponent(projectId)}/intelligence`;
+export const listIntelligence = (projectId) => apiRequest(base(projectId));
+export const getIntelligenceRecord = (projectId, id) => apiRequest(`${base(projectId)}/records/${encodeURIComponent(id)}`);
+export const createIncident = (projectId) => apiRequest(`${base(projectId)}/incidents`, { method: "POST" });
+export const registerApiContract = (projectId, body) => apiRequest(`${base(projectId)}/api-contracts`, { method: "POST", body });
+export const approveApiContract = (projectId, id, body) => apiRequest(`${base(projectId)}/api-contracts/${encodeURIComponent(id)}/approve`, { method: "POST", body });
+export const runApiContract = (projectId, id) => apiRequest(`${base(projectId)}/api-contracts/${encodeURIComponent(id)}/run`, { method: "POST" });
+export const createOptimization = (projectId, body) => apiRequest(`${base(projectId)}/optimizations`, { method: "POST", body });
+export const listSupportAccess = (organizationId) => apiRequest(`/api/workspaces/${encodeURIComponent(organizationId)}/support-access`);
+export const grantSupportAccess = (organizationId, body) => apiRequest(`/api/workspaces/${encodeURIComponent(organizationId)}/support-access`, { method: "POST", body });
+export const revokeSupportAccess = (organizationId, id) => apiRequest(`/api/workspaces/${encodeURIComponent(organizationId)}/support-access/${encodeURIComponent(id)}/revoke`, { method: "POST" });

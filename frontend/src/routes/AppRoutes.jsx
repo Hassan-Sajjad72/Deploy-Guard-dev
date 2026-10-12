@@ -10,6 +10,7 @@ import AdminLayout from "../components/layout/AdminLayout.jsx";
 const About = lazy(() => import("../pages/About.jsx"));
 const AdminLogin = lazy(() => import("../pages/AdminLogin.jsx"));
 const AdminUsers = lazy(() => import("../pages/AdminUsers.jsx"));
+const AdminBilling = lazy(() => import("../pages/AdminBilling.jsx"));
 const Forbidden = lazy(() => import("../pages/Forbidden.jsx"));
 const GithubConnecting = lazy(() => import("../pages/GithubConnecting.jsx"));
 const Landing = lazy(() => import("../pages/Landing.jsx"));
@@ -19,9 +20,18 @@ const ProjectInfrastructure = lazy(() => import("../pages/ProjectInfrastructure.
 const ProjectMetrics = lazy(() => import("../pages/ProjectMetrics.jsx"));
 const ProjectPipeline = lazy(() => import("../pages/ProjectPipeline.jsx"));
 const ProjectSettings = lazy(() => import("../pages/ProjectSettings.jsx"));
+const ProjectConfiguration = lazy(() => import("../pages/ProjectConfiguration.jsx"));
 const ProjectTroubleshooting = lazy(() => import("../pages/ProjectTroubleshooting.jsx"));
 const Projects = lazy(() => import("../pages/Projects.jsx"));
 const Billing = lazy(() => import("../pages/Billing.jsx"));
+const Workspaces = lazy(() => import("../pages/Workspaces.jsx"));
+const ProjectPlanning = lazy(() => import("../pages/ProjectPlanning.jsx"));
+const ProjectIntelligence = lazy(() => import("../pages/ProjectIntelligence.jsx"));
+const AdminAccess = lazy(() => import("../pages/AdminAccess.jsx"));
+const SupportAccess = lazy(() => import("../pages/SupportAccess.jsx"));
+const ProjectRecovery = lazy(() => import("../pages/ProjectRecovery.jsx"));
+const OrganizationEntitlements = lazy(() => import("../pages/OrganizationEntitlements.jsx"));
+const AdminEntitlements = lazy(() => import("../pages/AdminEntitlements.jsx"));
 
 export default function AppRoutes() {
   return (
@@ -39,13 +49,20 @@ export default function AppRoutes() {
           <Route element={<Navigate replace to="/projects" />} path="/dashboard" />
           <Route element={<Projects />} path="/projects" />
           <Route element={<Billing />} path="/billing" />
+          <Route element={<Workspaces />} path="/workspaces" />
+          <Route element={<OrganizationEntitlements />} path="/workspaces/:organizationId/entitlements" />
+          <Route element={<SupportAccess />} path="/support-access" />
           <Route element={<ProjectDetails />} path="/projects/:projectId" />
+          <Route element={<ProjectPlanning />} path="/projects/:projectId/planning" />
+          <Route element={<ProjectIntelligence />} path="/projects/:projectId/intelligence" />
+          <Route element={<ProjectRecovery />} path="/projects/:projectId/recovery" />
           <Route element={<ProjectPipeline />} path="/projects/:projectId/pipeline" />
           <Route element={<ProjectInfrastructure />} path="/projects/:projectId/infrastructure" />
           <Route element={<ProjectMetrics />} path="/projects/:projectId/monitoring" />
           {/* Historical bookmarks resolve to the current owning surface. */}
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/environment" />
           <Route element={<LegacyProjectRedirect />} path="/projects/:projectId/env" />
+          <Route element={<ProjectConfiguration />} path="/projects/:projectId/configuration" />
           <Route element={<ProjectSettings />} path="/projects/:projectId/settings" />
           <Route element={<LegacyProjectRedirect section="/infrastructure" />} path="/projects/:projectId/costs" />
           <Route element={<ProjectTroubleshooting />} path="/projects/:projectId/troubleshooting" />
@@ -71,6 +88,9 @@ export default function AppRoutes() {
       <Route element={<AdminProtectedRoute />}>
         <Route element={<AdminLayout />}>
           <Route element={<AdminUsers />} path="/admin" />
+          <Route element={<AdminEntitlements />} path="/admin/entitlements" />
+          <Route element={<AdminAccess />} path="/admin/access" />
+          <Route element={<AdminBilling />} path="/admin/billing" />
           <Route element={<Navigate replace to="/admin?section=users" />} path="/admin/users" />
           <Route element={<Navigate replace to="/admin?section=projects" />} path="/admin/projects" />
           <Route element={<Navigate replace to="/admin?section=audit" />} path="/admin/audit" />

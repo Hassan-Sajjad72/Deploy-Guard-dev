@@ -31,7 +31,10 @@ const releaseOnlyTaskDefinitions = readFileSync(join(root, "infrastructure", "ra
 const fallbackContract = readFileSync(join(root, "infrastructure", "docker-fallback", "fallback-contract.mjs"), "utf8");
 const fallbackTemplate = readFileSync(join(root, "infrastructure", "docker-fallback", "node22-npm-workspace.Dockerfile"), "utf8");
 const fallbackManifest = readFileSync(join(root, "infrastructure", "docker-fallback", "templates.json"), "utf8");
-const executableContract = { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform, fallbackBuilder: buildExecution, fallbackContract, fallbackTemplate, fallbackManifest };
+const executableContract = { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier: runtimeVerification, runtimeInfrastructure: terraform, fallbackBuilder: buildExecution, fallbackContract, fallbackTemplate, fallbackManifest,
+  // The customer contract also pins its runtime inputs, outputs and session helper.
+  runtimeVariables: readFileSync(join(root, "infrastructure", "railpack-runtime", "variables.tf"), "utf8"), runtimeOutputs: readFileSync(join(root, "infrastructure", "railpack-runtime", "outputs.tf"), "utf8"),
+  customerCredentialHelper: readFileSync(join(root, "infrastructure", "railpack-runtime", "prepare-customer-session.sh"), "utf8") };
 const deploymentService = readFileSync(join(root, "backend", "src", "projects", "railpack-deployment.service.ts"), "utf8");
 const capabilityContract = readFileSync(join(root, "backend", "src", "projects", "github-actions-aws-capability-contract.ts"), "utf8");
 const providerLock = readFileSync(join(root, "infrastructure", "railpack-runtime", ".terraform.lock.hcl"), "utf8");
@@ -327,14 +330,15 @@ for (const engine of ["postgres", "mysql", "mongodb"] as ManagedDatabaseEngine[]
 assert.match(terraform, /healthCheck\s+=\s+\{[\s\S]*?command\s+=\s+local\.database_health_check/, "the managed database container must expose engine health to ECS");
 assert.match(terraform, /resource "aws_ecs_service" "database"[\s\S]*?deployment_minimum_healthy_percent\s*=\s*0[\s\S]*?deployment_maximum_percent\s*=\s*100/, "the singleton managed database must stop its prior task before replacement so two processes never contend for persistent storage");
 assert.doesNotMatch(terraform, /terraform_data" "database_readiness|database_readiness_command/, "Terraform must not own the procedural managed-database readiness decision");
-assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?desired_count\s+=\s+each\.value\.database_attached\s+\?\s+0\s+:\s+1/, "only the database-attached application starts at zero");
+assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?desired_count\s+=\s+each\.value\.database_attached\s+\?\s+0\s+:\s+\(var\.application_workload == null \? 1 : var\.application_workload\.replicas\)/, "only the database-attached application starts at zero; others use the approved replica count");
 assert.match(terraform, /resource "aws_ecs_service" "application"[\s\S]*?lifecycle\s*\{[\s\S]*?ignore_changes\s+=\s+\[desired_count, task_definition\]/, "Terraform must not undo DeployGuard's post-readiness application scale-up or direct ECS release revision");
 assert.match(releaseOnlyTaskDefinitions, /aws ecs register-task-definition[\s\S]*?aws ecs update-service/, "release-only deployments must register then activate one immutable ECS task definition per service");
 assert.match(workflow, /terraform -chdir=\.deployguard\/terraform apply[\s\S]*?register-release-task-definitions\.sh[^\n]+"\$DEPLOYMENT_ACTION" terraform[\s\S]*?verify-runtime\.sh/, "Terraform fallback must activate Terraform's emitted task definitions before runtime verification");
 assert.match(releaseOnlyTaskDefinitions, /desired_count.*= "1"[\s\S]*?inactive_service_requires_terraform/, "release-only deployments must fail closed when an active service is not already established");
 assert.match(releaseOnlyTaskDefinitions, /service_port_changed_requires_terraform/, "topology changes must remain on the Terraform bootstrap path");
 assert.doesNotMatch(terraform, /resource "aws_ecs_service" "application"[\s\S]*?depends_on\s+=\s+\[[^\]]*database/, "application service resource creation must not retain a global database gate");
-assert.match(runtimeVerification, /wait_for_managed_database_readiness[\s\S]*?aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/, "DeployGuard must release only the attached ECS service after database readiness");
+assert.match(runtimeVerification, /release_database_attached_service\(\) \{[\s\S]*?-le 100 \][\s\S]*?aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count "\$desired"/, "the attached service is released to a validated approved replica count");
+assert.match(runtimeVerification, /wait_for_managed_database_readiness[\s\S]*?release_database_attached_service "/, "DeployGuard must release only the attached ECS service after database readiness");
 const verifyDatabase = runtimeVerification.match(/verify_database\(\) \{[\s\S]*?\n\}\n\ndatabase_failed=/)?.[0] || "";
 assert.ok(verifyDatabase, "the managed-database release orchestration must be extractable");
 assert.ok(
@@ -345,7 +349,7 @@ assert.ok(
   verifyDatabase.indexOf('wait_for_cloud_map_registration "$database_id"') < verifyDatabase.indexOf('release_database_attached_service "$database_id"'),
   "the attached application scale-up must occur strictly after current-task Cloud Map registration",
 );
-assert.equal((runtimeVerification.match(/aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count 1/g) || []).length, 1, "the runtime boundary has one explicit attached-service release action");
+assert.equal((runtimeVerification.match(/aws ecs update-service --cluster "\$cluster" --service "\$attached_service" --desired-count "\$desired"/g) || []).length, 1, "the runtime boundary has one explicit attached-service release action");
 assert.match(terraform, /mysql_grant_reconciler_name\s+=\s+"deployguard-mysql-grant-reconciler"/, "managed MySQL must name its grant reconciler explicitly");
 assert.match(mysqlDatabaseCommand, /if \[ ! -d \/var\/lib\/mysql\/mysql \]; then[\s\S]*?exec docker-entrypoint\.sh mysqld[\s\S]*?--init-file="\$bootstrap"/, "fresh MySQL storage must use normal initialization while persisted storage receives the administrative bootstrap");
 assert.match(mysqlDatabaseCommand, /ALTER USER 'root'@'localhost' IDENTIFIED BY '\$MYSQL_ROOT_PASSWORD'/, "persisted MySQL must deterministically reconcile the administrative credential from the current managed secret");
@@ -416,6 +420,8 @@ sanitize() { cat; }
 configuration_failure() { return 1; }
 provider_failure() { return 1; }
 sleep_within_deadline() { [ "$3" -eq 0 ] || sleep "$3"; }
+# Terraform outputs with no replica override: the attached service is released to the default single task.
+outputs="$(mktemp)"; printf '%s' '{"services":{}}' > "$outputs"
 ${databaseReadiness}
 wait_for_managed_database_readiness "33333333-3333-4333-8333-333333333333" cluster database "database-task-definition:1" "$DATABASE_ENGINE"
 release_database_attached_service "33333333-3333-4333-8333-333333333333" cluster application

@@ -1,5 +1,6 @@
 name: DeployGuard Railpack release
 # deployguard-result-contract: deployguard.release-result/v5
+# deployguard-customer-contract: deployguard.customer-workflow/v1
 
 on:
   workflow_call:
@@ -23,6 +24,12 @@ on:
       release_only: { required: true, type: string }
       trivy_enabled: { required: true, type: string }
       trivy_enforce: { required: true, type: string }
+
+      customer_binding_secret_arn: { required: false, type: string, default: "" }
+      customer_account_id: { required: false, type: string, default: "" }
+      approved_plan_id: { required: false, type: string, default: "" }
+      approved_plan_fingerprint: { required: false, type: string, default: "" }
+      workload_base64: { required: false, type: string, default: "" }
 
 permissions:
   contents: read
@@ -51,6 +58,11 @@ jobs:
       VPC_ID: ${{ inputs.vpc_id }}
       PUBLIC_SUBNET_IDS: ${{ inputs.public_subnet_ids }}
       TERRAFORM_STATE_BUCKET: ${{ inputs.terraform_state_bucket }}
+      CUSTOMER_BINDING_SECRET_ARN: ${{ inputs.customer_binding_secret_arn }}
+      CUSTOMER_ACCOUNT_ID: ${{ inputs.customer_account_id }}
+      APPROVED_PLAN_ID: ${{ inputs.approved_plan_id }}
+      APPROVED_PLAN_FINGERPRINT: ${{ inputs.approved_plan_fingerprint }}
+      WORKLOAD_BASE64: ${{ inputs.workload_base64 }}
       BUILDKIT_CONTAINER: deployguard-buildkit-${{ inputs.deployment_operation_id }}
       BUILDKIT_IMAGE: moby/buildkit:v0.16.0@sha256:bc1fe18224dbcb92599139db0c745696c48ba9fd4ac24038d1fa81fdd7dcac27
       TRANSPORT_PROBE_IMAGE: public.ecr.aws/docker/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
@@ -62,6 +74,33 @@ jobs:
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with: { role-to-assume: "${{ inputs.aws_role_arn }}", aws-region: "${{ inputs.aws_region }}" }
+      - name: Checkout customer authorization contracts
+        if: inputs.customer_account_id != ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { repository: Hassan-Sajjad72/Deploy-Guard-dev, ref: "${{ inputs.control_plane_sha }}", path: .deployguard-customer-control-plane }
+      - name: Read protected customer role authorization
+        id: customer_authorization
+        if: inputs.customer_account_id != ''
+        shell: bash
+        run: bash .deployguard-customer-control-plane/infrastructure/railpack-runtime/prepare-customer-session.sh
+      - name: Chain into the approved customer role
+        if: inputs.customer_account_id != ''
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+        with:
+          role-to-assume: ${{ steps.customer_authorization.outputs.role_arn }}
+          role-external-id: ${{ steps.customer_authorization.outputs.external_id }}
+          role-chaining: true
+          role-duration-seconds: 3600
+          role-session-name: deployguard-${{ inputs.deployment_operation_id }}
+          aws-region: ${{ inputs.aws_region }}
+          allowed-account-ids: ${{ inputs.customer_account_id }}
+      - name: Verify customer account before deployment
+        if: inputs.customer_account_id != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_account="$(aws sts get-caller-identity --query Account --output text)"
+          [ "$actual_account" = "$CUSTOMER_ACCOUNT_ID" ] || { echo 'DG_FAILURE code=DG_CUSTOMER_ACCOUNT_MISMATCH stage=customer_authorization' >&2; exit 1; }
       - name: Validate immutable release input
         shell: bash
         run: |
@@ -73,6 +112,9 @@ jobs:
           { [ "$RELEASE_ONLY" = false ] || [ "$DEPLOYMENT_ACTION" = deploy ] || [ "$DEPLOYMENT_ACTION" = rollback ]; } || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=release_only_requires_deploy_or_rollback' >&2; exit 1; }
           [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ && "$OPERATION_ID" =~ ^[0-9a-fA-F-]{36}$ && "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=invalid_immutable_release_identity' >&2; exit 1; }
           [ "$RESULT_CONTRACT_VERSION" = deployguard.release-result/v5 ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=incompatible_result_contract' >&2; exit 1; }
+          if [ -z "$CUSTOMER_ACCOUNT_ID" ]; then
+            [ -z "$CUSTOMER_BINDING_SECRET_ARN$APPROVED_PLAN_ID$APPROVED_PLAN_FINGERPRINT$WORKLOAD_BASE64" ] || { echo 'DG_FAILURE code=DG_WORKFLOW_CONTRACT_INVALID stage=validate_release message=customer_inputs_without_customer_account' >&2; exit 1; }
+          fi
           mkdir -p .deployguard
           printf '%s' "$SERVICES_BASE64" | base64 --decode > .deployguard/runtime.json
           jq -e --arg project "$PROJECT_ID" --arg operation "$OPERATION_ID" --arg sha "$SOURCE_SHA" --arg action "$DEPLOYMENT_ACTION" '
@@ -325,6 +367,10 @@ jobs:
             {region:$region,project_id:$project,operation_id:$operation,vpc_id:$vpc,public_subnet_ids:$subnets,services:($runtime[0].services | map({key:.serviceId,value:{name:.serviceName,image:$images[.serviceId].image,runtime_config_revision_id:.runtimeConfigRevisionId,service_port:.servicePort,environment:(.environment+{PORT:(.servicePort|tostring),HOST:"0.0.0.0"}),secret_references:.secretReferences,database_attached:.databaseAttached,managed_database_aliases:.managedDatabase.aliases,managed_database_engine:(.managedDatabase.engine//"postgres"),managed_database_url_scheme:(.managedDatabase.urlScheme//"")}})|from_entries)}' > .deployguard/terraform/terraform.tfvars.json
           jq --arg environment "$ENVIRONMENT_NAME" '. + {environment_name:$environment}' .deployguard/terraform/terraform.tfvars.json > .deployguard/terraform/terraform.tfvars.next.json
           mv .deployguard/terraform/terraform.tfvars.next.json .deployguard/terraform/terraform.tfvars.json
+          if [ -n "$CUSTOMER_ACCOUNT_ID" ]; then
+            jq --slurpfile workload .deployguard/customer-workload.json '. + {execution_role_permissions_boundary_arn:$workload[0].executionRolePermissionsBoundaryArn,application_workload:{cpu:($workload[0].cpu*1024),memory_mib:$workload[0].memoryMiB,replicas:$workload[0].replicas}}' .deployguard/terraform/terraform.tfvars.json > .deployguard/terraform/customer.tfvars.next.json
+            mv .deployguard/terraform/customer.tfvars.next.json .deployguard/terraform/terraform.tfvars.json
+          fi
           terraform -chdir=.deployguard/terraform fmt -check || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
           terraform -chdir=.deployguard/terraform init -input=false -backend-config="bucket=$TERRAFORM_STATE_BUCKET" -backend-config="key=projects/$PROJECT_ID/$ENVIRONMENT_NAME/runtime/terraform.tfstate" -backend-config="region=$AWS_REGION" -backend-config="encrypt=true" -backend-config="use_lockfile=true" || { echo 'DG_FAILURE code=DG_TERRAFORM_MATERIALIZATION_FAILED stage=terraform_materialization' >&2; exit 1; }
           terraform -chdir=.deployguard/terraform validate || { echo 'DG_FAILURE code=DG_TERRAFORM_VALIDATE_FAILED stage=terraform_validate' >&2; exit 1; }

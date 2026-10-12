@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LogSanitizerService } from "../src/observability/log-sanitizer.service";
 import { AiEvidencePreprocessorService } from "../src/ai-troubleshooting/ai-evidence-preprocessor.service";
@@ -153,9 +153,7 @@ for (const [code, contract] of Object.entries(FAILURE_CONTRACT)) {
 const repositoryRoot = join(__dirname, "..", "..");
 const executableFailureSources = [
   ".github/workflows/deployguard-reusable.yml",
-  "infrastructure/railpack-runtime/verify-runtime.sh",
-  "infrastructure/railpack-runtime/register-release-task-definitions.sh",
-  "infrastructure/railpack-runtime/build-release-result.sh",
+  ...readdirSync(join(repositoryRoot, "infrastructure/railpack-runtime")).filter((name) => name.endsWith(".sh")).map((name) => `infrastructure/railpack-runtime/${name}`),
 ].map((path) => readFileSync(join(repositoryRoot, path), "utf8")).join("\n");
 const literalEmittedCodes = new Set([...executableFailureSources.matchAll(/\bcode=(DG_[A-Z0-9_]+)|\b(?:runtime_failure|managed_database_failure)\s+"[^"\n]+"\s+(DG_[A-Z0-9_]+)/g)].map((match) => match[1] || match[2]));
 const evidenceDependentCodes = new Set(["DG_RAILPACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED"]);

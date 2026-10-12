@@ -5,6 +5,7 @@ import { writeFile } from "fs/promises";
 import { join } from "path";
 import { promisify } from "util";
 import { CostResourceType } from "./project-cost-resource-breakdown.entity";
+import { knownMonthlyPrice } from "./pricing-amount";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +29,24 @@ type InfracostProcessError = NodeJS.ErrnoException & {
 @Injectable()
 export class InfracostService {
   constructor(private readonly config: ConfigService) {}
+
+  async runConfigurationBreakdown(terraform: Record<string, unknown>, usage: Record<string, unknown>, workdir: string) {
+    const apiKey = this.config.get<string>("INFRACOST_API_KEY", "");
+    const authToken = this.config.get<string>("INFRACOST_CLI_AUTHENTICATION_TOKEN", "");
+    if (!apiKey && !authToken) throw new Error("A configured Infracost pricing credential is required for hosting comparison.");
+    await writeFile(join(workdir, "main.tf.json"), JSON.stringify(terraform), { mode: 0o600 });
+    const usagePath = join(workdir, "usage.json");
+    await writeFile(usagePath, JSON.stringify(usage), { mode: 0o600 });
+    try {
+      const { stdout } = await execFileAsync(this.config.get<string>("INFRACOST_CLI_PATH", "infracost").trim() || "infracost",
+        ["breakdown", "--path", workdir, "--usage-file", usagePath, "--format", "json"],
+        { cwd: workdir, timeout: 60000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, ...(apiKey ? { INFRACOST_API_KEY: apiKey } : {}), ...(authToken ? { INFRACOST_CLI_AUTHENTICATION_TOKEN: authToken } : {}) } });
+      return this.parseInfracostResponse(stdout);
+    } catch (error) {
+      if ((error as InfracostProcessError).code === "ENOENT") throw new Error("The configured official Infracost CLI is not installed or executable.");
+      throw new Error(this.boundedProviderFailure(error as InfracostProcessError, apiKey, authToken));
+    }
+  }
 
   async runInfracostBreakdown(planJson: string, workdir: string) {
     const apiKey = this.config.get<string>("INFRACOST_API_KEY");
@@ -64,10 +83,10 @@ export class InfracostService {
     }
   }
 
-  private boundedProviderFailure(error: InfracostProcessError, apiKey: string) {
+  private boundedProviderFailure(error: InfracostProcessError, apiKey: string, authToken = "") {
     const exitCode = typeof error.code === "number" ? error.code : null;
-    const detail = String(error.stderr || "")
-      .replaceAll(apiKey, "[redacted]")
+    const redacted = [apiKey, authToken].filter(Boolean).reduce((value, secret) => value.replaceAll(secret, "[redacted]"), String(error.stderr || ""));
+    const detail = redacted
       .replace(/(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi, "$1[redacted]")
       .replace(/([?&](?:token|key|signature)=)[^&\s]+/gi, "$1[redacted]")
       .replace(/https?:\/\/\S+/gi, "[provider endpoint]")
@@ -107,10 +126,15 @@ export class InfracostService {
       return Array.isArray(breakdown?.resources) ? breakdown.resources : [];
     });
 
+    if (!resources.length) throw new Error("INFRACOST_ESTIMATE_INCOMPLETE: no priced resources were returned.");
+
     return resources.map((resource, index) => {
       const item = resource as Record<string, unknown>;
-      const monthlyCost = Number(item.monthlyCost || 0);
       const name = String(item.name || item.resourceType || `resource-${index + 1}`);
+      const monthlyCost = knownMonthlyPrice(item.monthlyCost);
+      if (monthlyCost === null) {
+        throw new Error(`INFRACOST_ESTIMATE_INCOMPLETE: monthly price unavailable for ${name.slice(0, 200)}.`);
+      }
 
       return {
         resourceType: this.mapResourceType(name),

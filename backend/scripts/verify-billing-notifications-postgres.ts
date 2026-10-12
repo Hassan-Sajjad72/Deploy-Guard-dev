@@ -1,9 +1,11 @@
+import { ConfigService } from "@nestjs/config";
 import "reflect-metadata";
 import { strict as assert } from "node:assert";
 import { randomUUID } from "node:crypto";
 import { DataSource } from "typeorm";
 import { BillingAccount } from "../src/billing/billing-account.entity";
 import { BillingCheckoutSession } from "../src/billing/billing-checkout-session.entity";
+import { BillingPayment } from "../src/billing/billing-payment.entity";
 import { BillingInvoice } from "../src/billing/billing-invoice.entity";
 import { BillingService } from "../src/billing/billing.service";
 import { BillingSubscription } from "../src/billing/billing-subscription.entity";
@@ -54,8 +56,9 @@ function stripeSubscriptionEvent(id: string, created: number, status: "active" |
         id: "sub_fixture",
         customer: "cus_fixture",
         status,
+        livemode: false,
         cancel_at_period_end: false,
-        items: { data: [{ current_period_start: created, current_period_end: created + 3600 }] },
+        items: { data: [{ price: { id: "price_fixturepro" }, current_period_start: created, current_period_end: created + 3600 }] },
       },
     },
   };
@@ -83,28 +86,34 @@ async function main() {
   const project = { id: randomUUID(), ownerUserId: user.id, name: "Notification fixture" };
   await dataSource.query(
     `INSERT INTO projects (id, owner_user_id, name, description, repository_url, repository_provider,
-      repository_full_name, target_branch, environment_name, deployment_overrides, status, visibility)
-     VALUES ($1, $2, $3, $4, $5, 'github', $6, 'main', 'dev', '{}'::jsonb, 'created', 'private')`,
+      repository_full_name, target_branch, environment_name, status, visibility)
+     VALUES ($1, $2, $3, $4, $5, 'github', $6, 'main', 'dev', 'created', 'private')`,
     [project.id, user.id, project.name, "Disposable provider-boundary verification", "https://example.invalid/disposable.git", "fixture/disposable"]
   );
   await accountRepo.save(accountRepo.create({ userId: user.id, providerCustomerId: customerId, provider: "stripe", mode: "live" }));
   await subscriptionRepo.save(subscriptionRepo.create({ userId: user.id, plan: "free", status: "active", provider: "none", mode: "not_configured" }));
 
-  let currentEvent = stripeSubscriptionEvent(concurrentEventId, 200, "active");
+  let currentEvent: any = stripeSubscriptionEvent(concurrentEventId, 200, "active");
   currentEvent.data.object.customer = customerId;
   currentEvent.data.object.id = subscriptionId;
+  const authoritative = structuredClone(currentEvent.data.object);
+  const accountDispatches: unknown[][] = [], audits: string[] = [];
   const billing = new BillingService(
     accountRepo,
     subscriptionRepo,
     dataSource.getRepository(BillingCheckoutSession),
     dataSource.getRepository(BillingInvoice),
+    dataSource.getRepository(BillingPayment),
     webhookRepo,
     dataSource,
-    { verifyWebhook: () => currentEvent } as never,
+    // Mirrors BillingProviderService: a verified envelope, and Stripe's authoritative subscription on retrieval.
+    { verifyWebhook: () => ({ eventId: currentEvent.id, eventType: currentEvent.type, object: currentEvent.data.object, occurredAt: new Date(currentEvent.created * 1000) }),
+      retrieveSubscription: async () => authoritative, planForPrice: (priceId: string) => (priceId === "price_fixturepro" ? "pro" : null) } as never,
     {} as never,
     {} as never,
-    { record: async () => undefined } as never,
-    { dispatchAccount: async () => undefined } as never
+    { record: async (row: { action: string }) => { audits.push(row.action); } } as never,
+    { get: () => undefined } as never,
+    { dispatchAccount: async (...args: unknown[]) => { accountDispatches.push(args); } } as never
   );
   const concurrent = await Promise.all([
     billing.handleStripeWebhook(Buffer.from("{}"), "fixture"),
@@ -122,7 +131,18 @@ async function main() {
   assert.equal(durableSubscription.status, "active");
   assert.equal(durableSubscription.providerEventCreatedAt?.toISOString(), new Date(200_000).toISOString());
 
-  await preferences.save(preferences.create({ userId: user.id, projectId: project.id, criticalEnabled: true, successEnabled: true, stageUpdatesEnabled: true }));
+  const failedEventId = `evt_payment_failed_${runToken}`;
+  currentEvent = { id: failedEventId, type: "invoice.payment_failed", created: 300, livemode: false, data: { object: {
+    id: `in_${runToken}`, number: `FIXTURE-${runToken}`, customer: customerId, subscription: subscriptionId, status: "open", amount_due: 1900, amount_paid: 0, currency: "usd", created: 300 } } };
+  const failed = await billing.handleStripeWebhook(Buffer.from("{}"), "fixture");
+  assert.deepEqual(failed, { received: true, duplicate: false, status: "payment_failed" }, "internal routing fields never reach the webhook response");
+  assert.equal(accountDispatches.length, 1, "a failed subscription payment notifies the account once");
+  assert.deepEqual(accountDispatches[0].slice(0, 3), [user.id, failedEventId, "billing_payment_failed"]);
+  assert(audits.includes("BILLING_PAYMENT_FAILED"));
+  assert.equal((await billing.handleStripeWebhook(Buffer.from("{}"), "fixture")).duplicate, true);
+  assert.equal(accountDispatches.length, 1, "Stripe redelivery does not notify again");
+
+  await preferences.save(preferences.create({ userId: user.id, projectId: project.id, enabled: true, criticalEnabled: true, successEnabled: true, stageUpdatesEnabled: true }));
   await subscriptions.save(subscriptions.create({ userId: user.id, projectId: project.id, destination: user.email, status: "confirmed", protocol: "email", confirmedAt: new Date() }));
   let providerCalls = 0;
   let entitlementCalls = 0;
@@ -158,7 +178,7 @@ async function main() {
   durableSubscription.status = "active";
   await subscriptionRepo.save(durableSubscription);
   const projectUsage = { counts: async () => ({ activeProjects: 0, activeRuns: 0 }) };
-  const entitlements = new EntitlementService(dataSource, projectUsage as never);
+  const entitlements = new EntitlementService(dataSource, projectUsage as never, new ConfigService({ BILLING_ENABLED: "true", BILLING_ENFORCE: "true" }));
   const usageKey = `fixture-usage-${randomUUID()}`;
   const usage = await Promise.all([
     entitlements.consume(user.id, "terraform_export", usageKey, 1, { projectId: project.id, unsafe: "excluded" }),

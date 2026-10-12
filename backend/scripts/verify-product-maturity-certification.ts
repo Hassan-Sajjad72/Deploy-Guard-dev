@@ -124,8 +124,8 @@ function repositoryPresentation() {
   const projects = read("frontend/src/pages/Projects.jsx");
   const settings = read("frontend/src/pages/ProjectSettings.jsx");
   const routes = read("frontend/src/routes/AppRoutes.jsx");
-  const sidebar = read("frontend/src/components/layout/Sidebar.jsx");
-  const dashboard = read("frontend/src/pages/Dashboard.jsx");
+  const sidebar = read("frontend/src/components/layout/AppHeader.jsx");
+  const dashboard = read("frontend/src/pages/Projects.jsx");
   const api = read("frontend/src/api/projectApi.js");
   const platformApi = read("frontend/src/api/platformApi.js");
   const billing = read("frontend/src/pages/Billing.jsx");
@@ -143,14 +143,14 @@ function repositoryPresentation() {
   assert.doesNotMatch(sidebar, /setInterval|getProjectCurrentState/);
   assert.match(dashboard, /if \(!hasActiveOperation\) return undefined/);
   assert.match(api, /detailedCurrentStateRequests/);
-  assert.match(troubleshooting, /operation\.failedStageLabel \|\| label\(operation\.failedStage\)/);
+  assert.match(troubleshooting, /productText\(operation\.failedStageLabel \|\| operation\.failedStage\)/);
   assert.match(routes, /<Route element=\{<Billing \/>\} path="\/billing" \/>/, "Billing remains an intentional protected product route");
-  assert.match(sidebar, /label: "Plan & Usage", to: "\/billing"/, "Billing remains discoverable from primary navigation");
-  assert.match(billing, /Stripe Test Mode/, "Billing remains visibly test-mode");
+  assert.match(sidebar, /label: "Plan & usage", to: "\/billing"/, "Billing remains discoverable from primary navigation");
+  assert.match(billing, /Stripe test mode/, "Billing remains visibly test-mode");
   assert.match(billing, /createBillingCheckout/);
   assert.match(billing, /createBillingPortal/, "Billing remains provider-backed");
   assert.match(platformApi, /\/api\/billing\/summary[\s\S]*\/api\/billing\/checkout[\s\S]*\/api\/billing\/portal/, "Billing uses the current subscription API surface");
-  for (const retired of ["ProjectCost.jsx", "ProjectObservability.jsx", "ProjectOrchestration.jsx", "ProjectRecovery.jsx", "ProjectRollback.jsx", "ProjectStateManagement.jsx"]) {
+  for (const retired of ["ProjectCost.jsx", "ProjectObservability.jsx", "ProjectOrchestration.jsx", "ProjectRollback.jsx", "ProjectStateManagement.jsx"]) {
     assert.equal(existsSync(join(root, "frontend", "src", "pages", retired)), false);
   }
 }

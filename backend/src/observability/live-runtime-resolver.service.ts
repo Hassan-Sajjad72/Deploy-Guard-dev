@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { canAccessProject } from "../workspaces/project-access";
+import { BadRequestException, Injectable, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import {
@@ -9,7 +10,9 @@ import {
 } from "@aws-sdk/client-ecs";
 import {
   DescribeTargetGroupsCommand,
+  DescribeLoadBalancersCommand,
   DescribeTargetHealthCommand,
+  DescribeTagsCommand,
   ElasticLoadBalancingV2Client,
 } from "@aws-sdk/client-elastic-load-balancing-v2";
 import { Repository } from "typeorm";
@@ -20,6 +23,7 @@ import { Project, ProjectStatus } from "../projects/project.entity";
 import { resolveApplicationEntrypointServiceId } from "../projects/application-entrypoint";
 import { User, UserRole } from "../users/user.entity";
 import { LiveRuntimeIdentityRecoveryService } from "../projects/current-state/live-runtime-identity-recovery.service";
+import { CustomerRuntimeEvidenceService } from "../operational-intelligence/customer-runtime-evidence.service";
 
 export type LiveRuntimeIdentity = {
   projectId: string;
@@ -44,6 +48,10 @@ export type LiveRuntimeIdentity = {
   containerName: string;
   resolvedAt: string;
   targetHealth: string[];
+  executionMode?: "customer" | "legacy_control_plane";
+  desiredCount?: number;
+  runningCount?: number;
+  pendingCount?: number;
 };
 
 /** The persisted LIVE release is valid, but lacks immutable runtime identity. */
@@ -61,16 +69,19 @@ export class LiveRuntimeResolverService {
     @InjectRepository(ProjectStableRelease) private readonly releases: Repository<ProjectStableRelease>,
     private readonly config: ConfigService,
     private readonly runtimeIdentityRecovery: LiveRuntimeIdentityRecoveryService,
+    @Optional() private readonly customerRuntime?: CustomerRuntimeEvidenceService,
   ) {}
 
   async resolveForUser(user: User, projectId: string, serviceId?: string) {
+    return this.resolveProject(await this.assertAccessForUser(user, projectId), serviceId);
+  }
+
+  async assertAccessForUser(user: User, projectId: string) {
     const project = await this.projects.findOne({ where: { id: projectId } });
     if (!project || project.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
-    const canView = user.role === UserRole.ADMIN
-      || project.ownerUserId === user.id
-      || (user.role === UserRole.READONLY && project.visibility === "workspace");
+    const canView = canAccessProject(user, project);
     if (!canView) throw new NotFoundException("Project not found");
-    return this.resolveProject(project, serviceId);
+    return project;
   }
 
   async resolveProjectId(projectId: string, serviceId?: string) {
@@ -104,7 +115,63 @@ export class LiveRuntimeResolverService {
     for (const key of this.cache.keys()) if (key === projectId || key.startsWith(`${projectId}:`)) this.cache.delete(key);
   }
 
+  async withRuntimeRead<T>(identity: LiveRuntimeIdentity, read: (context: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string; sessionToken: string } }) => Promise<T>): Promise<T> {
+    const project = await this.projects.findOne({ where: { id: identity.projectId } });
+    if (!project || project.status === ProjectStatus.ARCHIVED) throw new NotFoundException("Project not found");
+    if (project.executionMode !== "customer") {
+      if (project.executionMode !== "legacy_control_plane" || identity.executionMode === "customer") throw new RuntimeIdentityUnavailableException("Runtime account authority changed.");
+      return read({ region: identity.region });
+    }
+    if (!this.customerRuntime || identity.executionMode !== "customer") throw new RuntimeIdentityUnavailableException("Account-scoped customer runtime evidence is required.");
+    return this.customerRuntime.withVerifiedRuntimeRead(project, identity.serviceId, async (scope) => {
+      if ([scope.credentials?.accessKeyId, scope.credentials?.secretAccessKey, scope.credentials?.sessionToken].some((value) => typeof value !== "string" || !value)) throw new RuntimeIdentityUnavailableException("Temporary customer read credentials are unavailable.");
+      if (scope.region !== identity.region || scope.releaseId !== identity.releaseId || scope.generationId !== identity.generationId || scope.identity.ecsServiceArn !== identity.serviceArn || scope.identity.taskDefinitionArn !== identity.taskDefinitionArn || scope.identity.cloudWatchLogGroupName !== identity.logGroupName) throw new RuntimeIdentityUnavailableException("Customer runtime changed before observation.");
+      if (scope.logConfiguration.logDriver !== "awslogs" || scope.logConfiguration.options["awslogs-group"] !== identity.logGroupName || scope.logConfiguration.options["awslogs-region"] !== scope.region) throw new RuntimeIdentityUnavailableException("Customer log destination changed before observation.");
+      return read({ region: scope.region, credentials: scope.credentials });
+    });
+  }
+
+  private async resolveCustomerProject(project: Project, requestedServiceId?: string): Promise<LiveRuntimeIdentity> {
+    if (!this.customerRuntime) throw new RuntimeIdentityUnavailableException("Account-scoped customer runtime verification is unavailable.");
+    const manifest = await this.runtimeIdentityRecovery.recover(project) || {};
+    const services = Array.isArray(manifest.services) ? manifest.services : [];
+    const serviceId = requestedServiceId || resolveApplicationEntrypointServiceId(project.applicationEntryPointServiceId, services);
+    if (!serviceId || !services.some((service: any) => service.serviceId === serviceId)) throw new RuntimeIdentityUnavailableException("The authoritative customer service revision is unavailable.");
+    return this.customerRuntime.withVerifiedRuntimeRead(project, serviceId, async (scope) => {
+      const identity = scope.identity, signal = AbortSignal.timeout(15_000);
+      const expectedGroup = `/deployguard/${project.id}/services/${serviceId}`;
+      const albPrefix = `arn:aws:elasticloadbalancing:${scope.region}:${scope.accountId}:`;
+      const options = scope.logConfiguration.options;
+      if (identity.cloudWatchLogGroupName !== expectedGroup || scope.logConfiguration.logDriver !== "awslogs" || options["awslogs-group"] !== expectedGroup || options["awslogs-region"] !== scope.region || !options["awslogs-stream-prefix"] || !String(identity.targetGroupArn || "").startsWith(`${albPrefix}targetgroup/`) || !String(identity.albArn || "").startsWith(`${albPrefix}loadbalancer/app/`)) throw new RuntimeIdentityUnavailableException("Customer log or load-balancer scope differs from the owned release.");
+      const ecs = new ECSClient({ region: scope.region, credentials: scope.credentials, maxAttempts: 1 });
+      const elb = new ElasticLoadBalancingV2Client({ region: scope.region, credentials: scope.credentials, maxAttempts: 1 });
+      try {
+        const [tasks, groups, health, service, tags, loadBalancers] = await Promise.all([
+          ecs.send(new ListTasksCommand({ cluster: identity.ecsClusterArn, serviceName: identity.ecsServiceArn, desiredStatus: "RUNNING" }), { abortSignal: signal }),
+          elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [identity.targetGroupArn] }), { abortSignal: signal }),
+          elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: identity.targetGroupArn }), { abortSignal: signal }),
+          ecs.send(new DescribeServicesCommand({ cluster: identity.ecsClusterArn, services: [identity.ecsServiceArn] }), { abortSignal: signal }),
+          elb.send(new DescribeTagsCommand({ ResourceArns: [identity.albArn, identity.targetGroupArn] }), { abortSignal: signal }),
+          elb.send(new DescribeLoadBalancersCommand({ LoadBalancerArns: [identity.albArn] }), { abortSignal: signal }),
+        ]);
+        const group = groups.TargetGroups?.[0];
+        const owns = (arn: string) => { const entry = tags.TagDescriptions?.find((item) => item.ResourceArn === arn); return entry?.Tags?.some((tag) => tag.Key === "ManagedBy" && tag.Value === "DeployGuard") && entry.Tags.some((tag) => tag.Key === "DeployGuardProjectId" && tag.Value === project.id); };
+        let url: URL;
+        try { url = new URL(identity.publicUrl); } catch { throw new RuntimeIdentityUnavailableException("Customer application origin is unavailable."); }
+        const lb = loadBalancers.LoadBalancers?.[0];
+        if (!owns(identity.albArn) || !owns(identity.targetGroupArn) || lb?.LoadBalancerArn !== identity.albArn || url.hostname !== lb.DNSName || url.username || url.password || url.port || url.search || url.hash || !["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || group?.TargetGroupArn !== identity.targetGroupArn || !group.LoadBalancerArns?.includes(identity.albArn) || !service.services?.[0]?.loadBalancers?.some((attachment) => attachment.targetGroupArn === identity.targetGroupArn && attachment.containerName === identity.applicationContainerName)) throw new RuntimeIdentityUnavailableException("Customer log or load-balancer routing differs from the owned release.");
+        return { projectId: project.id, environmentName: canonicalEnvironmentName(project), generationId: scope.generationId, releaseId: scope.releaseId, operationId: scope.operationId,
+          serviceId, serviceDisplayName: services.find((entry: any) => entry.serviceId === serviceId)?.serviceName || serviceId, publicUrl: identity.publicUrl || null,
+          region: scope.region, cluster: identity.ecsClusterArn, clusterName: identity.ecsClusterArn.split("/").pop(), serviceArn: identity.ecsServiceArn, serviceName: identity.ecsServiceArn.split("/").pop(),
+          taskDefinitionArn: identity.taskDefinitionArn, taskArns: tasks.taskArns || [], targetGroupArn: identity.targetGroupArn, loadBalancerArn: identity.albArn,
+          logGroupName: expectedGroup, logStreamPrefix: options["awslogs-stream-prefix"], containerName: identity.applicationContainerName, resolvedAt: new Date().toISOString(),
+          targetHealth: (health.TargetHealthDescriptions || []).map((entry) => entry.TargetHealth?.State || "unknown"), executionMode: "customer", desiredCount: service.services?.[0]?.desiredCount, runningCount: service.services?.[0]?.runningCount, pendingCount: service.services?.[0]?.pendingCount };
+      } finally { ecs.destroy(); elb.destroy(); }
+    });
+  }
+
   private async resolveProject(project: Project, requestedServiceId?: string): Promise<LiveRuntimeIdentity> {
+    if (project.executionMode === "customer") return this.resolveCustomerProject(project, requestedServiceId);
     const environmentName = canonicalEnvironmentName(project);
     const release = await this.releases.findOne({
       where: { projectId: project.id, environmentName, status: StableReleaseStatus.STABLE },
@@ -212,6 +279,7 @@ export class LiveRuntimeResolverService {
       containerName: expectedContainerName,
       resolvedAt: new Date().toISOString(),
       targetHealth: (healthResult.TargetHealthDescriptions || []).map((item) => item.TargetHealth?.State || "unknown"),
+      executionMode: "legacy_control_plane",
     };
     this.cache.set(cacheKey, { value, expiresAt: Date.now() + 20_000 });
     return value;

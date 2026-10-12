@@ -26,6 +26,17 @@ export enum ProjectVisibility {
 
 @Entity("projects")
 export class Project {
+  @Index()
+  @Column({ name: "organization_id", type: "uuid", nullable: true })
+  organizationId: string;
+  @Column({ name: "client_id", type: "uuid", nullable: true })
+  clientId: string | null;
+  @Column({ name: "engagement_id", type: "uuid", nullable: true })
+  engagementId: string | null;
+  @Column({ name: "aws_account_binding_id", type: "uuid", nullable: true })
+  awsAccountBindingId: string | null;
+  @Column({ name: "execution_mode", type: "varchar", default: "customer" })
+  executionMode: "legacy_control_plane" | "customer";
   @PrimaryGeneratedColumn("uuid")
   id: string;
 

@@ -5,7 +5,7 @@ import { UserRole } from "../users/user.entity";
 import { FinopsService } from "./finops.service";
 
 @Controller("api/projects/:projectId")
-@UseGuards(requireRole([UserRole.ADMIN]))
+@UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
 export class FinopsController {
   constructor(private readonly finopsService: FinopsService) {}
 

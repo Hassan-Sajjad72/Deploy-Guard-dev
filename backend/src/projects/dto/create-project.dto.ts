@@ -4,6 +4,14 @@ import { ProjectVisibility } from "../project.entity";
 import { DeployableServiceInputDto } from "./deployable-service.dto";
 
 export class CreateProjectDto {
+  @IsUUID() @IsOptional()
+  organizationId?: string;
+  @IsUUID() @IsOptional()
+  awsAccountBindingId?: string;
+  @IsUUID() @IsOptional()
+  clientId?: string;
+  @IsUUID() @IsOptional()
+  engagementId?: string;
   @IsString()
   @IsOptional()
   @Matches(/\S/, { message: "name is required" })

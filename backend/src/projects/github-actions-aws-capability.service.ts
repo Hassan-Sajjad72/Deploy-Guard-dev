@@ -3,11 +3,15 @@ import { ConfigService } from "@nestjs/config";
 import {
   DeleteRolePolicyCommand,
   GetRolePolicyCommand,
+  GetPolicyCommand,
+  GetPolicyVersionCommand,
   IAMClient,
   PutRolePolicyCommand,
   SimulatePrincipalPolicyCommand,
 } from "@aws-sdk/client-iam";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
+import { customerCapabilitiesFor, customerTaskRoleBoundary, verifyCustomerWorkflowIsolation } from "./customer-workflow-capability-contract";
+import { ecsTaskBoundaryArn, planFingerprint } from "../planning/deployment-plan";
 import {
   capabilitiesFor,
   WorkflowAwsCapability,
@@ -79,6 +83,8 @@ async function simulateCapability(client: IamSender, roleArn: string, scope: Wor
   }
   for (const group of actionGroups.values()) {
     let marker: string | undefined;
+    const observed = new Set<string>();
+    const pages = new Set<string>();
     do {
       const response = await client.send(new SimulatePrincipalPolicyCommand({
         PolicySourceArn: roleArn,
@@ -92,10 +98,14 @@ async function simulateCapability(client: IamSender, roleArn: string, scope: Wor
         Marker: marker,
       }), { abortSignal });
       for (const result of response.EvaluationResults || []) {
+        if (typeof result.EvalActionName === "string" && group.actions.includes(result.EvalActionName)) observed.add(result.EvalActionName);
         if (result.EvalDecision !== "allowed") denied.add(String(result.EvalActionName || capability.id));
       }
+      if (response.IsTruncated && (!response.Marker || pages.has(response.Marker))) throw new Error("IAM capability simulation pagination is incomplete.");
+      if (response.Marker) pages.add(response.Marker);
       marker = response.IsTruncated ? response.Marker : undefined;
     } while (marker);
+    for (const action of group.actions) if (!observed.has(action)) denied.add(action);
   }
   return [...denied].sort();
 }
@@ -218,6 +228,26 @@ export class GithubActionsAwsCapabilityService {
   private readonly inFlight = new Map<string, Promise<ReturnType<typeof reconcileWorkflowCapabilities> extends Promise<infer T> ? T : never>>();
 
   constructor(private readonly config: ConfigService) {}
+
+  async ensureCustomer(input: Omit<WorkflowAwsCapabilityScope, "accountId" | "region" | "terraformStateBucket" | "vpcId"> & { action: WorkflowLifecycleAction }, context: import("./customer-execution-context").CustomerExecutionContext) {
+    if (input.projectId !== context.projectId || input.environmentName !== context.environmentName || input.generationId !== context.operationId || context.roleArn.split(":")[4] !== context.accountId) throw new WorkflowAwsCapabilityError(["customer-scope"], "Customer AWS capability scope does not match the approved operation.");
+    const scope: WorkflowAwsCapabilityScope = { ...input, accountId: context.accountId, region: context.region, terraformStateBucket: context.terraformStateBucket, vpcId: context.vpcId };
+    const client = new IAMClient({ region: context.region, credentials: context.credentials, maxAttempts: 1 });
+    try {
+      const signal = AbortSignal.timeout(30000);
+      const boundary = context.executionRolePermissionsBoundaryArn;
+      if (boundary !== ecsTaskBoundaryArn(context.accountId, context.projectId)) throw new WorkflowAwsCapabilityError(["iam:PermissionsBoundary"], "Customer task-role boundary identity does not match the approved project.");
+      const policy = await client.send(new GetPolicyCommand({ PolicyArn: boundary }), { abortSignal: signal });
+      if (!policy.Policy?.DefaultVersionId || policy.Policy.Arn !== boundary) throw new WorkflowAwsCapabilityError(["iam:GetPolicy"], "Customer task-role boundary is unavailable.");
+      const version = await client.send(new GetPolicyVersionCommand({ PolicyArn: boundary, VersionId: policy.Policy.DefaultVersionId }), { abortSignal: signal });
+      if (planFingerprint(decodedPolicy(version.PolicyVersion?.Document)) !== planFingerprint(customerTaskRoleBoundary(scope))) throw new WorkflowAwsCapabilityError(["iam:PermissionsBoundary"], "Customer task-role boundary permits authority outside the exact project runtime contract.");
+      const violations = await verifyCustomerWorkflowIsolation(client, context.roleArn, scope, signal);
+      if (violations.length) throw new WorkflowAwsCapabilityError(violations, "The customer role permits foreign project mutations or cannot prove their denial. Scoped customer IAM is required.");
+      const denied = await verifyEffectiveWorkflowCapabilities(client, context.roleArn, scope, input.action, customerCapabilitiesFor(scope, input.action, boundary), signal);
+      if (denied.length) throw new WorkflowAwsCapabilityError(denied, "The customer-managed role does not satisfy the approved workflow capability contract. DeployGuard does not modify customer IAM policies.");
+      return { reconciled: false, contractVersion: WORKFLOW_AWS_CAPABILITY_CONTRACT_VERSION, fingerprint: workflowCapabilityFingerprint() };
+    } finally { client.destroy(); }
+  }
 
   async ensure(input: Omit<WorkflowAwsCapabilityScope, "accountId" | "region" | "terraformStateBucket" | "vpcId"> & { action: WorkflowLifecycleAction }) {
     const runtimeContract = workflowCapabilityRuntimeStatus();

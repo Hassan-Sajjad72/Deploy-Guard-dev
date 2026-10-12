@@ -237,7 +237,7 @@ export type DeveloperProjectCurrentState = {
     operationId: string | null;
     estimatedAt: string | null;
     unavailableReason: string | null;
-    breakdown: Array<{ name: string; service: string | null; monthly: number }>;
+    breakdown: Array<{ name: string; service: string | null; monthly: number | null }>;
   } | null;
   missingConfiguration: string[];
   advisories?: string[];

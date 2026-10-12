@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, Outlet, useLocation, useNavigate, useOutletContext } from "react-router-dom";
 import { adminSignOut } from "../../api/adminAuthApi.js";
 import { ThemeSwitch } from "./AppHeader.jsx";
 import { BrandMark } from "../common/BrandLogo.jsx";
+import { adminLandingPath, adminSectionAllowed } from "../../utils/adminScope.js";
 
 export const adminNavigation = [
   { label: "Overview", to: "/admin", section: "overview" },
   { label: "Users", to: "/admin?section=users", section: "users" },
   { label: "Projects", to: "/admin?section=projects", section: "projects" },
   { label: "Audit log", to: "/admin?section=audit", section: "audit" },
+  { label: "Billing", to: "/admin/billing", section: "billing" },
+  { label: "Entitlements", to: "/admin/entitlements", section: "entitlements" },
+  { label: "Privileged access", to: "/admin/access", section: "access" },
 ];
 
 function AdminMenu({ onLogout }) {
@@ -36,10 +40,12 @@ function AdminMenu({ onLogout }) {
 }
 
 export default function AdminLayout() {
+  const { adminUser } = useOutletContext();
   const navigate = useNavigate();
   const location = useLocation();
-  const section = new URLSearchParams(location.search).get("section") || "overview";
+  const section = location.pathname === "/admin/billing" ? "billing" : location.pathname === "/admin/entitlements" ? "entitlements" : location.pathname === "/admin/access" ? "access" : new URLSearchParams(location.search).get("section") || "overview";
   async function logout() { await adminSignOut().catch(() => undefined); navigate("/admin/login", { replace: true }); }
+  if (!adminSectionAllowed(adminUser?.internalAdminRole, section)) return <Navigate replace to={adminLandingPath(adminUser?.internalAdminRole)} />;
   return <div className="app">
     <a className="skip-link" href="#admin-main-content">Skip to main content</a>
     <header className="header">
@@ -52,9 +58,9 @@ export default function AdminLayout() {
         <div className="header-actions"><AdminMenu onLogout={logout} /></div>
       </div>
       <nav aria-label="Administration" className="header-tabs">
-        {adminNavigation.map((tab) => <Link aria-current={section === tab.section ? "page" : undefined} className={section === tab.section ? "header-tab is-active" : "header-tab"} key={tab.section} to={tab.to}>{tab.label}</Link>)}
+        {adminNavigation.filter((tab) => adminSectionAllowed(adminUser?.internalAdminRole, tab.section)).map((tab) => <Link aria-current={section === tab.section ? "page" : undefined} className={section === tab.section ? "header-tab is-active" : "header-tab"} key={tab.section} to={tab.to}>{tab.label}</Link>)}
       </nav>
     </header>
-    <main className="app-main" id="admin-main-content" tabIndex={-1}><Outlet /></main>
+    <main className="app-main" id="admin-main-content" tabIndex={-1}><Outlet context={{ adminUser }} /></main>
   </div>;
 }

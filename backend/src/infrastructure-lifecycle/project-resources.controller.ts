@@ -8,7 +8,7 @@ import { InfrastructureLifecycleService } from "./infrastructure-lifecycle.servi
 import { UpdateEnvironmentTtlDto } from "./dto/update-environment-ttl.dto";
 
 @Controller("api/projects/:projectId")
-@UseGuards(requireRole([UserRole.ADMIN]))
+@UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
 export class ProjectResourcesController {
   constructor(private readonly service: InfrastructureLifecycleService) {}
   @Get("resources") resources(@Req() req: Request, @Param("projectId") projectId: string) { return this.service.projectResources(req.user!, projectId); }

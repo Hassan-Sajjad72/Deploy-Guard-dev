@@ -1,3 +1,4 @@
+import { canAccessProject } from "../workspaces/project-access";
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -20,7 +21,7 @@ export class TerraformExportService {
   async create(user: User, projectId: string) {
     const project = await this.projects.findOne({ where: { id: projectId } });
     if (!project) throw new NotFoundException("Project not found.");
-    if (user.role === UserRole.READONLY || (user.role !== UserRole.ADMIN && project.ownerUserId !== user.id)) throw new ForbiddenException("You cannot export this project.");
+    if (user.role === UserRole.READONLY || (!canAccessProject(user, project, true))) throw new ForbiddenException("You cannot export this project.");
     const environment = await this.environments.findOne({ where: { projectId }, order: { updatedAt: "DESC" } });
     const root = getInfrastructureConfig(this.config).terraformWorkingBaseDir;
     const files = environment?.terraformWorkspacePath
@@ -40,7 +41,14 @@ export class TerraformExportService {
     await this.cleanup(); await this.audit.record({ actorUser: user, action: "TERRAFORM_EXPORT_CREATED", resourceType: "terraform_export", resourceId: artifact.id, status: "success", metadata: { projectId, sizeBytes: archive.length, checksum } });
     return { id: artifact.id, filename: artifact.filename, checksum, sizeBytes: archive.length, expiresAt: artifact.expiresAt, manifest };
   }
-  async download(user: User, projectId: string, artifactId: string) { const artifact = await this.artifacts.createQueryBuilder("artifact").addSelect("artifact.archive").where("artifact.id = :artifactId", { artifactId }).andWhere("artifact.projectId = :projectId", { projectId }).getOne(); if (!artifact || artifact.expiresAt.getTime() <= Date.now()) throw new NotFoundException("Terraform export is missing or expired."); if (user.role !== UserRole.ADMIN && artifact.userId !== user.id) throw new ForbiddenException("You cannot download this export."); return artifact; }
+  async download(user: User, projectId: string, artifactId: string) {
+    const project = await this.projects.findOne({ where: { id: projectId } });
+    if (!project || !canAccessProject(user, project, true)) throw new ForbiddenException("You cannot download this export.");
+    const artifact = await this.artifacts.createQueryBuilder("artifact").addSelect("artifact.archive").where("artifact.id = :artifactId", { artifactId }).andWhere("artifact.projectId = :projectId", { projectId }).getOne();
+    if (!artifact || artifact.expiresAt.getTime() <= Date.now()) throw new NotFoundException("Terraform export is missing or expired.");
+    if (artifact.userId !== user.id) throw new ForbiddenException("You cannot download this export.");
+    return artifact;
+  }
   async assertSafeDirectory(value: string, allowedRoot: string) { const root = await realpath(resolve(allowedRoot)); const candidate = await realpath(resolve(value)); if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) throw new ForbiddenException("Terraform workspace is outside the configured export root."); return candidate; }
   private async collect(workspace: string, root: string) { const output: Array<{ path: string; content: Buffer }> = []; const visit = async (directory: string, prefix = "") => { for (const entry of await readdir(directory, { withFileTypes: true })) { const full = resolve(directory, entry.name); const stat = await lstat(full); if (stat.isSymbolicLink()) continue; const path = prefix ? `${prefix}/${entry.name}` : entry.name; if (entry.isDirectory()) { if ([".terraform", ".git", "node_modules"].includes(entry.name)) continue; await visit(full, path); continue; } if (!entry.isFile() || !this.allowed(path)) continue; output.push({ path, content: await readFile(full) }); } }; await visit(workspace);
     const tfText = Buffer.concat(output.filter((file) => file.path.endsWith(".tf")).map((file) => file.content)).toString("utf8"); const sources = [...tfText.matchAll(/source\s*=\s*"(\.\.\/[^"\n]+)"/g)].map((match) => match[1]);

@@ -6,6 +6,7 @@ const lifecycle = await readFile(new URL("../src/components/projects/ProjectOver
 const pipeline = await readFile(new URL("../src/pages/ProjectPipeline.jsx", import.meta.url), "utf8");
 const troubleshooting = await readFile(new URL("../src/pages/ProjectTroubleshooting.jsx", import.meta.url), "utf8");
 const routes = await readFile(new URL("../src/routes/AppRoutes.jsx", import.meta.url), "utf8");
+const governedRecovery = await readFile(new URL("../src/pages/ProjectRecovery.jsx", import.meta.url), "utf8");
 
 for (const source of [overview, pipeline]) {
   assert.match(source, /getProjectCurrentState/);
@@ -16,7 +17,9 @@ assert.match(lifecycle, /retryGithubActionsDeployment/);
 assert.match(troubleshooting, /retryGithubActionsDeployment/);
 assert.match(lifecycle, /troubleshooting\$\{latest\?\.operationId \? `\?operation=/, "Overview opens the diagnosis of the exact failed operation");
 assert.doesNotMatch(troubleshooting, /CloudWatch|Redis|BullMQ|DeploymentRecoveryCard/, "no infrastructure internals in the recovery surface");
-assert.doesNotMatch(routes, /ProjectRecovery/);
+// /recovery is governed recovery (approved runbooks, PRD R3); deployment retry must not be duplicated there.
+assert.match(routes, /path="\/projects\/:projectId\/recovery"/);
+assert.doesNotMatch(governedRecovery, /retryGithubActionsDeployment|retryPipelineRun|resumeProjectRecovery/);
 assert.match(routes, /path="\/projects\/:projectId\/pipeline"/);
 assert.match(routes, /path="\/projects\/:projectId\/troubleshooting"/);
 

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -6,7 +6,10 @@ import { Request } from "express";
 import Stripe = require("stripe");
 import { DataSource, EntityManager, IsNull, Repository } from "typeorm";
 import { AuditLogService } from "../audit-log/audit-log.service";
-import { User } from "../users/user.entity";
+import { NotificationDispatcherService } from "../notifications/notification-dispatcher.service";
+import { User, UserRole } from "../users/user.entity";
+import { ensurePersonalWorkspace } from "../workspaces/personal-workspace";
+import { billingScope } from "./billing-scope";
 import { BillingAccount } from "./billing-account.entity";
 import { BillingCheckoutSession } from "./billing-checkout-session.entity";
 import { BillingInvoice } from "./billing-invoice.entity";
@@ -26,6 +29,7 @@ const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "incomplete_expired"
 
 @Injectable()
 export class BillingService {
+  private readonly logger = new Logger(BillingService.name);
   constructor(
     @InjectRepository(BillingAccount) private readonly accountRepo: Repository<BillingAccount>,
     @InjectRepository(BillingSubscription) private readonly subscriptionRepo: Repository<BillingSubscription>,
@@ -39,64 +43,79 @@ export class BillingService {
     private readonly projectUsage: ProjectUsageService,
     private readonly auditLog: AuditLogService,
     private readonly config: ConfigService,
+    private readonly notifications: NotificationDispatcherService,
   ) {}
 
-  async summary(user: User) {
-    await this.entitlements.reconcileFreeTrial(user.id);
+  async workspaceScope(user: User, requestedId?: string) {
+    const organizationId = requestedId || await this.dataSource.transaction((manager) => ensurePersonalWorkspace(manager, user));
+    await this.assertBillingMembership(user, organizationId);
+    return organizationId;
+  }
+
+  private async assertBillingMembership(user: User, organizationId: string, manage = false) {
+    const [membership] = await this.dataSource.query(`SELECT role FROM organization_memberships WHERE organization_id = $1 AND user_id = $2`, [organizationId, user.id]);
+    if (user.disabledAt || !membership || !["owner", "admin"].includes(membership.role) || (manage && user.role === UserRole.READONLY)) throw new ForbiddenException("A workspace owner or administrator is required for billing access.");
+  }
+
+  async summary(user: User, organizationId?: string) {
+    if (organizationId) await this.assertBillingMembership(user, organizationId, false);
+    await this.entitlements.reconcileFreeTrial(user.id, organizationId);
     const [subscription, account, invoices, payments] = await Promise.all([
-      this.ensureSubscription(user.id),
-      this.accountRepo.findOne({ where: { userId: user.id } }),
-      this.invoiceRepo.find({ where: { userId: user.id, invalidatedAt: IsNull() }, order: { createdAt: "DESC" }, take: 25 }),
-      this.paymentRepo.find({ where: { userId: user.id }, order: { createdAt: "DESC" }, take: 25 }),
+      this.ensureSubscription(user.id, undefined, organizationId),
+      this.accountRepo.findOne({ where: billingScope(user.id, organizationId) }),
+      this.invoiceRepo.find({ where: { ...billingScope(user.id, organizationId), invalidatedAt: IsNull() }, order: { createdAt: "DESC" }, take: 25 }),
+      this.paymentRepo.find({ where: billingScope(user.id, organizationId), order: { createdAt: "DESC" }, take: 25 }),
     ]);
     const provider = this.provider.status();
-    const usage = await this.entitlements.usage(user.id);
-    const projectUsage = await this.entitlements.projectUsage(user.id);
-    const deploymentRuns = await this.projectUsage.deploymentRunsSince(user.id, new Date(usage.periodStart));
+    const usage = await this.entitlements.usage(user.id, organizationId);
+    const projectUsage = await this.entitlements.projectUsage(user.id, undefined, organizationId);
+    const deploymentRuns = await this.projectUsage.deploymentRunsSince(user.id, new Date(usage.periodStart), undefined, organizationId);
     const limitsVisible = usage.billing.enabled;
     return {
-      provider, enforcement: usage.enforcement, plan: usage.plan, planName: publicBillingPlan(usage.plan),
+      organizationId: organizationId || null, provider, enforcement: usage.enforcement, plan: usage.plan, planName: publicBillingPlan(usage.plan),
       pricing: { monthlyUsd: PLAN_ENTITLEMENTS[usage.plan].priceUsdMonthly, minimumLiveProjectCostUsd: MINIMUM_LIVE_PROJECT_COST_USD },
       billing: usage.billing, status: subscription.status, cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
       billingPeriodStart: subscription.billingPeriodStart, billingPeriodEnd: subscription.billingPeriodEnd,
       providerSubscriptionId: subscription.providerSubscriptionId,
+      subscriptionProvider: subscription.provider,
       customerPortalAvailable: Boolean(provider.configured && account?.providerCustomerId),
       trial: this.trialView(subscription), entitlements: usage.entitlements, usage: usage.usage,
       usagePeriod: { start: usage.periodStart, end: usage.periodEnd },
-      workspaceUsage: { ...projectUsage, deploymentRuns, limits: { currentProjects: limitsVisible ? projectUsage.currentProjectLimit : null, liveProjects: limitsVisible ? projectUsage.liveProjectLimit : null, deploymentRuns: null } },
+      workspaceUsage: { ...projectUsage, deploymentRuns, limits: { currentProjects: limitsVisible || projectUsage.hasApprovedProjectLimit ? projectUsage.currentProjectLimit : null, liveProjects: limitsVisible ? projectUsage.liveProjectLimit : null, deploymentRuns: null } },
       paymentMethod: null,
       payments: payments.map((payment) => ({ id: payment.id, status: payment.status, amount: payment.amount, currency: payment.currency, plan: payment.plan, provider: payment.provider, providerTransactionId: payment.providerTransactionId, paidAt: payment.paidAt })),
       invoices: invoices.map((invoice) => this.invoiceView(invoice)),
     };
   }
 
-  async createCheckout(user: User, plan: Exclude<BillingPlan, "free">, req?: Request) {
+  async createCheckout(user: User, plan: Exclude<BillingPlan, "free">, req?: Request, organizationId?: string) {
+    if (organizationId) await this.assertBillingMembership(user, organizationId, true);
     const billing = getBillingConfig(this.config);
     if (!billing.enabled) throw new BadRequestException("Billing is disabled.");
-    const current = await this.entitlements.planForUser(user.id);
+    const current = await this.entitlements.planForUser(user.id, undefined, organizationId);
     if (BILLING_PLAN_ORDER.indexOf(plan) <= BILLING_PLAN_ORDER.indexOf(current)) throw new BadRequestException("Stripe Checkout may only upgrade the current plan.");
-    const existingSubscription = await this.subscriptionRepo.findOne({ where: { userId: user.id } });
+    const existingSubscription = await this.subscriptionRepo.findOne({ where: billingScope(user.id, organizationId) });
     if (existingSubscription?.providerSubscriptionId && !TERMINAL_SUBSCRIPTION_STATUSES.has(existingSubscription.status)) {
       throw new BadRequestException("An existing Stripe subscription must be changed through Manage Billing.");
     }
-    const customerId = await this.ensureCustomer(user);
+    const customerId = await this.ensureCustomer(user, organizationId);
     const orderId = `dg-${randomUUID()}`;
     const priceId = this.provider.priceIdForPlan(plan);
     let row = await this.checkoutRepo.save(this.checkoutRepo.create({
-      userId: user.id, providerSessionId: `pending:${orderId}`, merchantOrderId: orderId,
+      userId: user.id, organizationId: organizationId || null, providerSessionId: `pending:${orderId}`, merchantOrderId: orderId,
       provider: "stripe", mode: "test", plan, status: "creating",
       amountDue: PLAN_ENTITLEMENTS[plan].priceUsdMonthly * 100, currency: "USD",
       providerCustomerId: customerId, providerSubscriptionId: null, providerPriceId: priceId, expiresAt: null,
     }));
     try {
-      const checkout = await this.provider.createCheckout(orderId, plan, user, customerId);
+      const checkout = await this.provider.createCheckout(orderId, plan, user, customerId, organizationId);
       row.providerSessionId = checkout.id;
       row.providerCustomerId = checkout.customerId;
       row.providerPriceId = checkout.priceId;
       row.status = "created";
       row.expiresAt = checkout.expiresAt;
       row = await this.checkoutRepo.save(row);
-      await this.auditLog.record({ actorUser: user, action: "BILLING_CHECKOUT_CREATED", resourceType: "billing", resourceId: row.id, status: "success", metadata: { provider: "stripe", mode: "test", plan, priceId }, req });
+      await this.auditLog.record({ actorUser: user, action: "BILLING_CHECKOUT_CREATED", resourceType: "billing", resourceId: row.id, status: "success", metadata: { organizationId, provider: "stripe", mode: "test", plan, priceId }, req });
       return { checkoutUrl: checkout.url, checkoutSessionId: row.id, providerSessionId: checkout.id, orderId, provider: "stripe", mode: "test", status: "awaiting_verified_webhook", message: "Stripe Test Mode subscription Checkout created." };
     } catch (error) {
       row.status = "failed";
@@ -105,16 +124,17 @@ export class BillingService {
     }
   }
 
-  async createPortal(user: User) {
-    const account = await this.accountRepo.findOne({ where: { userId: user.id } });
+  async createPortal(user: User, organizationId?: string) {
+    if (organizationId) await this.assertBillingMembership(user, organizationId, true);
+    const account = await this.accountRepo.findOne({ where: billingScope(user.id, organizationId) });
     if (!account?.providerCustomerId) throw new BadRequestException("No Stripe customer exists for this account yet.");
-    const portal = await this.provider.createPortal(account.providerCustomerId);
+    const portal = await this.provider.createPortal(account.providerCustomerId, organizationId);
     return { portalUrl: portal.url, provider: "stripe", mode: "test" };
   }
 
   async handleStripeWebhook(rawBody: Buffer, signature: string) {
     const event = this.provider.verifyWebhook(rawBody, signature);
-    return this.dataSource.transaction("READ COMMITTED", async (manager) => {
+    const result = await this.dataSource.transaction("READ COMMITTED", async (manager) => {
       await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`stripe-event:${event.eventId}`]);
       const webhookRepo = manager.getRepository(BillingWebhookEvent);
       let webhook = await webhookRepo.findOne({ where: { providerEventId: event.eventId } });
@@ -136,28 +156,43 @@ export class BillingService {
       await webhookRepo.save(webhook);
       return result;
     });
+    // Only after commit, so a rolled-back event never notifies; dispatchAccount deduplicates Stripe redeliveries by event ID.
+    if (result.status === "payment_failed" && result.duplicate === false && typeof result.userId === "number") {
+      const { userId, invoiceRowId, ...response } = result;
+      try {
+        await this.notifications.dispatchAccount(userId, event.eventId, "billing_payment_failed", "A DeployGuard subscription payment failed. Open Plan & usage to review the provider-hosted invoice.");
+        await this.auditLog.record({ action: "BILLING_PAYMENT_FAILED", resourceType: "billing", resourceId: String(invoiceRowId), status: "failed", metadata: { provider: "stripe", providerEventId: event.eventId } });
+      } catch (error) {
+        // The invoice is already recorded; a notification fault must not make Stripe redeliver the event.
+        this.logger.warn(`Payment-failure notification for ${event.eventId} failed: ${(error as Error).name}`);
+      }
+      return response;
+    }
+    return result;
   }
 
-  async invoice(user: User, invoiceId: string) {
-    const invoice = await this.invoiceRepo.findOne({ where: { id: invoiceId, userId: user.id, invalidatedAt: IsNull() } });
+  async invoice(user: User, invoiceId: string, organizationId?: string) {
+    if (organizationId) await this.assertBillingMembership(user, organizationId);
+    const invoice = await this.invoiceRepo.findOne({ where: { id: invoiceId, ...billingScope(user.id, organizationId), invalidatedAt: IsNull() } });
     if (!invoice) throw new NotFoundException("Invoice not found.");
     return { ...this.invoiceView(invoice), account: { id: user.id, name: user.name, email: user.email } };
   }
 
-  async invoicePdf(user: User, invoiceId: string) {
-    const invoice = await this.invoiceRepo.findOne({ where: { id: invoiceId, userId: user.id, invalidatedAt: IsNull() } });
+  async invoicePdf(user: User, invoiceId: string, organizationId?: string) {
+    if (organizationId) await this.assertBillingMembership(user, organizationId);
+    const invoice = await this.invoiceRepo.findOne({ where: { id: invoiceId, ...billingScope(user.id, organizationId), invalidatedAt: IsNull() } });
     if (!invoice) throw new NotFoundException("Invoice not found.");
     return { filename: `${invoice.invoiceNumber}.pdf`, content: renderInvoicePdf(invoice, user) };
   }
 
-  private async ensureCustomer(user: User) {
+  private async ensureCustomer(user: User, organizationId?: string) {
     return this.dataSource.transaction("READ COMMITTED", async (manager) => {
-      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`stripe-customer:${user.id}`]);
+      await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`stripe-customer:${organizationId || user.id}`]);
       const repo = manager.getRepository(BillingAccount);
-      let account = await repo.findOne({ where: { userId: user.id } });
+      let account = await repo.findOne({ where: billingScope(user.id, organizationId) });
       if (account?.providerCustomerId) return account.providerCustomerId;
-      const customer = await this.provider.createCustomer(user);
-      account ||= repo.create({ userId: user.id, providerCustomerId: null, provider: "stripe", mode: "test" });
+      const customer = await this.provider.createCustomer(user, organizationId);
+      account ||= repo.create({ userId: user.id, organizationId: organizationId || null, providerCustomerId: null, provider: "stripe", mode: "test" });
       account.providerCustomerId = customer.id;
       account.provider = "stripe";
       account.mode = "test";
@@ -173,12 +208,12 @@ export class BillingService {
     const customerId = this.objectId(session.customer);
     const subscriptionId = this.objectId(session.subscription);
     if (!customerId || !subscriptionId || customerId !== checkout.providerCustomerId) throw new BadRequestException("Stripe Checkout customer or subscription identity does not match DeployGuard.");
-    const account = await manager.getRepository(BillingAccount).findOne({ where: { userId: checkout.userId } });
+    const account = await manager.getRepository(BillingAccount).findOne({ where: billingScope(checkout.userId, checkout.organizationId) });
     if (account?.providerCustomerId !== customerId) throw new BadRequestException("Stripe Checkout customer does not belong to the DeployGuard account.");
     const subscription = await this.provider.retrieveSubscription(subscriptionId);
     if (this.objectId(subscription.customer) !== customerId) throw new BadRequestException("Stripe subscription customer does not match Checkout.");
     const applied = await this.applySubscription(manager, subscription, occurredAt, false);
-    if (applied.userId !== checkout.userId || applied.plan !== checkout.plan) throw new BadRequestException("Stripe subscription plan or account does not match Checkout.");
+    if ((applied.row.organizationId || null) !== (checkout.organizationId || null) || (!checkout.organizationId && applied.userId !== checkout.userId) || applied.plan !== checkout.plan) throw new BadRequestException("Stripe subscription plan or account does not match Checkout.");
     checkout.providerSubscriptionId = subscription.id;
     checkout.status = "completed";
     await checkoutRepo.save(checkout);
@@ -200,8 +235,8 @@ export class BillingService {
     const customerId = this.objectId(invoice.customer);
     if (!customerId || customerId !== applied.customerId) throw new BadRequestException("Stripe invoice customer does not match its DeployGuard subscription.");
     const paid = eventType === "invoice.paid";
-    await this.persistInvoice(manager, invoice, applied, paid, occurredAt);
-    return { received: true, duplicate: false, status: paid ? "paid" : "payment_failed" };
+    const row = await this.persistInvoice(manager, invoice, applied, paid, occurredAt);
+    return { received: true, duplicate: false, status: paid ? "paid" : "payment_failed", ...(paid ? {} : { userId: applied.userId, invoiceRowId: row.id }) };
   }
 
   private async applySubscription(manager: EntityManager, subscription: Stripe.Subscription, occurredAt: Date, deletedEvent: boolean) {
@@ -215,9 +250,10 @@ export class BillingService {
     if (items.length !== 1 || supported.length !== 1) throw new BadRequestException("Stripe subscription must contain exactly one configured DeployGuard Price.");
     const plan = supported[0].plan!;
     const item = supported[0].item;
+    await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`billing-subscription:${account.organizationId || account.userId}`]);
     const repo = manager.getRepository(BillingSubscription);
-    let row = await repo.findOne({ where: { userId: account.userId } });
-    row ||= repo.create({ userId: account.userId, plan: "free", status: "active", provider: "none", mode: "not_configured" });
+    let row = await repo.findOne({ where: billingScope(account.userId, account.organizationId) });
+    row ||= repo.create({ userId: account.userId, organizationId: account.organizationId || null, plan: "free", status: "active", provider: "none", mode: "not_configured" });
     if (row.providerSubscriptionId && row.providerSubscriptionId !== subscription.id && !TERMINAL_SUBSCRIPTION_STATUSES.has(row.status)) {
       throw new BadRequestException("Stripe subscription conflicts with the account's existing subscription.");
     }
@@ -244,7 +280,7 @@ export class BillingService {
     const invoiceRepo = manager.getRepository(BillingInvoice);
     let row = await invoiceRepo.findOne({ where: { providerInvoiceId: invoice.id } });
     row ||= invoiceRepo.create({
-      userId: applied.userId,
+      userId: applied.userId, organizationId: applied.row.organizationId || null,
       providerInvoiceId: invoice.id,
       invoiceNumber: invoice.number || `STRIPE-${invoice.id}`,
       providerTransactionId: null,
@@ -272,19 +308,23 @@ export class BillingService {
       const paymentRepo = manager.getRepository(BillingPayment);
       const existing = await paymentRepo.findOne({ where: { providerTransactionId: transactionReference } });
       if (!existing) await paymentRepo.save(paymentRepo.create({
-        userId: applied.userId, providerTransactionId: transactionReference, checkoutSessionId: null,
+        userId: applied.userId, organizationId: applied.row.organizationId || null, providerTransactionId: transactionReference, checkoutSessionId: null,
         provider: "stripe", mode: "test", plan: applied.plan, status: "paid",
         amount: invoice.amount_paid || invoice.amount_due, currency: invoice.currency.toUpperCase(), paidAt: row.paidAt,
         safeMetadata: { providerInvoiceId: invoice.id, providerSubscriptionId: applied.row.providerSubscriptionId },
       }));
     }
-    await invoiceRepo.save(row);
+    return invoiceRepo.save(row);
   }
 
-  private async ensureSubscription(userId: number, manager?: EntityManager) {
+  private async ensureSubscription(userId: number, manager?: EntityManager, organizationId?: string) {
+    if (!manager) return this.dataSource.transaction(async (transaction) => {
+      await transaction.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`billing-subscription:${organizationId || userId}`]);
+      return this.ensureSubscription(userId, transaction, organizationId);
+    });
     const repo = manager?.getRepository(BillingSubscription) || this.subscriptionRepo;
-    let subscription = await repo.findOne({ where: { userId } });
-    if (!subscription) subscription = await repo.save(repo.create({ userId, plan: "free", status: "active", provider: "none", mode: "not_configured" }));
+    let subscription = await repo.findOne({ where: billingScope(userId, organizationId) });
+    if (!subscription) subscription = await repo.save(repo.create({ userId, organizationId: organizationId || null, plan: "free", status: "active", provider: "none", mode: "not_configured" }));
     return subscription;
   }
 
@@ -311,6 +351,6 @@ export class BillingService {
   }
 
   private invoiceView(invoice: BillingInvoice) {
-    return { id: invoice.id, invoiceNumber: invoice.invoiceNumber, plan: invoice.plan, status: invoice.status, amountDue: invoice.amountDue, currency: invoice.currency, provider: invoice.provider, mode: invoice.mode, providerTransactionId: invoice.providerTransactionId, hostedInvoiceUrl: invoice.hostedInvoiceUrl, invoicePdfUrl: invoice.invoicePdfUrl, issuedAt: invoice.issuedAt, paidAt: invoice.paidAt, billingPeriodStart: invoice.billingPeriodStart, billingPeriodEnd: invoice.billingPeriodEnd, subscriptionStatus: invoice.subscriptionStatus };
+    return { id: invoice.id, organizationId: invoice.organizationId || null, adjustmentOfInvoiceId: invoice.adjustmentOfInvoiceId || null, dueAt: invoice.dueAt || null, reconciliationReason: invoice.reconciliationReason || null, invoiceNumber: invoice.invoiceNumber, plan: invoice.plan, status: invoice.status, amountDue: invoice.amountDue, currency: invoice.currency, provider: invoice.provider, mode: invoice.mode, providerTransactionId: invoice.providerTransactionId, hostedInvoiceUrl: invoice.hostedInvoiceUrl, invoicePdfUrl: invoice.invoicePdfUrl, issuedAt: invoice.issuedAt, paidAt: invoice.paidAt, billingPeriodStart: invoice.billingPeriodStart, billingPeriodEnd: invoice.billingPeriodEnd, subscriptionStatus: invoice.subscriptionStatus };
   }
 }

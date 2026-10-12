@@ -49,7 +49,13 @@ async function verify() {
     GITHUB_CLIENT_SECRET: "test-client-secret",
     GITHUB_CALLBACK_URL: "http://localhost:5000/api/auth/github/callback",
   });
-  const auth = new AuthService(users as unknown as UsersService, config);
+  const revoked = new Set<string>();
+  const revocations = {
+    existsBy: async ({ tokenHash }: { tokenHash: string }) => revoked.has(tokenHash),
+    upsert: async ({ tokenHash }: { tokenHash: string }) => { revoked.add(tokenHash); },
+    delete: async () => undefined,
+  } as never;
+  const auth = new AuthService(users as unknown as UsersService, config, revocations);
 
   const githubUser = Object.assign(new User(), {
     id: 41, name: "Deploy Guard User", email: "user@example.com",
@@ -76,7 +82,7 @@ async function verify() {
     findOrCreate: async () => ({ user: disabledGithubUser, isNewUser: false }),
     storeGithubAccessToken: async () => { accessTokenStored = true; },
   };
-  const disabledGithubAuth = new AuthService(disabledGithubUsers as unknown as UsersService, config);
+  const disabledGithubAuth = new AuthService(disabledGithubUsers as unknown as UsersService, config, revocations);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url: string | URL | Request) => new Response(
     JSON.stringify(String(url).includes("/emails") ? [] : { access_token: "test-token", id: "disabled-github-user", login: "disabled-user" }),
@@ -120,7 +126,7 @@ async function verify() {
   assert.equal((request as { user?: User }).user?.id, githubUser.id);
 
   const adminUsers = new InMemoryUsers();
-  const adminAuth = new AuthService(adminUsers as unknown as UsersService, config);
+  const adminAuth = new AuthService(adminUsers as unknown as UsersService, config, revocations);
   const admin = await adminAuth.signup({
     name: "DeployGuard Admin",
     email: "admin@example.test",
@@ -202,6 +208,17 @@ async function verify() {
     login: "legacy-admin",
   });
   assert.equal(normalized.user.role, UserRole.DEVELOPER, "legacy GitHub-linked administrators must regain developer authentication without changing project ownership");
+
+  const otherSession = auth.createSessionToken(githubUser);
+  assert.notEqual(otherSession, session, "same-second sessions have distinct identities");
+  await auth.revokeSessionToken(session);
+  assert.equal(await auth.getUserFromSessionToken(session), null, "a copied cookie cannot be replayed after logout");
+  assert.equal((await auth.getUserFromSessionToken(otherSession))?.id, githubUser.id, "logout preserves other sessions");
+  await adminAuth.revokeSessionToken(adminSession, "developer");
+  assert.equal((await adminAuth.getUserFromSessionToken(adminSession, "admin"))?.id, admin.id);
+  await adminAuth.revokeSessionToken(adminSession, "admin");
+  assert.equal(await adminAuth.getUserFromSessionToken(adminSession, "admin"), null);
+  assert.equal(await auth.getUserFromSessionToken(`${otherSession}.extra`), null);
 
   const usersSource = readFileSync(resolve(__dirname, "../src/users/users.service.ts"), "utf8");
   assert.match(usersSource, /GitHub-linked users cannot be administrators/);

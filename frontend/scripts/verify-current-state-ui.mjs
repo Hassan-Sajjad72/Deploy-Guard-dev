@@ -36,7 +36,9 @@ assert.match(overview, /getProjectCurrentState/);
 assert.match(overview, /ProjectOverviewLifecycle/);
 assert.match(pipeline, /getProjectCurrentState/);
 assert.match(pipeline, /PipelineExecution/);
-assert.match(lifecycle, /overviewLifecycleActions\(currentState, canManage\)/);
+// Customer-account projects execute only through an approved plan (FR-077).
+assert.match(lifecycle, /const canExecute = canManage && !customerPlanningRequired;/);
+assert.match(lifecycle, /overviewLifecycleActions\(currentState, canExecute\)/);
 assert.match(troubleshooting, /currentState\?\.canRetry/, "retry admission uses the canonical current state");
 assert.match(troubleshooting, /failedStageLabel/);
 assert.match(api, /current-state[\s\S]*cache:\s*"no-store"/);

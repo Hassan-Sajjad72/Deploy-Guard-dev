@@ -5,7 +5,7 @@ import { UserRole } from "../users/user.entity";
 import { StateManagementService } from "./state-management.service";
 
 @Controller("api/projects/:projectId/state")
-@UseGuards(requireRole([UserRole.ADMIN]))
+@UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
 export class StateManagementController {
   constructor(private readonly stateManagementService: StateManagementService) {}
 
@@ -39,14 +39,14 @@ export class StateManagementController {
   }
 
   @Post("validate")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async validate(@Req() req: Request, @Param("projectId") projectId: string) {
     const result = await this.stateManagementService.validate(req.user!, projectId);
     return { result, snapshot: await this.stateManagementService.getSafetySnapshot(req.user!, projectId) };
   }
 
   @Post("recover")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async recover(
     @Req() req: Request,
     @Param("projectId") projectId: string,
@@ -57,7 +57,7 @@ export class StateManagementController {
   }
 
   @Post("locks/:lockId/force-release")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async forceRelease(
     @Req() req: Request,
     @Param("projectId") projectId: string,
@@ -68,7 +68,7 @@ export class StateManagementController {
   }
 
   @Post("lockfile/clear-stale")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async clearStaleLockfile(@Req() req: Request, @Param("projectId") projectId: string) {
     const lockfile = await this.stateManagementService.clearStaleLockfile(req.user!, projectId);
     return { lockfile, snapshot: await this.stateManagementService.getSafetySnapshot(req.user!, projectId) };

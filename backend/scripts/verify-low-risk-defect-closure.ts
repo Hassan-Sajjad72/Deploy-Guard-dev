@@ -253,9 +253,9 @@ async function main() {
   assert.match(workflow, /terraform .* apply[\s\S]{0,500}DG_TERRAFORM_APPLY_FAILED stage=terraform_apply/);
   assert.doesNotMatch(workflow.match(/terraform .* plan[^\n]+/)?.[0] || "", /DG_TERRAFORM_APPLY_FAILED/);
   const buildTargetResolution = deployment.indexOf("resolveBuildTargetsAtExactSha");
-  assert.ok(buildTargetResolution >= 0 && deployment.indexOf("managedDatabaseReconciliation.reconcile(project)", buildTargetResolution) > buildTargetResolution, "exact-SHA BuildTarget compatibility precedes managed-database cloud reconciliation");
+  assert.ok(buildTargetResolution >= 0 && deployment.indexOf("managedDatabaseReconciliation.reconcile(project, customer)", buildTargetResolution) > buildTargetResolution, "exact-SHA BuildTarget compatibility precedes managed-database cloud reconciliation");
   assert.match(deployment, /managedDatabaseAdmission\(project, requestedMode, effectiveResetAt, report\)/);
-  assert.ok(deployment.indexOf('operation.currentStage = "managed_database_reconciliation"', buildTargetResolution) < deployment.indexOf("managedDatabaseReconciliation.reconcile(project)", buildTargetResolution), "the managed-database stage is persisted before reconciliation executes");
+  assert.ok(deployment.indexOf('operation.currentStage = "managed_database_reconciliation"', buildTargetResolution) < deployment.indexOf("managedDatabaseReconciliation.reconcile(project, customer)", buildTargetResolution), "the managed-database stage is persisted before reconciliation executes");
   assert.ok(deployment.indexOf('operation.currentStage = "deployment_requirement_admission"', buildTargetResolution) < deployment.indexOf("resolveRequirementsAtExactSha", buildTargetResolution), "the requirement-admission stage is persisted before requirement resolution executes");
   assert.ok(deployment.indexOf("if (active) return { active };") < deployment.indexOf("reconcileResetFreshDatabaseIdentity(manager, user, project, deployAdmission)"), "reset mutation occurs only after same-project active-operation admission is checked");
   assert.match(deployment, /managedDatabaseReconciliationState/);

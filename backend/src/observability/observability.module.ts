@@ -7,7 +7,6 @@ import { NotificationsModule } from "../notifications/notifications.module";
 import { AwsPrometheusExportService } from "./aws-prometheus-export.service";
 import { CloudWatchLogsService } from "./cloudwatch-logs.service";
 import { CloudWatchMetricsService } from "./cloudwatch-metrics.service";
-import { LiveRuntimeResolverService } from "./live-runtime-resolver.service";
 import { LogSanitizerService } from "./log-sanitizer.service";
 import { ObservabilityController } from "./observability.controller";
 import { ObservabilityService } from "./observability.service";
@@ -19,13 +18,12 @@ import { ProjectsModule } from "../projects/projects.module";
   imports: [TypeOrmModule.forFeature([Project, ProjectDeploymentGeneration, ProjectStableRelease]), NotificationsModule, ProjectsModule],
   controllers: [ObservabilityController, PrometheusMetricsController],
   providers: [
-    LiveRuntimeResolverService,
     CloudWatchLogsService,
     CloudWatchMetricsService,
     AwsPrometheusExportService,
     LogSanitizerService,
     ObservabilityService,
   ],
-  exports: [LiveRuntimeResolverService, CloudWatchLogsService, CloudWatchMetricsService],
+  exports: [ProjectsModule, CloudWatchLogsService, CloudWatchMetricsService],
 })
 export class ObservabilityModule {}

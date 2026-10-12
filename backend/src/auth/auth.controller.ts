@@ -53,6 +53,7 @@ export class AuthController {
     const sessionUser = await this.authService.getUserFromSessionToken(
       this.getCookie(request, SESSION_COOKIE_NAME)
     );
+    await this.authService.revokeSessionToken(this.getCookie(request, SESSION_COOKIE_NAME));
     response.clearCookie(SESSION_COOKIE_NAME, this.cookieOptions());
     await this.auditLogService.record({
       actorUser: sessionUser,

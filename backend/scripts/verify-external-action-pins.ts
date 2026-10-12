@@ -10,8 +10,8 @@ const APPROVED_ACTIONS = new Map<string, string>([
   ["aquasecurity/setup-trivy", "81e514348e19b6112ce2a7e3ecbafe19c1e1f567"],
 ]);
 const APPROVED_ACTION_OCCURRENCES = new Map<string, number>([
-  ["actions/checkout", 2],
-  ["aws-actions/configure-aws-credentials", 1],
+  ["actions/checkout", 3],
+  ["aws-actions/configure-aws-credentials", 2],
   ["hashicorp/setup-terraform", 1],
   ["actions/upload-artifact", 2],
   ["aquasecurity/setup-trivy", 1],

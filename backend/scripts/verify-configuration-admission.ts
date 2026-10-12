@@ -91,6 +91,10 @@ const controlPlaneFiles: Record<string, string> = {
   ".github/workflows/deployguard-reusable.yml": readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8"),
   ...Object.fromEntries(Object.values(CONTROL_PLANE_EXECUTABLE_PATHS).map((path) => [path, readFileSync(join(root, path), "utf8")])),
 };
+// A workflow declaring the customer contract also pins the customer runtime inputs, outputs and session helper.
+const customerControlPlanePaths = ["infrastructure/railpack-runtime/variables.tf", "infrastructure/railpack-runtime/outputs.tf", "infrastructure/railpack-runtime/prepare-customer-session.sh"];
+const customerContract = controlPlaneFiles[".github/workflows/deployguard-reusable.yml"].includes("# deployguard-customer-contract: deployguard.customer-workflow/v1");
+if (customerContract) for (const path of customerControlPlanePaths) controlPlaneFiles[path] = readFileSync(join(root, path), "utf8");
 async function validateControlPlane(overrides: Partial<Record<keyof typeof controlPlaneFiles, string>> = {}) {
   const candidate = Object.create(GithubAppService.prototype) as any;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -104,7 +108,7 @@ async function validateControlPlane(overrides: Partial<Record<keyof typeof contr
   return calls;
 }
 const validControlPlaneCalls = await validateControlPlane();
-assert.equal(validControlPlaneCalls.length, 1 + Object.keys(CONTROL_PLANE_EXECUTABLE_PATHS).length, "valid admission verifies every pinned workflow executable at the exact SHA");
+assert.equal(validControlPlaneCalls.length, 1 + Object.keys(CONTROL_PLANE_EXECUTABLE_PATHS).length + (customerContract ? customerControlPlanePaths.length : 0), "valid admission verifies every pinned workflow executable at the exact SHA");
 await assert.rejects(
   () => validateControlPlane({ "infrastructure/railpack-runtime/build-release-result.sh": controlPlaneFiles["infrastructure/railpack-runtime/build-release-result.sh"].replace("awsRuntimeVerification:$awsRuntimeVerification", "runtimeVerification:$awsRuntimeVerification") }),
   (error: any) => error instanceof ControlPlaneCompatibilityError && error.diagnosticCode === CONTROL_PLANE_VERSION_MISMATCH,

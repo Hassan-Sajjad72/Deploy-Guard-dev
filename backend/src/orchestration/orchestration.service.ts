@@ -1,3 +1,4 @@
+import { canAccessProject } from "../workspaces/project-access";
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -80,7 +81,7 @@ export class OrchestrationService {
     const spotEvents = await this.spotInterruptionService.list(project.id);
 
     return {
-      canManage: user.role !== UserRole.READONLY && (user.role === UserRole.ADMIN || project.ownerUserId === user.id),
+      canManage: canAccessProject(user, project, true),
       deployment: deploymentView,
       stableRelease,
       spotEvents,
@@ -404,9 +405,7 @@ export class OrchestrationService {
     }
 
     if (
-      user.role === UserRole.ADMIN ||
-      project.ownerUserId === user.id ||
-      (user.role === UserRole.READONLY && project.visibility === ProjectVisibility.WORKSPACE)
+      canAccessProject(user, project)
     ) {
       return project;
     }
@@ -421,7 +420,7 @@ export class OrchestrationService {
       throw new ForbiddenException("Insufficient permissions");
     }
 
-    if (user.role === UserRole.ADMIN || project.ownerUserId === user.id) {
+    if (canAccessProject(user, project, true)) {
       return project;
     }
 

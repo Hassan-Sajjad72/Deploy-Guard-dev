@@ -12,15 +12,20 @@ import { BrandMark } from "../common/BrandLogo.jsx";
  */
 export const workspaceNavigation = [
   { label: "Projects", to: "/projects" },
+  { label: "Workspaces", to: "/workspaces" },
   { label: "Plan & usage", to: "/billing" },
 ];
 
 export const projectNavigation = [
   { label: "Overview", path: "" },
+  { label: "Configuration", path: "configuration" },
+  { label: "Planning", path: "planning" },
+  { label: "Intelligence", path: "intelligence" },
   { label: "Deployments", path: "pipeline" },
   { label: "Infrastructure", path: "infrastructure" },
   { label: "Monitoring", path: "monitoring" },
   { label: "Troubleshoot", path: "troubleshooting" },
+  { label: "Recovery", path: "recovery" },
   { label: "Settings", path: "settings" },
 ];
 

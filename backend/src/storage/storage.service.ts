@@ -1,3 +1,4 @@
+import { canAccessProject } from "../workspaces/project-access";
 import {
   BadRequestException,
   ForbiddenException,
@@ -297,9 +298,7 @@ export class StorageService {
     }
 
     if (
-      user.role === UserRole.ADMIN ||
-      project.ownerUserId === user.id ||
-      (user.role === UserRole.READONLY && project.visibility === ProjectVisibility.WORKSPACE)
+      canAccessProject(user, project)
     ) {
       return project;
     }
@@ -314,7 +313,7 @@ export class StorageService {
       throw new ForbiddenException("Insufficient permissions");
     }
 
-    if (user.role === UserRole.ADMIN || project.ownerUserId === user.id) {
+    if (canAccessProject(user, project, true)) {
       return project;
     }
 

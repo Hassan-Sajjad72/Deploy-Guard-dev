@@ -8,6 +8,13 @@ const FALLBACK_STATES = {
   failed_application: "FAILED",
 };
 
+export function overviewApplicationHealthCopy(currentState) {
+  const health = currentState?.stateAuthority?.applicationHealth?.status;
+  if (health === "healthy") return "The application endpoint passed its latest health check.";
+  if (health === "failed") return "The infrastructure is running; the application endpoint health check failed.";
+  return "The infrastructure is running; application health is unverified.";
+}
+
 /**
  * Overview actions are derived from the canonical current-state response.
  * No operation history, URL presence, or client-reconstructed workflow state

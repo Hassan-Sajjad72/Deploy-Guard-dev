@@ -19,7 +19,7 @@ import {
   retryGithubActionsDeployment,
 } from "../../api/projectApi.js";
 import { deploymentPhasePresentation } from "../../utils/developerDeploymentPresentation.js";
-import { canonicalOverviewState, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
+import { canonicalOverviewState, overviewApplicationHealthCopy, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../../utils/overviewLifecyclePresentation.js";
 import { projectStateLabel, projectStateTone } from "../../utils/projectStatePresentation.js";
 import { formatDateTime } from "../../utils/time.js";
 import { productText } from "../../utils/productTerms.js";
@@ -58,6 +58,8 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   const copy = overviewLifecycleCopy(currentState);
   const latestOperationFailed = authority.latestCompletedOperation?.outcome === "failed" && !authority.activeOperation;
   const runtimeLive = state === "LIVE";
+  const customerPlanningRequired = project?.executionMode === "customer";
+  const canExecute = canManage && !customerPlanningRequired;
   // The rail follows the same canonical authority as the card/actions. This
   // prevents an older failed attempt from rendering over a newer LIVE state.
   const phases = deploymentPhasePresentation({
@@ -80,7 +82,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   }, [acceptedOperation, authority.activeOperation?.id]);
 
   async function runDeploy() {
-    if (dispatching.current || !canManage) return;
+    if (dispatching.current || !canExecute) return;
     dispatching.current = true;
     setBusy("deploy");
     setAcceptedOperation(null);
@@ -99,7 +101,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   }
 
   async function retry() {
-    if (dispatching.current || !canManage || !currentState.canRetry) return;
+    if (dispatching.current || !canExecute || !currentState.canRetry) return;
     dispatching.current = true;
     setBusy("retry");
     setError("");
@@ -116,7 +118,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   }
 
   async function openRollback() {
-    if (dispatching.current || !canManage || busy) return;
+    if (dispatching.current || !canExecute || busy) return;
     setRollbackOpen(true);
     setRollbackLoading(true);
     setRollbackError("");
@@ -133,7 +135,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
 
   async function rollback() {
     const target = rollbackCandidates[0];
-    if (dispatching.current || !canManage || !target) return;
+    if (dispatching.current || !canExecute || !target) return;
     dispatching.current = true;
     setBusy("rollback");
     setAcceptedOperation(null);
@@ -153,7 +155,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   }
 
   // Lifecycle actions come from the canonical presenter; Overview decides only where each one sits.
-  const lifecycleActions = overviewLifecycleActions(currentState, canManage);
+  const lifecycleActions = overviewLifecycleActions(currentState, canExecute);
   const primary = [];
   const menu = [];
   for (const action of lifecycleActions) {
@@ -170,10 +172,10 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
   }
 
   const statusSentence = (() => {
-    if (state === "LIVE") return "The current release passed its health check and is serving traffic.";
+    if (state === "LIVE") return overviewApplicationHealthCopy(currentState);
     if (state === "DEPLOYING") return <>{currentState.progress?.label || copy.message}{authority.activeOperation?.startedAt ? <> · started <Time value={authority.activeOperation.startedAt} /></> : null}</>;
     if (state === "FAILED") return productText(diagnosis?.summary) || copy.message;
-    if (state === "READY") return `Nothing has been deployed yet. Deploying builds ${branch || "the selected branch"} and starts it on AWS.`;
+    if (state === "READY") return customerPlanningRequired ? "Review and approve a customer deployment plan before deployment." : `Nothing has been deployed yet. Deploying builds ${branch || "the selected branch"} and starts it on AWS.`;
     if (state === "DESTROYED") return <>Infrastructure was removed{authority.latestCompletedOperation?.completedAt ? <> <Time value={authority.latestCompletedOperation.completedAt} /></> : null}. History is kept; deploy again to recreate it.</>;
     return copy.message;
   })();
@@ -183,6 +185,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       actions={<>
         {runtimeLive && currentState.stableUrl ? <Button external href={currentState.stableUrl}>Open app</Button> : null}
         {primary}
+        {customerPlanningRequired ? <Button to={`/projects/${projectId}/planning`}>Review deployment plan</Button> : null}
         <ActionMenu items={menu} label="More project actions" />
       </>}
       description={<span className="overview-source">
@@ -205,7 +208,7 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
       {state === "FAILED" ? <div className="actions"><Button icon="wrench" to={troubleshootPath}>See what went wrong</Button>{failureOwnershipLabel ? <span className="sr-only"> ({failureOwnershipLabel})</span> : null}</div> : null}
 
       {runtimeLive && latestOperationFailed ? <Callout actions={<Button size="sm" to={troubleshootPath}>See what went wrong</Button>} title={copy.title} tone="warning">
-        <p>{productText(diagnosis?.summary) || "The latest deployment did not complete."} Your previous release is still serving traffic.</p>
+        <p>{productText(diagnosis?.summary) || "The latest deployment did not complete."} The previous release remains active. {overviewApplicationHealthCopy(currentState)}</p>
       </Callout> : null}
 
       {error ? <ErrorState message={error} title="The action could not start" /> : null}

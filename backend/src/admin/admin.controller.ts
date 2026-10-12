@@ -5,6 +5,8 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
+  ParseUUIDPipe,
   Query,
   Req,
   UseGuards,
@@ -21,6 +23,9 @@ import { ProjectsService } from "../projects/projects.service";
 import { UserRole } from "../users/user.entity";
 import { UsersService } from "../users/users.service";
 import { UpdateUserRoleDto } from "./dto/update-user-role.dto";
+import { AdminAuthorizationService } from "./admin-authorization.service";
+import { assertInternalAdminScope } from "./internal-admin-scope";
+import { AdminAccountControlDto, VerifyAdminIdentityDto } from "./dto/admin-controls.dto";
 
 type ServiceAvailability = {
   status: "available" | "degraded" | "unavailable";
@@ -59,11 +64,13 @@ export class AdminController {
     private readonly dataSource: DataSource,
     private readonly projectsService: ProjectsService,
     private readonly projectCurrentStateService: ProjectCurrentStateService,
+    private readonly authorization: AdminAuthorizationService,
   ) {}
 
   @Get("overview")
   @UseGuards(requireRole([UserRole.ADMIN]))
   async overview(@Req() req: Request) {
+    assertInternalAdminScope(req.user!, "platform_ops");
     let database = false;
     let projects = 0;
     let activeOperations = 0;
@@ -137,28 +144,32 @@ export class AdminController {
   @Get("projects")
   @UseGuards(requireRole([UserRole.ADMIN]))
   async listProjects(@Req() req: Request) {
-    const projects = await this.projectsService.listProjects(req.user!);
-    const states = await Promise.all(
-      projects.map((project) => this.projectCurrentStateService.getCurrentState(req.user!, project.id)),
-    );
+    assertInternalAdminScope(req.user!, "platform_ops");
+    const summaries = await this.dataSource.query(`SELECT project.id,project.name,project.status,project.organization_id AS "organizationId",project.created_at AS "createdAt",operation.id AS "operationId",operation.status AS "operationStatus",operation.updated_at AS "operationUpdatedAt" FROM projects project LEFT JOIN LATERAL (SELECT id,status,updated_at FROM project_pipeline_runs WHERE project_id=project.id ORDER BY created_at DESC LIMIT 1) operation ON TRUE ORDER BY project.created_at DESC LIMIT 200`);
+    await this.auditLogService.record({ actorUser: req.user, action: "ADMIN_PROJECT_STATUS_VIEWED", resourceType: "platform", status: "success", req });
+    return { summaries: summaries.map((project: unknown) => ({ project, currentState: null })) };
+  }
 
-    return {
-      summaries: projects.map((project, index) => ({
-        project,
-        currentState: states[index],
-      })),
-    };
+  @Get("organizations")
+  @UseGuards(requireRole([UserRole.ADMIN]))
+  async listOrganizations(@Req() req: Request) {
+    assertInternalAdminScope(req.user!, "platform_ops");
+    const organizations = await this.dataSource.query(`SELECT organization.id,organization.name,organization.kind,organization.archived_at AS "archivedAt",(SELECT COUNT(*)::int FROM organization_memberships membership WHERE membership.organization_id=organization.id) AS "members",(SELECT COUNT(*)::int FROM projects project WHERE project.organization_id=organization.id AND project.status<>'archived' AND project.archived_at IS NULL) AS "projects" FROM organizations organization ORDER BY organization.created_at DESC LIMIT 200`);
+    await this.auditLogService.record({ actorUser: req.user, action: "ADMIN_ORGANIZATION_STATUS_VIEWED", resourceType: "platform", status: "success", req });
+    return { organizations };
   }
 
   @Get("audit-logs")
   @UseGuards(requireRole([UserRole.ADMIN]))
   listAuditLogs(@Query() query: AuditLogQueryDto, @Req() req: Request) {
+    assertInternalAdminScope(req.user!, "security_auditor");
     return this.auditLogService.findForUser(req.user!, query);
   }
 
   @Get("users")
   @UseGuards(requireRole([UserRole.ADMIN]))
   async listUsers(@Req() req: Request) {
+    assertInternalAdminScope(req.user!, "super_admin");
     const users = await this.usersService.findAll();
 
     await this.auditLogService.record({
@@ -175,6 +186,7 @@ export class AdminController {
         email: user.email,
         name: user.name,
         role: user.role,
+        internalAdminRole: user.internalAdminRole,
         provider: user.githubId ? "github" : null,
         githubLogin: user.githubLogin,
         enabled: !user.disabledAt,
@@ -191,10 +203,13 @@ export class AdminController {
     @Body() dto: UpdateUserRoleDto,
     @Req() req: Request
   ) {
+    assertInternalAdminScope(req.user!, "super_admin");
+    await this.authorization.requireRecentVerification(req.user!);
     const updatedUser = await this.usersService.updateRole(
       userId,
       dto.role,
-      req.user?.id
+      req.user?.id,
+      dto.reason
     );
 
     await this.auditLogService.record({
@@ -205,6 +220,7 @@ export class AdminController {
       status: "success",
       metadata: {
         newRole: updatedUser.role,
+        reason: dto.reason.trim(),
       },
       req,
     });
@@ -219,5 +235,25 @@ export class AdminController {
         createdAt: updatedUser.createdAt,
       },
     };
+  }
+
+  @Post("verify-identity")
+  @UseGuards(requireRole([UserRole.ADMIN]))
+  verifyIdentity(@Body() dto: VerifyAdminIdentityDto, @Req() req: Request) { return this.authorization.verifyIdentity(req.user!, dto.password); }
+
+  @Patch("users/:userId/controls")
+  @UseGuards(requireRole([UserRole.ADMIN]))
+  updateAccount(@Param("userId", ParseIntPipe) userId: number, @Body() dto: AdminAccountControlDto, @Req() req: Request) { return this.authorization.updateAccount(req.user!, userId, dto); }
+
+  @Get("support-access")
+  @UseGuards(requireRole([UserRole.ADMIN]))
+  supportGrants(@Req() req: Request) { return this.authorization.listSupport(req.user!); }
+
+  @Get("support-access/:grantId/projects/:projectId")
+  @UseGuards(requireRole([UserRole.ADMIN]))
+  async supportEvidence(@Param("grantId", ParseUUIDPipe) grantId: string, @Param("projectId", ParseUUIDPipe) projectId: string, @Req() req: Request) {
+    const authorizedViewer = await this.authorization.supportProject(req.user!, grantId, projectId);
+    const state = await this.projectCurrentStateService.getCurrentState(authorizedViewer, projectId);
+    return { projectId, stateAuthority: state.stateAuthority, release: state.stableRelease ? { id: state.stableRelease.id, commit: state.stableRelease.commit, promotedAt: state.stableRelease.promotedAt } : null };
   }
 }

@@ -7,7 +7,7 @@ import { InfrastructureLifecycleService } from "./infrastructure-lifecycle.servi
 import { IssueDestroyChallengeDto } from "./dto/issue-destroy-challenge.dto";
 import { ExecuteAdminCleanupDto } from "./dto/execute-admin-cleanup.dto";
 @Controller("api/projects/:projectId/infrastructure/destroy")
-@UseGuards(requireRole([UserRole.ADMIN]))
+@UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
 export class InfrastructureLifecycleController {
   constructor(private readonly service: InfrastructureLifecycleService) {}
   @Get("review") review(@Req() req: Request, @Param("projectId") projectId: string, @Query("environment") environment = "dev") { return this.service.review(req.user!, projectId, environment); }

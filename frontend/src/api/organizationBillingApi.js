@@ -1,0 +1,10 @@
+import { apiRequest } from "./client.js";
+const scope = (organizationId) => `/api/admin/billing/${encodeURIComponent(organizationId)}`;
+export const verifyBillingIdentity = (password) => apiRequest("/api/admin/verify-identity", { method: "POST", body: { password } });
+export const getBillingWorkspaces = () => apiRequest("/api/admin/billing/workspaces");
+export const getOrganizationInvoices = (organizationId) => apiRequest(`${scope(organizationId)}/invoices`);
+export const issueOrganizationInvoice = (body) => apiRequest("/api/admin/billing/invoices", { method: "POST", body });
+export const reconcileOrganizationInvoice = (organizationId, id, body) => apiRequest(`${scope(organizationId)}/invoices/${encodeURIComponent(id)}/reconcile`, { method: "POST", body });
+export const changeOrganizationInvoice = (organizationId, id, body) => apiRequest(`${scope(organizationId)}/invoices/${encodeURIComponent(id)}/status`, { method: "POST", body });
+export const adjustOrganizationInvoice = (organizationId, id, body) => apiRequest(`${scope(organizationId)}/invoices/${encodeURIComponent(id)}/adjust`, { method: "POST", body });
+export const cancelOrganizationSubscription = (organizationId, reason) => apiRequest(`${scope(organizationId)}/subscription/cancel`, { method: "POST", body: { reason } });

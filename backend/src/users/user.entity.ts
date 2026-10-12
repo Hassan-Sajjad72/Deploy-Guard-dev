@@ -7,6 +7,7 @@ import {
   UpdateDateColumn,
   Index,
 } from "typeorm";
+import type { OrganizationMembership } from "../workspaces/organization-membership.entity";
 
 export enum UserRole {
   ADMIN = "admin",
@@ -27,6 +28,7 @@ export enum UserRole {
 @Entity("users") // Table name in PostgreSQL
 @Check("CHK_users_admin_not_github", `"github_id" IS NULL OR "role" <> 'admin'`)
 export class User {
+  organizationMemberships: Array<Pick<OrganizationMembership, "organizationId" | "role"> & { archivedAt?: Date | string | null }>;
   /**
    * Auto-incrementing primary key.
    * PostgreSQL assigns this: 1, 2, 3, 4...
@@ -101,6 +103,9 @@ export class User {
     default: UserRole.DEVELOPER,
   })
   role: UserRole;
+
+  @Column({ name: "internal_admin_role", type: "varchar", length: 32, nullable: true })
+  internalAdminRole: "super_admin" | "platform_ops" | "support" | "billing" | "security_auditor" | null;
 
   /**
    * TypeORM auto-sets this when the row is FIRST created.

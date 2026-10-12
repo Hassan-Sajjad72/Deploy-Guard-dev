@@ -396,10 +396,12 @@ wait_for_cloud_map_registration() {
 }
 
 release_database_attached_service() {
-  local service_id="$1" cluster="$2" attached_service="$3" update
-  update="$(aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count 1 --output json 2>&1)" || provider_failure "$service_id" "$update"
-  jq -e --arg service "$attached_service" '.service.serviceName == $service and .service.desiredCount == 1' <<<"$update" >/dev/null || configuration_failure "$service_id" "The attached application service did not accept its intended desired count."
-  printf 'DG_DATABASE_ATTACHED_SERVICE_RELEASED serviceId=%s desiredCount=1\n' "$service_id"
+  local service_id="$1" cluster="$2" attached_service="$3" update desired
+  desired="$(jq -r --arg id "$service_id" '.services[$id].desired_count // 1' "$outputs")"
+  [[ "$desired" =~ ^[0-9]+$ ]] && [ "$desired" -ge 1 ] && [ "$desired" -le 100 ] || configuration_failure "$service_id" "Invalid approved replica count."
+  update="$(aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count "$desired" --output json 2>&1)" || provider_failure "$service_id" "$update"
+  jq -e --arg service "$attached_service" --argjson desired "$desired" '.service.serviceName == $service and .service.desiredCount == $desired' <<<"$update" >/dev/null || configuration_failure "$service_id" "The attached application service did not accept its intended desired count."
+  printf 'DG_DATABASE_ATTACHED_SERVICE_RELEASED serviceId=%s desiredCount=%s\n' "$service_id" "$desired"
 }
 
 cluster="$(jq -r '.ecs_cluster_name' "$outputs")"
@@ -446,12 +448,23 @@ fi
 verify_service() {
   local service="$1" service_id deployed expected service_name target_group log_group service_description task_definition_arn task_definition expected_image expected_port expected_probe_port expected_health_path
   local database expected_environment expected_secrets managed_database application_sg alb_sg application_security_group alb_security_group target_group_description running tasks target_health expected_targets check
-  local target_result alb_arn public_url public_host ecs_stability_timeout_seconds
+  local target_result alb_arn public_url public_host ecs_stability_timeout_seconds approved_replicas
   local -a running_task_arns
   service_id="$(jq -r '.key' <<<"$service")"; deployed="$(jq -c '.value' <<<"$service")"
   expected="$(jq -c --arg id "$service_id" '.services[] | select(.serviceId == $id)' "$runtime")"
   service_name="$(jq -r '.ecs_service_name' <<<"$deployed")"; target_group="$(jq -r '.alb_target_group_arn' <<<"$deployed")"; log_group="$(jq -r '.cloudwatch_log_group_name' <<<"$deployed")"
   service_description="$(aws ecs describe-services --cluster "$cluster" --services "$service_name" --output json 2>&1)" || provider_failure "$service_id" "$service_description"
+  if [ -n "${CUSTOMER_ACCOUNT_ID:-}" ]; then
+    approved_replicas="$(jq -r '.desired_count' <<<"$deployed")"
+    [[ "$approved_replicas" =~ ^[0-9]+$ ]] && [ "$approved_replicas" -ge 1 ] && [ "$approved_replicas" -le 100 ] || configuration_failure "$service_id" "Approved replica count is unavailable."
+    # Existing Terraform service lifecycle ignores desired_count during updates.
+    # Reconcile the exact approved count after database readiness, for every service.
+    if [ "$(jq -r '.services[0].desiredCount' <<<"$service_description")" != "$approved_replicas" ]; then
+      aws ecs update-service --cluster "$cluster" --service "$service_name" --desired-count "$approved_replicas" --output json >/dev/null || provider_failure "$service_id" "Approved replica reconciliation failed."
+      service_description="$(aws ecs describe-services --cluster "$cluster" --services "$service_name" --output json 2>&1)" || provider_failure "$service_id" "$service_description"
+    fi
+    jq -e --argjson count "$approved_replicas" '.services[0].desiredCount == $count' <<<"$service_description" >/dev/null || configuration_failure "$service_id" "ECS replica count differs from the approved plan."
+  fi
   task_definition_arn="$(jq -r '.task_definition_arn' <<<"$deployed")"
   task_definition="$(aws ecs describe-task-definition --task-definition "$task_definition_arn" --output json 2>&1)" || provider_failure "$service_id" "$task_definition"
   expected_image="$(jq -r '.image' <<<"$deployed")"
@@ -504,6 +517,9 @@ verify_service() {
   [[ "$ecs_stability_timeout_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$ecs_stability_timeout_seconds" -le 1200 ] || configuration_failure "$service_id" "ECS stability timeout is invalid."
   timeout "$ecs_stability_timeout_seconds" aws ecs wait services-stable --cluster "$cluster" --services "$service_name" || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   running="$(aws ecs list-tasks --cluster "$cluster" --service-name "$service_name" --desired-status RUNNING --output json 2>&1)" || provider_failure "$service_id" "$running"
+  if [ -n "${CUSTOMER_ACCOUNT_ID:-}" ]; then
+    jq -e --argjson count "$approved_replicas" '.taskArns | length == $count' <<<"$running" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
+  fi
   jq -e '.taskArns | length > 0' <<<"$running" >/dev/null || ecs_diagnostics "$service_id" "$cluster" "$service_name" "$target_group" "$log_group"
   mapfile -t running_task_arns < <(jq -r '.taskArns[]' <<<"$running")
   tasks="$(aws ecs describe-tasks --cluster "$cluster" --tasks "${running_task_arns[@]}" --output json 2>&1)" || provider_failure "$service_id" "$tasks"
@@ -546,7 +562,7 @@ verify_service() {
     --argjson alb "$alb_observation" \
     --argjson listener "$listener_observation" \
     --argjson publicProbe "$public_probe" \
-    '{serviceId:$serviceId,verified:true,readinessMode:"platform_transport",applicationReachabilityPath:"alb_to_task_eni",image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),taskIpAddresses:$expectedTargets,runtimePort:$runtimePort,transportProbePort:$transportProbePort,platformHealthCheckPath:$platformHealthCheckPath,targetGroupArn:$targetGroupArn,targetHealth:$targets,targetRegistrations:$targetRegistrations,alb:$alb,listener:$listener,publicProbe:$publicProbe,environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
+    '{serviceId:$serviceId,verified:true,readinessMode:"platform_transport",applicationReachabilityPath:"alb_to_task_eni",image:$image,ecsServiceArn:$ecsServiceArn,taskDefinitionArn:$taskDefinitionArn,runningTaskArns:$runningTaskArns,ecsTasksRunning:($runningTaskArns|length),taskIpAddresses:$expectedTargets,runtimePort:$runtimePort,transportProbePort:$transportProbePort,platformHealthCheckPath:$platformHealthCheckPath,targetGroupArn:$targetGroupArn,targetHealth:$targets,targetRegistrations:$targetRegistrations,alb:$alb,listener:$listener,publicProbe:$publicProbe,infrastructureReady:true,transportConnected:true,applicationHealth:(if ($publicProbe.httpStatus | test("^[23][0-9]{2}$")) then "healthy" else "failed" end),environment:$environment,secretValueFrom:$secretValueFrom,managedDatabase:$managedDatabase,publicUrl:$publicUrl,publicEndpointVerified:true,taskDefinition:true,secretsInjection:true,vpcConnectivity:true,publicReachability:true,checkedAt:$checkedAt}')"
   jq --argjson check "$check" '. + [$check]' "$evidence" > "$evidence.next"; mv "$evidence.next" "$evidence"
 }
 

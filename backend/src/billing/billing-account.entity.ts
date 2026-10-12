@@ -1,9 +1,11 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
 
+@Index("UQ_billing_accounts_organization_scope", ["organizationId"], { unique: true, where: '"organization_id" IS NOT NULL' })
 @Entity("billing_accounts")
 export class BillingAccount {
   @PrimaryGeneratedColumn("uuid") id: string;
-  @Index({ unique: true }) @Column({ name: "user_id" }) userId: number;
+  @Index() @Column({ name: "organization_id", type: "uuid", nullable: true }) organizationId: string | null;
+  @Index({ unique: true, where: '"organization_id" IS NULL' }) @Column({ name: "user_id" }) userId: number;
   @Index({ unique: true }) @Column({ nullable: true, name: "provider_customer_id" }) providerCustomerId: string | null;
   @Column({ default: "none" }) provider: string;
   @Column({ default: "not_configured" }) mode: string;

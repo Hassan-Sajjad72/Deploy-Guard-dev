@@ -3,6 +3,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 @Entity("billing_payments")
 export class BillingPayment {
   @PrimaryGeneratedColumn("uuid") id: string;
+  @Index() @Column({ name: "organization_id", type: "uuid", nullable: true }) organizationId: string | null;
   @Index() @Column({ name: "user_id" }) userId: number;
   @Index({ unique: true }) @Column({ name: "provider_transaction_id" }) providerTransactionId: string;
   @Index() @Column({ nullable: true, name: "checkout_session_id", type: "uuid" }) checkoutSessionId: string | null;

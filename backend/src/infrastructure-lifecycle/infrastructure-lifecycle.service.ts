@@ -1,3 +1,5 @@
+import { assertLegacyExecutionScope } from "../projects/customer-execution-boundary";
+import { canAccessProject } from "../workspaces/project-access";
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -197,6 +199,7 @@ export class InfrastructureLifecycleService {
       this.operations.findOne({ where: { projectId: input.projectId, status: In(["queued", "running"]) } }),
     ]);
     if (!project || !environment) throw new NotFoundException("Project infrastructure environment not found.");
+    if (project.executionMode === "customer") throw new ConflictException("Customer cleanup requires an approved account-scoped deployment plan; the legacy cleanup lane cannot execute it.");
     if (environment.environmentType === InfrastructureEnvironmentType.PRODUCTION) throw new ForbiddenException("Automated cleanup can never target a production environment.");
     if (active) return this.safe(active);
     const live = this.config.get<string>("DESTROY_ENABLED", "false") === "true";
@@ -310,8 +313,8 @@ export class InfrastructureLifecycleService {
     }));
     if (tracksSharedBucket) throw new Error("Destroy refused because the shared Terraform state bucket appears in the project's Terraform state.");
   }
-  private async context(user: User, projectId: string, environmentName = "dev") { const project = await this.projects.findOne({ where: { id: projectId } }); if (!project) throw new NotFoundException("Project not found."); if (user.role !== UserRole.ADMIN && project.ownerUserId !== user.id) throw new ForbiddenException("You cannot manage this project."); if (user.role === UserRole.READONLY) throw new ForbiddenException("Read-only users cannot destroy infrastructure."); const environment = await this.environments.findOne({ where: { projectId, environmentName }, order: { updatedAt: "DESC" } }); if (!environment) throw new NotFoundException("Infrastructure environment not found."); return { project, environment }; }
-  private async assertProjectAccess(user: User, projectId: string) { const project = await this.projects.findOne({ where: { id: projectId } }); if (!project) throw new NotFoundException("Project not found."); if (user.role !== UserRole.ADMIN && project.ownerUserId !== user.id) throw new ForbiddenException("You cannot manage this project."); return project; }
+  private async context(user: User, projectId: string, environmentName = "dev") { const project = await this.projects.findOne({ where: { id: projectId } }); if (!project) throw new NotFoundException("Project not found."); assertLegacyExecutionScope(project); if (!canAccessProject(user, project, true)) throw new ForbiddenException("You cannot manage this project."); if (user.role === UserRole.READONLY) throw new ForbiddenException("Read-only users cannot destroy infrastructure."); const environment = await this.environments.findOne({ where: { projectId, environmentName }, order: { updatedAt: "DESC" } }); if (!environment) throw new NotFoundException("Infrastructure environment not found."); return { project, environment }; }
+  private async assertProjectAccess(user: User, projectId: string) { const project = await this.projects.findOne({ where: { id: projectId } }); if (!project) throw new NotFoundException("Project not found."); assertLegacyExecutionScope(project); if (!canAccessProject(user, project, true)) throw new ForbiddenException("You cannot manage this project."); return project; }
   private assertRecentAuthentication(user: User) { const maxAge = Number(this.config.get<string>("DESTROY_RECENT_AUTH_MINUTES", "15")) * 60_000; if (!user.lastLoginAt || Date.now() - new Date(user.lastLoginAt).getTime() > maxAge) throw new ForbiddenException("Recent authentication is required before destroying infrastructure. Sign in again."); }
   private assertAdmin(user: User) { if (user.role !== UserRole.ADMIN) throw new ForbiddenException("Admin permission is required for cloud residue cleanup."); }
   private hash(value: string) { return createHash("sha256").update(value).digest("hex"); }

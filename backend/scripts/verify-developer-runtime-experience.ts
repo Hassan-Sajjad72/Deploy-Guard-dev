@@ -48,13 +48,13 @@ function repositoryContracts() {
   const workflow = readFileSync(join(root, ".github/workflows/deployguard-reusable.yml"), "utf8");
   const deployment = readFileSync(join(root, "backend/src/projects/railpack-deployment.service.ts"), "utf8");
   const currentState = readFileSync(join(root, "backend/src/projects/current-state/project-current-state.service.ts"), "utf8");
-  assert.match(infrastructure, /Source[\s\S]*Build[\s\S]*ECR[\s\S]*ECS[\s\S]*ALB[\s\S]*Application/);
+  assert.match(infrastructure, /Public URL[\s\S]*Application Load Balancer[\s\S]*Amazon ECR[\s\S]*ECS Fargate/);
   for (const supporting of ["Terraform", "CloudWatch", "Infracost"]) assert.match(infrastructure, new RegExp(supporting));
   assert.match(infrastructure, /cost\?\.source === "infracost"/, "Infrastructure pricing remains gated by persisted Infracost evidence");
-  assert.match(infrastructure, /Technical infrastructure details/);
+  assert.match(infrastructure, /summary="AWS resource identifiers"/);
   assert.match(monitoring, /getProjectDetailedCurrentState/, "Monitoring must consume the same bounded AWS observation as Infrastructure");
   assert.doesNotMatch(monitoring, /getProjectCurrentState/);
-  for (const evidence of ["CPU", "Memory", "Latency", "Targets", "ECS task health", "ALB health", "Logs", "Grafana"]) assert.match(monitoring, new RegExp(evidence));
+  for (const evidence of ["CPU", "Memory", "Response time", "Healthy instances", "Unhealthy instances", "Logs", "Grafana"]) assert.match(monitoring, new RegExp(evidence));
   for (const state of ["disabled_by_configuration", "temporarily_unavailable", "no_samples_yet"]) assert.match(monitoring, new RegExp(state));
   assert.match(workflow, /terraform -chdir=\.deployguard\/terraform plan -input=false -out=deployguard\.tfplan/);
   assert.match(workflow, /deployguard-cost-plan\.json/);

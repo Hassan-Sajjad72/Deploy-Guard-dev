@@ -51,7 +51,7 @@ export class ManagedDatabaseReconciliationService {
     private readonly config: ConfigService,
   ) {}
 
-  async reconcile(project: Project): Promise<ManagedDatabaseReconciliationReport> {
+  async reconcile(project: Project, context?: import("./customer-execution-context").CustomerExecutionContext): Promise<ManagedDatabaseReconciliationReport> {
     const tier = await this.tiers.findOne({ where: { projectId: project.id } });
     const environment = canonicalEnvironmentName(project);
     if (!tier) return this.classify(null, environment, {
@@ -60,12 +60,13 @@ export class ManagedDatabaseReconciliationService {
       passwordSecretPresent: false, urlSecretPresent: false, terraformDatabaseAddresses: [], usableRecoveryPointArn: null,
     });
     const managed = tier?.provider === DatabaseTierProvider.MANAGED;
+    const aws = context ? { run: (args: string[]) => this.aws.runScoped(args, context) } : this.aws;
     try {
       const [fileSystems, secretPresent, terraformDatabaseAddresses] = await Promise.all([
-        this.fileSystems(), this.secretPresent(project.id, environment), this.terraformDatabaseAddresses(project.id, environment),
+        this.fileSystems(aws), this.secretPresent(project.id, environment, aws), this.terraformDatabaseAddresses(project.id, environment, aws, context),
       ]);
       const current = this.selectFileSystem(fileSystems, tier, project.id, environment);
-      const accessPoint = current?.FileSystemId ? await this.accessPoint(current.FileSystemId, project.id, environment) : null;
+      const accessPoint = current?.FileSystemId ? await this.accessPoint(current.FileSystemId, project.id, environment, aws) : null;
       const expectedStorageIdentity = Boolean(
         tier?.efsFileSystemId || tier?.efsAccessPointId || tier?.activeGenerationId || tier?.status === DatabaseTierStatus.READY,
       );
@@ -110,8 +111,8 @@ export class ManagedDatabaseReconciliationService {
     };
   }
 
-  private async fileSystems(): Promise<AwsFileSystem[]> {
-    const result = await this.aws.run(["efs", "describe-file-systems", "--output", "json"]);
+  private async fileSystems(aws: Pick<AwsCliService, "run"> = this.aws): Promise<AwsFileSystem[]> {
+    const result = await aws.run(["efs", "describe-file-systems", "--output", "json"]);
     return (JSON.parse(result.stdout || "{}") as { FileSystems?: AwsFileSystem[] }).FileSystems || [];
   }
 
@@ -121,15 +122,15 @@ export class ManagedDatabaseReconciliationService {
       || null;
   }
 
-  private async accessPoint(fileSystemId: string, projectId: string, environment: string): Promise<AwsAccessPoint | null> {
-    const result = await this.aws.run(["efs", "describe-access-points", "--file-system-id", fileSystemId, "--output", "json"]);
+  private async accessPoint(fileSystemId: string, projectId: string, environment: string, aws: Pick<AwsCliService, "run"> = this.aws): Promise<AwsAccessPoint | null> {
+    const result = await aws.run(["efs", "describe-access-points", "--file-system-id", fileSystemId, "--output", "json"]);
     const points = (JSON.parse(result.stdout || "{}") as { AccessPoints?: AwsAccessPoint[] }).AccessPoints || [];
     return points.find((item) => this.owned(item.Tags, projectId, environment)) || null;
   }
 
-  private async secretPresent(projectId: string, environment: string) {
+  private async secretPresent(projectId: string, environment: string, aws: Pick<AwsCliService, "run"> = this.aws) {
     try {
-      const result = await this.aws.run(["secretsmanager", "describe-secret", "--secret-id", `deployguard/${projectId}/${environment}/database`, "--output", "json"]);
+      const result = await aws.run(["secretsmanager", "describe-secret", "--secret-id", `deployguard/${projectId}/${environment}/database`, "--output", "json"]);
       const secret = JSON.parse(result.stdout || "{}") as { DeletedDate?: string; Tags?: Array<{ Key?: string; Value?: string }> };
       return !secret.DeletedDate && this.owned(secret.Tags, projectId, environment);
     } catch (error) {
@@ -138,14 +139,14 @@ export class ManagedDatabaseReconciliationService {
     }
   }
 
-  private async terraformDatabaseAddresses(projectId: string, environment: string) {
-    const bucket = this.config.get<string>("DEPLOYGUARD_TERRAFORM_STATE_BUCKET", "").trim();
+  private async terraformDatabaseAddresses(projectId: string, environment: string, aws: Pick<AwsCliService, "run"> = this.aws, context?: import("./customer-execution-context").CustomerExecutionContext) {
+    const bucket = context?.terraformStateBucket || this.config.get<string>("DEPLOYGUARD_TERRAFORM_STATE_BUCKET", "").trim();
     if (!bucket) throw new ServiceUnavailableException({ code: "DG_AWS_PROVIDER_FAILED", message: "Terraform state storage is unavailable for managed database admission.", stage: "managed_database_admission" });
     const directory = await mkdtemp(join(tmpdir(), "deployguard-db-admission-"));
     const output = join(directory, "terraform.tfstate");
     try {
       try {
-        await this.aws.run(["s3api", "get-object", "--bucket", bucket, "--key", `projects/${projectId}/${environment}/runtime/terraform.tfstate`, output]);
+        await aws.run(["s3api", "get-object", "--bucket", bucket, "--key", `projects/${projectId}/${environment}/runtime/terraform.tfstate`, ...(context ? ["--expected-bucket-owner", context.accountId] : []), output]);
       } catch (error) {
         if (/NoSuchKey|404|Not Found/i.test(error instanceof Error ? error.message : String(error))) return [];
         throw error;

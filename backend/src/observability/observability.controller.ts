@@ -39,12 +39,12 @@ export class ObservabilityController {
 
   @Get("application-logs/stream")
   streamApplicationLogs(@Req() req: Request, @Res() response: Response, @Param("projectId", ParseUUIDPipe) projectId: string, @Query("serviceId") serviceId?: string) {
-    return this.logs.stream(req.user!, projectId, response, serviceId);
+    return this.logs.stream(req.user!, projectId, response, serviceId, req.refreshAuthenticatedUser);
   }
 
   @Get("logs/stream")
   streamCompatibility(@Req() req: Request, @Res() response: Response, @Param("projectId", ParseUUIDPipe) projectId: string, @Query("serviceId") serviceId?: string) {
-    return this.logs.stream(req.user!, projectId, response, serviceId);
+    return this.logs.stream(req.user!, projectId, response, serviceId, req.refreshAuthenticatedUser);
   }
 
   @Get("health")

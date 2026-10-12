@@ -23,7 +23,7 @@ function failed(action: "deploy" | "rollback" | "destroy") {
   } as any;
 }
 
-function authority(projected: any, runtime: "present" | "absent" | "unknown") {
+function authority(projected: any, runtime: "present" | "absent" | "unknown", applicationProbe = true) {
   const service: any = Object.create(ProjectCurrentStateService.prototype);
   service.config = { get: (_key: string, fallback?: unknown) => fallback };
   const evidence = runtime === "present" ? {
@@ -32,6 +32,7 @@ function authority(projected: any, runtime: "present" | "absent" | "unknown") {
     ecs: { cluster: "cluster", service: "service", taskDefinitionRevision: 1, desiredCount: 1, runningCount: 1, pendingCount: 0 },
     alb: { name: "alb", status: "active", targetHealth: ["healthy"], endpoint: "https://application.example.test" },
     services: [],
+    ...(applicationProbe ? { applicationHealth: { status: "healthy", httpStatus: 200 } } : {}),
   } : null;
   return service.withStateAuthority(projectId, "dev", projected, evidence, {
     observedAt,
@@ -63,6 +64,8 @@ async function verifyCanonicalProjection() {
     assert.equal(state.stateAuthority.state, "LIVE", `failed ${action} preserves a positively verified prior runtime`);
     assert.equal(state.stateAuthority.applicationHealth.status, "healthy");
   }
+  // FR-095: healthy ALB targets prove transport readiness only; without an application probe health stays unavailable.
+  assert.equal(authority(failed("deploy"), "present", false).stateAuthority.applicationHealth.status, "unavailable");
   const intactDestroy = authority(failed("destroy"), "present");
   assert.equal(intactDestroy.stateAuthority.state, "LIVE", "failed Destroy may preserve LIVE only with positive current runtime evidence");
   assert.equal(intactDestroy.stateAuthority.runtime.state, "present");

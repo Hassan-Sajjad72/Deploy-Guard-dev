@@ -1,0 +1,12 @@
+import { apiRequest } from "./client.js";
+const base = (id) => `/api/projects/${encodeURIComponent(id)}/recovery`;
+export const recoveryRegistry = (id) => apiRequest(`${base(id)}/runbooks`);
+export const recoveryRequests = (id) => apiRequest(`${base(id)}/requests`);
+export const requestRecovery = (id, body) => apiRequest(`${base(id)}/requests`, { method: "POST", body });
+export const decideRecovery = (id, requestId, body) => apiRequest(`${base(id)}/requests/${encodeURIComponent(requestId)}/decisions`, { method: "POST", body });
+export const executeRecovery = (id, requestId, fingerprint) => apiRequest(`${base(id)}/requests/${encodeURIComponent(requestId)}/execute`, { method: "POST", body: { fingerprint } });
+export const verifyRecovery = (id, requestId) => apiRequest(`${base(id)}/requests/${encodeURIComponent(requestId)}`);
+export const repairProposals = (id) => apiRequest(`${base(id)}/repairs`);
+export const proposeRepair = (id, body) => apiRequest(`${base(id)}/repairs`, { method: "POST", body });
+export const checkRepair = (id, proposalId, fingerprint) => apiRequest(`${base(id)}/repairs/${encodeURIComponent(proposalId)}/check`, { method: "POST", body: { fingerprint } });
+export const publishRepair = (id, proposalId, fingerprint) => apiRequest(`${base(id)}/repairs/${encodeURIComponent(proposalId)}/publish`, { method: "POST", body: { fingerprint } });

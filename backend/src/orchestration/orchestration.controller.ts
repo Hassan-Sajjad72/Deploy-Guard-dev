@@ -9,13 +9,13 @@ export class OrchestrationController {
   constructor(private readonly orchestrationService: OrchestrationService) {}
 
   @Get("status")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async status(@Req() req: Request, @Param("projectId") projectId: string) {
     return this.orchestrationService.getStatus(req.user!, projectId);
   }
 
   @Get("events")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async events(@Req() req: Request, @Param("projectId") projectId: string) {
     return {
       events: await this.orchestrationService.getEvents(req.user!, projectId),
@@ -23,7 +23,7 @@ export class OrchestrationController {
   }
 
   @Get("releases")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async releases(@Req() req: Request, @Param("projectId") projectId: string) {
     return {
       releases: await this.orchestrationService.getReleases(req.user!, projectId),
@@ -31,7 +31,7 @@ export class OrchestrationController {
   }
 
   @Get("target-health")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async targetHealth(@Req() req: Request, @Param("projectId") projectId: string) {
     return {
       targetHealth: await this.orchestrationService.getTargetHealth(req.user!, projectId),
@@ -39,7 +39,7 @@ export class OrchestrationController {
   }
 
   @Get("scaling")
-  @UseGuards(requireRole([UserRole.ADMIN]))
+  @UseGuards(requireRole([UserRole.ADMIN], "platform_ops"))
   async scaling(@Req() req: Request, @Param("projectId") projectId: string) {
     return {
       scaling: await this.orchestrationService.getScaling(req.user!, projectId),

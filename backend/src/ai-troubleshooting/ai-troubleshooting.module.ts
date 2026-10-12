@@ -19,11 +19,13 @@ import { AiEvidenceService } from "./ai-evidence.service";
 import { AiProviderAdapter } from "./ai-provider.adapter";
 import { AiTroubleshootingController } from "./ai-troubleshooting.controller";
 import { AiTroubleshootingService } from "./ai-troubleshooting.service";
+import { AiUsageService } from "./ai-usage.service";
+import { OrganizationLimitsModule } from "../billing/organization-limits.module";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Project, ProjectPipelineRun, ProjectPipelineEvent, ProjectObservabilityEvent, ProjectEnvironmentVariable, ProjectDeploymentGeneration, ProjectStableRelease, AiAnalysisSession, AiAnalysisMessage, AiAnalysisResult]), AuditLogModule, ObservabilityModule],
+  imports: [OrganizationLimitsModule, TypeOrmModule.forFeature([Project, ProjectPipelineRun, ProjectPipelineEvent, ProjectObservabilityEvent, ProjectEnvironmentVariable, ProjectDeploymentGeneration, ProjectStableRelease, AiAnalysisSession, AiAnalysisMessage, AiAnalysisResult]), AuditLogModule, ObservabilityModule],
   controllers: [AiTroubleshootingController],
-  providers: [AiTroubleshootingService, AiEvidenceService, AiEvidencePreprocessorService, AiProviderAdapter, LogSanitizerService, ProjectEnvironmentCryptoService],
-  exports: [AiTroubleshootingService],
+  providers: [AiTroubleshootingService, AiEvidenceService, AiEvidencePreprocessorService, AiProviderAdapter, AiUsageService, LogSanitizerService, ProjectEnvironmentCryptoService],
+  exports: [AiTroubleshootingService, AiProviderAdapter],
 })
 export class AiTroubleshootingModule {}

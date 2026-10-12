@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { canonicalOverviewState, failureRecoveryCommand, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
+import { canonicalOverviewState, failureRecoveryCommand, overviewApplicationHealthCopy, overviewFailureOwnershipLabel, overviewLifecycleActions, overviewLifecycleCopy } from "../src/utils/overviewLifecyclePresentation.js";
 import { projectStatePresentation } from "../src/utils/projectStatePresentation.js";
 import { deploymentPhasePresentation } from "../src/utils/developerDeploymentPresentation.js";
 
@@ -150,7 +150,10 @@ assert.match(lifecycle, /rollbackError/);
 assert.match(lifecycle, /Nothing is rebuilt from source/);
 assert.doesNotMatch(lifecycle, /MetricCard|overview-summary-grid/, "Overview owns one lifecycle state rather than a duplicate deployment record.");
 assert.doesNotMatch(lifecycle, /label="Application health"/, "Overview does not present runtime health");
-assert.doesNotMatch(lifecycle, /applicationHealth|health\.observedAt|health\.source/, "Overview does not consume detailed runtime health data");
+assert.doesNotMatch(lifecycle, /getRuntimeMetrics|getProjectDetailedCurrentState/, "Overview uses the canonical health observation without a separate monitoring request");
+assert.match(overviewApplicationHealthCopy({ stateAuthority: { applicationHealth: { status: "failed" } } }), /health check failed/);
+assert.match(overviewApplicationHealthCopy({ stateAuthority: { applicationHealth: { status: "healthy" } } }), /passed/);
+assert.match(overviewApplicationHealthCopy({ stateAuthority: {} }), /unverified/);
 assert.doesNotMatch(lifecycle, /detail=\{`Commit \$\{shortCommit\(latest/, "Overview does not show a commit beneath Latest Operation");
 assert.doesNotMatch(lifecycle, /\$\{formatDate\(latest\.startedAt\)\} to \$\{formatDate\(latest\.completedAt\)\}/, "Overview does not show a verbose deployment timestamp range");
 assert.match(styles, /\.phase-rail \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(0, 1fr\)\)/, "all deployment phases share one rail row on wide screens");

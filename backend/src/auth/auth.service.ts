@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
+  createHash,
   createHmac,
   pbkdf2Sync,
   randomBytes,
@@ -15,6 +16,9 @@ import { User } from "../users/user.entity";
 import { UserRole } from "../users/user.entity";
 import { SignupDto } from "./dto/signup.dto";
 import { LoginDto } from "./dto/login.dto";
+import { InjectRepository } from "@nestjs/typeorm";
+import { LessThanOrEqual, Repository } from "typeorm";
+import { SessionRevocation } from "./session-revocation.entity";
 
 export const SESSION_COOKIE_NAME = "deploy_guard_session";
 export const ADMIN_SESSION_COOKIE_NAME = "deploy_guard_admin_session";
@@ -25,6 +29,7 @@ type SessionPayload = {
   audience: "developer" | "admin";
   iat: number;
   exp: number;
+  nonce: string;
 };
 
 /**
@@ -38,7 +43,8 @@ type SessionPayload = {
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    @InjectRepository(SessionRevocation) private readonly revocations: Repository<SessionRevocation>,
   ) {}
 
   async signup(dto: SignupDto): Promise<User> {
@@ -75,6 +81,7 @@ export class AuthService {
     }
 
     if (payload.audience !== audience) return null;
+    if (await this.revocations.existsBy({ tokenHash: createHash("sha256").update(token!).digest("hex") })) return null;
     const user = await this.usersService.findById(payload.sub);
     if (!user || user.disabledAt) return null;
     if (audience === "admin") return user.role === UserRole.ADMIN && !user.githubId ? user : null;
@@ -88,11 +95,22 @@ export class AuthService {
       audience,
       iat: now,
       exp: now + (audience === "admin" ? 8 * 60 * 60 : 7 * 24 * 60 * 60),
+      nonce: randomBytes(16).toString("hex"),
     };
     const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
     const signature = this.sign(encodedPayload);
 
     return `${encodedPayload}.${signature}`;
+  }
+
+  async revokeSessionToken(token?: string, audience: "developer" | "admin" = "developer") {
+    const payload = this.verifySessionToken(token);
+    if (!payload || payload.audience !== audience) return;
+    await this.revocations.upsert({
+      tokenHash: createHash("sha256").update(token!).digest("hex"),
+      expiresAt: new Date(payload.exp * 1000),
+    }, ["tokenHash"]);
+    await this.revocations.delete({ expiresAt: LessThanOrEqual(new Date()) });
   }
 
   getGithubAuthorizationUrl(state: string): string {
@@ -191,6 +209,7 @@ export class AuthService {
       avatarUrl: user.image,
       githubLogin: user.githubLogin,
       role: user.role,
+      internalAdminRole: user.role === UserRole.ADMIN ? user.internalAdminRole : null,
     };
   }
 
@@ -232,11 +251,12 @@ export class AuthService {
       return null;
     }
 
-    const [encodedPayload, signature] = token.split(".");
+    const [encodedPayload, signature, extra] = token.split(".");
 
     if (
       !encodedPayload ||
       !signature ||
+      extra !== undefined ||
       !this.isSameSignature(this.sign(encodedPayload), signature)
     ) {
       return null;
@@ -247,7 +267,7 @@ export class AuthService {
         Buffer.from(encodedPayload, "base64url").toString("utf8")
       ) as SessionPayload;
 
-      if (!payload.sub || !["developer", "admin"].includes(payload.audience) || payload.exp < Math.floor(Date.now() / 1000)) {
+      if (!Number.isSafeInteger(payload.sub) || payload.sub <= 0 || !["developer", "admin"].includes(payload.audience) || !Number.isSafeInteger(payload.exp) || !Number.isSafeInteger(payload.iat) || payload.iat > Math.floor(Date.now() / 1000) || payload.exp <= Math.floor(Date.now() / 1000)) {
         return null;
       }
 

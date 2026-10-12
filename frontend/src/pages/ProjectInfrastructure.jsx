@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { createTerraformExport, downloadTerraformExport } from "../api/platformApi.js";
+import { createTerraformExport, downloadOperationalEvidence, downloadTerraformExport } from "../api/platformApi.js";
 import { getProjectDetailedCurrentState } from "../api/projectApi.js";
 import AppIcon from "../components/common/AppIcon.jsx";
 import { Badge, Button, Callout, CopyValue, DataTable, Disclosure, EmptyState, PageHeader, Section } from "../components/common/DesignSystem.jsx";
@@ -41,6 +41,18 @@ function TerraformExportAction({ projectId }) {
     }
   }
   return <Button aria-busy={exporting || undefined} disabled={exporting} icon="code" onClick={exportTerraform}>{exporting ? "Preparing export…" : "Export Terraform"}</Button>;
+}
+
+function EvidenceExportActions({ projectId, canExportTerraform }) {
+  const { notify } = useToast();
+  const [exporting, setExporting] = useState("");
+  async function download(format) {
+    setExporting(format);
+    try { await downloadOperationalEvidence(projectId, format); notify("Operational evidence downloaded.", "success"); }
+    catch (caught) { notify(caught.message, "danger"); }
+    finally { setExporting(""); }
+  }
+  return <div className="actions">{canExportTerraform ? <TerraformExportAction projectId={projectId} /> : null}{["json", "pdf", "zip"].map((format) => <Button key={format} disabled={Boolean(exporting)} aria-busy={exporting === format || undefined} onClick={() => void download(format)}>Evidence {format.toUpperCase()}</Button>)}</div>;
 }
 
 function hostOf(url) {
@@ -179,7 +191,7 @@ export default function ProjectInfrastructure() {
   const destroyRemoved = state?.stateAuthority?.activeOperation?.type === "destroy" && state?.stateAuthority?.runtime?.state === "removed";
   const runtimePresent = state?.stateAuthority?.runtime?.state === "present";
   const releaseUpdating = Boolean(state?.stateAuthority?.activeOperation && state.stateAuthority.activeOperation.type !== "destroy");
-  const header = <PageHeader actions={state && !absent ? <TerraformExportAction projectId={projectId} /> : null} description="What runs your app on AWS, how it is connected, and what it costs." title="Infrastructure" />;
+  const header = <PageHeader actions={state ? <EvidenceExportActions projectId={projectId} canExportTerraform={!absent} /> : null} description="What runs your app on AWS, how it is connected, and what it costs." title="Infrastructure" />;
 
   if (!state) return <div className="page">{header}<ErrorState message={error} onRetry={load} title="Infrastructure could not be loaded" /></div>;
   if (cleanupRequired) return <div className="page infrastructure-page">{header}<Callout actions={<Button to={`/projects/${projectId}`}>Go to overview to retry</Button>} title="Destroy did not finish" tone="danger"><p>{state?.stateAuthority?.reason || "Some resources may still exist. The runtime is not live and old release evidence is not treated as current."}</p><dl className="facts infra-cleanup-facts"><div><dt>Containers</dt><dd>{label(evidence?.resources?.find((resource) => resource.type === "ECS Fargate")?.status)}</dd></div><div><dt>Load balancer</dt><dd>{label(evidence?.resources?.find((resource) => resource.type === "ALB")?.status)}</dd></div><div><dt>Infrastructure state</dt><dd>{label(evidence?.terraformState?.status)}</dd></div></dl></Callout></div>;

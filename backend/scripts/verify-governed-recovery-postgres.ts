@@ -1,0 +1,64 @@
+import "reflect-metadata";
+import { strict as assert } from "node:assert";
+import { PostgreSqlContainer } from "@testcontainers/postgresql";
+import { DataSource } from "typeorm";
+import { GovernedRecovery1791676809000 } from "../src/migrations/1791676809000-GovernedRecovery";
+import { GovernedRecoveryDecision, GovernedRecoveryRequest, SupervisedRepairProposal } from "../src/recovery/recovery.entity";
+import { RecoveryService } from "../src/recovery/recovery.service";
+import { UserRole } from "../src/users/user.entity";
+import { canAccessProject } from "../src/workspaces/project-access";
+import { recoveryFingerprint } from "../src/recovery/recovery-policy";
+import { ProjectStableRelease } from "../src/orchestration/project-stable-release.entity";
+import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
+const projectId = "11111111-1111-4111-8111-111111111111", organizationId = "22222222-2222-4222-8222-222222222222", incidentId = "33333333-3333-4333-8333-333333333333";
+async function run() {
+  const container = await new PostgreSqlContainer("deployguard-local/postgres:local").start();
+  const db = new DataSource({ type: "postgres", url: container.getConnectionUri(), entities: [GovernedRecoveryRequest, GovernedRecoveryDecision, SupervisedRepairProposal] });
+  try {
+    await db.initialize(); await db.query(`CREATE TABLE organizations(id uuid PRIMARY KEY)`); await db.query(`INSERT INTO organizations VALUES($1)`, [organizationId]);
+    await db.query(`CREATE TABLE project_deployable_services(id uuid,project_id uuid,name varchar,service_directory varchar,build_target_override jsonb,position integer); CREATE TABLE project_environment_variables(id uuid,project_id uuid,service_id uuid,key varchar,value varchar,scope varchar,is_secret boolean,environment varchar,is_active boolean); CREATE TABLE project_database_tiers(id uuid,project_id uuid,provider varchar,engine varchar,attached_service_id uuid,persistence_enabled boolean,backup_enabled boolean,external_host varchar,external_port integer,external_tls_required boolean)`);
+    await db.query(`INSERT INTO project_environment_variables VALUES(gen_random_uuid(),$1,gen_random_uuid(),'API_KEY','fixture-ciphertext','runtime',true,'dev',true)`, [projectId]);
+    await new GovernedRecovery1791676809000().up(db.createQueryRunner());
+    const users = new Map([[1, { id: 1, role: UserRole.DEVELOPER, organizationMemberships: [{ organizationId, role: "engineer" }] }], [2, { id: 2, role: UserRole.DEVELOPER, organizationMemberships: [{ organizationId, role: "approver" }] }]]);
+    const project = { id: projectId, organizationId, ownerUserId: 1, environmentName: "dev", executionMode: "legacy_control_plane", awsAccountBindingId: null };
+    let dispatches = 0, guards = 0, driftDuringAdmission = false;
+    const guardManager = { query: db.manager.query.bind(db.manager), getRepository: (entity: any) => entity === ProjectStableRelease ? { findOne: async () => ({ commitSha: "a".repeat(40), generationId: "generation" }) } : db.manager.getRepository(entity) };
+    const service = new RecoveryService(db, { findById: async (id: number) => users.get(id) } as any, {} as any, { rollback: async (_user: any, _id: string, _target: string, guard: any) => {
+      if (driftDuringAdmission) await db.query(`UPDATE project_environment_variables SET value='changed-ciphertext' WHERE project_id=$1`, [projectId]);
+      guards++; await guard(guardManager,project); dispatches++; return { deployment: { operation: { id: "44444444-4444-4444-8444-444444444444" } } };
+    } } as any, {} as any, { record: async () => undefined } as any);
+    (service as any).access = async (user: any, id: string, write = false) => { const fresh = users.get(user.id); assert.equal(id, projectId); if (!fresh || !canAccessProject(fresh as any, project as any, write)) throw new Error("fresh permission denied"); return { user: fresh, project }; };
+    let validScope = true; (service as any).revalidate = async () => { if (!validScope) throw new Error("scope changed"); };
+    const configurationFingerprint = await (service as any).configurationFingerprint(db.manager,project);
+    const content = { contractVersion: 1, runbookId: "verified_rollback", maxAttempts: 1, timeoutSeconds: 900, configurationFingerprint, target: { operationId: "target", sourceSha: "a".repeat(40), generationId: "generation" }, parameters: { targetOperationId: "target" }, cost: { monthlyBudgetUsd: 50 }, scope: { sourceSha: "a".repeat(40) } };
+    assert.ok(!JSON.stringify(content).includes("fixture-ciphertext"));
+    const requests = db.getRepository(GovernedRecoveryRequest); const request = await requests.save({ id: "55555555-5555-4555-8555-555555555555", projectId, organizationId, incidentId, createdByUserId: 1, content, fingerprint: recoveryFingerprint(content), status: "requested" });
+    await assert.rejects(() => service.decide(users.get(1) as any, projectId, request.id, { fingerprint: request.fingerprint, decision: "approved", reason: "engineer cannot approve" }));
+    await assert.rejects(() => service.decide(users.get(2) as any, projectId, request.id, { fingerprint: "b".repeat(64), decision: "approved", reason: "wrong hash" }));
+    validScope = false; await assert.rejects(() => service.decide(users.get(2) as any, projectId, request.id, { fingerprint: request.fingerprint, decision: "approved", reason: "stale source" })); validScope = true;
+    await service.decide(users.get(2) as any, projectId, request.id, { fingerprint: request.fingerprint, decision: "approved", reason: "exact reviewed scope" });
+    await assert.rejects(() => service.decide(users.get(2) as any, projectId, request.id, { fingerprint: request.fingerprint, decision: "rejected", reason: "cannot rewrite approval" }));
+    await assert.rejects(() => db.query(`UPDATE governed_recovery_decisions SET reason='rewritten' WHERE request_id=$1`, [request.id]));
+    await assert.rejects(() => db.query(`UPDATE governed_recovery_requests SET content='{}' WHERE id=$1`, [request.id]));
+    const approver = users.get(2)!; users.delete(2); await assert.rejects(() => service.execute(users.get(1) as any, projectId, request.id, request.fingerprint)); assert.equal(dispatches, 0); users.set(2, approver);
+    await service.execute(users.get(1) as any, projectId, request.id, request.fingerprint); assert.equal(dispatches, 1); assert.equal(guards,1);
+    await service.execute(users.get(1) as any, projectId, request.id, request.fingerprint); assert.equal(dispatches, 1);
+    await assert.rejects(() => requests.save({ id: "66666666-6666-4666-8666-666666666666", projectId, organizationId, incidentId, createdByUserId: 1, content, fingerprint: recoveryFingerprint(content), status: "running" }));
+    await db.query(`UPDATE governed_recovery_requests SET status='failed', completed_at=now() WHERE id=$1`, [request.id]);
+    const second = await requests.save({ id: "77777777-7777-4777-8777-777777777777", projectId, organizationId, incidentId, createdByUserId: 1, content, fingerprint: recoveryFingerprint(content), status: "requested" });
+    await service.decide(users.get(2) as any, projectId, second.id, { fingerprint: second.fingerprint, decision: "approved", reason: "reviewed retry" });
+    await assert.rejects(() => service.execute(users.get(1) as any, projectId, second.id, second.fingerprint)); assert.equal(dispatches, 1);
+    const drifted = await requests.save({ id: "88888888-8888-4888-8888-888888888888", projectId, organizationId, incidentId: "99999999-9999-4999-8999-999999999999", createdByUserId: 1, content, fingerprint: recoveryFingerprint(content), status: "requested" });
+    await service.decide(users.get(2) as any, projectId, drifted.id, { fingerprint: drifted.fingerprint, decision: "approved", reason: "reviewed before drift" }); driftDuringAdmission=true;
+    await assert.rejects(()=>service.execute(users.get(1) as any,projectId,drifted.id,drifted.fingerprint)); assert.equal(dispatches,1); assert.equal((await requests.findOneByOrFail({id:drifted.id})).status,"unverified");
+    const pipeline=Object.create(RailpackDeploymentService.prototype);const order:string[]=[];
+    const legacyProject={id:projectId,ownerUserId:1,organizationId:null,executionMode:"legacy_control_plane",repositoryFullName:"fixture/app",environmentName:"dev"};
+    pipeline.dataSource={transaction:async(work:any)=>work({query:async()=>{order.push("lock");},getRepository:()=>({findOne:async()=>{order.push("actualproject");return legacyProject;}})})};
+    await assert.rejects(()=>pipeline.admitLifecycleOperation({id:1,role:UserRole.DEVELOPER},legacyProject,"rollback",null,null,null,async()=>{order.push("approvalguard");throw new Error("approval drift");}));
+    assert.deepEqual(order,["lock","actualproject","approvalguard"]);
+    await assert.rejects(() => db.query(`DELETE FROM governed_recovery_requests WHERE id=$1`, [request.id]));
+    await assert.rejects(() => new GovernedRecovery1791676809000().down(db.createQueryRunner()));
+    console.log("Focused PostgreSQL recovery approval, retention, lock, replay and retry-ceiling checks passed.");
+  } finally { if (db.isInitialized) await db.destroy(); await container.stop(); }
+}
+run().catch((error) => { console.error(error); process.exitCode = 1; });

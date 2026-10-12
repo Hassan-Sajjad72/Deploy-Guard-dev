@@ -5,7 +5,7 @@ import { createSign } from "crypto";
 import { Repository } from "typeorm";
 import { GithubAppInstallation } from "./github-app-installation.entity";
 import { User, UserRole } from "../users/user.entity";
-import { RAILPACK_CALLER_INPUT_NAMES, RAILPACK_OPTIONAL_CALLER_INPUT_NAMES, RAILPACK_WORKFLOW_INPUTS } from "./railpack-workflow-contract";
+import { CUSTOMER_WORKFLOW_INPUTS, RAILPACK_CALLER_INPUT_NAMES, RAILPACK_OPTIONAL_CALLER_INPUT_NAMES, RAILPACK_WORKFLOW_INPUTS } from "./railpack-workflow-contract";
 import { assertReusableWorkflowCompatibility, CONTROL_PLANE_EXECUTABLE_PATHS, generatedCallerWithKeys, GithubActionsWorkflowContractError, parsePinnedReusableWorkflow } from "./github-actions-workflow-contract";
 
 export const DEPLOYGUARD_WORKFLOW_PATH = ".github/workflows/deployguard.yml";
@@ -29,14 +29,14 @@ export function canonicalDeployguardReusableWorkflow(config: ConfigService) {
   return reference;
 }
 
-export function renderDeployguardCallerWorkflow(reusable: string) {
-  const names = [...RAILPACK_CALLER_INPUT_NAMES];
-  const optional = new Set<string>(RAILPACK_OPTIONAL_CALLER_INPUT_NAMES);
+export function renderDeployguardCallerWorkflow(reusable: string, customerMode = false) {
+  const names = [...RAILPACK_CALLER_INPUT_NAMES, ...(customerMode ? CUSTOMER_WORKFLOW_INPUTS : [])];
+  const optional = new Set<string>([...RAILPACK_OPTIONAL_CALLER_INPUT_NAMES, ...CUSTOMER_WORKFLOW_INPUTS]);
   const inputDefinitions = names.map((name) => {
     const defaultValue = optional.has(name) ? ', default: ""' : "";
     return `      ${name}: { required: ${optional.has(name) ? "false" : "true"}, type: string${defaultValue} }`;
   }).join("\n");
-  const forwarded = RAILPACK_WORKFLOW_INPUTS.map(({ name }) => {
+  const forwarded = names.map((name) => {
     return `      ${name}: \${{ inputs.${name} }}`;
   }).join("\n");
   return `name: DeployGuard\nrun-name: DeployGuard \${{ inputs.deployment_operation_id }}\non:\n  workflow_dispatch:\n    inputs:\n${inputDefinitions}\npermissions:\n  contents: read\n  id-token: write\njobs:\n  deploy:\n    uses: ${reusable}\n    with:\n${forwarded}\n`;
@@ -148,12 +148,12 @@ export class GithubAppService {
     ];
   }
 
-  async ensureWorkflow(userId: number, repositoryFullName: string, installationId?: string | null) {
+  async ensureWorkflow(userId: number, repositoryFullName: string, installationId?: string | null, customerMode = false) {
     const credential = await this.tokenForRepository(userId, repositoryFullName, installationId);
     const branch = credential.defaultBranch;
     if (!branch) throw new BadRequestException("GitHub did not provide the repository default branch required for workflow registration.");
     const reusable = canonicalDeployguardReusableWorkflow(this.config);
-    const content = renderDeployguardCallerWorkflow(reusable);
+    const content = renderDeployguardCallerWorkflow(reusable, customerMode);
     await this.validatePinnedReusableWorkflow(credential.token, reusable, content);
     const url = `https://api.github.com/repos/${repositoryFullName}/contents/${DEPLOYGUARD_WORKFLOW_PATH}?ref=${encodeURIComponent(branch)}`;
     let response = await this.githubFetch(url, { headers: this.headers(credential.token) });
@@ -177,6 +177,18 @@ export class GithubAppService {
     });
     if (!response.ok) throw new BadRequestException("DeployGuard could not generate deployguard.yml. Grant Contents write permission to the GitHub App.");
     return { verified: true, generated: !existingSha, updated: Boolean(existingSha), path: DEPLOYGUARD_WORKFLOW_PATH, registrationBranch: branch, installationId: credential.installationId };
+  }
+
+  async customerOidcSubjects(userId: number, repositoryFullName: string, installationId: string | null, controlPlaneSha: string) {
+    const credential = await this.tokenForRepository(userId, repositoryFullName, installationId);
+    const response = await this.githubFetch(`https://api.github.com/repos/${repositoryFullName}/actions/oidc/customization/sub`, { headers: this.headers(credential.token) });
+    if (!response.ok) throw new BadRequestException("Customer OIDC subject configuration could not be verified.");
+    const customization = await response.json() as { use_default?: boolean; include_claim_keys?: string[] };
+    if (customization.use_default !== false || JSON.stringify(customization.include_claim_keys) !== JSON.stringify(["repo", "job_workflow_ref"])) throw new BadRequestException("Customer execution requires the reviewed GitHub OIDC subject template with repo and job_workflow_ref claims.");
+    const reusable = parsePinnedReusableWorkflow(canonicalDeployguardReusableWorkflow(this.config));
+    if (reusable.sha !== controlPlaneSha) throw new BadRequestException("Customer OIDC reusable workflow revision changed.");
+    const suffix = `:job_workflow_ref:${reusable.reference}`;
+    return (await this.oidcTrustSubjects(userId, repositoryFullName, installationId)).map((subject) => subject.slice(0, -2) + suffix);
   }
 
   async removeManagedWorkflow(userId: number, repositoryFullName: string, installationId?: string | null) {
@@ -230,7 +242,11 @@ export class GithubAppService {
       const fallbackContract = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.fallbackContract);
       const fallbackTemplate = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.fallbackTemplate);
       const fallbackManifest = await readAtPinnedSha(CONTROL_PLANE_EXECUTABLE_PATHS.fallbackManifest);
-      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier, runtimeInfrastructure, fallbackBuilder, fallbackContract, fallbackTemplate, fallbackManifest });
+      const customerContract = workflow.includes("# deployguard-customer-contract: deployguard.customer-workflow/v1");
+      const runtimeVariables = customerContract ? await readAtPinnedSha("infrastructure/railpack-runtime/variables.tf") : undefined;
+      const runtimeOutputs = customerContract ? await readAtPinnedSha("infrastructure/railpack-runtime/outputs.tf") : undefined;
+      const customerCredentialHelper = customerContract ? await readAtPinnedSha("infrastructure/railpack-runtime/prepare-customer-session.sh") : undefined;
+      assertReusableWorkflowCompatibility(workflow, pinned, generatedCallerWithKeys(caller), { releaseResultProducer, releaseOnlyTaskDefinitions, runtimeVerifier, runtimeInfrastructure, fallbackBuilder, fallbackContract, fallbackTemplate, fallbackManifest, runtimeVariables, runtimeOutputs, customerCredentialHelper });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
       const message = error instanceof GithubActionsWorkflowContractError

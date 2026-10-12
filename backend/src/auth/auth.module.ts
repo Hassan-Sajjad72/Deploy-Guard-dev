@@ -4,6 +4,8 @@ import { AuthService } from "./auth.service";
 import { AuditLogModule } from "../audit-log/audit-log.module";
 import { UsersModule } from "../users/users.module";
 import { AdminAuthController } from "./admin-auth.controller";
+import { TypeOrmModule } from "@nestjs/typeorm";
+import { SessionRevocation } from "./session-revocation.entity";
 
 /**
  * AuthModule
@@ -12,7 +14,7 @@ import { AdminAuthController } from "./admin-auth.controller";
  * Imports UsersModule so AuthService can use UsersService.
  */
 @Module({
-  imports: [UsersModule, AuditLogModule],
+  imports: [UsersModule, AuditLogModule, TypeOrmModule.forFeature([SessionRevocation])],
   controllers: [AuthController, AdminAuthController],
   providers: [AuthService],
   exports: [AuthService],

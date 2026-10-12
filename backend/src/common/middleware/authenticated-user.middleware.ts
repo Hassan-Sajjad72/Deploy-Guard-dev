@@ -12,11 +12,12 @@ export class AuthenticatedUserMiddleware implements NestMiddleware {
 
   async use(req: Request, _res: Response, next: NextFunction) {
     const requestPath = req.path || req.originalUrl || req.url || "";
-    const adminRoute = requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/admin-auth");
+    const adminRoute = requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/admin-auth") || requestPath.startsWith("/api/audit-logs");
     const sessionToken = this.getCookie(req, adminRoute ? ADMIN_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME);
 
     if (sessionToken) {
-      req.user = await this.authService.getUserFromSessionToken(sessionToken, adminRoute ? "admin" : "developer");
+      req.refreshAuthenticatedUser = () => this.authService.getUserFromSessionToken(sessionToken, adminRoute ? "admin" : "developer");
+      req.user = await req.refreshAuthenticatedUser();
 
       if (req.user) {
         return next();
@@ -38,8 +39,12 @@ export class AuthenticatedUserMiddleware implements NestMiddleware {
       return next();
     }
 
-    const user = await this.usersService.findById(parsedUserId);
-    req.user = user?.disabledAt ? null : user;
+    req.refreshAuthenticatedUser = async () => {
+      if (process.env.NODE_ENV === "production" || process.env.ALLOW_INSECURE_USER_HEADER !== "true") return null;
+      const user = await this.usersService.findById(parsedUserId);
+      return user?.disabledAt ? null : user;
+    };
+    req.user = await req.refreshAuthenticatedUser();
 
     return next();
   }

@@ -44,3 +44,18 @@ variable "services" {
     error_message = "Every attached managed database requires its sealed engine-compatible URL scheme; unattached services must not declare one."
   }
 }
+
+variable "application_workload" {
+  type     = object({ cpu = number, memory_mib = number, replicas = number })
+  default  = null
+  nullable = true
+  validation {
+    condition     = var.application_workload == null ? true : (var.application_workload.cpu > 0 && var.application_workload.memory_mib > 0 && var.application_workload.replicas >= 1 && floor(var.application_workload.replicas) == var.application_workload.replicas)
+    error_message = "The approved application workload requires positive CPU, memory and an integer replica count."
+  }
+}
+
+variable "execution_role_permissions_boundary_arn" {
+  type    = string
+  default = null
+}

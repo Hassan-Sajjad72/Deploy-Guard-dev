@@ -202,5 +202,5 @@ try {
     await new Promise((resolveExit) => chrome.once("exit", resolveExit));
   }
   if (server) await new Promise((resolveClose) => server.close(resolveClose));
-  await rm(temporaryRoot, { recursive: true, force: true });
+  await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

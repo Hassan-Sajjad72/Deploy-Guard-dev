@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { LiveRuntimeResolverService } from "../observability/live-runtime-resolver.service";
+import { CustomerRuntimeEvidenceService } from "../operational-intelligence/customer-runtime-evidence.service";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { AuditLogModule } from "../audit-log/audit-log.module";
 import { LogSanitizerService } from "../observability/log-sanitizer.service";
@@ -55,6 +57,10 @@ import { DeploymentRequirementResolverService } from "./deployment-requirement-r
 import { FailureDiagnosticService } from "./failure-diagnostics/failure-diagnostic.service";
 import { BillingModule } from "../billing/billing.module";
 import { FreeTrialReconciliationService } from "./free-trial-reconciliation.service";
+import { WorkspacesModule } from "../workspaces/workspaces.module";
+import { OrganizationLimitsModule } from "../billing/organization-limits.module";
+import { CustomerWorkflowBindingService } from "./customer-workflow-binding.service";
+import { CustomerPlanAdmissionService } from "./customer-plan-admission.service";
 
 @Module({
   imports: [
@@ -73,13 +79,18 @@ import { FreeTrialReconciliationService } from "./free-trial-reconciliation.serv
     AuditLogModule,
     UsersModule,
     AwsCliModule,
+    WorkspacesModule,
+    OrganizationLimitsModule,
     NotificationsModule,
     BillingModule,
   ],
   controllers: [ProjectsController],
   providers: [
+    LiveRuntimeResolverService, CustomerRuntimeEvidenceService,
     ProjectsService, GithubAppService, GithubActionsService, RailpackDeploymentService, GithubActionsRuntimeSecretService,
     GithubActionsOidcTrustService, GithubActionsAwsCapabilityService, ProjectEnvironmentCryptoService,
+    CustomerWorkflowBindingService,
+    CustomerPlanAdmissionService,
     DatabaseTierService,
     RepositorySourceService,
     BuildTargetResolverService,
@@ -98,6 +109,6 @@ import { FreeTrialReconciliationService } from "./free-trial-reconciliation.serv
     ManagedDatabaseReconciliationService,
     FreeTrialReconciliationService,
   ],
-  exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService, LiveRuntimeIdentityRecoveryService],
+  exports: [ProjectActivityService, ProjectsService, ProjectCurrentStateService, LiveRuntimeIdentityRecoveryService, LiveRuntimeResolverService, CustomerRuntimeEvidenceService, RepositorySourceService, GithubAppService, RailpackDeploymentService],
 })
 export class ProjectsModule {}

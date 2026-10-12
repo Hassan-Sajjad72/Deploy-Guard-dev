@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { execFile } from "child_process";
 import { lstat, mkdtemp, realpath, rm } from "fs/promises";
 import { tmpdir } from "os";
-import { join } from "path";
+import { isAbsolute, join, sep } from "path";
 import { promisify } from "util";
 import { resolveServicePorts } from "./service-port-resolver";
 import { BuildTargetResolverService } from "./build-target-resolver.service";
@@ -17,6 +17,21 @@ export class RepositorySourceError extends Error {
   }
 }
 
+export async function assertBoundedSourceCheckout(workspacePath: string, trackedPaths: string[]) {
+  if (trackedPaths.length > 5000) throw new RepositorySourceError("Repository exceeds the supported 5,000-file analysis limit.", "source file limit exceeded");
+  const root = await realpath(workspacePath);
+  let bytes = 0;
+  for (const path of trackedPaths) {
+    if (isAbsolute(path) || path.includes("\0") || path.split(/[\\/]/).includes("..")) throw new RepositorySourceError("Repository contains an unsafe tracked path.", "unsafe source path");
+    const candidate = join(root, path);
+    const resolved = await realpath(candidate).catch(() => null);
+    if (!resolved || (resolved !== root && !resolved.startsWith(`${root}${sep}`))) throw new RepositorySourceError("Repository contains a broken or escaping symlink.", "unsafe source symlink");
+    const entry = await lstat(candidate);
+    if (entry.isFile()) bytes += entry.size;
+    if (bytes > 200 * 1024 * 1024) throw new RepositorySourceError("Repository exceeds the supported 200 MiB analysis limit.", "source size limit exceeded");
+  }
+}
+
 /** Repository transport plus bounded canonical-directory validation and application-port resolution. */
 @Injectable()
 export class RepositorySourceService {
@@ -27,16 +42,23 @@ export class RepositorySourceService {
     this.validateRepositoryUrl(input.repositoryUrl);
     const workspacePath = await mkdtemp(join(tmpdir(), "deploy-guard-source-"));
     try {
-      await execFileAsync("git", ["clone", "--depth", "1", "--branch", input.branch, input.repositoryUrl, workspacePath], {
+      const approvedSha = await this.resolveSourceSha(input);
+      await this.assertRemoteSourceBounds(input.repositoryUrl, approvedSha, input.accessToken);
+      await execFileAsync("git", ["clone", "--filter=blob:none", "--no-checkout", "--depth", "1", "--branch", input.branch, input.repositoryUrl, workspacePath], {
         timeout: 120_000, maxBuffer: 1024 * 1024, env: this.gitEnvironment(input.accessToken),
       });
-      const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: workspacePath, timeout: 10_000 });
+      const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: workspacePath, timeout: 10_000, env: this.gitEnvironment() });
       const sourceSha = stdout.trim();
       if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new RepositorySourceError("Source checkout did not resolve an exact Git SHA.", "source SHA was unavailable");
+      if (sourceSha.toLowerCase() !== approvedSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed before source checkout. Retry against its new exact SHA.", "source SHA changed after size admission");
+      await execFileAsync("git", ["checkout", "--detach", sourceSha], { cwd: workspacePath, timeout: 120_000, maxBuffer: 1024 * 1024, env: this.gitEnvironment(input.accessToken) });
+      const tracked = await execFileAsync("git", ["ls-files", "-z"], { cwd: workspacePath, timeout: 10_000, maxBuffer: 1024 * 1024, env: this.gitEnvironment() });
+      // shortcut: Git metadata transport has time bounds only; add filesystem quotas for stricter disk isolation.
+      await assertBoundedSourceCheckout(workspacePath, tracked.stdout.split("\0").filter(Boolean));
       return { workspacePath, sourceSha };
     } catch (error) {
       await this.cleanup(workspacePath);
-      this.logger.warn(`Source checkout failed for branch=${input.branch}`);
+      this.logger.warn("Source checkout failed.");
       if (error instanceof RepositorySourceError) throw error;
       throw new RepositorySourceError("Unable to checkout the selected repository branch.", "repository checkout failed");
     }
@@ -44,10 +66,13 @@ export class RepositorySourceService {
 
   async resolveSourceSha(input: { repositoryUrl: string; branch: string; accessToken?: string | null }) {
     this.validateRepositoryUrl(input.repositoryUrl);
+    if (typeof input.branch !== "string" || !input.branch || input.branch.length > 255 || input.branch.startsWith("-")) throw new RepositorySourceError("Selected branch is invalid.", "source branch was invalid");
+    try { await execFileAsync("git", ["check-ref-format", `refs/heads/${input.branch}`], { timeout: 10_000, env: this.gitEnvironment() }); }
+    catch { throw new RepositorySourceError("Selected branch is invalid.", "source branch was invalid"); }
     const { stdout } = await execFileAsync("git", ["ls-remote", "--refs", input.repositoryUrl, `refs/heads/${input.branch}`], {
       timeout: 30_000, maxBuffer: 1024 * 1024, env: this.gitEnvironment(input.accessToken),
     });
-    const sourceSha = stdout.trim().split(/\s+/)[0] || "";
+    const sourceSha = stdout.trim().split("\n").find((line) => line.split(/\s+/)[1] === `refs/heads/${input.branch}`)?.split(/\s+/)[0] || "";
     if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new RepositorySourceError("Selected branch was not found.", "branch could not be resolved");
     return sourceSha;
   }
@@ -121,17 +146,47 @@ export class RepositorySourceService {
 
   async cleanup(workspacePath: string) { await rm(workspacePath, { recursive: true, force: true }); }
 
+  private async assertRemoteSourceBounds(repositoryUrl: string, sourceSha: string, accessToken?: string | null) {
+    const repository = new URL(repositoryUrl).pathname.replace(/^\//, "").replace(/\/$/, "").replace(/\.git$/, "");
+    const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", ...(accessToken?.trim() ? { Authorization: `Bearer ${accessToken.trim()}` } : {}) };
+    const read = async (url: string) => {
+      const response = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(30_000) });
+      if (!response.ok || !response.body) { await response.body?.cancel(); throw new RepositorySourceError("Exact repository size evidence is unavailable.", "source metadata unavailable"); }
+      const chunks: Uint8Array[] = []; let bytes = 0;
+      const reader = response.body.getReader();
+      try {
+        while (true) { const chunk = await reader.read(); if (chunk.done) break; bytes += chunk.value.byteLength; if (bytes > 8 * 1024 * 1024) throw new RepositorySourceError("Repository metadata exceeds the supported analysis limit.", "source metadata limit exceeded"); chunks.push(chunk.value); }
+        return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } finally { await reader.cancel(); }
+    };
+    const commit = await read(`https://api.github.com/repos/${repository}/commits/${sourceSha}`);
+    const treeSha = commit?.commit?.tree?.sha;
+    if (commit?.sha?.toLowerCase() !== sourceSha.toLowerCase() || typeof treeSha !== "string" || !/^[0-9a-f]{40}$/i.test(treeSha)) throw new RepositorySourceError("GitHub did not return the exact admitted source identity.", "source metadata identity mismatch");
+    const tree = await read(`https://api.github.com/repos/${repository}/git/trees/${treeSha}?recursive=1`);
+    if (tree?.truncated !== false || !Array.isArray(tree.tree) || tree.sha !== treeSha) throw new RepositorySourceError("Complete repository size evidence is required before source download.", "source metadata incomplete");
+    let files = 0, bytes = 0;
+    for (const entry of tree.tree) {
+      if (entry?.type === "tree") continue;
+      if (entry?.type !== "blob" || !Number.isSafeInteger(entry.size) || entry.size < 0) throw new RepositorySourceError("Repository contains unsupported or unbounded source entries.", "source entry evidence incomplete");
+      if (typeof entry.path !== "string" || isAbsolute(entry.path) || entry.path.includes("\0") || entry.path.split(/[\\/]/).includes("..")) throw new RepositorySourceError("Repository contains an unsafe tracked path.", "unsafe source path");
+      files++; bytes += entry.size;
+      if (files > 5000) throw new RepositorySourceError("Repository exceeds the supported 5,000-file analysis limit.", "source file limit exceeded");
+      if (bytes > 200 * 1024 * 1024) throw new RepositorySourceError("Repository exceeds the supported 200 MiB analysis limit.", "source size limit exceeded");
+    }
+  }
+
   private gitEnvironment(accessToken?: string | null) {
     const token = accessToken?.trim();
-    return token ? {
-      ...process.env,
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
-    } : process.env;
+    const environment: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+    Object.assign(environment, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_LFS_SKIP_SMUDGE: "1" });
+    const settings: Array<[string, string]> = [["core.hooksPath", "/dev/null"], ["core.attributesFile", "/dev/null"], ["credential.helper", ""], ["protocol.ext.allow", "never"], ["http.followRedirects", "false"]];
+    if (token) settings.push(["http.https://github.com/.extraheader", `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`]);
+    environment.GIT_CONFIG_COUNT = String(settings.length);
+    settings.forEach(([key, value], index) => { environment[`GIT_CONFIG_KEY_${index}`] = key; environment[`GIT_CONFIG_VALUE_${index}`] = value; });
+    return environment;
   }
 
   private validateRepositoryUrl(repositoryUrl: string) {
-    if (!/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/?$/.test(repositoryUrl)) throw new BadRequestException("repositoryUrl must be a GitHub repository URL");
+    if (typeof repositoryUrl !== "string" || !/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/?$/.test(repositoryUrl)) throw new BadRequestException("repositoryUrl must be a GitHub repository URL");
   }
 }

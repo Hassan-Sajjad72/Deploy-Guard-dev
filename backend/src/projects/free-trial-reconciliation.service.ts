@@ -12,12 +12,12 @@ export class FreeTrialReconciliationService implements OnApplicationBootstrap {
   async onApplicationBootstrap() {
     if (!getBillingConfig(this.config).enabled) return;
     const rows = await this.dataSource.query(`
-      SELECT DISTINCT project.owner_user_id AS "userId"
+      SELECT DISTINCT project.owner_user_id AS "userId", project.organization_id AS "organizationId"
       FROM projects project
       INNER JOIN project_environment_routes route ON route.project_id = project.id AND route.live_generation_id IS NOT NULL
       INNER JOIN project_deployment_generations generation ON generation.id = route.live_generation_id AND generation.status = 'live'
       WHERE project.archived_at IS NULL AND project.status <> 'archived'
-    `) as Array<{ userId: number | string }>;
-    for (const row of rows) await this.entitlements.reconcileFreeTrial(Number(row.userId));
+    `) as Array<{ userId: number | string; organizationId: string | null }>;
+    for (const row of rows) await this.entitlements.reconcileFreeTrial(Number(row.userId), row.organizationId);
   }
 }

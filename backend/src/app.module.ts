@@ -1,3 +1,15 @@
+import { AwsAccountBinding } from "./workspaces/aws-account-binding.entity";
+import { IntelligenceModule } from "./operational-intelligence/intelligence.module";
+import { IntelligenceRecord } from "./operational-intelligence/intelligence-record.entity";
+import { PlanningModule } from "./planning/planning.module";
+import { RecoveryModule } from "./recovery/recovery.module";
+import { GovernedRecoveryRequest, GovernedRecoveryDecision, SupervisedRepairProposal } from "./recovery/recovery.entity";
+import { OrganizationEntitlementVersion } from "./billing/organization-limits.entity";
+import { DeploymentPlan, DeploymentPlanDecision } from "./planning/deployment-plan.entity";
+import { WorkspacesModule } from "./workspaces/workspaces.module";
+import { Organization } from "./workspaces/organization.entity";
+import { OrganizationMembership } from "./workspaces/organization-membership.entity";
+import { SessionRevocation } from "./auth/session-revocation.entity";
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
@@ -76,6 +88,7 @@ import { BillingPayment } from "./billing/billing-payment.entity";
 /** The supported local product: PostgreSQL + authenticated GitHub App + GitHub Actions. */
 @Module({
   imports: [
+    IntelligenceModule,
     ConfigModule.forRoot({ isGlobal: true, envFilePath: resolveBackendEnvFile() }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -90,7 +103,8 @@ import { BillingPayment } from "./billing/billing-payment.entity";
         // Historical deployment/audit rows remain readable. Registering an
         // entity does not activate its retired mutation provider.
         entities: [
-          User, AuditLog, Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, ProjectBuildTargetRevision, GithubAppInstallation, ProjectEnvironmentVariable,
+          IntelligenceRecord,
+          User, Organization, OrganizationMembership, AwsAccountBinding, DeploymentPlan, DeploymentPlanDecision, OrganizationEntitlementVersion, GovernedRecoveryRequest, GovernedRecoveryDecision, SupervisedRepairProposal, SessionRevocation, AuditLog, Project, ProjectDeployableService, ProjectServiceRuntimeConfigRevision, ProjectGenerationServiceRevision, ProjectBuildTargetRevision, GithubAppInstallation, ProjectEnvironmentVariable,
           ProjectDatabaseTier,
           ProjectServiceBinding, ProjectConfigurationSnapshot,
           ProjectPipelineRun, ProjectDeploymentGeneration, ProjectEnvironmentRoute,
@@ -113,10 +127,10 @@ import { BillingPayment } from "./billing/billing-payment.entity";
         ],
         synchronize: false,
         logging: ["error", "warn"],
-        ssl: config.get<string>("DATABASE_SSL", "false") === "true" ? { rejectUnauthorized: false } : false,
+        ssl: config.get<string>("DATABASE_SSL", "false") === "true" ? { rejectUnauthorized: true } : false,
       }),
     }),
-    AuthModule, UsersModule, AdminModule, AuditLogModule, ProjectsModule,
+    PlanningModule, RecoveryModule, WorkspacesModule, AuthModule, UsersModule, AdminModule, AuditLogModule, ProjectsModule,
     TerraformExportModule, AiTroubleshootingModule, ObservabilityModule, BillingModule,
   ],
   controllers: [HealthController],

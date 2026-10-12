@@ -1,0 +1,14 @@
+import { strict as assert } from "node:assert";
+import { dashboardEvidence, dashboardScopeMatches, dashboardTotals } from "../src/utils/organizationDashboard.js";
+const release={commit:"a".repeat(40),generationId:"generation",promotedAt:new Date().toISOString()};
+const live={project:{id:"one",organizationId:"team",environmentName:"prod"},currentState:{stableRelease:release,stateAuthority:{state:"LIVE",runtime:{state:"present",source:"verified_release"},applicationHealth:{status:"unavailable"}}}};
+assert.equal(dashboardEvidence(live).releaseVerified,true);
+assert.equal(dashboardEvidence(live).health,"unavailable");
+assert.equal(dashboardEvidence({...live,currentState:{...live.currentState,stateAuthority:{...live.currentState.stateAuthority,runtime:{state:"unknown",source:"unavailable"}}}}).releaseVerified,false);
+const failed={project:{id:"two",organizationId:"agency",environmentName:"dev",clientId:"client",engagementId:"engagement"},currentState:{stateAuthority:{state:"FAILED",applicationHealth:{status:"failed"}}}};
+assert.equal(dashboardScopeMatches(failed,{organizationId:"agency",clientId:"client",engagementId:"engagement",environment:"dev"}),true);
+assert.equal(dashboardScopeMatches(failed,{organizationId:"team"}),false);
+assert.equal(dashboardScopeMatches(failed,{clientId:"other"}),false);
+assert.deepEqual(dashboardTotals([live,failed]),{projects:2,environments:2,verifiedReleases:1,healthy:0,failedHealth:1,pendingHealth:0,unverifiedHealth:1,alerts:1});
+assert.equal(dashboardEvidence({...live,attention:true}).alert,true);
+console.log("Focused organization dashboard scope, release identity and independent health checks passed.");

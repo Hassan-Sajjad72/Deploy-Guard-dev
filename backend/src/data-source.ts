@@ -1,3 +1,11 @@
+import { AwsAccountBinding } from "./workspaces/aws-account-binding.entity";
+import { IntelligenceRecord } from "./operational-intelligence/intelligence-record.entity";
+import { DeploymentPlan, DeploymentPlanDecision } from "./planning/deployment-plan.entity";
+import { GovernedRecoveryRequest, GovernedRecoveryDecision, SupervisedRepairProposal } from "./recovery/recovery.entity";
+import { OrganizationEntitlementVersion } from "./billing/organization-limits.entity";
+import { Organization } from "./workspaces/organization.entity";
+import { OrganizationMembership } from "./workspaces/organization-membership.entity";
+import { SessionRevocation } from "./auth/session-revocation.entity";
 import "reflect-metadata";
 import { existsSync, readFileSync } from "fs";
 import { DataSource } from "typeorm";
@@ -125,9 +133,20 @@ export default new DataSource({
   password: process.env.DATABASE_PASSWORD || "mini_paas_password",
   database: process.env.DATABASE_NAME || "mini_paas",
   ssl:
-    process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
+    process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: true } : false,
   entities: [
+    IntelligenceRecord,
     User,
+    SessionRevocation,
+    Organization,
+    OrganizationMembership,
+    AwsAccountBinding,
+    DeploymentPlan,
+    DeploymentPlanDecision,
+    GovernedRecoveryRequest,
+    GovernedRecoveryDecision,
+    SupervisedRepairProposal,
+    OrganizationEntitlementVersion,
     AuditLog,
     Project,
     ProjectDeployableService,

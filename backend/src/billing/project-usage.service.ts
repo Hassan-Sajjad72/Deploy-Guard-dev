@@ -14,47 +14,47 @@ export class ProjectUsageService {
     @InjectRepository(ProjectPipelineRun) private readonly runRepo: Repository<ProjectPipelineRun>
   ) {}
 
-  async counts(userId: number, manager?: EntityManager) {
+  async counts(userId: number, manager?: EntityManager, organizationId?: string | null) {
     const projects = manager?.getRepository(Project) || this.projectRepo;
     const runs = manager?.getRepository(ProjectPipelineRun) || this.runRepo;
     const [totalProjects, currentProjects, liveProjects, activeRuns] = await Promise.all([
-      projects.count({ where: { ownerUserId: userId } }),
+      projects.count({ where: organizationId ? { organizationId } : { ownerUserId: userId } }),
       projects.createQueryBuilder("project")
-        .where("project.ownerUserId = :userId", { userId })
+        .where(organizationId ? "project.organizationId = :organizationId" : "project.ownerUserId = :userId", organizationId ? { organizationId } : { userId })
         .andWhere("project.status <> :archived", { archived: ProjectStatus.ARCHIVED })
         .andWhere("project.archivedAt IS NULL")
         .getCount(),
       projects.createQueryBuilder("project")
         .innerJoin(ProjectEnvironmentRoute, "route", "route.projectId = project.id AND route.liveGenerationId IS NOT NULL")
         .innerJoin(ProjectDeploymentGeneration, "generation", "generation.id = route.liveGenerationId AND generation.status = :live", { live: DeploymentGenerationStatus.LIVE })
-        .where("project.ownerUserId = :userId", { userId })
+        .where(organizationId ? "project.organizationId = :organizationId" : "project.ownerUserId = :userId", organizationId ? { organizationId } : { userId })
         .andWhere("project.status <> :archived", { archived: ProjectStatus.ARCHIVED })
         .andWhere("project.archivedAt IS NULL")
         .getCount(),
       runs.createQueryBuilder("run")
         .innerJoin(Project, "project", "project.id = run.projectId")
-        .where("project.ownerUserId = :userId", { userId })
+        .where(organizationId ? "project.organizationId = :organizationId" : "project.ownerUserId = :userId", organizationId ? { organizationId } : { userId })
         .andWhere("run.status NOT IN (:...terminalStatuses)", { terminalStatuses: TERMINAL_PIPELINE_STATUSES })
         .getCount(),
     ]);
     return { totalProjects, currentProjects, activeProjects: currentProjects, liveProjects, activeRuns };
   }
 
-  async deploymentRunsSince(userId: number, since: Date, manager?: EntityManager) {
+  async deploymentRunsSince(userId: number, since: Date, manager?: EntityManager, organizationId?: string | null) {
     const projects = manager?.getRepository(Project) || this.projectRepo;
     const runs = manager?.getRepository(ProjectPipelineRun) || this.runRepo;
-    const ids = (await projects.find({ select: { id: true }, where: { ownerUserId: userId } })).map((project) => project.id);
+    const ids = (await projects.find({ select: { id: true }, where: organizationId ? { organizationId } : { ownerUserId: userId } })).map((project) => project.id);
     return ids.length ? runs.count({ where: { projectId: In(ids), createdAt: MoreThanOrEqual(since) } }) : 0;
   }
 
-  async earliestLiveProject(userId: number, manager?: EntityManager) {
+  async earliestLiveProject(userId: number, manager?: EntityManager, organizationId?: string | null) {
     const projects = manager?.getRepository(Project) || this.projectRepo;
     return projects.createQueryBuilder("project")
       .select("project.id", "projectId")
       .addSelect("COALESCE(generation.activatedAt, generation.createdAt)", "activatedAt")
       .innerJoin(ProjectEnvironmentRoute, "route", "route.projectId = project.id AND route.liveGenerationId IS NOT NULL")
       .innerJoin(ProjectDeploymentGeneration, "generation", "generation.id = route.liveGenerationId AND generation.status = :live", { live: DeploymentGenerationStatus.LIVE })
-      .where("project.ownerUserId = :userId", { userId })
+      .where(organizationId ? "project.organizationId = :organizationId" : "project.ownerUserId = :userId", organizationId ? { organizationId } : { userId })
       .andWhere("project.status <> :archived", { archived: ProjectStatus.ARCHIVED })
       .andWhere("project.archivedAt IS NULL")
       .orderBy("COALESCE(generation.activatedAt, generation.createdAt)", "ASC")

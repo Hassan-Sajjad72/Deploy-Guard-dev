@@ -3,6 +3,7 @@ import {
   RAILPACK_WORKFLOW_CONTRACT_VERSION,
   RAILPACK_RESULT_CONTRACT_VERSION,
   RAILPACK_WORKFLOW_INPUTS,
+  CUSTOMER_WORKFLOW_INPUTS,
 } from "./railpack-workflow-contract";
 
 export const AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION = "deployguard.aws-runtime-verification/v1";
@@ -28,6 +29,22 @@ const CONTROL_PLANE_EXECUTABLE_SHA256 = {
   fallbackManifest: "3446d4cbd87b97041ae0ea6fd623a993f3eeb20ae3b8d503e22c6f6c83e89340",
 } as const;
 
+// Executable integrity for the versioned customer path; availability still requires independent final provider evidence.
+export const CUSTOMER_CONTROL_PLANE_EXECUTABLE_SHA256: Record<string, string> = {
+  "workflow": "5bfaef238b437da5b5dcab7cbc80202b314c30efba6c755f7fb8ebf422eb8471",
+  "releaseResultProducer": "b0a19dd5cba4144dc460a99981ada034fef12d2ac1c1a5a2b1bdbe3f415af7ea",
+  "releaseOnlyTaskDefinitions": "518ecab10d7fee7e6c283955e476030faf8ad61dfcbb2a60f6d75cde52bb0f87",
+  "runtimeVerifier": "c0ce0463c8f33a6deb5527441640ad16b93ae439217f5de4fd0161185c2234f9",
+  "runtimeInfrastructure": "47b73196502e1b50202d743dfe2d4f230e00cefdc1aff42ac6597219d3d6603c",
+  "fallbackBuilder": "b4974d375b0db2215552d1dc69b887da83a622b9ecc89610fd81e7c4d5f8497e",
+  "fallbackContract": "d23b986804cfddc24a2b651535dde0dad2f2ef92d008045d2db13c462536aafd",
+  "fallbackTemplate": "04872857e43a18e2e083a71f739e1cd5f9b7c2463cd50516832c05558686b4d6",
+  "fallbackManifest": "3446d4cbd87b97041ae0ea6fd623a993f3eeb20ae3b8d503e22c6f6c83e89340",
+  "runtimeVariables": "9438705d1ebfcba073b5f76ad744be4896f89aae086dd24c9ce08a04ffd5c64b",
+  "runtimeOutputs": "338f99c9aff1ccb9475382847aa9d703716c007616a3cfffdff8ae2cc5eac9f3",
+  "customerCredentialHelper": "a6d804defaaf491bdc3a54b4ab5b288087831403c5a36e3bb7eb4b9cc8f4c5e2"
+};
+
 export type ReusableWorkflowExecutableContract = {
   releaseResultProducer: string;
   releaseOnlyTaskDefinitions: string;
@@ -37,6 +54,9 @@ export type ReusableWorkflowExecutableContract = {
   fallbackContract: string;
   fallbackTemplate: string;
   fallbackManifest: string;
+  runtimeVariables?: string;
+  runtimeOutputs?: string;
+  customerCredentialHelper?: string;
 };
 
 export type PinnedReusableWorkflow = {
@@ -75,6 +95,7 @@ export function generatedCallerWithKeys(workflow: string) {
 function sha256(value: string) { return createHash("sha256").update(value).digest("hex"); }
 
 export function assertReusableWorkflowCompatibility(workflow: string, pinned: PinnedReusableWorkflow, callerWithKeys: readonly string[] | undefined, executable: ReusableWorkflowExecutableContract) {
+  const customerContract = workflow.includes("# deployguard-customer-contract: deployguard.customer-workflow/v1");
   const resultContract = workflow.match(/^# deployguard-result-contract: ([a-z0-9./_-]+)$/m)?.[1] || null;
   if (resultContract !== RAILPACK_RESULT_CONTRACT_VERSION) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not produce ${RAILPACK_RESULT_CONTRACT_VERSION} evidence.`);
@@ -128,7 +149,7 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.runtimeVerifier.includes("failureMarker:")
     || !executable.runtimeVerifier.includes("wait_for_managed_database_readiness")
     || !executable.runtimeVerifier.includes("wait_for_cloud_map_registration")
-    || !executable.runtimeVerifier.includes('aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count 1')
+    || !(executable.runtimeVerifier.includes('aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count 1') || customerContract && executable.runtimeVerifier.includes('aws ecs update-service --cluster "$cluster" --service "$attached_service" --desired-count "$desired"'))
     || !executable.runtimeVerifier.includes("wait_for_alb_active")
     || !executable.runtimeVerifier.includes("wait_for_listener")
     || !executable.runtimeVerifier.includes("wait_for_public_dns")
@@ -143,7 +164,7 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     || !executable.runtimeInfrastructure.includes('port    = tostring(local.transport_probe_ports[each.key])')
     || !executable.runtimeInfrastructure.includes('database_url_scheme         = local.database_enabled ? local.database_service.managed_database_url_scheme : ""')
     || !executable.runtimeInfrastructure.includes('url      = "${local.database_url_scheme}://')
-    || !executable.runtimeInfrastructure.includes('desired_count   = each.value.database_attached ? 0 : 1')
+    || !(executable.runtimeInfrastructure.includes('desired_count   = each.value.database_attached ? 0 : 1') || customerContract && executable.runtimeInfrastructure.includes('desired_count   = each.value.database_attached ? 0 : (var.application_workload == null ? 1 : var.application_workload.replicas)'))
     || !executable.runtimeInfrastructure.includes('ignore_changes = [desired_count, task_definition]')
     || executable.runtimeInfrastructure.includes('terraform_data.database_readiness')) {
     throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} does not implement platform-owned transport and managed-database release readiness.`);
@@ -157,7 +178,9 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
       throw new GithubActionsWorkflowContractError(`input \`${expected.name}\` in pinned workflow ${pinned.sha} must be ${expected.required ? "required" : "optional"} ${expected.type} for ${RAILPACK_WORKFLOW_CONTRACT_VERSION}.`);
     }
   }
-  const expectedNames = new Set(RAILPACK_WORKFLOW_INPUTS.map((input) => input.name));
+  const expectedNames = new Set<string>([...RAILPACK_WORKFLOW_INPUTS.map((input) => input.name), ...(customerContract ? CUSTOMER_WORKFLOW_INPUTS : [])]);
+  if (customerContract) for (const name of CUSTOMER_WORKFLOW_INPUTS) { const actual = byName.get(name); if (!actual || actual.required || actual.type !== "string") throw new GithubActionsWorkflowContractError(`Customer workflow must declare optional string ${name}.`); }
+  if (!customerContract && callerWithKeys?.some((name) => CUSTOMER_WORKFLOW_INPUTS.includes(name as never))) throw new GithubActionsWorkflowContractError("Customer deployment requires the versioned customer workflow contract.");
   const extra = declared.find((input) => !expectedNames.has(input.name as never));
   if (extra) throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} declares unknown input \`${extra.name}\`.`);
   if (callerWithKeys) {
@@ -178,9 +201,11 @@ export function assertReusableWorkflowCompatibility(workflow: string, pinned: Pi
     fallbackTemplate: sha256(executable.fallbackTemplate),
     fallbackManifest: sha256(executable.fallbackManifest),
   };
-  for (const [name, expected] of Object.entries(CONTROL_PLANE_EXECUTABLE_SHA256)) {
-    if (executableHashes[name as keyof typeof executableHashes] !== expected) {
-      throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} executable ${name} is not the backend-certified control-plane release.`);
+  const expectedHashes = customerContract ? CUSTOMER_CONTROL_PLANE_EXECUTABLE_SHA256 : CONTROL_PLANE_EXECUTABLE_SHA256;
+  const hashes: Record<string, string> = { ...executableHashes, ...(customerContract ? { runtimeVariables: sha256(executable.runtimeVariables || ""), runtimeOutputs: sha256(executable.runtimeOutputs || ""), customerCredentialHelper: sha256(executable.customerCredentialHelper || "") } : {}) };
+  for (const [name, expected] of Object.entries(expectedHashes)) {
+    if (hashes[name] !== expected) {
+      throw new GithubActionsWorkflowContractError(`pinned workflow ${pinned.sha} executable ${name} does not match the pinned backend executable contract.`);
     }
   }
   return { contractVersion: RAILPACK_WORKFLOW_CONTRACT_VERSION, runtimeVerificationContractVersion: AWS_RUNTIME_VERIFICATION_CONTRACT_VERSION, sha: pinned.sha, inputs: declared, executableHashes };

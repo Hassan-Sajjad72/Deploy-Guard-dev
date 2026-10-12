@@ -203,7 +203,7 @@ async function verifyServiceBoundaries(collected: any, run: any) {
 }
 
 async function verifyProviderFallbackAndStateAuthority(evidence: ProcessedEvidence[]) {
-  const adapter = new AiProviderAdapter(new ConfigService({ AI_ASSISTANT_ENABLED: "true", GOOGLE_AI_API_KEY: "configured-for-test" }), preprocessor) as any;
+  const adapter = new AiProviderAdapter(new ConfigService({ AI_ASSISTANT_ENABLED: "true", GOOGLE_AI_API_KEY: "configured-for-test" }), preprocessor, { reserve: async () => "fixture", settle: async () => undefined } as any) as any;
   assert.equal(adapter.temperature(), 0.3); assert.equal(adapter.maxOutputTokens(), 1000);
   let attempts = 0; adapter.request = async () => { attempts += 1; return { content: JSON.stringify({ summary: "malformed" }), usage: null }; };
   await assert.rejects(() => adapter.analyze("bounded prompt", { evidence, facts: { failureOwner: "UNVERIFIED", problemType: "LIVE_RUNTIME_ISSUE" } }), /invalid response after retry/);
@@ -236,7 +236,7 @@ function verifyQuestionSpecificAnswers(evidence: ProcessedEvidence[]) {
 }
 
 async function verifyGeminiStructuredSchema() {
-  const adapter = new AiProviderAdapter(new ConfigService({ AI_ASSISTANT_ENABLED: "true", GOOGLE_AI_API_KEY: "configured-for-test" }), preprocessor) as any;
+  const adapter = new AiProviderAdapter(new ConfigService({ AI_ASSISTANT_ENABLED: "true", GOOGLE_AI_API_KEY: "configured-for-test" }), preprocessor, { reserve: async () => "fixture", settle: async () => undefined } as any) as any;
   const originalFetch = globalThis.fetch; let requestBody: any = null;
   globalThis.fetch = (async (_url: any, init: any) => { requestBody = JSON.parse(init.body); return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: "{}" }] } }] }) } as any; }) as any;
   try { await adapter.requestGoogle("bounded prompt"); } finally { globalThis.fetch = originalFetch; }

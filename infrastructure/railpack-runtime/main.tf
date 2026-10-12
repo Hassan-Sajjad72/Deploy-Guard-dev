@@ -241,9 +241,10 @@ data "aws_iam_policy_document" "ecs_task_assume_role" {
   }
 }
 resource "aws_iam_role" "execution" {
-  name               = "${local.project_name}-execution"
-  assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
-  tags               = local.tags
+  permissions_boundary = var.execution_role_permissions_boundary_arn
+  name                 = "${local.project_name}-execution"
+  assume_role_policy   = data.aws_iam_policy_document.ecs_task_assume_role.json
+  tags                 = local.tags
 }
 resource "aws_iam_role_policy_attachment" "execution" {
   role       = aws_iam_role.execution.name
@@ -305,8 +306,8 @@ resource "aws_ecs_task_definition" "application" {
   family                   = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = "512"
-  memory                   = "1024"
+  cpu                      = var.application_workload == null ? "512" : tostring(var.application_workload.cpu)
+  memory                   = var.application_workload == null ? "1024" : tostring(var.application_workload.memory_mib)
   execution_role_arn       = aws_iam_role.execution.arn
   container_definitions = jsonencode([
     {
@@ -430,7 +431,7 @@ resource "aws_ecs_service" "application" {
   name            = "${local.project_name}-${substr(replace(each.key, "-", ""), 0, 8)}"
   cluster         = aws_ecs_cluster.project.id
   task_definition = aws_ecs_task_definition.application[each.key].arn
-  desired_count   = each.value.database_attached ? 0 : 1
+  desired_count   = each.value.database_attached ? 0 : (var.application_workload == null ? 1 : var.application_workload.replicas)
   launch_type     = "FARGATE"
   network_configuration {
     subnets          = var.public_subnet_ids

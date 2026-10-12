@@ -23,7 +23,8 @@ export const RAILPACK_WORKFLOW_INPUTS = [
   { name: "trivy_enforce", required: true, type: "string" },
 ] as const;
 export type RailpackWorkflowInputName = typeof RAILPACK_WORKFLOW_INPUTS[number]["name"];
-export type RailpackWorkflowInputs = Record<RailpackWorkflowInputName, string>;
+export const CUSTOMER_WORKFLOW_INPUTS = ["customer_binding_secret_arn", "customer_account_id", "approved_plan_id", "approved_plan_fingerprint", "workload_base64"] as const;
+export type RailpackWorkflowInputs = Record<RailpackWorkflowInputName, string> & Partial<Record<typeof CUSTOMER_WORKFLOW_INPUTS[number], string>>;
 export const RAILPACK_CALLER_INPUT_NAMES = RAILPACK_WORKFLOW_INPUTS.map(({ name }) => name);
 export const RAILPACK_OPTIONAL_CALLER_INPUT_NAMES = [] as const;
 

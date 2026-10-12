@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 const apiBase = process.env.PLAYWRIGHT_API_URL;
 const projectId = process.env.PLAYWRIGHT_PROJECT_ID;
 const readonlyUserId = process.env.PLAYWRIGHT_READONLY_USER_ID;
+const outsiderUserId = process.env.PLAYWRIGHT_OUTSIDER_USER_ID;
 const resultPath = process.env.PLAYWRIGHT_RESULT_PATH;
 
 function saveResult(value) {
@@ -44,7 +45,7 @@ test("new deployment directory picker expands a complete tree and selects canoni
   await page.route("**/api/projects/github/repositories/example/tree/directories?ref=main", (route) => route.fulfill({ json: { directories } }));
 
   await page.goto("/deploy");
-  await page.locator(".new-project-fields select").first().selectOption("example/tree");
+  await page.getByRole("combobox", { name: "Repository", exact: true }).selectOption("example/tree");
   const directory = page.getByRole("combobox", { name: "Directory", exact: true });
   await directory.click();
   const picker = page.getByRole("tree", { name: "Repository directories" });
@@ -74,7 +75,7 @@ test("new deployment directory picker searches the tree and keeps every direct c
   await page.route("**/api/projects/github/repositories/example/many/directories?ref=main", (route) => route.fulfill({ json: { directories } }));
 
   await page.goto("/deploy");
-  await page.locator(".new-project-fields select").first().selectOption("example/many");
+  await page.getByRole("combobox", { name: "Repository", exact: true }).selectOption("example/many");
   const directory = page.getByRole("combobox", { name: "Directory", exact: true });
   await directory.click();
   const picker = page.getByRole("tree", { name: "Repository directories" });
@@ -100,21 +101,21 @@ test("new deployment directory picker keeps multi-service selections isolated an
   });
 
   await page.goto("/deploy");
-  await page.locator(".new-project-fields select").first().selectOption("example/multi");
+  await page.getByRole("combobox", { name: "Repository", exact: true }).selectOption("example/multi");
   const directoriesByService = page.getByRole("combobox", { name: "Directory", exact: true });
   await directoriesByService.first().click();
   let picker = page.getByRole("tree", { name: "Repository directories" });
   await expandDirectory(picker, "apps");
   await expandDirectory(picker, "apps/customer");
   await selectDirectory(picker, "apps/customer/web");
-  await page.getByRole("button", { name: "+ Add Service" }).click();
+  await page.getByRole("button", { name: "Add service" }).click();
   await directoriesByService.nth(1).click();
   picker = page.getByRole("tree", { name: "Repository directories" });
   await expandDirectory(picker, "services");
   await selectDirectory(picker, "services/api");
   await expect(directoriesByService.nth(0)).toHaveValue("apps/customer/web");
   await expect(directoriesByService.nth(1)).toHaveValue("services/api");
-  const applicationService = page.getByRole("combobox", { name: "Application service", exact: true });
+  const applicationService = page.getByRole("combobox", { name: "Public service" });
   const secondServiceIdentity = await applicationService.locator("option").nth(2).getAttribute("value");
   await applicationService.selectOption(secondServiceIdentity);
   await page.getByRole("button", { name: "Continue" }).click();
@@ -157,8 +158,8 @@ test("new deployment directory picker ignores stale repository and branch direct
   });
 
   await page.goto("/deploy");
-  const repositorySelector = page.locator(".new-project-fields select").first();
-  const branchSelector = page.locator(".new-project-fields select").nth(1);
+  const repositorySelector = page.getByRole("combobox", { name: "Repository", exact: true });
+  const branchSelector = page.getByRole("combobox", { name: "Branch", exact: true });
   const directory = page.getByRole("combobox", { name: "Directory", exact: true });
   await repositorySelector.selectOption("example/a");
   await firstRepositoryRequested;
@@ -201,8 +202,8 @@ test("new deployment directory picker keeps exact path entry available when dire
   });
 
   await page.goto("/deploy");
-  await page.locator(".new-project-fields select").first().selectOption("example/large");
-  await expect(page.getByText("Suggestions are unavailable. Enter the exact repository-relative path.")).toBeVisible();
+  await page.getByRole("combobox", { name: "Repository", exact: true }).selectOption("example/large");
+  await expect(page.getByText("Folder suggestions are unavailable. Type the path relative to the repository root.")).toBeVisible();
   await expect(page.getByLabel("Exact directory path", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Enter path manually" })).toHaveCount(0);
   const directory = page.getByRole("combobox", { name: "Directory", exact: true });
@@ -210,7 +211,7 @@ test("new deployment directory picker keeps exact path entry available when dire
   await directory.fill("products/customer/application");
   await expect(directory).toHaveValue("products/customer/application");
   await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByRole("region", { name: "Deployment review" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Review & deploy" })).toBeVisible();
   expect(createPayload.services[0].serviceDirectory).toBe("products/customer/application");
 });
 
@@ -222,11 +223,11 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   const missing = await request.get(`${apiBase}/api/projects/99999999-9999-4999-8999-999999999999`);
   expect(missing.status()).toBe(404);
 
-  await page.goto(`/projects/${projectId}/settings`);
-  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await page.goto(`/projects/${projectId}/configuration?section=general`);
+  await expect(page.getByRole("heading", { name: "Configuration", level: 1 })).toBeVisible();
   await expect(page.getByText("fixture/local · main")).toBeVisible();
 
-  await page.getByLabel("Name").first().fill("Certified application");
+  await page.getByLabel("Project name").fill("Certified application");
   await page.getByLabel("Description").fill("Full-stack persisted configuration");
   const detailsResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}`));
   await page.getByRole("button", { name: "Save changes" }).click();
@@ -236,12 +237,12 @@ test("real browser configuration, persistence-facing responses, navigation, relo
 
   await page.getByRole("tab", { name: "Services" }).click();
   const addResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith(`/api/projects/${projectId}/services`));
-  await page.getByRole("button", { name: "+ Add service" }).click();
+  await page.getByRole("button", { name: "Add service" }).click();
   const added = await expectJson(await addResponse, 201);
   expect(added.service.id).toMatch(/^[0-9a-f-]{36}$/i);
-  await expect(page.getByText("Service added.")).toBeVisible();
+  await expect(page.getByText("Service added. Set its name and directory below.")).toBeVisible();
 
-  const cards = page.locator(".settings-service-card");
+  const cards = page.locator(".settings-service");
   await expect(cards).toHaveCount(2);
   const second = cards.nth(1);
   await second.locator("summary").click();
@@ -253,10 +254,10 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   expect(savedService.service.serviceDirectory).toBe("apps/api");
   const apiServiceId = savedService.service.id;
 
-  const applicationService = page.getByRole("combobox", { name: "Open Application service", exact: true });
+  const applicationService = page.getByRole("combobox", { name: "Public service" });
   await applicationService.selectOption(apiServiceId);
   const applicationServiceResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}`));
-  await page.getByRole("button", { name: "Save entrypoint" }).click();
+  await page.getByRole("button", { name: "Save public service" }).click();
   const applicationProject = await expectJson(await applicationServiceResponse);
   expect(applicationProject.project.applicationEntryPointServiceId).toBe(apiServiceId);
   const selectedDelete = await request.delete(`${apiBase}/api/projects/${projectId}/services/${apiServiceId}`);
@@ -265,36 +266,38 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   await page.getByRole("tab", { name: "Variables" }).click();
   const variableService = page.getByRole("combobox", { name: "Service", exact: true });
   await variableService.selectOption({ index: 0 });
+  await page.locator("summary", { hasText: "Import a .env file" }).click();
   await page.getByLabel("Paste KEY=VALUE lines").fill("PUBLIC_URL=https://example.test");
   const publicEnvResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url().includes(`/api/projects/${projectId}/services/`) && response.url().endsWith("/env/bulk"));
-  await page.getByRole("button", { name: "Save pasted variables" }).click();
+  await page.getByRole("button", { name: "Save 1 variable" }).click();
   const publicEnv = await expectJson(await publicEnvResponse, 201);
   expect(publicEnv.variables).toHaveLength(1);
   expect(JSON.stringify(publicEnv)).not.toContain("https://example.test");
 
   await variableService.selectOption(apiServiceId);
+  if (!(await page.getByLabel("Paste KEY=VALUE lines").isVisible())) await page.locator("summary", { hasText: "Import a .env file" }).click();
   await page.getByLabel("Paste KEY=VALUE lines").fill("JWT_SECRET=browser-secret-value");
   const secretEnvResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url().includes(apiServiceId) && response.url().endsWith("/env/bulk"));
-  await page.getByRole("button", { name: "Save pasted variables" }).click();
+  await page.getByRole("button", { name: "Save 1 variable" }).click();
   const secretEnv = await expectJson(await secretEnvResponse, 201);
   expect(secretEnv.variables[0].isSecret).toBe(true);
   expect(JSON.stringify(secretEnv)).not.toContain("browser-secret-value");
 
   await page.getByRole("tab", { name: "Database" }).click();
-  const databaseForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Managed database" }) });
-  await databaseForm.getByLabel("Database type").selectOption("mysql");
-  await databaseForm.getByLabel("Attached service").selectOption(apiServiceId);
+  const databaseForm = page.locator("#project-configuration-panel-database");
+  await databaseForm.getByRole("combobox", { name: "Database", exact: true }).selectOption("mysql");
+  await databaseForm.getByRole("combobox", { name: "Connected to" }).selectOption(apiServiceId);
   const databaseResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}/database-tier`));
   await databaseForm.getByRole("button", { name: "Save database" }).click();
   const database = await expectJson(await databaseResponse);
   expect(database.database).toMatchObject({ provider: "managed", engine: "mysql", attachedServiceId: apiServiceId });
 
-  await databaseForm.getByLabel("Database type").selectOption("none");
+  await databaseForm.getByRole("combobox", { name: "Database", exact: true }).selectOption("none");
   const disabledResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}/database-tier`));
   await databaseForm.getByRole("button", { name: "Save database" }).click();
   expect((await expectJson(await disabledResponse)).database.provider).toBe("none");
-  await databaseForm.getByLabel("Database type").selectOption("mongodb");
-  await databaseForm.getByLabel("Attached service").selectOption(apiServiceId);
+  await databaseForm.getByRole("combobox", { name: "Database", exact: true }).selectOption("mongodb");
+  await databaseForm.getByRole("combobox", { name: "Connected to" }).selectOption(apiServiceId);
   const mongodbResponse = page.waitForResponse((response) => response.request().method() === "PATCH" && response.url().endsWith(`/api/projects/${projectId}/database-tier`));
   await databaseForm.getByRole("button", { name: "Save database" }).click();
   expect((await expectJson(await mongodbResponse)).database.engine).toBe("mongodb");
@@ -305,14 +308,14 @@ test("real browser configuration, persistence-facing responses, navigation, relo
   expect((await expectJson(rollbackCandidates)).candidates).toEqual([]);
 
   const surfaces = [
-    ["", "Certified application"], ["/pipeline", "Deployment pipeline"],
-    ["/infrastructure", "Runtime infrastructure"], ["/monitoring", "Monitoring"], ["/settings", "Settings"],
+    ["", "Certified application"], ["/pipeline", "Deployments"],
+    ["/infrastructure", "Infrastructure"], ["/monitoring", "Monitoring"], ["/configuration", "Configuration"], ["/settings", "Settings"],
   ];
   for (const [suffix, heading] of surfaces) {
     await page.goto(`/projects/${projectId}${suffix}`);
-    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    await expect(page.getByRole("heading", { name: heading, level: 1, exact: true })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    await expect(page.getByRole("heading", { name: heading, level: 1, exact: true })).toBeVisible();
   }
   const current = await expectJson(await request.get(`${apiBase}/api/projects/${projectId}/current-state`));
   const detailed = await expectJson(await request.get(`${apiBase}/api/projects/${projectId}/current-state/details`));
@@ -323,14 +326,23 @@ test("real browser configuration, persistence-facing responses, navigation, relo
 
   const readonly = await browser.newContext({ baseURL: process.env.PLAYWRIGHT_FRONTEND_URL, extraHTTPHeaders: { "X-User-Id": readonlyUserId } });
   const readonlyPage = await readonly.newPage();
-  await readonlyPage.goto(`/projects/${projectId}/settings`);
-  await expect(readonlyPage.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await readonlyPage.goto(`/projects/${projectId}/configuration?section=general`);
+  await expect(readonlyPage.getByRole("heading", { name: "Configuration", level: 1 })).toBeVisible();
   await expect(readonlyPage.getByRole("button", { name: "Save changes" })).toHaveCount(0);
   await readonlyPage.goto("/deploy");
   await expect(readonlyPage).toHaveURL(/\/403$/);
   const forbidden = await readonly.request.patch(`${apiBase}/api/projects/${projectId}`, { data: { name: "forbidden" }, headers: { "X-User-Id": readonlyUserId } });
   expect(forbidden.status()).toBe(403);
   await readonly.close();
+
+  // AT-014: a user outside the project's organization can neither read nor change it.
+  const outsider = await browser.newContext({ baseURL: process.env.PLAYWRIGHT_FRONTEND_URL, extraHTTPHeaders: { "X-User-Id": outsiderUserId } });
+  expect((await outsider.request.get(`${apiBase}/api/projects/${projectId}`, { headers: { "X-User-Id": outsiderUserId } })).status()).toBe(403);
+  expect((await outsider.request.get(`${apiBase}/api/projects/${projectId}/services/${apiServiceId}/env`, { headers: { "X-User-Id": outsiderUserId } })).status()).toBe(403);
+  const outsiderPage = await outsider.newPage();
+  await outsiderPage.goto(`/projects/${projectId}/configuration`);
+  await expect(outsiderPage.getByText("You do not have permission to view this project.")).toBeVisible();
+  await outsider.close();
 
   saveResult({ projectId, apiServiceId, currentState: current.stateAuthority.state, browserMutations: 9, crossPageSurfaces: surfaces.length });
 });
@@ -347,16 +359,16 @@ test("real GitHub-backed repository and branch selection with project creation w
   const repositoriesResponse = await request.get(`${apiBase}/api/projects/github/repositories`);
   if (!status.connected || repositoriesResponse.status() !== 200) {
     await page.goto("/deploy");
-    await expect(page.getByRole("heading", { name: "Connect GitHub App" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Connect GitHub" })).toBeVisible();
     saveResult({ githubSelection: "EXPECTED_BLOCKER", githubMessage: "GitHub App installation is not connected for the isolated user." });
     return;
   }
   const repositories = (await repositoriesResponse.json()).repositories || [];
   expect(repositories.length).toBeGreaterThan(0);
   await page.goto("/deploy");
-  await expect(page.getByRole("heading", { name: "Repository, branch, and environment" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Source", level: 2 })).toBeVisible();
   const repository = repositories.find((item) => item.fullName !== "fixture/local") || repositories[0];
-  await page.getByLabel("Authorized repository").selectOption(repository.fullName);
+  await page.getByRole("combobox", { name: "Repository", exact: true }).selectOption(repository.fullName);
   await expect.poll(async () => page.getByLabel("Branch").locator("option").count()).toBeGreaterThan(1);
   const createResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/projects");
   await page.getByRole("button", { name: "Continue" }).click();

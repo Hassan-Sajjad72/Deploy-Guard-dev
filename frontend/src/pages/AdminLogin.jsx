@@ -3,17 +3,18 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import { adminMe, adminSignIn } from "../api/adminAuthApi.js";
 import BrandLogo from "../components/common/BrandLogo.jsx";
 import { Callout } from "../components/common/DesignSystem.jsx";
+import { adminLandingPath } from "../utils/adminScope.js";
 
 export default function AdminLogin() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [authenticated, setAuthenticated] = useState(false);
-  if (authenticated) return <Navigate replace to="/admin" />;
+  const [authenticated, setAuthenticated] = useState(null);
+  if (authenticated) return <Navigate replace to={authenticated} />;
   async function submit(event) {
     event.preventDefault(); setBusy(true); setError("");
-    try { await adminSignIn(form); await adminMe(); setAuthenticated(true); navigate("/admin", { replace: true }); }
+    try { await adminSignIn(form); const { user } = await adminMe(); const destination = adminLandingPath(user.internalAdminRole); setAuthenticated(destination); navigate(destination, { replace: true }); }
     catch (caught) { setError(caught.message || "Admin sign-in failed."); }
     finally { setBusy(false); }
   }

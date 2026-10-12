@@ -75,7 +75,7 @@ function mergeLogEvents(current, incoming) {
   return [...byId.values()].sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp))).slice(-400);
 }
 
-const CONNECTION_TEXT = { connecting: ["Connecting", "info"], connected: ["Streaming", "success"], reconnecting: ["Reconnecting", "warning"] };
+const CONNECTION_TEXT = { connecting: ["Connecting", "info"], connected: ["Streaming", "success"], reconnecting: ["Reconnecting", "warning"], ended: ["Access ended", "warning"] };
 
 function RuntimeLogViewer({ projectId, serviceId, live }) {
   const [connection, setConnection] = useState({ state: "connecting", message: "Connecting to the LIVE CloudWatch log group…", generationId: null });
@@ -111,6 +111,12 @@ function RuntimeLogViewer({ projectId, serviceId, live }) {
     source.addEventListener("generation_changed", generationChanged);
     source.addEventListener("log", log);
     source.addEventListener("warning", warning);
+    source.addEventListener("access_revoked", (event) => {
+      if (!active) return;
+      setEvents([]);
+      setConnection({ state: "ended", message: JSON.parse(event.data).message, generationId: null });
+      active = false; source.close();
+    });
     source.onerror = () => {
       if (!active) return;
       setConnection((value) => ({ state: "reconnecting", message: "The log connection dropped. Reconnecting automatically…", generationId: value.generationId }));
@@ -226,7 +232,9 @@ export default function ProjectMetrics() {
 
     {metricsState === "disabled_by_configuration" ? <Callout title="Metrics are turned off" tone="neutral"><p>{runtime?.message || "CloudWatch metrics are disabled in this environment. Logs are still available below."}</p></Callout> : null}
     {metricsState === "temporarily_unavailable" ? <Callout title="Metrics are temporarily unavailable" tone="warning"><p>{runtime?.message || "CloudWatch did not respond. DeployGuard will try again on the next refresh."}</p></Callout> : null}
+    {runtime?.cacheStatus === "stale" ? <Callout title="Showing earlier metric samples" tone="warning"><p>The latest CloudWatch read failed. These samples were collected {formatDateTime(runtime.collectedAt)}.</p></Callout> : null}
     {metricsState === "no_samples_yet" || (runtimeAvailable && !runtimeCharts.length) ? <Callout title="No samples yet" tone="neutral"><p>CloudWatch is connected but has no data points for this range yet.</p></Callout> : null}
+    {Number(unhealthy) > 0 ? <Callout title="Unhealthy instances" tone="warning"><p>The load balancer reports {unhealthy} unhealthy {unhealthy === "1" ? "instance" : "instances"} in the latest sample. Traffic only reaches healthy instances; check the logs below for failing health checks.</p></Callout> : null}
     {runtimeAvailable && runtimeCharts.length ? <section aria-label="Metric history" className="charts">{runtimeCharts.filter(({ key }) => CHARTED.has(key)).map(({ key, title, unit }) => <MetricChart key={key} metric={runtime[key]} metricKey={key} note={key === "healthyHosts" ? (unhealthy !== "—" && unhealthy !== "0" ? `${unhealthy} unhealthy` : "all passing") : undefined} title={title} unit={unit} />)}</section> : null}
 
     <RuntimeLogViewer key={selectedService?.serviceId || "default"} live={liveInfrastructure} projectId={projectId} serviceId={selectedService?.serviceId || ""} />

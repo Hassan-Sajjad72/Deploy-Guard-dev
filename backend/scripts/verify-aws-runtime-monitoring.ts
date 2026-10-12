@@ -34,7 +34,7 @@ const compose = readFileSync(resolve(root, "compose.yaml"), "utf8");
 const dashboard = JSON.parse(readFileSync(resolve(root, "monitoring/grafana/dashboards/deployguard-runtime.json"), "utf8"));
 
 assert.match(appSource, /ObservabilityModule/);
-assert.match(moduleSource, /LiveRuntimeResolverService/);
+assert.match(moduleSource, /ProjectsModule/);
 assert.match(resolverSource, /DeploymentGenerationStatus\.LIVE/);
 assert.match(resolverSource, /StableReleaseStatus\.STABLE/);
 assert.match(resolverSource, /id: release\.generationId/);
@@ -52,7 +52,7 @@ assert.match(metricsSource, /HealthyHostCount/);
 assert.match(metricsSource, /UnHealthyHostCount/);
 assert.match(metricsSource, /awsMetricsCacheSeconds/);
 assert.match(frontendSource, /EventSource/);
-assert.match(frontendSource, /ECS application logs/);
+assert.match(frontendSource, /Live application logs/);
 assert.match(frontendSource, /runtimeAvailability/);
 assert.match(compose, /prom\/prometheus/);
 assert.match(compose, /grafana\/grafana/);
@@ -92,8 +92,9 @@ async function verifyBehavior() {
     },
   };
   let requests = 0;
-  const metrics = new CloudWatchMetricsService(config as never, {} as never, { dispatch: async () => null } as never);
-  (metrics as unknown as { client: () => { send: (command: { input: { MetricDataQueries: unknown[] } }) => Promise<unknown> } }).client = () => ({
+  const metrics = new CloudWatchMetricsService(config as never, { withRuntimeRead: async (runtime: LiveRuntimeIdentity, read: any) => read({ region: runtime.region }) } as never, { dispatch: async () => null } as never);
+  (metrics as unknown as { client: () => { destroy: () => void; send: (command: { input: { MetricDataQueries: unknown[] } }) => Promise<unknown> } }).client = () => ({
+    destroy: () => {},
     send: async (command) => {
       requests += 1;
       assert.equal(command.input.MetricDataQueries.length, 5);
@@ -103,11 +104,11 @@ async function verifyBehavior() {
       const cpu = serviceName === "service-b" ? 82.5 : 12.5;
       return {
         MetricDataResults: [
-          { Id: "ecs_cpu", Timestamps: [timestamp], Values: [cpu] },
-          { Id: "ecs_memory", Timestamps: [timestamp], Values: [37.5] },
-          { Id: "alb_latency", Timestamps: [timestamp], Values: [0.125] },
-          { Id: "healthy_hosts", Timestamps: [timestamp], Values: [1] },
-          { Id: "unhealthy_hosts", Timestamps: [timestamp], Values: [0] },
+          { Id: "ecs_cpu", StatusCode: "Complete", Timestamps: [timestamp], Values: [cpu] },
+          { Id: "ecs_memory", StatusCode: "Complete", Timestamps: [timestamp], Values: [37.5] },
+          { Id: "alb_latency", StatusCode: "Complete", Timestamps: [timestamp], Values: [0.125] },
+          { Id: "healthy_hosts", StatusCode: "Complete", Timestamps: [timestamp], Values: [1] },
+          { Id: "unhealthy_hosts", StatusCode: "Complete", Timestamps: [timestamp], Values: [0] },
         ],
       };
     },

@@ -46,9 +46,13 @@ async function waitFor(url: string, child: ChildProcess) {
 async function seed(client: Client) {
   const developer = await client.query(`INSERT INTO users (github_id,name,email,image,github_login,role) VALUES ('9000001','Certification Developer','certification@example.test','','certification-developer','developer') RETURNING id`);
   const readonly = await client.query(`INSERT INTO users (github_id,name,email,image,github_login,role) VALUES ('9000002','Certification Reader','reader@example.test','','certification-reader','readonly') RETURNING id`);
-  await client.query(`INSERT INTO projects (id,owner_user_id,name,description,repository_url,repository_full_name,target_branch,environment_name,status,visibility) VALUES ($1,$2,'Fixture application','Isolated full-stack fixture','https://github.com/fixture/local','fixture/local','main','dev','configured','workspace')`, [projectId, developer.rows[0].id]);
+  const outsider = await client.query(`INSERT INTO users (github_id,name,email,image,github_login,role) VALUES ('9000003','Certification Outsider','outsider@example.test','','certification-outsider','readonly') RETURNING id`);
+  // Tenant isolation: project access comes from organization membership, not from a global role.
+  const organizationId = (await client.query(`INSERT INTO organizations (name,kind) VALUES ('Certification team','team') RETURNING id`)).rows[0].id;
+  await client.query(`INSERT INTO organization_memberships (organization_id,user_id,role) VALUES ($1,$2,'owner'),($1,$3,'viewer')`, [organizationId, developer.rows[0].id, readonly.rows[0].id]);
+  await client.query(`INSERT INTO projects (id,organization_id,owner_user_id,name,description,repository_url,repository_full_name,target_branch,environment_name,status,visibility) VALUES ($1,$3,$2,'Fixture application','Isolated full-stack fixture','https://github.com/fixture/local','fixture/local','main','dev','configured','workspace')`, [projectId, developer.rows[0].id, organizationId]);
   await client.query(`INSERT INTO project_deployable_services (id,project_id,name,service_directory,position) VALUES ($1,$2,'Web','.',0)`, [serviceId, projectId]);
-  return { developerId: developer.rows[0].id, readonlyId: readonly.rows[0].id };
+  return { developerId: developer.rows[0].id, readonlyId: readonly.rows[0].id, outsiderId: outsider.rows[0].id };
 }
 
 async function verifyPersistence(client: Client, result: any) {
@@ -153,7 +157,7 @@ async function main() {
   await waitFor(`http://127.0.0.1:${frontendPort}`, frontend);
   const playwrightEnv = {
     ...env, PLAYWRIGHT_API_URL: `http://127.0.0.1:${apiPort}`, PLAYWRIGHT_FRONTEND_URL: `http://127.0.0.1:${frontendPort}`,
-    PLAYWRIGHT_USER_ID: String(users.developerId), PLAYWRIGHT_READONLY_USER_ID: String(users.readonlyId), PLAYWRIGHT_PROJECT_ID: projectId, PLAYWRIGHT_RESULT_PATH: resultPath,
+    PLAYWRIGHT_USER_ID: String(users.developerId), PLAYWRIGHT_READONLY_USER_ID: String(users.readonlyId), PLAYWRIGHT_OUTSIDER_USER_ID: String(users.outsiderId), PLAYWRIGHT_PROJECT_ID: projectId, PLAYWRIGHT_RESULT_PATH: resultPath,
   };
   checked(join(frontendRoot, "node_modules", ".bin", "playwright"), ["test", "--config", "playwright.config.js"], frontendRoot, playwrightEnv);
   const result = JSON.parse(readFileSync(resultPath, "utf8"));

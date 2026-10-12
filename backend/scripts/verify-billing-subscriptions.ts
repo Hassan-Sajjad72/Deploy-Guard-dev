@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { getBillingConfig } from "../src/billing/billing.config";
 import { BILLING_PLAN_ORDER, PLAN_ENTITLEMENTS } from "../src/billing/billing-plan";
 import { BillingSubscription } from "../src/billing/billing-subscription.entity";
+import { BillingInvoice } from "../src/billing/billing-invoice.entity";
 import { EntitlementService } from "../src/billing/entitlement.service";
 import { ProjectEnvironmentRoute } from "../src/projects/project-environment-route.entity";
 
@@ -20,7 +21,7 @@ const subscription: any = { id: "subscription", userId: 7, plan: "free", status:
 let saves = 0;
 const subscriptions: any = { findOne: async () => subscription, create: (value: any) => value, save: async (value: any) => { saves += 1; Object.assign(subscription, value); return value; } };
 const routeQuery: any = { where() { return this; }, andWhere() { return this; }, getExists: async () => false };
-const manager: any = { query: async () => undefined, getRepository: (entity: any) => entity === BillingSubscription ? subscriptions : entity === ProjectEnvironmentRoute ? { createQueryBuilder: () => routeQuery } : {} };
+const manager: any = { query: async () => undefined, getRepository: (entity: any) => entity === BillingSubscription ? subscriptions : [ProjectEnvironmentRoute, BillingInvoice].includes(entity) ? { createQueryBuilder: () => routeQuery } : {} };
 let counts = { totalProjects: 2, currentProjects: 2, activeProjects: 2, liveProjects: 2, activeRuns: 0 };
 const activatedAt = new Date("2026-09-08T12:00:00.000Z");
 const usage: any = { counts: async () => counts, earliestLiveProject: async () => ({ projectId: "10000000-0000-4000-8000-000000000001", activatedAt }) };

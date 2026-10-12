@@ -3,6 +3,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 @Entity("billing_usage_events")
 export class BillingUsageEvent {
   @PrimaryGeneratedColumn("uuid") id: string;
+  @Index() @Column({ name: "organization_id", type: "uuid", nullable: true }) organizationId: string | null;
   @Index() @Column({ name: "user_id" }) userId: number;
   @Column() metric: string;
   @Index({ unique: true }) @Column({ name: "idempotency_key" }) idempotencyKey: string;

@@ -3,12 +3,30 @@ import { ConfigService } from "@nestjs/config";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { getStateManagementConfig } from "./state-management.config";
+import { CustomerAwsContext } from "../planning/customer-aws-session.service";
 
 const execFileAsync = promisify(execFile);
 
 @Injectable()
 export class AwsCliService {
   constructor(private readonly config: ConfigService) {}
+
+  async runScoped(args: string[], context: CustomerAwsContext) {
+    const readCommands = new Set(["efs describe-file-systems", "efs describe-access-points", "secretsmanager describe-secret", "s3api get-object", "ec2 describe-vpcs", "ec2 describe-subnets", "ec2 describe-route-tables", "s3api get-bucket-location"]);
+    if (!readCommands.has(args.slice(0, 2).join(" ")) || args.some((arg) => /^--(?:endpoint-url|profile|region|no-sign-request|cli-input-json|cli-input-yaml)(?:=|$)/.test(arg)) || !/^\d{12}$/.test(context.accountId) || !/^[a-z]{2}(?:-[a-z]+)+-\d$/.test(context.region) || context.credentials.expiration.getTime() <= Date.now()) throw new Error("Invalid customer read-only AWS command scope.");
+    const redact = (value: unknown) => [context.credentials.accessKeyId, context.credentials.secretAccessKey, context.credentials.sessionToken].reduce((text, secret) => secret ? text.replaceAll(secret, "[REDACTED]") : text, this.sanitize(String(value || "")));
+    try {
+      const result = await execFileAsync(this.config.get<string>("AWS_CLI_PATH", "aws"), args, { timeout: 30000, maxBuffer: 4 * 1024 * 1024,
+        env: { ...process.env, AWS_REGION: context.region, AWS_DEFAULT_REGION: context.region, AWS_ACCESS_KEY_ID: context.credentials.accessKeyId,
+          AWS_SECRET_ACCESS_KEY: context.credentials.secretAccessKey, AWS_SESSION_TOKEN: context.credentials.sessionToken,
+          AWS_EC2_METADATA_DISABLED: "true", AWS_PAGER: "" } });
+      return { stdout: redact(result.stdout), stderr: redact(result.stderr) };
+    } catch (error) {
+      const failure = error as NodeJS.ErrnoException & { stderr?: string };
+      if (failure.code === "ENOENT") throw new Error("AWS CLI is not installed or executable.");
+      throw new Error(redact(failure.stderr || "Customer AWS read command failed."));
+    }
+  }
 
   async run(args: string[]) {
     const stateConfig = getStateManagementConfig(this.config);

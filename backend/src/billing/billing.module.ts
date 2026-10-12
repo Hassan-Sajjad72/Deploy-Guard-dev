@@ -17,11 +17,15 @@ import { EntitlementService } from "./entitlement.service";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { ProjectUsageService } from "./project-usage.service";
 import { BillingController } from "./billing.controller";
+import { AdminAuthorizationModule } from "../admin/admin-authorization.module";
+import { OrganizationInvoicesController } from "./organization-invoices.controller";
+import { OrganizationInvoicesService } from "./organization-invoices.service";
+import { OrganizationLimitsModule } from "./organization-limits.module";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Project, ProjectPipelineRun, BillingAccount, BillingSubscription, BillingUsageCounter, BillingUsageEvent, BillingCheckoutSession, BillingInvoice, BillingPayment, BillingWebhookEvent]), AuditLogModule, forwardRef(() => NotificationsModule)],
-  providers: [BillingProviderService, ProjectUsageService, EntitlementService, BillingService],
-  controllers: [BillingController],
+  imports: [OrganizationLimitsModule, TypeOrmModule.forFeature([Project, ProjectPipelineRun, BillingAccount, BillingSubscription, BillingUsageCounter, BillingUsageEvent, BillingCheckoutSession, BillingInvoice, BillingPayment, BillingWebhookEvent]), AuditLogModule, AdminAuthorizationModule, forwardRef(() => NotificationsModule)],
+  providers: [BillingProviderService, ProjectUsageService, EntitlementService, BillingService, OrganizationInvoicesService],
+  controllers: [BillingController, OrganizationInvoicesController],
   exports: [ProjectUsageService, EntitlementService, BillingService],
 })
 export class BillingModule {}

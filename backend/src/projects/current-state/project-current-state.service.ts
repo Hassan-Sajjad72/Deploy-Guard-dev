@@ -1,4 +1,6 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { LiveRuntimeResolverService } from "../../observability/live-runtime-resolver.service";
+import { knownMonthlyPrice } from "../../finops/pricing-amount";
 import { ConfigService } from "@nestjs/config";
 import { DescribeImagesCommand, DescribeRepositoriesCommand, ECRClient } from "@aws-sdk/client-ecr";
 import { DescribeServicesCommand, DescribeTaskDefinitionCommand, ECSClient, ListTagsForResourceCommand as EcsListTagsForResourceCommand } from "@aws-sdk/client-ecs";
@@ -22,6 +24,7 @@ import { RailpackDeploymentService } from "../railpack-deployment.service";
 import { LiveRuntimeIdentityRecoveryService } from "./live-runtime-identity-recovery.service";
 import { resolveApplicationEntrypointServiceId, resolveProjectApplicationUrl } from "../application-entrypoint";
 import { currentFailureDiagnostic } from "../failure-diagnostics/failure-diagnostic.service";
+import { probeApplicationHealth } from "../application-health";
 
 function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" | "commitSha">) {
   const diagnostic = currentFailureDiagnostic(operation as ProjectPipelineRun);
@@ -34,6 +37,7 @@ function retryOperationEligible(operation: Pick<ProjectPipelineRun, "metadata" |
 
 
 type LiveAwsEvidence = {
+  applicationHealth?: Awaited<ReturnType<typeof probeApplicationHealth>>;
   observedAt: string;
   ecr: { repository: string; imageTag: string | null; imageDigest: string | null };
   ecs: { cluster: string; service: string; taskDefinitionRevision: number | null; desiredCount: number; runningCount: number; pendingCount: number };
@@ -92,6 +96,7 @@ export class ProjectCurrentStateService {
     private readonly runtimeIdentityRecovery: LiveRuntimeIdentityRecoveryService,
     private readonly config: ConfigService,
     private readonly dataSource: DataSource,
+    @Optional() private readonly customerRuntime?: LiveRuntimeResolverService,
   ) {}
 
   async getCurrentState(
@@ -174,7 +179,7 @@ export class ProjectCurrentStateService {
           ? ((estimate.normalizedBreakdown as { resources: Array<Record<string, unknown>> }).resources).map((resource) => ({
               name: String(resource.resourceName || resource.name || "resource"),
               service: typeof resource.serviceName === "string" ? resource.serviceName : null,
-              monthly: Number(resource.monthlyCost || 0),
+              monthly: knownMonthlyPrice(resource.monthlyCost),
             }))
           : [],
       } : null,
@@ -762,7 +767,7 @@ export class ProjectCurrentStateService {
       } : null,
       infrastructure: { ...infrastructureStatus, observedAt: runtimeObservation?.observedAt || (authoritativeLiveRelease ? awsEvidence?.observedAt || liveReleaseObservedAt : observedAt) },
       applicationHealth: authoritativeLiveRelease && awsEvidence
-        ? { status: "healthy", source: "aws_observation", observedAt: runtimeObservation?.observedAt || liveReleaseObservedAt }
+        ? { status: awsEvidence.applicationHealth?.status || "unavailable", source: "aws_observation", observedAt: awsEvidence.observedAt }
         : authoritativeLiveRelease
           ? { status: "unavailable", source: "unavailable", observedAt: null }
         : runtimeUnverifiedAfterDestroy
@@ -861,6 +866,7 @@ export class ProjectCurrentStateService {
   }
 
   private async runtimeObservation(project: Project, generationId: string, stableUrl: string): Promise<RuntimeObservation> {
+    if (project.executionMode === "customer") return this.readRuntimeObservation(project, generationId, stableUrl);
     this.runtimeObservationCache ||= new Map();
     this.runtimeObservationInFlight ||= new Map();
     const key = `${project.id}:${generationId}`;
@@ -879,7 +885,31 @@ export class ProjectCurrentStateService {
     }
   }
 
+  private async customerAwsEvidence(project: Project, generationId: string): Promise<LiveAwsEvidence | null> {
+    if (!this.customerRuntime) return null;
+    try {
+      const manifest = await this.runtimeIdentityRecovery.recover(project) || {};
+      const revisions = Array.isArray(manifest.services) ? manifest.services as Array<Record<string, any>> : [];
+      const observed = await this.customerRuntime.resolveAllProjectServices(project.id);
+      if (!revisions.length || observed.length !== revisions.length || observed.some((entry) => entry.executionMode !== "customer" || entry.generationId !== generationId || !revisions.some((revision) => revision.serviceId === entry.serviceId && /^sha256:[a-f0-9]{64}$/.test(revision.imageDigest || "")) || [entry.desiredCount, entry.runningCount, entry.pendingCount].some((count) => !Number.isSafeInteger(count) || count! < 0))) return null;
+      const services = observed.map((entry) => ({ serviceId: entry.serviceId, serviceName: entry.serviceDisplayName, publicUrl: entry.publicUrl, imageDigest: revisions.find((revision) => revision.serviceId === entry.serviceId)!.imageDigest,
+        ecs: { service: entry.serviceName, desiredCount: entry.desiredCount!, runningCount: entry.runningCount!, pendingCount: entry.pendingCount! }, alb: { targetHealth: entry.targetHealth } }));
+      const selectedId = resolveApplicationEntrypointServiceId(project.applicationEntryPointServiceId, revisions);
+      const application = services.find((entry) => entry.serviceId === selectedId);
+      if (!application) return null;
+      const revision = revisions.find((entry) => entry.serviceId === selectedId)!;
+      return { observedAt: new Date().toISOString(), applicationHealth: await probeApplicationHealth(application.publicUrl),
+        ecr: { repository: String(revision.imageUri || "").replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, ""), imageTag: null, imageDigest: application.imageDigest },
+        ecs: { cluster: observed[0].cluster, service: services.map((entry) => entry.ecs.service).join(", "), taskDefinitionRevision: null, desiredCount: services.reduce((total, entry) => total + entry.ecs.desiredCount, 0), runningCount: services.reduce((total, entry) => total + entry.ecs.runningCount, 0), pendingCount: services.reduce((total, entry) => total + entry.ecs.pendingCount, 0) },
+        alb: { name: application.serviceName, status: "active", targetHealth: services.flatMap((entry) => entry.alb.targetHealth), endpoint: application.publicUrl }, services };
+    } catch { return null; }
+  }
+
   private async readRuntimeObservation(project: Project, generationId: string, stableUrl: string): Promise<RuntimeObservation> {
+    if (project.executionMode === "customer") {
+      const evidence = await this.customerAwsEvidence(project, generationId);
+      return { observedAt: new Date().toISOString(), runtime: evidence ? "present" : "unknown", resources: { ecs: evidence ? "present" : "unknown", alb: evidence ? "present" : "unknown", cloudWatch: "unknown" }, evidence };
+    }
     const present = await this.liveAwsEvidence(project, generationId, stableUrl);
     if (present) return {
       observedAt: present.observedAt,
@@ -917,6 +947,7 @@ export class ProjectCurrentStateService {
   }
 
   private async liveAwsEvidence(project: Project, generationId: string, stableUrl: string): Promise<LiveAwsEvidence | null> {
+    if (project.executionMode === "customer") return this.customerAwsEvidence(project, generationId);
     const projectId = project.id;
     const environment = canonicalEnvironmentName(project);
     const generation = await this.generationRepository.findOne({ where: { id: generationId, projectId, environmentName: environment, status: DeploymentGenerationStatus.LIVE } });
@@ -930,10 +961,10 @@ export class ProjectCurrentStateService {
     const cluster = string("ecsClusterArn") || string("ecsClusterName");
     const services = Array.isArray(identity.services) ? (identity.services as Array<Record<string, unknown>>).slice().sort((a, b) => String(a.serviceId).localeCompare(String(b.serviceId))) : [];
     if (!generation || !release || !cluster || !services.length || services.some((service) => !service.ecsServiceArn || !service.taskDefinitionArn || !service.targetGroupArn || !service.imageUri || !service.imageDigest || !service.runtimeConfigRevisionId)) return null;
+    const ecs = new ECSClient({ region });
+    const ecr = new ECRClient({ region });
+    const elb = new ElasticLoadBalancingV2Client({ region });
     try {
-      const ecs = new ECSClient({ region });
-      const ecr = new ECRClient({ region });
-      const elb = new ElasticLoadBalancingV2Client({ region });
       const observations = [] as LiveAwsEvidence["services"];
       for (const item of services) {
         const serviceId = String(item.serviceId); const imageUri = String(item.imageUri); const imageDigest = String(item.imageDigest);
@@ -945,7 +976,7 @@ export class ProjectCurrentStateService {
           elb.send(new DescribeTargetGroupsCommand({ TargetGroupArns: [String(item.targetGroupArn)] })),
         ]);
         const runtimeService = serviceResult.services?.[0]; const repositoryEvidence = repositoryResult.repositories?.[0]; const targetGroup = targetGroupsResult.TargetGroups?.[0];
-        if (!runtimeService?.serviceName || runtimeService.status !== "ACTIVE" || runtimeService.taskDefinition !== item.taskDefinitionArn || repositoryEvidence?.repositoryUri !== imageUri || !targetGroup?.TargetGroupArn) return null;
+        if (!runtimeService?.serviceName || runtimeService.status !== "ACTIVE" || runtimeService.taskDefinition !== item.taskDefinitionArn || repositoryEvidence?.repositoryUri !== imageUri.split("@")[0] || !targetGroup?.TargetGroupArn) return null;
         const [taskDefinitionResult, imageResult, serviceTags, targetGroupTags, targetHealth] = await Promise.all([
           ecs.send(new DescribeTaskDefinitionCommand({ taskDefinition: String(item.taskDefinitionArn), include: ["TAGS"] })), ecr.send(new DescribeImagesCommand({ repositoryName: repository, imageIds: [{ imageDigest }] })), ecs.send(new EcsListTagsForResourceCommand({ resourceArn: runtimeService.serviceArn! })), elb.send(new DescribeTagsCommand({ ResourceArns: [String(item.targetGroupArn)] })), elb.send(new DescribeTargetHealthCommand({ TargetGroupArn: String(item.targetGroupArn) })),
         ]);
@@ -955,7 +986,6 @@ export class ProjectCurrentStateService {
           || imageResult.imageDetails?.[0]?.imageDigest !== imageDigest) return null;
         observations.push({ serviceId, serviceName: String(item.serviceName || runtimeService.serviceName), publicUrl: typeof item.publicUrl === "string" ? item.publicUrl : null, imageDigest, ecs: { service: runtimeService.serviceName, desiredCount: runtimeService.desiredCount || 0, runningCount: runtimeService.runningCount || 0, pendingCount: runtimeService.pendingCount || 0 }, alb: { targetHealth: (targetHealth.TargetHealthDescriptions || []).map((target) => target.TargetHealth?.State || "unknown") } });
       }
-      ecs.destroy(); ecr.destroy(); elb.destroy();
       const applicationServiceId = resolveApplicationEntrypointServiceId(project.applicationEntryPointServiceId, services);
       // A legacy multi-service project without an explicit selection retains
       // only its historical deployedUrl for reads until the user selects one.
@@ -968,6 +998,7 @@ export class ProjectCurrentStateService {
       if (!applicationService || !applicationObservation) return null;
       return {
         observedAt: new Date().toISOString(),
+        applicationHealth: await probeApplicationHealth(applicationObservation.publicUrl),
         ecr: { repository: String(applicationService.imageUri).replace(/^\d+\.dkr\.ecr\.[^.]+\.amazonaws\.com\//, ""), imageTag: null, imageDigest: applicationObservation.imageDigest },
         ecs: { cluster, service: observations.map((item) => item.ecs.service).join(", "), taskDefinitionRevision: null, desiredCount: observations.reduce((sum, item) => sum + item.ecs.desiredCount, 0), runningCount: observations.reduce((sum, item) => sum + item.ecs.runningCount, 0), pendingCount: observations.reduce((sum, item) => sum + item.ecs.pendingCount, 0) },
         alb: {
@@ -980,6 +1011,8 @@ export class ProjectCurrentStateService {
       };
     } catch {
       return null;
+    } finally {
+      ecs.destroy(); ecr.destroy(); elb.destroy();
     }
   }
 

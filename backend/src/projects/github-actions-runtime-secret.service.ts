@@ -1,3 +1,7 @@
+import { DataSource } from "typeorm";
+import { AwsAccountBinding } from "../workspaces/aws-account-binding.entity";
+import { customerMutationAuthorized } from "../workspaces/customer-authority-proof";
+import type { CustomerExecutionContext } from "./customer-execution-context";
 import { createHash } from "crypto";
 import { Agent } from "https";
 import { Injectable } from "@nestjs/common";
@@ -199,7 +203,7 @@ export class RuntimeSecretMaterializer {
 export class GithubActionsRuntimeSecretService {
   private readonly client: SecretsManagerClient;
 
-  constructor(config: ConfigService) {
+  constructor(private readonly config: ConfigService, private readonly database?: DataSource) {
     this.client = new SecretsManagerClient({
       region: config.get<string>("AWS_REGION", "us-east-1"),
       requestHandler: runtimeSecretRequestHandler(),
@@ -213,30 +217,44 @@ export class GithubActionsRuntimeSecretService {
     environment: string;
     configurationFingerprint: string;
     secretValues: Record<string, string>;
-  }) {
-    const port = this.port();
+  }, context?: import("../planning/customer-aws-session.service").CustomerAwsContext) {
+    const client = context ? new SecretsManagerClient({ region: context.region, credentials: context.credentials, requestHandler: runtimeSecretRequestHandler() }) : this.client;
+    const port = this.port(client, context as CustomerExecutionContext | undefined);
     try {
-      return await new RuntimeSecretMaterializer(port).materialize(input);
+      const result = await new RuntimeSecretMaterializer(port).materialize(input);
+      if (result && context && result.secretArn.split(":")[4] !== context.accountId) throw new Error("Runtime secret account mismatch.");
+      return result;
     } catch {
       throw new RuntimeSecretMaterializationError();
-    }
+    } finally { if (context) client.destroy(); }
   }
 
-  async compensate(materializations: RuntimeSecretMaterialization[]) {
-    const materializer = new RuntimeSecretMaterializer(this.port());
+  async compensate(materializations: RuntimeSecretMaterialization[], context?: import("../planning/customer-aws-session.service").CustomerAwsContext) {
+    const client = context ? new SecretsManagerClient({ region: context.region, credentials: context.credentials, requestHandler: runtimeSecretRequestHandler() }) : this.client;
+    const materializer = new RuntimeSecretMaterializer(this.port(client, context as CustomerExecutionContext | undefined));
     const failed: string[] = [];
-    for (const materialization of [...materializations].reverse()) {
+    try { for (const materialization of [...materializations].reverse()) {
+      if (context && materialization.secretArn.split(":")[4] !== context.accountId) { failed.push(materialization.secretName); continue; }
       try { await materializer.compensate(materialization); }
       catch { failed.push(materialization.secretName); }
-    }
-    return { cleaned: materializations.length - failed.length, failed: failed.length };
+    } return { cleaned: materializations.length - failed.length, failed: failed.length }; }
+    finally { if (context) client.destroy(); }
   }
 
-  private port(): RuntimeSecretMaterializationPort {
+  private async beforeCustomerMutation(context: CustomerExecutionContext) {
+    if (!this.database || !context.projectId || !context.organizationId || !context.bindingId) throw new Error("Customer mutation context is unavailable.");
+    const [project] = await this.database.query(`SELECT p.id FROM projects p JOIN organizations o ON o.id = p.organization_id WHERE p.id = $1 AND p.organization_id = $2 AND p.status <> 'archived' AND p.deletion_intent_id IS NULL AND o.archived_at IS NULL`, [context.projectId, context.organizationId]);
+    const binding = await this.database.getRepository(AwsAccountBinding).findOneBy({ id: context.bindingId, organizationId: context.organizationId });
+    if (!project || !binding || binding.verificationVersion !== context.bindingVersion || binding.accountId !== context.accountId || !binding.regions.includes(context.region) || !customerMutationAuthorized(this.config, binding, context.projectId) || context.credentials.expiration.getTime() < Date.now() + 10000) throw new Error("Customer mutation authorization changed.");
+  }
+  private port(client = this.client, context?: CustomerExecutionContext): RuntimeSecretMaterializationPort {
+    const owned = (arn: string) => !context || arn.startsWith(`arn:aws:secretsmanager:${context.region}:${context.accountId}:secret:deployguard/${context.projectId}/${context.environmentName}/services/`);
+    const before = async (arn?: string) => { if (context) { if (arn && !owned(arn)) throw new Error("Foreign customer secret."); await this.beforeCustomerMutation(context); } };
     return {
       describe: async (name) => {
         try {
-          const result = await this.client.send(new DescribeSecretCommand({ SecretId: name }));
+          const result = await client.send(new DescribeSecretCommand({ SecretId: name }));
+          if (result.ARN && !owned(result.ARN)) throw new Error("Foreign customer secret.");
           if (!result.ARN || !result.Name) throw new Error("Managed runtime secret identity is incomplete.");
           return {
             arn: result.ARN,
@@ -251,7 +269,9 @@ export class GithubActionsRuntimeSecretService {
         }
       },
       create: async (name, secretString, versionToken, tags) => {
-        const result = await this.client.send(new CreateSecretCommand({
+        if (context && !name.startsWith(`deployguard/${context.projectId}/${context.environmentName}/services/`)) throw new Error("Foreign customer secret name.");
+        await before();
+        const result = await client.send(new CreateSecretCommand({
           Name: name,
           SecretString: secretString,
           ClientRequestToken: versionToken,
@@ -260,12 +280,14 @@ export class GithubActionsRuntimeSecretService {
         if (!result.ARN) throw new Error("Managed runtime secret creation returned no ARN.");
         return result.ARN;
       },
-      restore: async (arn) => { await this.client.send(new RestoreSecretCommand({ SecretId: arn })); },
+      restore: async (arn) => { await before(arn); await client.send(new RestoreSecretCommand({ SecretId: arn })); },
       put: async (arn, secretString, versionToken) => {
-        await this.client.send(new PutSecretValueCommand({ SecretId: arn, SecretString: secretString, ClientRequestToken: versionToken }));
+        await before(arn);
+        await client.send(new PutSecretValueCommand({ SecretId: arn, SecretString: secretString, ClientRequestToken: versionToken }));
       },
       activateVersion: async (arn, versionToken, previousVersionToken) => {
-        await this.client.send(new UpdateSecretVersionStageCommand({
+        await before(arn);
+        await client.send(new UpdateSecretVersionStageCommand({
           SecretId: arn,
           VersionStage: "AWSCURRENT",
           MoveToVersionId: versionToken,
@@ -273,7 +295,8 @@ export class GithubActionsRuntimeSecretService {
         }));
       },
       delete: async (arn) => {
-        await this.client.send(new DeleteSecretCommand({ SecretId: arn, ForceDeleteWithoutRecovery: true }));
+        await before(arn);
+        await client.send(new DeleteSecretCommand({ SecretId: arn, ForceDeleteWithoutRecovery: true }));
       },
     };
   }

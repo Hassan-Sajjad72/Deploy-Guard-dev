@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { CloudWatchClient, GetMetricDataCommand, MetricDataQuery, StandardUnit } from "@aws-sdk/client-cloudwatch";
-import { LiveRuntimeIdentity, LiveRuntimeResolverService } from "./live-runtime-resolver.service";
+import { AwsRuntimeUnavailableException, LiveRuntimeIdentity, LiveRuntimeResolverService } from "./live-runtime-resolver.service";
 import { getObservabilityConfig, rangeToDates } from "./observability.config";
 import { NotificationDispatcherService } from "../notifications/notification-dispatcher.service";
 
@@ -55,6 +55,7 @@ export class CloudWatchMetricsService {
   async collect(identity: LiveRuntimeIdentity, range = "1h"): Promise<AwsRuntimeTelemetry> {
     if (!this.isEnabled()) throw new Error("AWS runtime monitoring is disabled.");
     if (!["1h", "6h", "24h"].includes(range)) throw new Error("Unsupported metrics time range.");
+    if (identity.executionMode === "customer") return this.fetch(identity, range);
     const key = `${identity.projectId}:${identity.generationId}:${identity.serviceId}:${range}`;
     const now = Date.now();
     const cached = this.cache.get(key);
@@ -93,7 +94,9 @@ export class CloudWatchMetricsService {
       { Name: "LoadBalancer", Value: this.loadBalancerDimension(identity.loadBalancerArn) },
       { Name: "TargetGroup", Value: this.targetGroupDimension(identity.targetGroupArn) },
     ];
-    const response = await this.client(identity.region).send(new GetMetricDataCommand({
+    const query = async (context: { region: string; credentials?: { accessKeyId: string; secretAccessKey: string; sessionToken: string } }) => {
+      const client = context.credentials ? new CloudWatchClient({ ...context, maxAttempts: 1 }) : this.client(context.region);
+      try { return await client.send(new GetMetricDataCommand({
       StartTime: start,
       EndTime: end,
       MetricDataQueries: [
@@ -103,7 +106,11 @@ export class CloudWatchMetricsService {
         this.query("healthy_hosts", "AWS/ApplicationELB", "HealthyHostCount", "Count", albDimensions),
         this.query("unhealthy_hosts", "AWS/ApplicationELB", "UnHealthyHostCount", "Count", albDimensions),
       ],
-    }));
+      }), { abortSignal: AbortSignal.timeout(15_000) }); } finally { client.destroy(); }
+    };
+    const response = await this.liveRuntime.withRuntimeRead(identity, query);
+    const expectedMetrics = ["ecs_cpu", "ecs_memory", "alb_latency", "healthy_hosts", "unhealthy_hosts"];
+    if (response.NextToken || expectedMetrics.some((id) => !response.MetricDataResults?.some((entry) => entry.Id === id && entry.StatusCode === "Complete"))) throw new AwsRuntimeUnavailableException("CloudWatch returned incomplete runtime measurements.");
     const values = Object.fromEntries((response.MetricDataResults || []).map((item) => [item.Id, this.points(item.Timestamps, item.Values)]));
     const observedAt = new Date().toISOString();
     const healthy = values.healthy_hosts || [];
@@ -167,7 +174,7 @@ export class CloudWatchMetricsService {
       }).catch(() => undefined);
     }
     const ttl = getObservabilityConfig(this.config).awsMetricsCacheSeconds * 1_000;
-    this.cache.set(`${identity.projectId}:${identity.generationId}:${identity.serviceId}:${range}`, {
+    if (identity.executionMode !== "customer") this.cache.set(`${identity.projectId}:${identity.generationId}:${identity.serviceId}:${range}`, {
       telemetry,
       expiresAt: Date.now() + ttl,
       staleUntil: Date.now() + Math.max(ttl * 5, 300_000),

@@ -1,3 +1,4 @@
+import { canAccessProject } from "../workspaces/project-access";
 import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { MoreThan, Repository } from "typeorm";
@@ -163,7 +164,9 @@ export class AiTroubleshootingService {
       model: string | null;
       usage: Record<string, unknown> | null;
     };
-    try { output = await this.provider.analyze(this.preprocessor.buildPrompt(context, collected.evidence, followUp || undefined, questionType), { evidence: collected.evidence, facts: context }); }
+    try {
+      output = await this.provider.analyze(this.preprocessor.buildPrompt(context, collected.evidence, followUp || undefined, questionType), { organizationId: project?.organizationId, evidence: collected.evidence, facts: context });
+    }
     catch (error) {
       session.lastError = this.fallbackReason(error);
       const fallback = this.preprocessor.validate(this.preprocessor.fallback(context, collected.evidence), collected.evidence, context);
@@ -279,7 +282,7 @@ export class AiTroubleshootingService {
   private async assertAccess(user: User, projectId: string, manage: boolean) {
     const project = await this.projects.findOne({ where: { id: projectId } });
     if (!project) throw new NotFoundException("Project not found.");
-    const allowed = user.role === UserRole.ADMIN || project.ownerUserId === user.id;
+    const allowed = canAccessProject(user, project, manage);
     if (!allowed || (manage && user.role === UserRole.READONLY)) {
       await this.audit.record({ actorUser: user, action: "ai.analysis.access_denied", resourceType: "project", resourceId: projectId, status: "denied" });
       throw new ForbiddenException("You do not have access to troubleshoot this project.");
