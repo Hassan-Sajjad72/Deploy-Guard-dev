@@ -195,6 +195,8 @@ async function lifecycle(run: Run, save: () => Promise<void>, results: Record<st
     generation.scope.planFingerprint = builder.fingerprint(generation.plan);
     const artifacts = builder.buildHostingArtifacts({ profile: run.profile, plan: generation.plan, configuration: generation.configuration, scope: generation.scope });
     const record = { generationId: generation.scope.generationId, artifacts, identity: null as any, assets: Object.fromEntries(Object.entries(generation.assets).map(([path, data]) => [path, data.toString("base64")])) };
+    // A static site has no server that can fail health; its failing candidate is a build file altered after approval.
+    if (failing && run.profile === "static") generation.assets["index.html"] = Buffer.from("<!doctype html><p>altered after approval</p>");
     run.generations.push(record); await save();
     const started = Date.now();
     const result = await runtime.executeGeneration(artifacts, authority(artifacts), { runCommand, loadAsset: async ({ path }: any) => generation.assets[path] });
@@ -218,7 +220,7 @@ async function lifecycle(run: Run, save: () => Promise<void>, results: Record<st
   assert.equal(route, first.generationId, "A rejected candidate must not move the canonical route.");
   const stillLive = await evidence.observeProviderEndpoint(first.artifacts.manifest, first.identity);
   assert.equal(stillLive.application, "healthy", "The verified generation must keep serving after a rejected candidate.");
-  results.retry_rejected = `unhealthy candidate rejected in ${Math.round((Date.now() - rejectedStarted) / 1000)}s (${rejection.slice(0, 160)}); route stayed on generation 1, HTTP ${stillLive.httpStatus}`;
+  results.retry_rejected = `${run.profile === "static" ? "corrupted" : "unhealthy"} candidate rejected in ${Math.round((Date.now() - rejectedStarted) / 1000)}s (${rejection.slice(0, 160)}); route stayed on generation 1, HTTP ${stillLive.httpStatus}`;
   log(results.retry_rejected);
   // Remove the rejected candidate before retrying: it is never promoted, and small accounts cap concurrent instances.
   const rejected: any = run.generations.at(-1);

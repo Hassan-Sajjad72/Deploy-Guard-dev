@@ -20,7 +20,7 @@ import { FinalProviderProof, HostingProfileRegistryService, IMPLEMENTED_PROVIDER
 const envPath = join(__dirname, "..", ".env");
 const ADAPTER_VERSION = "deployguard.hosting-provider/v1", PROOF_DAYS = 30, CERTIFICATION_BUDGET_USD = 50;
 const sha = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-type Evidence = { contractVersion: string; runId: string; profile: "ec2" | "lightsail" | "lambda"; region: string; accountId: string; adapterVersion: string; executableFingerprint: string; executableUnchanged: boolean; completedAt: string; passed: boolean; results: Record<string, string> };
+type Evidence = { contractVersion: string; runId: string; profile: "ec2" | "lightsail" | "lambda" | "static"; region: string; accountId: string; adapterVersion: string; executableFingerprint: string; executableUnchanged: boolean; completedAt: string; passed: boolean; results: Record<string, string> };
 
 function setEnv(updates: Record<string, string>) {
   const lines = readFileSync(envPath, "utf8").split("\n");
@@ -40,7 +40,7 @@ function checkEvidence(evidence: Evidence) {
   };
   assert(removals.length >= 5 && removals.every((key) => /^confirmed |^none remain/.test(r[key])), `${evidence.runId}: independent removal evidence is incomplete.`);
   assert(/^verified in \d+s; health healthy at https:\/\//.test(r.deploy_1) && /^verified in \d+s; health healthy at https:\/\//.test(r.deploy_2), `${evidence.runId}: both deploys must be verified healthy.`);
-  assert(/^unhealthy candidate rejected/.test(r.retry_rejected || "") && /route stayed on generation 1, HTTP 200$/.test(r.retry_rejected) && /^fresh attempt deployed and verified/.test(r.retry || ""), `${evidence.runId}: retry evidence is incomplete.`);
+  assert(/^(unhealthy|corrupted) candidate rejected/.test(r.retry_rejected || "") && /route stayed on generation 1, HTTP 200$/.test(r.retry_rejected) && /^fresh attempt deployed and verified/.test(r.retry || ""), `${evidence.runId}: retry evidence is incomplete.`);
   assert(/^verified; route returned to generation 1 after fresh ownership and health proof$/.test(r.rollback) && r.cleanup_guard === "active generation cleanup refused", `${evidence.runId}: rollback/ownership evidence is incomplete.`);
   assert(/^deleted through inspected destroy plan/.test(r.cleanup_1) && /^deleted through inspected destroy plan/.test(r.cleanup_2), `${evidence.runId}: cleanup evidence is incomplete.`);
   assert(/application healthy, HTTP 200$/.test(r.monitoring_endpoint) && /^read-only metric query succeeded/.test(r.monitoring_metrics), `${evidence.runId}: AWS runtime evidence is incomplete.`);
@@ -52,12 +52,13 @@ const WORKLOADS: Record<Evidence["profile"], WorkloadAssumptions> = {
   ec2: { cpu: .5, memoryMiB: 256, replicas: 1, storageGiB: 30, monthlyRequests: 1000, monthlyTransferGiB: 1, monthlyLogGiB: 1, availability: "single_instance", stateful: false, continuousCompute: true, monthlyBudgetUsd: CERTIFICATION_BUDGET_USD },
   lightsail: { cpu: .25, memoryMiB: 512, replicas: 1, storageGiB: 1, monthlyRequests: 1000, monthlyTransferGiB: 1, monthlyLogGiB: 1, availability: "single_instance", stateful: false, continuousCompute: true, monthlyBudgetUsd: CERTIFICATION_BUDGET_USD },
   lambda: { cpu: .25, memoryMiB: 256, replicas: 1, storageGiB: 1, monthlyRequests: 1000, monthlyTransferGiB: 1, monthlyLogGiB: 1, availability: "single_instance", stateful: false, continuousCompute: false, monthlyBudgetUsd: CERTIFICATION_BUDGET_USD },
+  static: { cpu: .25, memoryMiB: 256, replicas: 1, storageGiB: 1, monthlyRequests: 1000, monthlyTransferGiB: 1, monthlyLogGiB: 1, availability: "single_instance", stateful: false, continuousCompute: false, monthlyBudgetUsd: CERTIFICATION_BUDGET_USD },
 };
 const QUANTITIES = { imageStorageGiB: 1, publicIpv4Count: 1, albNewConnectionsPerSecond: 0, albActiveConnectionsPerMinute: 0, albRuleEvaluationsPerSecond: 0, monthlyIntraRegionGiB: 0, stateStorageGiB: .1, monthlyStateWriteRequests: 100, monthlyStateReadRequests: 100, monthlySecretApiRequests: 0, backupStorageGiB: 0, averageRequestDurationMs: 100 };
 async function budgetEvidence(profile: Evidence["profile"], region: string, config: ConfigService) {
   const assumptions = { ...WORKLOADS[profile], pricing: QUANTITIES };
   const costs = await new HostingPricingService(new InfracostService(config), new AwsPublicPricingService()).estimate({ region, assumptions, serviceCount: 1, managedDatabase: false, runtimeSecretCount: 0 });
-  const option = compareHosting({ region, assumptions, targets: [{ status: "resolved" } as any], managedDatabase: false, requirements: { status: "READY" } as any, configuration: { references: 0, secrets: 0 }, verifiedBuildKinds: ["lambda_http"] }, costs).options.find((item) => item.id === profile)!;
+  const option = compareHosting({ region, assumptions, targets: [{ status: "resolved" } as any], managedDatabase: false, requirements: { status: "READY" } as any, configuration: { references: 0, secrets: 0 }, verifiedBuildKinds: ["lambda_http", "static"] }, costs).options.find((item) => item.id === profile)!;
   assert(option.cost.status === "complete" && option.cost.monthlyUsd !== null && option.cost.monthlyUsd <= assumptions.monthlyBudgetUsd, `${profile}: no complete estimate within the $${assumptions.monthlyBudgetUsd} certification budget.`);
   const cost = costs.find((item) => item.profile === profile)!;
   return { sha: sha({ profile, region, assumptions, cost }), monthlyUsd: option.cost.monthlyUsd, source: cost.source, estimatedAt: cost.estimatedAt };
@@ -82,7 +83,7 @@ async function main() {
   const signed: typeof existing = [];
   for (const file of files) {
     const evidence: Evidence = JSON.parse(readFileSync(file, "utf8"));
-    assert(evidence.contractVersion === "deployguard.live-provider-evidence/v1" && ["ec2", "lightsail", "lambda"].includes(evidence.profile) && /^\d{12}$/.test(evidence.accountId), `${file}: not live provider evidence.`);
+    assert(evidence.contractVersion === "deployguard.live-provider-evidence/v1" && ["ec2", "lightsail", "lambda", "static"].includes(evidence.profile) && /^\d{12}$/.test(evidence.accountId), `${file}: not live provider evidence.`);
     assert(evidence.passed && evidence.executableUnchanged, `${evidence.runId}: the live run did not pass on an unchanged executable.`);
     assert(evidence.adapterVersion === ADAPTER_VERSION && evidence.executableFingerprint === fingerprint, `${evidence.runId}: evidence certifies ${evidence.executableFingerprint.slice(0, 12)}, but the current executable is ${fingerprint.slice(0, 12)}.`);
     const checks = checkEvidence(evidence), budget = await budgetEvidence(evidence.profile, evidence.region, config);

@@ -22,7 +22,7 @@ This records, for every requirement in the PRD corrections, what is implemented 
 | B — EC2 | **Certified — available to customers in us-east-1** | Signed final proof from run `cdbe23df` (2026-10-11): deploy ×2, rejected-candidate retry, rollback, ownership guard, cleanup, AWS runtime monitoring, budget $21.88/mo complete. Expires 2026-11-10. | Re-certify before expiry or after any change to the executable. |
 | C — Lightsail | **Certified — available to customers in us-east-1** | Signed final proof from run `a7542a36`: same seven checks; budget $5.44/mo complete (AWS Lightsail offer file). Expires 2026-11-10. | Accounts with the default 2-instance Lightsail quota cannot hold a rollback generation and a retry candidate at once. |
 | D — Lambda | **Certified — available to customers in us-east-1** | Signed final proof from run `073d9960`: same seven checks; budget $0.62/mo complete. Expires 2026-11-10. | Re-certify before expiry or after any change to the executable. |
-| E — S3 + CloudFront | Blocked (external: AWS) | Local artifacts and fence verified (`test:hosting-fence-coverage`). | AWS Support must verify the account for CloudFront. |
+| E — S3 + CloudFront | **Certified — available to customers in us-east-1** | Signed final proof from run `8b4bdb7b` (2026-10-12): deploy ×2 via CloudFront, corrupted-candidate retry (a build file altered after approval is refused before any AWS call), rollback, ownership guard, cleanup of both distributions, AWS runtime monitoring, budget $0.65/mo complete. Expires 2026-11-11. | CloudFront deploys and deletes take 4–7 minutes each. |
 
 A profile is available only with a signed final provider proof for its region and executable fingerprint (`HostingProfileRegistryService`). Proofs are produced by `npm run sign:final-provider-proofs` from passing live evidence for the exact fingerprint (`b3195045…`, identical under ts-node and the compiled build); any change to the nine fingerprinted files invalidates them. This satisfies "do not represent an unimplemented profile as available" (AT-015).
 
@@ -94,6 +94,7 @@ A profile is available only with a signed final provider proof for its region an
 11. **Monitoring dropped the unhealthy-instance signal** (computed, never rendered). It now shows as a warning.
 12. **Lambda and static cleanup always failed** (found live). `aws s3api delete-objects` with `Quiet: true` prints nothing on full success, and the runtime parsed that empty output as JSON. Empty output is now treated as success; errors are still checked.
 14. **EC2 and Lightsail could never pass the budget gate.** EC2 always had an unknown storage item, and Lightsail had unknown network and storage items, so no estimate was ever "complete" and the adapter would refuse every deployment. EC2 now prices image storage from reviewed quantities. Lightsail now prices bundle disk, transfer quota, overage and static IP from the official AWS Lightsail offer file, and fails closed when that file can't be read.
+16. **Static could never pass the budget gate.** CloudFront had three unpriced usage components. Invalidations and origin transfer are now priced at zero (the profile issues neither), and HTTP requests are counted as an upper bound, since plain HTTP is answered with a billed redirect.
 15. **The live harness never tested retry.** It now deploys a deliberately unhealthy candidate, asserts it is rejected while the route and the live generation stay healthy, removes it, and then retries successfully.
 13. **Ownership-check failures were undiagnosable.** The AWS error code and the read command are now included in the message, never payloads or credentials.
 
@@ -104,7 +105,6 @@ About 30 test suites were stale after the UI and contract changes. Each was chec
 | Item | Type | Action |
 |---|---|---|
 | `test:release-identity` fails by design until release | Release gate | Commit, push, and re-pin `DEPLOYGUARD_REUSABLE_WORKFLOW` to the new control-plane SHA. Customer cross-account ECS only works after this. |
-| CloudFront account verification | AWS Support | — |
 | Orphan sweep in the production adapter | Not implemented | Needs tag-based discovery (`tag:GetResources`), which widens the session fence; requires approval. |
 | Plan-limit enforcement off by default | Product policy | Limits apply only with `BILLING_ENABLED=true` and `BILLING_ENFORCE=true`. `PLAN_USAGE_ENFORCEMENT_ENABLED` (still in `backend/.env`) is dead code. |
 | GitHub repository selection in the browser | External | Needs a connected GitHub App installation (expected blocker in the full-stack run). |

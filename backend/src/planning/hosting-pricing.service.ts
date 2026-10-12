@@ -62,7 +62,9 @@ export function hostingCostTemplate(profile: HostingProfile, input: PriceWorkloa
     add("aws_cloudfront_distribution", "site", { enabled: true, price_class: "PriceClass_100", origin: [{ domain_name: "pricing-preview.s3.amazonaws.com", origin_id: "site" }],
       default_cache_behavior: [{ allowed_methods: ["GET", "HEAD"], cached_methods: ["GET", "HEAD"], target_origin_id: "site", viewer_protocol_policy: "redirect-to-https" }],
       restrictions: [{ geo_restriction: [{ restriction_type: "none" }] }], viewer_certificate: [{ cloudfront_default_certificate: true }] }, "network",
-      { monthly_data_transfer_to_internet_gb: { us: a.monthlyTransferGiB }, monthly_https_requests: { us: a.monthlyRequests } });
+      // No invalidations (each generation is a new distribution) and GET/HEAD only (no origin uploads). HTTP is answered
+      // with a billed redirect to HTTPS, so every request is also counted as HTTP: an upper bound, never an understatement.
+      { monthly_data_transfer_to_internet_gb: { us: a.monthlyTransferGiB }, monthly_https_requests: { us: a.monthlyRequests }, monthly_http_requests: { us: a.monthlyRequests }, monthly_data_transfer_to_origin_gb: { us: 0 }, monthly_invalidation_requests: 0 });
     known.push({ category: "compute", reason: "Static hosting provisions no application compute." },
       { category: "requests", reason: "CDN request charges are itemized in the CloudFront network estimate (North America/Europe PriceClass_100 rates; viewers elsewhere cost more)." },
       { category: "data_transfer", reason: "S3-to-CloudFront origin transfer has no charge; viewer transfer is itemized in the CloudFront network estimate." });
