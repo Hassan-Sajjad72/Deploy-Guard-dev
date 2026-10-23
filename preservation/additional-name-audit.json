@@ -1,0 +1,186 @@
+[
+  {
+    "path": "/home/hassan-sajjad/MIGARTION/deployguard-aws-business-data.sql",
+    "bytes": 1194280
+  },
+  {
+    "path": "/home/hassan-sajjad/MIGARTION/deployguard-july-final-before-migration.dump",
+    "bytes": 1035987
+  },
+  {
+    "path": "/home/hassan-sajjad/MIGARTION/deployguard-clean-reference-backup-2026-08-26.dump",
+    "bytes": 370951
+  },
+  {
+    "path": "/home/hassan-sajjad/MIGARTION/deployguard-aws-business-data-ordered.sql",
+    "bytes": 1197447
+  },
+  {
+    "path": "/home/hassan-sajjad/MIGARTION/deployguard-aws-real-data-backup.dump",
+    "bytes": 1035987
+  },
+  {
+    "path": "/home/hassan-sajjad/MIGARTION/deployguard-aws-contaminated-backup-2026-08-26.dump",
+    "bytes": 1035987
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/.~lock.DeployGuard_version1_stabilization_audit_2026-10-09 (1).md#",
+    "bytes": 122
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/deployguard-key.pem",
+    "bytes": 1678
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/aws-deployguard-cleanup-20260803T132231Z.log",
+    "bytes": 10355
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/deployguard-846665b9-ce31-405d-a131-b84457d80932-resources.csv",
+    "bytes": 72509
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/DEPLOYGUARD_accessKeys.csv",
+    "bytes": 99
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/deployguard-dev.2026-08-02.private-key.pem",
+    "bytes": 1679
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/deployguard-cloud-cleanup.csv",
+    "bytes": 40466
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/aws-deployguard-cleanup-20260803T133747Z.log",
+    "bytes": 131590
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/DEPLOYGUARD_accessKeys (1).csv",
+    "bytes": 99
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/deployguard-vps-one-command/deployguard",
+    "bytes": 411
+  },
+  {
+    "path": "/home/hassan-sajjad/Downloads/DATA2/deployguard-vps-one-command/deployguard.pub",
+    "bytes": 101
+  },
+  {
+    "path": "/home/hassan-sajjad/.ssh/deployguard_vps",
+    "bytes": 419
+  },
+  {
+    "path": "/home/hassan-sajjad/.ssh/deployguard_vps.pub",
+    "bytes": 107
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/dist/assets/deployguard-storm-glass-Dxc53b48.webp",
+    "bytes": 106570
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/dist/assets/deployguard-user-cloud-glass-CkYCCY0X.webp",
+    "bytes": 142100
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-storm-glass.webp",
+    "bytes": 106570
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-infrastructure-glass.webp",
+    "bytes": 803368
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-mist-glass.webp",
+    "bytes": 137386
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-user-cloud-glass.webp",
+    "bytes": 142100
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-cloud-infrastructure-glass.webp",
+    "bytes": 180336
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-cinematic-alpine-lake.webp",
+    "bytes": 623604
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-cinematic-mountain.webp",
+    "bytes": 274660
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-cinematic-coast.webp",
+    "bytes": 1125524
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-alpine-glass.webp",
+    "bytes": 710202
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-cinematic-sunset-lake.webp",
+    "bytes": 1096622
+  },
+  {
+    "path": "/home/hassan-sajjad/frontend/src/assets/deployguard-cinematic-red-mountain.webp",
+    "bytes": 662022
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/frontend/dist/deployguard-mark.svg",
+    "bytes": 653
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/deployguard-frontend-retry.log",
+    "bytes": 5567
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/deployguard-lifecycle-tests.log",
+    "bytes": 824
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/deployguard-schema-test.log",
+    "bytes": 175
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run1-deploy-artifacts/deployguard-result-e02be4e0-7538-4658-b598-6da50cee6121/deployguard-cost-plan.json",
+    "bytes": 104510
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run1-deploy-artifacts/deployguard-result-e02be4e0-7538-4658-b598-6da50cee6121/deployguard-result.json",
+    "bytes": 178345
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run1-destroy-artifacts/deployguard-result-05c85641-683a-4fa7-9ab5-564cb26b2f99/deployguard-result.json",
+    "bytes": 874
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/auxiliary-canary-destroy/deployguard-result-40f0c8df-947c-4c01-80d5-5d06156ab7f3/deployguard-result.json",
+    "bytes": 780
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run1-redeploy-artifacts/deployguard-result-88825bae-546b-44ec-8deb-3408bf4098a5/deployguard-cost-plan.json",
+    "bytes": 199454
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run1-redeploy-artifacts/deployguard-result-88825bae-546b-44ec-8deb-3408bf4098a5/deployguard-result.json",
+    "bytes": 178495
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run1-rollback-artifacts/deployguard-result-993036a4-a9a7-4443-8143-b467074ef517/deployguard-cost-plan.json",
+    "bytes": 210343
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run1-rollback-artifacts/deployguard-result-993036a4-a9a7-4443-8143-b467074ef517/deployguard-result.json",
+    "bytes": 7903
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run2-deploy-artifacts/deployguard-result-48e801d2-a8d3-44bf-aa16-2a5cd8353cbe/deployguard-cost-plan.json",
+    "bytes": 104510
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.deployguard-test-results/final-certification/run2-deploy-artifacts/deployguard-result-48e801d2-a8d3-44bf-aa16-2a5cd8353cbe/deployguard-result.json",
+    "bytes": 178351
+  }
+]
