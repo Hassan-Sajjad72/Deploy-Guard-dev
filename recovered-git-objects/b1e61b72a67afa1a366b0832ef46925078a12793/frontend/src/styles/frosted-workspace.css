@@ -1,0 +1,162 @@
+/*
+ * Product-wide alpine workspace: one translucent application plane above the
+ * mountain environment. Content is organized with rhythm and rules; enclosed
+ * surfaces are reserved for controls, records, evidence, and visualizations.
+ */
+:root {
+  --dg-canvas: #52677b;
+  --dg-surface: rgba(204, 219, 231, .42);
+  --dg-surface-2: rgba(219, 231, 240, .28);
+  --dg-surface-3: rgba(229, 238, 245, .34);
+  --dg-raised: rgba(222, 234, 243, .52);
+  --dg-line: rgba(19, 43, 70, .22);
+  --dg-line-strong: rgba(15, 38, 65, .38);
+  --data-surface: rgba(211, 225, 235, .52);
+  --data-surface-raised: rgba(224, 235, 242, .66);
+  --data-surface-muted: rgba(188, 207, 222, .42);
+  --data-line: rgba(18, 43, 70, .28);
+  --dg-ink: #071b33;
+  --dg-ink-2: #142b46;
+  --dg-muted: #1f3853;
+  --dg-faint: #28415d;
+  --text-primary: var(--dg-ink);
+  --text-body: var(--dg-ink-2);
+  --text-secondary: var(--dg-muted);
+  --text-muted: var(--dg-faint);
+  --dg-primary: #0a5ebe;
+  --dg-primary-strong: #073d82;
+  --dg-primary-hover: #052e66;
+  --dg-primary-soft: rgba(176, 214, 255, .58);
+  --dg-primary-line: rgba(5, 77, 161, .36);
+  --dg-link: #073f88;
+  --dg-success-soft: rgba(183, 238, 207, .62);
+  --dg-warning-soft: rgba(255, 229, 171, .62);
+  --dg-danger-soft: rgba(255, 205, 202, .62);
+  --dg-info-soft: rgba(187, 220, 255, .62);
+  --glass-fill: rgba(181, 202, 218, .46);
+  --glass-fill-secondary: rgba(204, 220, 231, .34);
+  --glass-fill-chrome: rgba(198, 216, 228, .32);
+  --glass-fill-interactive: rgba(224, 235, 243, .40);
+  --glass-fill-data: rgba(215, 229, 239, .56);
+  --glass-edge: rgba(237, 247, 255, .62);
+  --glass-edge-subtle: rgba(15, 43, 72, .24);
+  --glass-highlight: rgba(250, 254, 255, .42);
+  --glass-border: rgba(232, 244, 252, .52);
+  --glass-blur: blur(30px) saturate(118%);
+  --glass-blur-chrome: blur(22px) saturate(116%);
+  --glass-shadow: 0 32px 82px -42px rgba(4, 20, 39, .72), inset 0 1px 0 rgba(255, 255, 255, .42);
+}
+
+body::before { filter: grayscale(.3) contrast(1.04) brightness(.78) saturate(.82); }
+body::after { background: linear-gradient(118deg, rgba(7, 28, 53, .26), rgba(178, 204, 222, .05) 48%, rgba(7, 30, 57, .18)); }
+
+/* The shell is intentionally the only continuous panel in application routes. */
+.app-frame, .admin-frame, .landing-frame, .about-frame {
+  background: linear-gradient(118deg, rgba(224, 237, 246, .30), rgba(126, 153, 176, .20) 50%, rgba(229, 240, 247, .24)), var(--glass-fill);
+  border-color: var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+}
+.app-frame::before, .admin-frame::before, .landing-frame::before, .about-frame::before { background: linear-gradient(120deg, rgba(255, 255, 255, .30), transparent 28%, transparent 74%, rgba(236, 247, 255, .16)); }
+.sidebar { border-right-color: var(--glass-edge-subtle); }
+.navbar { background: rgba(211, 226, 237, .16); border-bottom-color: var(--glass-edge-subtle); }
+.content { padding-block: clamp(32px, 4vw, 58px); }
+
+/* Default content remains open. Rules and spacing supply hierarchy. */
+.app-frame :is(.panel, .panel-flat, .ds-card, .metric-card, .state, .admin-section),
+.admin-frame :is(.panel, .panel-flat, .ds-card, .metric-card, .state, .admin-section),
+.landing-frame :is(.panel, .panel-flat, .ds-card, .metric-card),
+.about-frame :is(.panel, .panel-flat, .ds-card, .metric-card) {
+  background: transparent;
+  border-color: var(--dg-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+.app-frame :is(.panel, .panel-flat, .ds-card, .admin-section) + :is(.panel, .panel-flat, .ds-card, .admin-section),
+.admin-frame :is(.panel, .panel-flat, .ds-card, .admin-section) + :is(.panel, .panel-flat, .ds-card, .admin-section) { border-top-width: 1px; }
+.app-frame .metric-card, .admin-frame .metric-card { border-width: 0 0 1px; padding: 12px 0 16px; }
+.app-frame :is(.panel, .panel-flat, .ds-card, .admin-section) { padding-inline: 0; }
+
+/* Shared surface policy for route content. Each section rests on the shell;
+ * dividers, rather than another pane, carry the information hierarchy. */
+.app-frame :is(
+  .dg-projects-inventory, .dg-projects-toolbar, .dg-ov-meta,
+  .overview-lifecycle-card, .dg-np-steps, .dg-np-service,
+  .dg-bill-plan, .dg-bill-period, .dg-bill-invoices,
+  .dg-bill-invoice-detail, .dg-set-content > .settings-section-panel,
+  .dg-set-content > section[role="tabpanel"], .monitoring-summary-strip
+) {
+  background: transparent;
+  border-color: var(--dg-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+.app-frame :is(.dg-projects-inventory, .dg-ov-meta, .overview-lifecycle-card, .dg-np-steps, .dg-bill-plan, .dg-bill-invoices, .dg-bill-invoice-detail, .dg-set-content > .settings-section-panel, .dg-set-content > section[role="tabpanel"], .monitoring-summary-strip) { border-width: 0; }
+.app-frame .dg-projects-inventory { overflow: visible; }
+.app-frame .dg-projects-toolbar { -webkit-backdrop-filter: none; backdrop-filter: none; padding: 0 0 17px; }
+.app-frame .project-inventory-list { background: rgba(211, 225, 235, .27); border: 1px solid var(--data-line); border-radius: 10px; padding: 0; }
+.app-frame .dg-projects-columns { background: transparent; }
+.app-frame .dg-ov-meta { border-bottom: 1px solid var(--dg-line); padding: 0; }
+.app-frame .dg-ov-meta > div:first-child { padding-left: 0; }
+.app-frame .overview-lifecycle-card { border-top: 1px solid var(--dg-line); overflow: visible; }
+.app-frame .overview-lifecycle-heading, .app-frame .overview-lifecycle-card > .ds-stage-rail, .app-frame .overview-actions { padding-inline: 0; }
+.app-frame .dg-np-steps { overflow: visible; }
+.app-frame .dg-np-step { padding-inline: 0; }
+.app-frame .dg-np-service { border-width: 1px 0 0; padding-inline: 0; }
+.app-frame .dg-bill-hero > .ds-card { background: transparent; border-width: 0; border-radius: 0; padding: 0; }
+.app-frame .dg-bill-hero > .ds-card + .ds-card { border-left: 1px solid var(--dg-line); padding-left: clamp(18px, 2.5vw, 30px); }
+.app-frame .billing-plan-card > .dg-bill-period { border-width: 1px 0 0; padding-inline: 0; }
+.app-frame .dg-bill-plan { border-width: 0 0 1px; padding: 14px 4px 18px 0; }
+.app-frame .dg-bill-plan.is-current { background: transparent; }
+.app-frame .dg-bill-plan.is-featured { border-color: var(--dg-primary-line); box-shadow: none; }
+.app-frame :is(.dg-bill-invoices, .dg-bill-invoice-detail) { border-top: 1px solid var(--dg-line); padding-inline: 0; }
+.app-frame .dg-set-content > :is(.settings-section-panel, section[role="tabpanel"]) { border-top: 1px solid var(--dg-line); padding: 20px 0 0; }
+.app-frame .dg-pipeline .ds-card { background: transparent; border-width: 0 0 1px; border-radius: 0; padding: 0 0 18px; }
+.app-frame .pipeline-identity-card { --dg-ink: #071b33; --dg-ink-2: #142b46; --dg-muted: #1f3853; --dg-line: rgba(19, 43, 70, .22); --dg-success: #146247; --dg-success-dot: #1d8b62; --dg-success-soft: rgba(194, 238, 218, .62); --dg-success-line: rgba(20, 98, 71, .24); --dg-warning: #805600; --dg-warning-dot: #b9810a; --dg-warning-soft: rgba(255, 229, 171, .62); --dg-warning-line: rgba(128, 86, 0, .28); --dg-danger: #a33038; --dg-danger-dot: #c94950; --dg-danger-soft: rgba(255, 213, 216, .58); --dg-danger-line: rgba(163, 48, 56, .26); --dg-info: #1d527e; --dg-info-dot: #3177ab; --dg-info-soft: rgba(203, 230, 250, .62); --dg-info-line: rgba(29, 82, 126, .24); background: transparent !important; border: 0 !important; border-bottom: 1px solid var(--dg-line) !important; border-radius: 0 !important; box-shadow: none !important; color: var(--dg-ink); color-scheme: light; padding: 0 0 18px !important; }
+.app-frame .pipeline-identity-card :is(h2, dd) { color: var(--dg-ink) !important; }
+.app-frame .pipeline-identity-card :is(.eyebrow, dt, p) { color: var(--dg-muted) !important; }
+.app-frame .pipeline-unavailable { background: transparent; border-style: solid; border-width: 1px 0 0; padding-inline: 0; }
+.admin-frame .admin-section { border: 0; padding: 0; }
+.admin-frame .admin-summary-grid { background: transparent; border: 0; border-block: 1px solid var(--dg-line); border-radius: 0; }
+.admin-frame .admin-summary-grid .ds-metric-card { background: transparent; border-radius: 0; }
+
+/* Raised surfaces are only for controls, dense records, charts, and evidence. */
+.app-frame :is(.field input, .field select, .field textarea, .ds-data-table, .responsive-record-table, .ds-chart-card, .dg-console, .monitoring-log-viewer, pre.dg-console, .ds-modal, .destroy-modal, .command-palette, .troubleshooting-diagnosis, .monitoring-log-card, .infrastructure-inventory-card),
+.admin-frame :is(.field input, .field select, .field textarea, .ds-data-table, .responsive-record-table, .ds-modal, .destroy-modal, .command-palette) {
+  background: var(--data-surface);
+  border-color: var(--data-line);
+  border-radius: 10px;
+}
+.app-frame :is(.ds-chart-card, .troubleshooting-diagnosis, .monitoring-log-card, .infrastructure-inventory-card) { padding: clamp(16px, 2vw, 22px); }
+.app-frame :is(.dg-console, .monitoring-log-viewer, pre.dg-console) { background: #061a31; color: #eef7ff; }
+
+/* Controls stay exceptionally legible without becoming floating cards. */
+.button, .ds-button-primary, .dg-cta, .dg-home-primary { background: var(--dg-primary-strong); color: #fff; }
+.button:hover, .ds-button-primary:hover, .dg-cta:hover, .dg-home-primary:hover { background: var(--dg-primary-hover); color: #fff; }
+.secondary-button, .subtle-button, .ds-button-secondary, .ds-button-ghost { background: rgba(232, 242, 249, .34); border-color: var(--dg-line-strong); color: var(--dg-ink); }
+.nav-link { color: var(--dg-ink-2); }
+.nav-link .app-icon, .breadcrumbs, small, .muted, .page-context { color: var(--dg-muted); opacity: 1; }
+.nav-link.active { background: rgba(182, 215, 247, .58); border-color: var(--dg-primary-line); color: var(--dg-primary-strong); }
+.status-badge, .count-chip, .dg-home-count { backdrop-filter: blur(10px); }
+
+/* Public and authentication routes participate in the same open composition. */
+.auth-card { background: var(--glass-fill); border-color: var(--glass-edge); box-shadow: var(--glass-shadow); }
+.dg-hero-copy, .dg-about-hero, .founder-card { background: transparent; box-shadow: none; }
+.founder-card { border: 0; border-radius: 0; padding-inline: 0; }
+.dg-about .dg-founder { background: transparent; border: 0; border-radius: 0; }
+.dg-founder-copy { border-top: 1px solid var(--dg-line); padding-inline: 0; }
+.dg-about-hero-copy { background: transparent; border: 0; border-left: 1px solid var(--dg-line); border-radius: 0; padding: 0 0 0 18px; }
+.dg-about-closing { background: transparent; }
+
+@media (max-width: 820px) {
+  .sidebar { background: rgba(189, 211, 226, .90); }
+  .app-frame :is(.panel, .panel-flat, .ds-card, .admin-section) { padding-inline: 0; }
+  .app-frame .dg-bill-hero > .ds-card + .ds-card { border-left: 0; border-top: 1px solid var(--dg-line); padding: 18px 0 0; }
+  .dg-about-hero-copy { border-left: 0; border-top: 1px solid var(--dg-line); padding: 18px 0 0; }
+}
+@media (max-width: 760px) {
+  .app-frame .deployment-journey { gap: 12px 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .app-frame .deployment-journey li { align-items: start; gap: 9px; grid-template-columns: 30px minmax(0, 1fr); min-height: 48px; }
+  .app-frame .deployment-journey li:not(:last-child)::after { display: none; }
+  .app-frame .deployment-journey li > div { padding: 4px 0 0; }
+  .app-frame .deployment-journey li strong { overflow-wrap: anywhere; }
+}

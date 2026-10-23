@@ -1,0 +1,1 @@
+# Add non-secret values required by variables.tf. Never commit credentials.

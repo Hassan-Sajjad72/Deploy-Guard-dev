@@ -1,0 +1,202 @@
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import ErrorState from "../common/ErrorState.jsx";
+import { StatusBadge } from "../common/Premium.jsx";
+import { useToast } from "../../hooks/useToast.js";
+import { executeNormalReleaseAction } from "../../utils/normalReleaseAction.js";
+import { commandErrorForCanonicalFetch } from "../../utils/canonicalCommandError.js";
+import { destroyGithubActionsDeployment, getGithubActionsDeploymentHistory, retryGithubActionsDeployment } from "../../api/projectApi.js";
+import {
+  deploymentActionPresentation,
+  deploymentCostPresentation,
+  deploymentPhasePresentation,
+} from "../../utils/developerDeploymentPresentation.js";
+
+function date(value) {
+  return value
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
+    : "—";
+}
+
+function shortCommit(value) {
+  return value ? String(value).slice(0, 12) : "—";
+}
+
+export default function CanonicalDeploymentView({ canonicalFetchVersion, currentState, onRefresh, projectId }) {
+  const { notify } = useToast();
+  const inFlight = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [actionFailure, setActionFailure] = useState(null);
+  const [githubDeployment, setGithubDeployment] = useState(null);
+  const [githubHistory, setGithubHistory] = useState([]);
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [showDestroy, setShowDestroy] = useState(false);
+  const [destroyPhrase, setDestroyPhrase] = useState("");
+  const [destroyBusy, setDestroyBusy] = useState(false);
+  const actionError = commandErrorForCanonicalFetch(actionFailure, canonicalFetchVersion);
+  const action = deploymentActionPresentation(currentState, projectId);
+  const phases = deploymentPhasePresentation(currentState);
+  const cost = deploymentCostPresentation(currentState.estimatedCost);
+  const progress = Math.max(0, Math.min(100, Number(currentState.progress?.percentage || 0)));
+
+  useEffect(() => {
+    setActionFailure((failure) => failure?.canonicalFetchVersion === canonicalFetchVersion ? failure : null);
+  }, [canonicalFetchVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function sync() {
+      try {
+        const response = await getGithubActionsDeploymentHistory(projectId);
+        if (!cancelled) { setGithubHistory(response.operations || []); setGithubDeployment(response.operations?.[0] || null); }
+      } catch { /* canonical error UI remains authoritative */ }
+    }
+    void sync();
+    const timer = window.setInterval(sync, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [projectId]);
+
+  async function execute() {
+    if (inFlight.current || action?.kind !== "command") return;
+    inFlight.current = true;
+    setBusy(true);
+    setActionFailure(null);
+    try {
+      const deployment = await executeNormalReleaseAction(projectId, currentState);
+      setGithubDeployment(deployment.operation || null);
+      await onRefresh();
+      if (deployment.message) notify(deployment.message, "success");
+    } catch (caught) {
+      setActionFailure({ message: caught.message, canonicalFetchVersion });
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function retry() {
+    if (retryBusy || githubDeployment?.status !== "failed") return;
+    setRetryBusy(true);
+    setActionFailure(null);
+    try {
+      const response = await retryGithubActionsDeployment(projectId);
+      setGithubDeployment(response.deployment?.operation || null);
+      notify(response.deployment?.message || "Retry dispatched.", "success");
+    } catch (caught) {
+      setActionFailure({ message: caught.message, canonicalFetchVersion });
+    } finally {
+      setRetryBusy(false);
+    }
+  }
+
+  async function destroy() {
+    if (destroyBusy || destroyPhrase !== "DESTROY") return;
+    setDestroyBusy(true);
+    setActionFailure(null);
+    try {
+      const response = await destroyGithubActionsDeployment(projectId, destroyPhrase);
+      setGithubDeployment(response.deployment?.operation || null);
+      setShowDestroy(false);
+      setDestroyPhrase("");
+      notify(response.deployment?.message || "Destroy dispatched.", "success");
+    } catch (caught) {
+      setActionFailure({ message: caught.message, canonicalFetchVersion });
+    } finally {
+      setDestroyBusy(false);
+    }
+  }
+
+  return <div className="canonical-deployment-view" data-canonical-deployment-view="true" data-developer-state={currentState.developerState}>
+    <section className={`simple-deployment-card panel-flat ${["failed_application", "platform_attention"].includes(currentState.developerState) ? "needs-attention" : ""}`}>
+      <div className="simple-deployment-heading">
+        <div>
+          <p className="eyebrow">Current deployment</p>
+          <h2>{currentState.progress?.label || "Ready"}</h2>
+          <p>{currentState.developerMessage}</p>
+        </div>
+        <div className="canonical-deployment-status">
+          <StatusBadge status={currentState.developerState} />
+          <strong className="simple-progress-number">{progress}%</strong>
+        </div>
+      </div>
+      <div className="deployment-progress-track" aria-label={`Deployment progress ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
+      {githubDeployment ? <div className="state" data-github-deployment-status={githubDeployment.status}>
+        <strong>GitHub Actions deployment: {String(githubDeployment.status || "queued").replaceAll("_", " ")}</strong>
+        {githubDeployment.deployedUrl ? <p>Live URL: <a href={githubDeployment.deployedUrl} rel="noreferrer" target="_blank">{githubDeployment.deployedUrl}</a></p> : <p>{githubDeployment.stageLabel || "Waiting for workflow"}</p>}
+        {githubDeployment.workflowUrl ? <a href={githubDeployment.workflowUrl} rel="noreferrer" target="_blank">View GitHub Actions run</a> : null}
+        {githubDeployment.status === "failed" ? <>
+          <p><strong>Failed stage:</strong> {githubDeployment.failedStageLabel || githubDeployment.stageLabel}</p>
+          {githubDeployment.failureOwner === "platform" ? <p>No AWS credential or project setting is required from you. DeployGuard must correct its platform authorization.</p> : null}
+          {githubDeployment.errorMessage ? <p>{githubDeployment.errorMessage}</p> : null}
+          {githubDeployment.safeLog ? <details><summary>Safe GitHub Actions logs</summary><pre>{githubDeployment.safeLog}</pre></details> : null}
+          <button className="secondary-button" disabled={retryBusy} onClick={retry} type="button">{retryBusy ? "Retrying…" : "Retry deployment"}</button>
+        </> : null}
+      </div> : null}
+      <ol className="overview-stage-rail" aria-label="Deployment phases">
+        {phases.map((phase) => <li className={`stage-${phase.status} ${phase.status === "running" ? "is-current" : ""}`} data-phase={phase.key} data-status={phase.status} key={phase.key}>
+          <span aria-hidden="true" />
+          <small>{phase.label}</small>
+        </li>)}
+      </ol>
+      {actionError ? <ErrorState message={actionError} /> : null}
+      <div className="canonical-deployment-footer">
+        <div className="simple-primary-actions">
+          {action?.kind === "command" ? <button className="button" disabled={busy} onClick={execute} type="button">{busy ? "Working…" : action.label}</button> : null}
+          {action?.kind === "link" ? <Link className="button" to={action.href}>{action.label}</Link> : null}
+          {action?.kind === "external" ? <a className="button" href={action.href} rel="noreferrer" target="_blank">{action.label}</a> : null}
+          {githubDeployment?.deployedUrl ? <button className="danger-text-button" disabled={busy || destroyBusy} onClick={() => setShowDestroy(true)} type="button">Destroy infrastructure</button> : null}
+        </div>
+        <Link className="subtle-button" to={`/projects/${projectId}/logs`}>View application logs</Link>
+      </div>
+    </section>
+
+    {githubHistory.length ? <section className="panel-flat">
+      <p className="eyebrow">GitHub Actions history</p>
+      <h2>Deployment attempts</h2>
+      <div className="active-run-list">{githubHistory.map((operation) => <article className="active-run-item" key={operation.id}>
+        <span className="active-run-identity"><strong>Attempt {operation.attempt}: {operation.status}</strong><small>{shortCommit(operation.commitSha)} · {date(operation.createdAt)}{operation.retryOfOperationId ? " · retry" : ""}</small></span>
+        {operation.workflowUrl ? <a className="text-link" href={operation.workflowUrl} rel="noreferrer" target="_blank">Workflow</a> : null}
+      </article>)}</div>
+    </section> : null}
+
+    {showDestroy ? <div className="destroy-modal-backdrop"><section aria-modal="true" className="destroy-modal" role="dialog">
+      <p className="eyebrow">Permanent action</p><h2>Destroy project infrastructure?</h2>
+      <p>GitHub Actions will run Terraform destroy against only this project's remote state. Type <strong>DESTROY</strong> to confirm.</p>
+      <label className="field"><span>Confirmation</span><input autoComplete="off" autoFocus onChange={(event) => setDestroyPhrase(event.target.value)} value={destroyPhrase} /></label>
+      <div className="destroy-modal-actions"><button className="subtle-button" disabled={destroyBusy} onClick={() => { setShowDestroy(false); setDestroyPhrase(""); }} type="button">Cancel</button><button className="danger-button" disabled={destroyBusy || destroyPhrase !== "DESTROY"} onClick={destroy} type="button">{destroyBusy ? "Destroying…" : "Confirm destroy"}</button></div>
+    </section></div> : null}
+
+    {currentState.applicationError ? <section className="panel-flat canonical-application-error">
+      <p className="eyebrow">Application action required</p>
+      <h2>Check your application</h2>
+      <p>{currentState.applicationError.message}</p>
+    </section> : null}
+
+    <div className="canonical-release-grid">
+      <section className="panel-flat canonical-release-card">
+        <p className="eyebrow">Latest attempt</p>
+        <h2>{currentState.latestAttempt ? `Release ${currentState.latestAttempt.releaseRevision || "—"}` : "No deployment yet"}</h2>
+        <dl>
+          <div><dt>Status</dt><dd>{currentState.latestAttempt?.status?.replaceAll("_", " ") || "Not started"}</dd></div>
+          <div><dt>Commit</dt><dd>{shortCommit(currentState.latestAttempt?.commit || currentState.commit)}</dd></div>
+          <div><dt>Updated</dt><dd>{date(currentState.latestAttempt?.occurredAt)}</dd></div>
+        </dl>
+      </section>
+      <section className="panel-flat canonical-release-card canonical-stable-card">
+        <p className="eyebrow">Stable release</p>
+        <h2>{currentState.stableRelease ? `Release ${currentState.stableRelease.revision}` : "No verified stable release"}</h2>
+        <dl>
+          <div><dt>Commit</dt><dd>{shortCommit(currentState.stableRelease?.commit)}</dd></div>
+          <div><dt>Promoted</dt><dd>{date(currentState.stableRelease?.promotedAt)}</dd></div>
+          <div><dt>Live URL</dt><dd>{currentState.stableUrl || "Available after verification"}</dd></div>
+        </dl>
+      </section>
+      <section className="panel-flat canonical-release-card">
+        <p className="eyebrow">Estimated cost</p>
+        <h2>{cost.label}</h2>
+        <p>{cost.detail}</p>
+        {currentState.missingConfiguration?.length ? <p className="canonical-configuration-note">{currentState.missingConfiguration.length} required configuration value{currentState.missingConfiguration.length === 1 ? "" : "s"} remaining.</p> : null}
+      </section>
+    </div>
+  </div>;
+}

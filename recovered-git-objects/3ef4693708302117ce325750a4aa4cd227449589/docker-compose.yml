@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mini_paas
+      POSTGRES_USER: mini_paas_user
+      POSTGRES_PASSWORD: mini_paas_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  normal-v1-release-consumer:
+    build:
+      context: backend/docker/normal-v1-release-consumer
+      dockerfile: Dockerfile
+    image: deployguard-normal-v1-release-consumer:local
+    profiles:
+      - normal-v1-release
+    container_name: deployguard-normal-v1-release-consumer
+    init: true
+    restart: "on-failure:3"
+    stop_grace_period: 90s
+    working_dir: /workspace/backend
+    command:
+      - node
+      - dist/src/normal-v1-release-consumer.worker.js
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - .:/workspace:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - normal_v1_release_consumer_status:/run/deployguard
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-mini_paas_user}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-mini_paas_password}
+      DATABASE_NAME: ${DATABASE_NAME:-mini_paas}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_TLS: ${REDIS_TLS:-false}
+      OUTBOX_BULLMQ_PREFIX: ${OUTBOX_BULLMQ_PREFIX:-bull}
+      TWO_LANE_NORMAL_RELEASE_CONSUMER_ENABLED: ${TWO_LANE_NORMAL_RELEASE_CONSUMER_ENABLED:-false}
+      TWO_LANE_NORMAL_RELEASE_PLANNING_ENABLED: ${TWO_LANE_NORMAL_RELEASE_PLANNING_ENABLED:-false}
+      TWO_LANE_NORMAL_RELEASE_EXECUTION_ENABLED: ${TWO_LANE_NORMAL_RELEASE_EXECUTION_ENABLED:-false}
+      TWO_LANE_NORMAL_RELEASE_AUTO_CONVERGENCE_ENABLED: ${TWO_LANE_NORMAL_RELEASE_AUTO_CONVERGENCE_ENABLED:-false}
+      TWO_LANE_NORMAL_RELEASE_OUTCOME_RECONCILE_APPROVED: ${TWO_LANE_NORMAL_RELEASE_OUTCOME_RECONCILE_APPROVED:-false}
+      TWO_LANE_NORMAL_RELEASE_AUTO_CONVERGENCE_INTERVAL_MS: ${TWO_LANE_NORMAL_RELEASE_AUTO_CONVERGENCE_INTERVAL_MS:-5000}
+      TWO_LANE_NORMAL_RELEASE_AUTO_CONVERGENCE_MAX_ATTEMPTS: ${TWO_LANE_NORMAL_RELEASE_AUTO_CONVERGENCE_MAX_ATTEMPTS:-2}
+      TWO_LANE_NORMAL_RELEASE_AUTO_CONVERGENCE_MAX_ELAPSED_MS: ${TWO_LANE_NORMAL_RELEASE_AUTO_CONVERGENCE_MAX_ELAPSED_MS:-600000}
+      TWO_LANE_NORMAL_RELEASE_CONSUMER_STATUS_INTERVAL_MS: ${TWO_LANE_NORMAL_RELEASE_CONSUMER_STATUS_INTERVAL_MS:-30000}
+      TWO_LANE_NORMAL_RELEASE_CONSUMER_STATUS_FILE: /run/deployguard/status.json
+      TWO_LANE_RELEASE_COMPOSITION_ENABLED: ${TWO_LANE_RELEASE_COMPOSITION_ENABLED:-false}
+      TWO_LANE_RELEASE_COMPOSITION_MODE: ${TWO_LANE_RELEASE_COMPOSITION_MODE:-}
+      TWO_LANE_RELEASE_WORKER_ID: ${TWO_LANE_RELEASE_WORKER_ID:-}
+      TWO_LANE_RELEASE_PROJECT_ALLOWLIST: ${TWO_LANE_RELEASE_PROJECT_ALLOWLIST:-}
+      TWO_LANE_RELEASE_ENVIRONMENT_ALLOWLIST: ${TWO_LANE_RELEASE_ENVIRONMENT_ALLOWLIST:-}
+      TWO_LANE_LATER_RELEASE_LIVE_CLIENT_ENABLED: ${TWO_LANE_LATER_RELEASE_LIVE_CLIENT_ENABLED:-false}
+      TWO_LANE_OWNERSHIP_ENFORCEMENT_ENABLED: ${TWO_LANE_OWNERSHIP_ENFORCEMENT_ENABLED:-false}
+      TWO_LANE_OWNERSHIP_ROLLOUT_ENABLED: ${TWO_LANE_OWNERSHIP_ROLLOUT_ENABLED:-false}
+      TWO_LANE_OWNERSHIP_PROJECT_ALLOWLIST: ${TWO_LANE_OWNERSHIP_PROJECT_ALLOWLIST:-}
+      TWO_LANE_OWNERSHIP_ENVIRONMENT_ALLOWLIST: ${TWO_LANE_OWNERSHIP_ENVIRONMENT_ALLOWLIST:-}
+      TWO_LANE_OPERATIONAL_ROLLOUT_ENABLED: ${TWO_LANE_OPERATIONAL_ROLLOUT_ENABLED:-false}
+      TWO_LANE_PRODUCTION_CANARY_PREFLIGHT_ENABLED: ${TWO_LANE_PRODUCTION_CANARY_PREFLIGHT_ENABLED:-false}
+      TWO_LANE_PRODUCTION_CANARY_PREFLIGHT_MODE: ${TWO_LANE_PRODUCTION_CANARY_PREFLIGHT_MODE:-}
+      DEPLOYGUARD_GIT_SHA: ${DEPLOYGUARD_GIT_SHA:-local}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - dist/src/normal-v1-release-consumer.health.js
+        - liveness
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  redis_data:
+  normal_v1_release_consumer_status:

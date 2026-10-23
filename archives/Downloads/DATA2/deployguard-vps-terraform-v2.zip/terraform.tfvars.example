@@ -1,0 +1,17 @@
+aws_region = "us-east-1"
+
+# Replace with YOUR laptop/network public IP:
+# Run: curl -4 ifconfig.me
+admin_cidr = "YOUR_PUBLIC_IP/32"
+
+# Replace with the domain you control:
+apps_domain = "apps.YOURDOMAIN.com"
+
+# Replace with your real email:
+acme_email = "YOUR_EMAIL@example.com"
+
+# Selected default:
+instance_type   = "t3a.medium"
+root_volume_gib = 30
+
+ssh_public_key_path = "./deployguard.pub"

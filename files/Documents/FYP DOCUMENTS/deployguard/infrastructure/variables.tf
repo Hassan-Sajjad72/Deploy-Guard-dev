@@ -1,0 +1,14 @@
+variable "aws_region"            { type=string; default="us-east-1"   }
+variable "project_name"          { type=string; default="deployguard"  }
+variable "environment"           { type=string; default="production"   }
+variable "vpc_cidr"              { type=string; default="10.0.0.0/16"  }
+variable "az_count"              { type=number; default=2              }
+variable "task_cpu"              { type=number; default=512            }
+variable "task_memory"           { type=number; default=1024           }
+variable "backend_port"          { type=number; default=3001           }
+variable "frontend_port"         { type=number; default=3000           }
+variable "service_desired_count" { type=number; default=1              }
+variable "min_capacity"          { type=number; default=1              }
+variable "max_capacity"          { type=number; default=10             }
+variable "notification_email"    { type=string; default=""             }
+variable "github_repo"           { type=string; default=""             }

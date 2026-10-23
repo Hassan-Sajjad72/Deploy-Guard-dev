@@ -1,0 +1,77 @@
+import { strict as assert } from "node:assert";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, extname, join, relative, resolve } from "node:path";
+
+const root = join(__dirname, "..", "..");
+const frontendRoot = join(root, "frontend", "src");
+
+function files(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory() ? files(join(directory, entry.name)) : [join(directory, entry.name)]);
+}
+
+function resolveImport(from: string, specifier: string) {
+  if (!specifier.startsWith(".")) return null;
+  const base = resolve(dirname(from), specifier);
+  for (const candidate of [base, `${base}.js`, `${base}.jsx`, `${base}.ts`, `${base}.tsx`, join(base, "index.js"), join(base, "index.jsx")]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function reachable(entry: string) {
+  const visited = new Set<string>();
+  const visit = (file: string) => {
+    if (visited.has(file) || !existsSync(file)) return;
+    visited.add(file);
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(/(?:import|export)\s+(?:[^"']*?\s+from\s+)?["']([^"']+)["']/g)) {
+      const target = resolveImport(file, match[1]);
+      if (target && /\.(?:js|jsx|ts|tsx)$/.test(target)) visit(target);
+    }
+  };
+  visit(entry);
+  return visited;
+}
+
+const frontendSources = files(frontendRoot).filter((file) => /\.(?:js|jsx)$/.test(file));
+const frontendReachable = reachable(join(frontendRoot, "main.jsx"));
+const unreachableFrontend = frontendSources.filter((file) => !frontendReachable.has(file));
+assert.deepEqual(unreachableFrontend.map((file) => relative(root, file)), [], "every frontend source file must be reachable from the application entrypoint");
+
+const routes = readFileSync(join(frontendRoot, "routes", "AppRoutes.jsx"), "utf8");
+for (const page of ["Dashboard", "Projects", "NewProject", "ProjectDetails", "ProjectPipeline", "ProjectInfrastructure", "ProjectMetrics", "ProjectSettings", "ProjectTroubleshooting"]) {
+  assert.match(routes, new RegExp(`<${page}\\b`), `${page} must have an executable route`);
+}
+assert.match(routes, /requirements\/\*[\s\S]*?section="\/settings"|section="\/settings"[\s\S]*?requirements\/\*/);
+
+const normalUi = frontendSources
+  .filter((file) => !file.includes(`${join("src", "pages", "Admin")}`) && !file.includes(`${join("src", "components", "admin")}`))
+  .map((file) => readFileSync(file, "utf8"))
+  .join("\n");
+assert.doesNotMatch(normalUi, /["'`]Railpack Build(?: failed)?["'`]/, "normal UI must use product stages rather than build-engine labels");
+assert.doesNotMatch(normalUi, /href: `\/projects\/\$\{projectId\}\/requirements`/, "configuration actions must resolve to Settings");
+
+const canonicalStages = readFileSync(join(frontendRoot, "utils", "developerDeploymentPresentation.js"), "utf8");
+for (const label of ["Prepare Source", "Build Application", "Publish Image", "Deploy and Verify Application", "Finalize Release", "Prepare Rollback", "Restore Release", "Update Runtime and Verify Application", "Finalize Rollback", "Destroy Infrastructure", "Verify Deletion", "Finalize Cleanup"]) {
+  assert.match(canonicalStages, new RegExp(label));
+}
+
+const removedExecutables = [
+  "backend/src/billing/billing.module.ts",
+  "backend/src/finops/finops.module.ts",
+  "backend/src/infrastructure-lifecycle/infrastructure-lifecycle.module.ts",
+  "backend/src/orchestration/orchestration.module.ts",
+  "backend/src/state-management/state-management.module.ts",
+  "backend/src/storage/storage.module.ts",
+  "backend/src/terraform-export/terraform-export.module.ts",
+  "frontend/src/context/ProductModeContext.jsx",
+  "frontend/src/pages/ProjectStateManagement.jsx",
+  "frontend/src/pages/ProjectOrchestration.jsx",
+  "frontend/src/pages/ProjectObservability.jsx",
+];
+for (const file of removedExecutables) assert.equal(existsSync(join(root, file)), false, `${file} must remain retired`);
+
+const migrations = files(join(root, "backend", "src", "migrations")).filter((file) => file.endsWith(".ts")).length;
+const entities = files(join(root, "backend", "src")).filter((file) => file.endsWith(".entity.ts")).length;
+console.log(`PRODUCT_SURFACE_CERTIFICATION=PASS reachable_frontend=${frontendReachable.size} historical_migrations=${migrations} persisted_entities=${entities} dead_retired_executables=0`);

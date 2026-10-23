@@ -1,0 +1,1083 @@
+Sanitized text extraction; credential examples removed before public backup.
+
+                   DeployGuard Public Repository
+                      Deployment Test Matrix
+30 GitHub applications with inspected ENV templates and conservative smoke-test ENV
+                                        files
+
+
+
+• Purpose: give DeployGuard a broad public-repository deployment test set without guessing ENV names.
+• ENV confidence: HIGH for every included repository - the repository ENV template was inspected.
+• Deployability: intentionally NOT pre-certified. A build/runtime failure is part of the platform test.
+• Platform rule: do not paste PORT or HOST from source templates. DeployGuard owns PORT=8080 and
+HOST=0.0.0.0.
+• Secrets below are randomly generated TEST-ONLY values. Generate new secrets for any real deployment.
+
+
+
+
+                                                   Prepared 2026-08-30
+
+
+
+
+                        DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+How to use this matrix
+1. Start with Tier A: These use SQLite, local files, or no database and are the fastest way to validate source checkout ->
+Railpack build -> runtime probe -> ECR -> ECS/ALB.
+
+2. Then run Tier B: Select DeployGuard managed PostgreSQL. The proposed ENV deliberately includes normal database
+aliases so the managed database replacement path is exercised.
+
+3. Finish with Tier C: Use managed MySQL or MongoDB and verify the bounded database alias replacement reaches the
+application at runtime.
+
+4. Treat PORT failures as real evidence: I intentionally removed PORT/HOST from every proposed ENV. If a repository
+ignores DeployGuard PORT=8080, the runtime probe should reject it. Do not “fix” the test ENV by adding a different app
+port.
+
+5. ENV scope: Only variables that are strongly supported by the inspected template are included. Optional paid API keys
+are blank or omitted when the repository can boot without them.
+
+Recommended test sequence
+Run the low-friction entries first, then PostgreSQL, then MySQL/MongoDB. Within a tier, the numbering is only a
+convenient reference, not a quality ranking.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+30-application index
+#               Repository                        Stack                            Database               Tier
+1               laravel/laravel                   PHP / Laravel 13                 SQLite                 A - low friction
+2               laravel/react-starter-kit         PHP / Laravel + React            SQLite                 A - low friction
+3               laravel/livewire-starter-kit      PHP / Laravel + Livewire         SQLite                 A - low friction
+4               waldmannly/bloom-tracker          Go / SQLite                      SQLite                 A - low friction
+5               dannymcc/casey                    Python / Flask / SQLite          SQLite                 A - low friction
+6               Kometa-Team/Plex-OAuth            Python / Flask                   None                   A - low friction
+7               iammikek/fastAPI-101              Python / FastAPI / SQLAlchemy    SQLite                 A - low friction
+8               nsidnev/fastapi-realworld-        Python / FastAPI                 PostgreSQL             B - managed PostgreSQL
+                example-app
+9               ag-tech-group/api-template        Python / FastAPI / SQLAlchemy    PostgreSQL             B - managed PostgreSQL
+                                                  / Alembic
+10              PythonPlumber/zly                 Python / FastAPI                 SQLite                 A - low friction
+11              gothinkster/golang-gin-           Go / Gin                         SQLite                 A - low friction
+                realworld-example-app
+12              NikSchaefer/gofiber-boilerplate   Go / Fiber                       PostgreSQL             B - managed PostgreSQL
+13              DriftOS/fastify-starter           Node.js / Fastify / Prisma       PostgreSQL             B - managed PostgreSQL
+14              chaalpritam/tribe-hub             Node.js / Fastify                PostgreSQL             B - managed PostgreSQL
+15              miikkaylisiurunen/template-       Node.js / Express / TypeScript   PostgreSQL             B - managed PostgreSQL
+                node-express
+16              notiz-dev/nestjs-prisma-starter   Node.js / NestJS / Prisma        PostgreSQL             B - managed PostgreSQL
+17              unlight/nestjs-graphql-prisma-    Node.js / NestJS / Prisma /      SQLite                 A - low friction
+                realworld-example-app             GraphQL
+18              mikebz/djangovue                  Python / Django + Vue            SQLite                 A - low friction
+19              eriktaveras/django-saas-          Python / Django                  SQLite                 A - low friction
+                boilerplate
+20              fasouto/django-starter-template   Python / Django 5.2              SQLite                 A - low friction
+21              Janon04/school-management-        Python / Django                  SQLite                 A - low friction
+                system
+22              AbdulRehman786-maker/             Python / Flask                   SQLite                 A - low friction
+                mobile-shop-management-
+                system
+23              leonrod/cookbook                  Python / Flask                   SQLite file            A - low friction
+24              incredibledays/forecast-arena     Python / Flask                   SQLite                 A - edge port test
+25              prasangapokharel/turbo-           Python / Flask                   SQLite                 A - low friction
+                domain-finder
+26              bifrost0x/webssh                  Python / Flask /                 Local data directory   A - advanced runtime
+                                                  WebSocket/SSH
+27              DrJonoG/job_search                Python / Flask                   MySQL                  C - managed MySQL
+28              pedroanisio/anthropic-export-     Python / Flask                   MongoDB                C - managed MongoDB
+                viewer
+29              Tuhin-SnapD/Real-Time-Stock-      Python / Flask                   None                   A - low friction
+                Trading-Simulator
+30              1mb-dev/driftfm                   Go / SQLite / vanilla web        SQLite                 A - low friction
+
+
+
+
+                     DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+01. laravel/laravel
+Repository: https://github.com/laravel/laravel
+Inspected ENV source: https://github.com/laravel/laravel/blob/13.x/.env.example
+Stack                                      Database                                           ENV confidence
+PHP / Laravel 13                           SQLite                                             HIGH
+
+Test tier                                  Port evidence                                      External credentials
+A - low friction                           No PORT in template; platform runtime test         Blank/omitted unless boot-safe
+                                           decides compatibility.
+
+
+Proposed smoke-test ENV
+
+  APP_NAME=DeployGuard Laravel
+  APP_ENV=production
+  APP_KEY=base64:K6RWY4HhfAMjU8hcUykNfX/fUemo8XGn0FqHR/919R4=
+  APP_DEBUG=false
+  APP_URL=http://localhost
+  LOG_CHANNEL=stack
+  LOG_LEVEL=info
+  DB_CONNECTION=sqlite
+  SESSION_DRIVER=file
+  QUEUE_CONNECTION=sync
+  CACHE_STORE=file
+  FILESYSTEM_DISK=local
+  MAIL_MAILER=log
+  VITE_APP_NAME=DeployGuard Laravel
+
+
+
+Why this ENV is safe to test: Uses Laravel SQLite and file/sync drivers to avoid external services during the smoke
+deployment.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+02. laravel/react-starter-kit
+Repository: https://github.com/laravel/react-starter-kit
+Inspected ENV source: https://github.com/laravel/react-starter-kit/blob/main/.env.example
+Stack                                       Database                                           ENV confidence
+PHP / Laravel + React                       SQLite                                             HIGH
+
+Test tier                                   Port evidence                                      External credentials
+A - low friction                            No PORT in template; platform runtime test         Blank/omitted unless boot-safe
+                                            decides compatibility.
+
+
+Proposed smoke-test ENV
+
+  APP_NAME=DeployGuard React Starter
+  APP_ENV=production
+  APP_KEY=base64:kTiWbwxB2I7AZcB1moRe86OoYWxP3wRVJiFf5ufFEHc=
+  APP_DEBUG=false
+  APP_URL=http://localhost
+  LOG_CHANNEL=stack
+  LOG_LEVEL=info
+  DB_CONNECTION=sqlite
+  SESSION_DRIVER=file
+  QUEUE_CONNECTION=sync
+  CACHE_STORE=file
+  FILESYSTEM_DISK=local
+  MAIL_MAILER=log
+  VITE_APP_NAME=DeployGuard React Starter
+
+
+
+Why this ENV is safe to test: Good test of a Laravel application that also has a Node/Vite frontend build stage.
+
+
+
+
+                              DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+03. laravel/livewire-starter-kit
+Repository: https://github.com/laravel/livewire-starter-kit
+Inspected ENV source: https://github.com/laravel/livewire-starter-kit/blob/main/.env.example
+Stack                                       Database                                           ENV confidence
+PHP / Laravel + Livewire                    SQLite                                             HIGH
+
+Test tier                                   Port evidence                                      External credentials
+A - low friction                            No PORT in template; platform runtime test         Blank/omitted unless boot-safe
+                                            decides compatibility.
+
+
+Proposed smoke-test ENV
+
+  APP_NAME=DeployGuard Livewire Starter
+  APP_ENV=production
+  APP_KEY=base64:nC8vpzvv7gl/BOX99T8qA7BBiSvNJHwjEZLpHCteZ10=
+  APP_DEBUG=false
+  APP_URL=http://localhost
+  LOG_CHANNEL=stack
+  LOG_LEVEL=info
+  DB_CONNECTION=sqlite
+  SESSION_DRIVER=file
+  QUEUE_CONNECTION=sync
+  CACHE_STORE=file
+  FILESYSTEM_DISK=local
+  MAIL_MAILER=log
+  VITE_APP_NAME=DeployGuard Livewire Starter
+
+
+
+Why this ENV is safe to test: Tests another Laravel build shape without adding an external database.
+
+
+
+
+                              DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+04. waldmannly/bloom-tracker
+Repository: https://github.com/waldmannly/bloom-tracker
+Inspected ENV source: https://github.com/waldmannly/bloom-tracker/blob/main/.env.example
+Stack                                       Database                                           ENV confidence
+Go / SQLite                                 SQLite                                             HIGH
+
+Test tier                                   Port evidence                                      External credentials
+A - low friction                            Source template uses standard PORT; omit it        Blank/omitted unless boot-safe
+                                            because DeployGuard owns PORT.
+
+
+Proposed smoke-test ENV
+
+  DB_PATH=period_tracker.db
+  EMAIL_API_URL=
+  EMAIL_API_KEY=
+  SMTP_EMAIL=
+  SMTP_PASS=
+  ENCRYPTION_KEY=
+
+
+
+Why this ENV is safe to test: The repository documents that all settings are optional and it works with defaults. This is a
+strong zero-external-service smoke candidate.
+
+
+
+
+                              DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+05. dannymcc/casey
+Repository: https://github.com/dannymcc/casey
+Inspected ENV source: https://github.com/dannymcc/casey/blob/master/.env.example
+Stack                                      Database                                           ENV confidence
+Python / Flask / SQLite                    SQLite                                             HIGH
+
+Test tier                                  Port evidence                                      External credentials
+A - low friction                           No PORT in env template; deployment itself         Blank/omitted unless boot-safe
+                                           should verify port behavior.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  FLASK_DEBUG=False
+
+
+
+Why this ENV is safe to test: The inspected template contains only a Flask secret and debug flag, so there is little ENV
+ambiguity.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+06. Kometa-Team/Plex-OAuth
+Repository: https://github.com/Kometa-Team/Plex-OAuth
+Inspected ENV source: https://github.com/Kometa-Team/Plex-OAuth/blob/main/.env.example
+Stack                                      Database                                           ENV confidence
+Python / Flask                             None                                               HIGH
+
+Test tier                                  Port evidence                                      External credentials
+A - low friction                           No PORT in env template; deployment itself         Blank/omitted unless boot-safe
+                                           should verify port behavior.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  APP_NAME=Kometa Plex Auth
+  APP_VERSION=1.0
+  DEBUG=False
+
+
+
+Why this ENV is safe to test: Very small ENV surface. Plex interaction is user-driven after boot and is not needed to prove
+the web process starts.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+07. iammikek/fastAPI-101
+Repository: https://github.com/iammikek/fastAPI-101
+Inspected ENV source: https://github.com/iammikek/fastAPI-101/blob/main/.env.example
+Stack                                         Database                                           ENV confidence
+Python / FastAPI / SQLAlchemy                 SQLite                                             HIGH
+
+Test tier                                     Port evidence                                      External credentials
+A - low friction                              No PORT in env template; README uses               Blank/omitted unless boot-safe
+                                              Uvicorn. Deployment verifies runtime binding.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  DATABASE_URL=sqlite:///./app.db
+  LOG_LEVEL=INFO
+  CORS_ORIGINS=*
+[credential example removed]
+  JWT_ALGORITHM=HS256
+  JWT_EXPIRE_MINUTES=60
+
+
+
+Why this ENV is safe to test: The repository explicitly documents SQLite as the default local path and states migrations run
+automatically on startup.
+
+
+
+
+                                DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+08. nsidnev/fastapi-realworld-example-app
+Repository: https://github.com/nsidnev/fastapi-realworld-example-app
+Inspected ENV source: https://github.com/nsidnev/fastapi-realworld-example-app/blob/master/.env.example
+Stack                                     Database                                           ENV confidence
+Python / FastAPI                          PostgreSQL                                         HIGH
+
+Test tier                                 Port evidence                                      External credentials
+B - managed PostgreSQL                    No PORT in env template; deployment verifies       Blank/omitted unless boot-safe
+                                          runtime binding.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  DEBUG=False
+  DATABASE_URL=postgresql://deployguard:replace-me@127.0.0.1:5432/application
+
+
+
+Why this ENV is safe to test: Select DeployGuard managed PostgreSQL. DATABASE_URL is deliberately present so the
+platform database replacement path is exercised.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+09. ag-tech-group/api-template
+Repository: https://github.com/ag-tech-group/api-template
+Inspected ENV source: https://github.com/ag-tech-group/api-template/blob/main/.env.example
+Stack                                           Database                                           ENV confidence
+Python / FastAPI / SQLAlchemy / Alembic         PostgreSQL                                         HIGH
+
+Test tier                                       Port evidence                                      External credentials
+B - managed PostgreSQL                          No PORT in env template; deployment verifies       Blank/omitted unless boot-safe
+                                                runtime binding.
+
+
+Proposed smoke-test ENV
+
+  DATABASE_URL=postgresql+asyncpg://deployguard:replace-me@127.0.0.1:5432/application
+[credential example removed]
+  ENVIRONMENT=development
+  CORS_ORIGINS=*
+  FRONTEND_URL=http://localhost
+  COOKIE_DOMAIN=
+  COOKIE_PREFIX=deployguard
+  LOG_LEVEL=INFO
+  OTEL_ENABLED=false
+
+
+
+Why this ENV is safe to test: Select managed PostgreSQL. Development mode is intentional for a deployment smoke test
+and avoids unrelated production cookie policy requirements.
+
+
+
+
+                                  DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+10. PythonPlumber/zly
+Repository: https://github.com/PythonPlumber/zly
+Inspected ENV source: https://github.com/PythonPlumber/zly/blob/main/infrastructure/.env.example
+Stack                                     Database                                           ENV confidence
+Python / FastAPI                          SQLite                                             HIGH
+
+Test tier                                 Port evidence                                      External credentials
+A - low friction                          No PORT in inspected template; deployment          Blank/omitted unless boot-safe
+                                          verifies runtime binding.
+
+
+Proposed smoke-test ENV
+
+  DATABASE_URL=sqlite+aiosqlite:///./zly.db
+  REDIS_URL=
+[credential example removed]
+[credential example removed]
+  CORS_ORIGINS=*
+  DEFAULT_DOMAIN=localhost
+  ENVIRONMENT=development
+
+
+
+Why this ENV is safe to test: The source template explicitly documents a local SQLite mode with no Redis required.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+11. gothinkster/golang-gin-realworld-example-app
+Repository: https://github.com/gothinkster/golang-gin-realworld-example-app
+Inspected ENV source: https://github.com/gothinkster/golang-gin-realworld-example-app/blob/main/.env.example
+Stack                                     Database                                           ENV confidence
+Go / Gin                                  SQLite                                             HIGH
+
+Test tier                                 Port evidence                                      External credentials
+A - low friction                          Source template uses standard PORT; omit it        Blank/omitted unless boot-safe
+                                          because DeployGuard owns PORT.
+
+
+Proposed smoke-test ENV
+
+  GIN_MODE=release
+  DB_PATH=./data/gorm.db
+
+
+
+Why this ENV is safe to test: Strong port-contract candidate because the repository itself documents a standard PORT
+variable.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+12. NikSchaefer/gofiber-boilerplate
+Repository: https://github.com/NikSchaefer/gofiber-boilerplate
+Inspected ENV source: https://github.com/NikSchaefer/gofiber-boilerplate/blob/main/.env.example
+Stack                                     Database                                           ENV confidence
+Go / Fiber                                PostgreSQL                                         HIGH
+
+Test tier                                 Port evidence                                      External credentials
+B - managed PostgreSQL                    Source template uses standard PORT; omit it        Blank/omitted unless boot-safe
+                                          because DeployGuard owns PORT.
+
+
+Proposed smoke-test ENV
+
+  DATABASE_URL=host=127.0.0.1 port=5432 user=deployguard password=replace-me dbname=application
+  sslmode=disable
+  STAGE=development
+  ALLOWED_ORIGINS=http://localhost
+  POSTHOG_KEY=
+  RESEND_KEY=
+  TWILIO_ACCOUNT_SID=
+  TWILIO_AUTH_TOKEN=
+  GOOGLE_CLIENT_ID=
+  GOOGLE_CLIENT_SECRET=
+  GOOGLE_REDIRECT_URL=http://localhost/auth/oauth/google/callback
+  APP_DOMAIN=localhost
+  TWILIO_PHONE_NUMBER=
+
+
+
+Why this ENV is safe to test: Select managed PostgreSQL. Optional analytics, mail, SMS and OAuth values are left empty.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+13. DriftOS/fastify-starter
+Repository: https://github.com/DriftOS/fastify-starter
+Inspected ENV source: https://github.com/DriftOS/fastify-starter/blob/main/.env.example
+Stack                                         Database                                           ENV confidence
+Node.js / Fastify / Prisma                    PostgreSQL                                         HIGH
+
+Test tier                                     Port evidence                                      External credentials
+B - managed PostgreSQL                        Source template uses standard PORT and             Blank/omitted unless boot-safe
+                                              HOST; both are intentionally omitted.
+
+
+Proposed smoke-test ENV
+
+  NODE_ENV=production
+  LOG_LEVEL=info
+  DATABASE_URL=postgresql://deployguard:replace-me@127.0.0.1:5432/application?schema=public
+  POSTGRES_USER=deployguard
+  POSTGRES_PASSWORD=replace-me
+  POSTGRES_DB=application
+[credential example removed]
+  JWT_EXPIRES_IN=7d
+  API_PREFIX=/api
+  API_VERSION=v1
+  RATE_LIMIT_MAX=100
+  RATE_LIMIT_TIME_WINDOW=60000
+  CORS_ORIGIN=http://localhost
+  CORS_CREDENTIALS=true
+  METRICS_ENABLED=true
+  SWAGGER_ENABLED=true
+  REDIS_URL=
+  OPENAI_API_KEY=
+  STRIPE_SECRET_KEY=
+  ENABLE_CLUSTERING=false
+  ENABLE_WEBSOCKETS=false
+
+
+
+Why this ENV is safe to test: Select managed PostgreSQL. This is also a strong test that platform-owned PORT/HOST
+override the source template.
+
+
+
+
+                                DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+14. chaalpritam/tribe-hub
+Repository: https://github.com/chaalpritam/tribe-hub
+Inspected ENV source: https://github.com/chaalpritam/tribe-hub/blob/master/.env.example
+Stack                                     Database                                           ENV confidence
+Node.js / Fastify                         PostgreSQL                                         HIGH
+
+Test tier                                 Port evidence                                      External credentials
+B - managed PostgreSQL                    Source template uses standard PORT; omit it        Blank/omitted unless boot-safe
+                                          because DeployGuard owns PORT.
+
+
+Proposed smoke-test ENV
+
+  HUB_ID=deployguard-smoke
+  SOLANA_RPC_URL=https://api.devnet.solana.com
+  SOLANA_WS_URL=wss://api.devnet.solana.com
+  DATABASE_URL=postgresql://deployguard:replace-me@127.0.0.1:5432/application
+  PEERS=ws://127.0.0.1:65535/gossip
+  TID_REGISTRY_PROGRAM_ID=4BSmJmRGQWKgioP9DG2bUuRS9U3V6soRauU7Nv6yGvHD
+[credential example removed]
+  SOCIAL_GRAPH_PROGRAM_ID=8kKnWvbmTjWq5uPePk79RRbQMAXCszNFzHdRwUS4N74w
+  GOSSIP_INTERVAL_MS=5000
+  MAX_SYNC_BATCH_SIZE=100
+  RECONNECT_DELAY_MS=10000
+  PING_INTERVAL_MS=30000
+  MAX_TWEET_TEXT_LENGTH=320
+  APP_KEY_CACHE_TTL_MS=60000
+  MEDIA_DIR=./data/media
+
+
+
+Why this ENV is safe to test: Select managed PostgreSQL. The unreachable peer is deliberate and should not prevent the
+HTTP service from proving its own startup path.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+15. miikkaylisiurunen/template-node-express
+Repository: https://github.com/miikkaylisiurunen/template-node-express
+Inspected ENV source: https://github.com/miikkaylisiurunen/template-node-express/blob/main/.env.example
+Stack                                          Database                                           ENV confidence
+Node.js / Express / TypeScript                 PostgreSQL                                         HIGH
+
+Test tier                                      Port evidence                                      External credentials
+B - managed PostgreSQL                         Source template uses standard PORT; omit it        Blank/omitted unless boot-safe
+                                               because DeployGuard owns PORT.
+
+
+Proposed smoke-test ENV
+
+  DATABASE_URL=postgres://deployguard:replace-me@127.0.0.1:5432/application
+
+
+
+Why this ENV is safe to test: Select managed PostgreSQL. TEST_PORT and TEST_DATABASE_URL are intentionally
+omitted from the deployment ENV.
+
+
+
+
+                                 DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+16. notiz-dev/nestjs-prisma-starter
+Repository: https://github.com/notiz-dev/nestjs-prisma-starter
+Inspected ENV source: https://github.com/notiz-dev/nestjs-prisma-starter/blob/main/.env.example
+Stack                                      Database                                           ENV confidence
+Node.js / NestJS / Prisma                  PostgreSQL                                         HIGH
+
+Test tier                                  Port evidence                                      External credentials
+B - managed PostgreSQL                     Source template uses standard PORT; omit it        Blank/omitted unless boot-safe
+                                           because DeployGuard owns PORT.
+
+
+Proposed smoke-test ENV
+
+  POSTGRES_USER=deployguard
+  POSTGRES_PASSWORD=replace-me
+  POSTGRES_DB=application
+  DB_HOST=127.0.0.1
+  DB_PORT=5432
+  DB_SCHEMA=public
+  DATABASE_URL=postgresql://deployguard:replace-me@127.0.0.1:5432/application?schema=public&sslmode=disable
+[credential example removed]
+[credential example removed]
+
+
+
+Why this ENV is safe to test: Select managed PostgreSQL. The platform should replace DB aliases and DATABASE_URL
+with the actual managed values.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+17. unlight/nestjs-graphql-prisma-realworld-example-app
+Repository: https://github.com/unlight/nestjs-graphql-prisma-realworld-example-app
+Inspected ENV source: https://github.com/unlight/nestjs-graphql-prisma-realworld-example-app/blob/master/.env.example
+Stack                                               Database                                           ENV confidence
+Node.js / NestJS / Prisma / GraphQL                 SQLite                                             HIGH
+
+Test tier                                           Port evidence                                      External credentials
+A - low friction                                    No PORT in env template; deployment verifies       Blank/omitted unless boot-safe
+                                                    runtime binding.
+
+
+Proposed smoke-test ENV
+
+  DATABASE_URL=file:data.db
+[credential example removed]
+
+
+
+Why this ENV is safe to test: One of the cleanest Node/Nest test candidates because its inspected template is only two
+variables.
+
+
+
+
+                                      DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+18. mikebz/djangovue
+Repository: https://github.com/mikebz/djangovue
+Inspected ENV source: https://github.com/mikebz/djangovue/blob/master/.env.example
+Stack                                     Database                                           ENV confidence
+Python / Django + Vue                     SQLite                                             HIGH
+
+Test tier                                 Port evidence                                      External credentials
+A - low friction                          No application PORT variable in env template;      Blank/omitted unless boot-safe
+                                          deployment verifies runtime binding.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  DEBUG=0
+  ALLOWED_HOSTS=*
+  CSRF_TRUSTED_ORIGINS=
+  DATABASE_URL=sqlite:///db.sqlite3
+  DB_CONN_MAX_AGE=60
+  SECURE_SSL_REDIRECT=0
+  USE_X_FORWARDED_PROTO=0
+  SECURE_HSTS_SECONDS=0
+  SECURE_HSTS_INCLUDE_SUBDOMAINS=0
+  SECURE_HSTS_PRELOAD=0
+  DJANGO_VITE_DEV_MODE=0
+
+
+
+Why this ENV is safe to test: The inspected README states environment variables override .env and the database
+defaults to local SQLite.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+19. eriktaveras/django-saas-boilerplate
+Repository: https://github.com/eriktaveras/django-saas-boilerplate
+Inspected ENV source: https://github.com/eriktaveras/django-saas-boilerplate/blob/main/.env.example
+Stack                                       Database                                           ENV confidence
+Python / Django                             SQLite                                             HIGH
+
+Test tier                                   Port evidence                                      External credentials
+A - low friction                            No PORT in env template; deployment verifies       Blank/omitted unless boot-safe
+                                            runtime binding.
+
+
+Proposed smoke-test ENV
+
+  DEBUG=False
+[credential example removed]
+  ALLOWED_HOSTS=*
+  EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+  STRIPE_PUBLIC_KEY=
+  STRIPE_SECRET_KEY=
+  STRIPE_WEBHOOK_SECRET=
+  STRIPE_PRICE_ID=
+  CSRF_TRUSTED_ORIGINS=
+
+
+
+Why this ENV is safe to test: The source documents SQLite as the default when DATABASE_URL is not set. Stripe values
+are left blank for the smoke boot.
+
+
+
+
+                              DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+20. fasouto/django-starter-template
+Repository: https://github.com/fasouto/django-starter-template
+Inspected ENV source: https://github.com/fasouto/django-starter-template/blob/master/.env.example
+Stack                                     Database                                           ENV confidence
+Python / Django 5.2                       SQLite                                             HIGH
+
+Test tier                                 Port evidence                                      External credentials
+A - low friction                          No PORT in env template; deployment verifies       Blank/omitted unless boot-safe
+                                          runtime binding.
+
+
+Proposed smoke-test ENV
+
+  DJANGO_SETTINGS_MODULE=config.settings.development
+[credential example removed]
+  DEBUG=True
+  DATABASE_URL=sqlite:///db.sqlite3
+  ALLOWED_HOSTS=*
+  CSRF_TRUSTED_ORIGINS=
+
+
+
+Why this ENV is safe to test: Uses the repository's documented development settings and SQLite path for a low-
+dependency smoke test.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+21. Janon04/school-management-system
+Repository: https://github.com/Janon04/school-management-system
+Inspected ENV source: https://github.com/Janon04/school-management-system/blob/main/.env.example
+Stack                                      Database                                           ENV confidence
+Python / Django                            SQLite                                             HIGH
+
+Test tier                                  Port evidence                                      External credentials
+A - low friction                           No PORT in env template; deployment verifies       Blank/omitted unless boot-safe
+                                           runtime binding.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  DEBUG=True
+  ALLOWED_HOSTS=*
+  DB_ENGINE=django.db.backends.sqlite3
+  DB_NAME=db.sqlite3
+  EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+  DEFAULT_FROM_EMAIL=noreply@deployguard.test
+  CORS_ORIGINS=*
+
+
+
+Why this ENV is safe to test: The inspected template explicitly provides SQLite as the development database and console
+email as the default-safe path.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+22. AbdulRehman786-maker/mobile-shop-management-system
+Repository: https://github.com/AbdulRehman786-maker/mobile-shop-management-system
+Inspected ENV source: https://github.com/AbdulRehman786-maker/mobile-shop-management-system/blob/
+main/.env.example
+Stack                                     Database                                           ENV confidence
+Python / Flask                            SQLite                                             HIGH
+
+Test tier                                 Port evidence                                      External credentials
+A - low friction                          No PORT in env template; deployment verifies       Blank/omitted unless boot-safe
+                                          runtime binding.
+
+
+Proposed smoke-test ENV
+
+  FLASK_APP=run.py
+  FLASK_ENV=production
+[credential example removed]
+  DATABASE_URL=sqlite:///instance/mobile_shop.db
+  UPLOAD_FOLDER=app/static/uploads
+  MAX_CONTENT_LENGTH=16777216
+  BOOTSTRAP_ADMIN_EMAIL=admin@deployguard.test
+[credential example removed]
+  BOOTSTRAP_STAFF_EMAIL=staff@deployguard.test
+[credential example removed]
+
+
+
+Why this ENV is safe to test: Uses the repository's documented SQLite mode and valid test-only bootstrap credentials.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+23. leonrod/cookbook
+Repository: https://github.com/leonrod/cookbook
+Inspected ENV source: https://github.com/leonrod/cookbook/blob/master/.env.example
+Stack                                      Database                                           ENV confidence
+Python / Flask                             SQLite file                                        HIGH
+
+Test tier                                  Port evidence                                      External credentials
+A - low friction                           Source template uses standard PORT; omit it        Blank/omitted unless boot-safe
+                                           because DeployGuard owns PORT.
+
+
+Proposed smoke-test ENV
+
+  FLASK_ENV=production
+[credential example removed]
+  DB_PATH=nurglingdatabase.db
+  API_RESULTS_LIMIT=50
+  API_MAX_QUERY_LENGTH=500
+  LOG_LEVEL=INFO
+  LOG_FILE=logs/app.log
+  CORS_ENABLED=False
+  CORS_ORIGINS=*
+  RATELIMIT_ENABLED=True
+  RATELIMIT_DEFAULT=100 per minute
+  CACHE_TYPE=simple
+  CACHE_DEFAULT_TIMEOUT=300
+  WORKERS=1
+
+
+
+Why this ENV is safe to test: Standard PORT is present in the source template, making this useful for the fixed platform-
+port contract.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+24. incredibledays/forecast-arena
+Repository: https://github.com/incredibledays/forecast-arena
+Inspected ENV source: https://github.com/incredibledays/forecast-arena/blob/master/.env.example
+Stack                                      Database                                           ENV confidence
+Python / Flask                             SQLite                                             HIGH
+
+Test tier                                  Port evidence                                      External credentials
+A - edge port test                         Source uses FLASK_PORT instead of PORT.            Blank/omitted unless boot-safe
+                                           FLASK_PORT is intentionally omitted.
+
+
+Proposed smoke-test ENV
+
+  DATABASE_URL=sqlite:///forecast_arena.db
+  TAVILY_API_KEY=
+  OPENAI_API_KEY=
+  OPENAI_MODEL=gpt-4o-mini
+  LLM_PROVIDER=openai
+  LLM_API_KEY=
+  LLM_API_BASE=
+  LLM_MODEL=gpt-4o-mini
+  LLM_TIMEOUT=30
+  LLM_TEMPERATURE=0.2
+  LLM_SSL_VERIFY=true
+  LLM_MAX_RETRIES=2
+  LLM_MAX_ESCALATIONS=1
+  LLM_MAX_CONCURRENT_STRONG=4
+
+
+
+Why this ENV is safe to test: ENV confidence is high, but this is deliberately an edge test for the platform PORT contract
+because the repository documents a custom FLASK_PORT variable.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+25. prasangapokharel/turbo-domain-finder
+Repository: https://github.com/prasangapokharel/turbo-domain-finder
+Inspected ENV source: https://github.com/prasangapokharel/turbo-domain-finder/blob/main/.env.example
+Stack                                      Database                                           ENV confidence
+Python / Flask                             SQLite                                             HIGH
+
+Test tier                                  Port evidence                                      External credentials
+A - low friction                           No PORT in env template; deployment verifies       Blank/omitted unless boot-safe
+                                           runtime binding.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  DATABASE_URL=sqlite:///domain.db
+
+
+
+Why this ENV is safe to test: The inspected template is only two variables; no external API credential is required for the
+basic application.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+26. bifrost0x/webssh
+Repository: https://github.com/bifrost0x/webssh
+Inspected ENV source: https://github.com/bifrost0x/webssh/blob/main/.env.example
+Stack                                          Database                                           ENV confidence
+Python / Flask / WebSocket/SSH                 Local data directory                               HIGH
+
+Test tier                                      Port evidence                                      External credentials
+A - advanced runtime                           Source template uses standard PORT and             Blank/omitted unless boot-safe
+                                               HOST; both are intentionally omitted.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  DEBUG=False
+  DEPLOYMENT_PROFILE=homelab
+  DATA_DIR=./data
+  APPLICATION_ROOT=
+  TRUSTED_PROXIES=1
+  CORS_ORIGINS=
+  SESSION_TIMEOUT=1800
+  REGISTRATION_ENABLED=True
+  RATELIMIT_ENABLED=True
+  RATELIMIT_STORAGE_URL=memory://
+
+
+
+Why this ENV is safe to test: More runtime-heavy than the basic apps, but its ENV is well documented. Use it after simpler
+web apps have passed.
+
+
+
+
+                                 DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+27. DrJonoG/job_search
+Repository: https://github.com/DrJonoG/job_search
+Inspected ENV source: https://github.com/DrJonoG/job_search/blob/main/.env.example
+Stack                                     Database                                           ENV confidence
+Python / Flask                            MySQL                                              HIGH
+
+Test tier                                 Port evidence                                      External credentials
+C - managed MySQL                         No PORT shown in inspected template;               Blank/omitted unless boot-safe
+                                          deployment verifies runtime binding.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  DATA_DIR=data
+  MAX_RESULTS_PER_SOURCE=100
+  REQUEST_TIMEOUT=30
+  RATE_LIMIT_DELAY=1.0
+  DB_HOST=127.0.0.1
+  DB_PORT=3306
+  DB_USER=deployguard
+  DB_PASSWORD=replace-me
+  DB_NAME=application
+  JOBSPY_SITES=indeed,linkedin,glassdoor
+  JOBSPY_COUNTRIES=USA
+  ADZUNA_APP_ID=
+  ADZUNA_APP_KEY=
+  REED_API_KEY=
+  USAJOBS_API_KEY=
+  USAJOBS_EMAIL=
+  JOOBLE_API_KEY=
+  SERPAPI_KEY=
+  FINDWORK_API_KEY=
+  CAREERJET_AFFID=
+[credential example removed]
+[credential example removed]
+  GOOGLE_AI_API_KEY=
+
+
+
+Why this ENV is safe to test: Select managed MySQL. Public/free scraper sources can exercise the app while optional API
+keys stay blank.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+28. pedroanisio/anthropic-export-viewer
+Repository: https://github.com/pedroanisio/anthropic-export-viewer
+Inspected ENV source: https://github.com/pedroanisio/anthropic-export-viewer/blob/main/env.example
+Stack                                       Database                                           ENV confidence
+Python / Flask                              MongoDB                                            HIGH
+
+Test tier                                   Port evidence                                      External credentials
+C - managed MongoDB                         Source template uses standard PORT and             Blank/omitted unless boot-safe
+                                            HOST; both are intentionally omitted.
+
+
+Proposed smoke-test ENV
+
+[credential example removed]
+  FLASK_ENV=development
+  DEBUG=false
+  MONGO_URI=mongodb://127.0.0.1:27017/anthropic_data
+  DB_NAME=anthropic_data
+  UPLOAD_FOLDER=./uploads
+  MAX_CONTENT_LENGTH=524288000
+  LOG_LEVEL=INFO
+  LOG_FORMAT=console
+
+
+
+Why this ENV is safe to test: Select managed MongoDB. Development mode avoids unrelated production Basic Auth
+requirements while still testing Mongo runtime injection.
+
+
+
+
+                              DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+29. Tuhin-SnapD/Real-Time-Stock-Trading-Simulator
+Repository: https://github.com/Tuhin-SnapD/Real-Time-Stock-Trading-Simulator
+Inspected ENV source: https://github.com/Tuhin-SnapD/Real-Time-Stock-Trading-Simulator/blob/main/env.example
+Stack                                        Database                                          ENV confidence
+Python / Flask                               None                                              HIGH
+
+Test tier                                    Port evidence                                     External credentials
+A - low friction                             Source template uses standard PORT and            Blank/omitted unless boot-safe
+                                             HOST; both are intentionally omitted.
+
+
+Proposed smoke-test ENV
+
+  FLASK_DEBUG=False
+[credential example removed]
+  DEFAULT_SYMBOL=AAPL
+  DEFAULT_INTERVAL=1m
+  DEFAULT_PERIOD=1d
+  DEFAULT_INITIAL_CASH=50000
+  MAX_RETRIES=5
+  RETRY_DELAY=10
+  DEFAULT_SHORT_WINDOW=2
+  DEFAULT_LONG_WINDOW=5
+  MAX_PORTFOLIO_VALUES=100
+  CHART_UPDATE_INTERVAL=5000
+
+
+
+Why this ENV is safe to test: No private external API key is required in the inspected template. Market-data access is an
+application-level network test after boot.
+
+
+
+
+                              DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+30. 1mb-dev/driftfm
+Repository: https://github.com/1mb-dev/driftfm
+Inspected ENV source: https://github.com/1mb-dev/driftfm/blob/main/.env.example
+Stack                                     Database                                           ENV confidence
+Go / SQLite / vanilla web                 SQLite                                             HIGH
+
+Test tier                                 Port evidence                                      External credentials
+A - low friction                          Source template uses standard PORT; omit it        Blank/omitted unless boot-safe
+                                          because DeployGuard owns PORT.
+
+
+Proposed smoke-test ENV
+
+  DB_PATH=data/inventory.db
+  AUDIO_STORE_LOCAL_PATH=audio
+
+
+
+Why this ENV is safe to test: Tiny ENV surface and standard PORT support make this an excellent Go smoke candidate.
+
+
+
+
+                            DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+Deployment evidence to capture for every repository
+   Exact source SHA checked out.
+   Railpack version and build result.
+   Runtime probe receives platform PORT=8080 and HOST=0.0.0.0.
+   If the probe fails, preserve the application logs and classify the failure rather than changing the platform port.
+   Image is pushed only after runtime validation and an immutable ECR digest is recorded.
+   Exact digest is used by ECS.
+   For managed databases, verify stale/local database aliases are replaced by runtime-managed values and secrets are
+    injected through secret references.
+   ALB target becomes healthy and the public endpoint returns a real application response.
+   Redeploy a new commit, rollback to the previous digest without rebuilding, then destroy and verify cleanup.
+
+
+
+Important: This matrix validates the ENV selection with high confidence; it does not guarantee that every public repository
+obeys DeployGuard’s runtime contract. That is exactly what the deployment campaign is intended to discover.
+
+
+
+
+                             DeployGuard - Public Repository Deployment Test Matrix | Test-only configuration
+

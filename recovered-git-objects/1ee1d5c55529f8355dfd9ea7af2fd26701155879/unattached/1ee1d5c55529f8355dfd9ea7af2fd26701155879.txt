@@ -1,0 +1,20 @@
+import {
+  PageHeader as SharedPageHeader,
+  StatusChip,
+} from "./DesignSystem.jsx";
+
+function formatStatus(value) {
+  if (!value) return "Unknown";
+  return String(value)
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function StatusBadge({ children, status, tone }) {
+  return <StatusChip status={status} tone={tone}>{children || formatStatus(status)}</StatusChip>;
+}
+
+export function PageHeader({ actions, eyebrow, title, description, status, context }) {
+  return <SharedPageHeader actions={actions} context={context} description={description} eyebrow={eyebrow} status={status} title={title} />;
+}

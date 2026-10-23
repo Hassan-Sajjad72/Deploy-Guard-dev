@@ -1,0 +1,22 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:80"
+    depends_on: [backend]
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      PORT: 3001
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: mongo:8
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 3s
+      timeout: 3s
+      retries: 30

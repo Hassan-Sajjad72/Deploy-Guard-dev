@@ -1,0 +1,92 @@
+# DeployGuard Verified Result
+
+Date: 2026-08-01  
+Scope: Railway transformation through Iteration 6 — operator/admin segregation.
+
+## Verdict
+
+**NO-GO — Iteration 6 is implemented and locally verified, but the developer
+Environment/Logs/Metrics/Settings package and launch acceptance remain.**
+
+This result is not a live AWS deployment claim. Verification did not submit a
+Deploy command, publish a job, or invoke Terraform, Docker, ECR, ECS, ALB,
+Stripe, or SNS.
+
+## Iteration 6 completed result
+
+- Activity Log, recovery, detailed detection/preflight, troubleshooting,
+  security, cost, infrastructure, Terraform export/state, storage,
+  orchestration, detailed runtime health, cloud resource inventory, destroy,
+  and cleanup pages now exist only inside the frontend admin route boundary.
+  Activity Log is absent from ordinary navigation and appears only in the admin
+  section; operator modules remain invisible to non-admin users.
+- Matching backend reads and mutations are guarded by the admin role. The
+  focused metadata test proves admin acceptance and developer, readonly, and
+  unauthenticated rejection across the detailed controller families. Canonical
+  developer current state and Deploy/Approve Cost remain available, as does
+  developer-owned re-analysis after changing source settings.
+- Detailed detection and preflight links/reads are no longer requested by
+  ordinary Project Settings. Administrators retain those diagnostics; developers
+  retain only the re-analysis command and sanitized current-state outcome.
+- Twelve unused legacy/internal frontend API exports were removed, including
+  stage recovery, direct release-lane prepare/dispatch, Terraform approval, and
+  legacy pipeline start/cancel/retry calls. Nine unrouted compatibility/control
+  components were removed, including legacy start/current-action, raw recovery,
+  Terraform planning-detail, and redundant role-wrapper components.
+- `test:automation` no longer invokes `PipelineService.startRun()`, cancellation,
+  or legacy Terraform approval. It is now a retirement guard covering ten
+  authenticated legacy endpoints: each returns HTTP 410 code
+  `LEGACY_DEPLOYMENT_EXECUTION_RETIRED` before touching an execution dependency,
+  creating a run, or publishing queue work.
+
+## Verification evidence
+
+Passed focused backend checks:
+
+- `test:operator-segregation` — route guard metadata and role decisions for
+  audit, diagnostics, security, cost, infrastructure, lifecycle/cleanup,
+  orchestration, state, storage, and detailed observability boundaries;
+- `test:automation` — explicit 410 retirement and zero execution dependency;
+- `test:developer-current-state` and `test:normal-deployment-command` — canonical
+  developer projection and Deploy/cost-policy regressions;
+- `test:project-continuity` — its stale pre-projection workspace fixture was
+  corrected to `developerState/latestAttempt`; canonical active and attention
+  ranking, meaningful recency, and retirement assertions now pass;
+- infrastructure-lifecycle and security-policy safety regressions;
+- Nest production build.
+
+Passed focused frontend checks:
+
+- `test:operator-segregation-ui` — admin route/navigation placement, Settings
+  diagnostic gating, removed API exports, and removed dead components;
+- `test:railway-deployment-pages`, `test:current-state-ui`, `test:recovery-ui`, and
+  `test:normal-release-lane-ui` — developer Overview/Deployments and sanitized
+  current-state regressions;
+- Vite production build (174 modules).
+
+The hot-reloaded backend and frontend remained available on ports 5000 and 5173;
+unauthenticated Activity Log and current-state requests returned HTTP 401. The
+release, infrastructure-plan, and infrastructure-apply consumers remained
+healthy with zero restarts. Read-only PostgreSQL/Redis inspection still reported
+18 projects, 9 release manifests, 2 stable releases, zero active operation
+leases, zero active cross-lane owners, zero active outbox claims, and zero
+waiting/active/delayed/paused BullMQ work.
+
+`git diff --check` passes.
+
+## Evidence classification
+
+- **Isolated:** role-guard metadata execution, frontend route/source guards,
+  legacy 410 controller execution, canonical state, and Deploy command fixtures.
+- **Local:** backend/frontend production builds, hot-reload availability,
+  supervised worker health, and read-only PostgreSQL/Redis checks.
+- **Live AWS:** not used. No cloud read or mutation is claimed for Iteration 6.
+
+## Genuine limitations
+
+Iteration 7 is the exact next package: consolidate Environment identity and
+masked configuration; replace legacy pipeline-event Logs with sanitized
+application logs; make Metrics application-focused without provider selection;
+and remove remaining detection/provider/recovery inconsistencies from Project
+Settings. Iteration 8 local multi-user/multi-project launch acceptance and
+Iteration 9 final evidence follow.

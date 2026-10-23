@@ -1,0 +1,24 @@
+import { useState } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
+import { adminMe, adminSignIn } from "../api/adminAuthApi.js";
+
+export default function AdminLogin() {
+  const navigate = useNavigate();
+  const [form, setForm] = useState({ email: "", password: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [authenticated, setAuthenticated] = useState(false);
+  if (authenticated) return <Navigate replace to="/admin" />;
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError("");
+    try { await adminSignIn(form); await adminMe(); setAuthenticated(true); navigate("/admin", { replace: true }); }
+    catch (caught) { setError(caught.message || "Admin sign-in failed."); }
+    finally { setBusy(false); }
+  }
+  return <main className="auth-page admin-auth-page">
+    <section className="auth-shell admin-auth-shell">
+      <aside className="auth-panel admin-auth-panel"><div className="admin-login-brand"><span className="brand-mark"><span /></span><strong>DeployGuard</strong></div><div><p className="eyebrow">Operator surface</p><h2>Platform control stays separate from developer delivery.</h2><p>Service readiness, access control, project state and audit evidence live behind the dedicated administrator boundary.</p></div><div className="admin-login-proof"><span><i />Dedicated admin session</span><span><i />Sanitized evidence</span><span><i />Role-controlled access</span></div></aside>
+      <section className="auth-card"><p className="eyebrow">DeployGuard administration</p><h1>Admin sign in</h1><p className="muted">Use the dedicated administrator email and password. GitHub accounts cannot enter this console.</p><form onSubmit={submit}><label className="field"><span>Email</span><input autoComplete="username" onChange={(event) => setForm({ ...form, email: event.target.value })} required type="email" value={form.email} /></label><label className="field"><span>Password</span><input autoComplete="current-password" onChange={(event) => setForm({ ...form, password: event.target.value })} required type="password" value={form.password} /></label>{error ? <p className="form-error">{error}</p> : null}<button className="button" disabled={busy} type="submit">{busy ? "Signing in…" : "Sign in as Admin"}</button></form></section>
+    </section>
+  </main>;
+}

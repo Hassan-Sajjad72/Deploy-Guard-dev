@@ -1,0 +1,32 @@
+const FALLBACK_STATES = {
+  ready: "READY",
+  live: "LIVE",
+  destroying: "DESTROYING",
+  destroyed: "DESTROYED",
+  failed_application: "FAILED",
+};
+
+/**
+ * Overview actions are derived from the canonical current-state response.
+ * No operation history, URL presence, or client-reconstructed workflow state
+ * is allowed to add a lifecycle action here.
+ */
+export function canonicalOverviewState(currentState) {
+  return currentState?.stateAuthority?.state || FALLBACK_STATES[currentState?.developerState] || "DEPLOYING";
+}
+
+export function overviewLifecycleActions(currentState, canManage = false) {
+  const state = canonicalOverviewState(currentState);
+  if (state === "READY") return canManage ? [{ kind: "command", command: "deploy", label: "Deploy" }] : [];
+  if (state === "DESTROYED") return canManage ? [{ kind: "command", command: "deploy", label: "Deploy Again" }] : [];
+  if (state === "DEPLOYING" || state === "DESTROYING") return [{ kind: "link", target: "pipeline", label: "View progress" }];
+  if (state === "FAILED") return [
+    { kind: "link", target: "pipeline", label: "View Pipeline" },
+    ...(canManage && currentState?.canRetry ? [{ kind: "command", command: "retry", label: "Retry Failed Deployment" }] : []),
+  ];
+  if (state === "LIVE") return [
+    ...(currentState?.stableUrl ? [{ kind: "external", href: currentState.stableUrl, label: "Open Application" }] : []),
+    ...(canManage ? [{ kind: "command", command: "destroy", label: "Destroy Infrastructure" }] : []),
+  ];
+  return [{ kind: "link", target: "pipeline", label: "View Pipeline" }];
+}

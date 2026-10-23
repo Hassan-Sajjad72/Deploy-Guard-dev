@@ -1,0 +1,92 @@
+# DeployGuard Remaining Work
+
+Authoritative implementation queue as of 2026-08-01. Repository source,
+durable state, and the focused evidence below supersede older exact-project
+worker conclusions.
+
+## Shared normal-v1 platform blocker — resolved
+
+The former Smart Retail UUID binding was a real P0 product blocker: a supported
+project could pass detection and preflight yet receive
+`NORMAL_RELEASE_LANE_STATUS_DISABLED`. Normal-v1 now has two explicit modes:
+
+- `shared` is the reusable platform mode. Release, infrastructure-plan, and
+  infrastructure-apply workers start with one `dev` environment policy and no
+  project UUID list.
+- `canary` remains an optional exact project/`dev` harness. Switching modes does
+  not require a generated per-project Compose file.
+
+Shared jobs carry immutable workspace, actor/role policy, project/environment,
+intent, source/contract, manifest revision, AWS account/region, and resource
+namespace evidence. The worker re-reads the project, owner, actor, deployment
+contract, preflight, intent, and manifest revisions before ownership. Missing
+shared evidence, changed workspace/project evidence, invalid authorization, or
+account/region drift fails closed before handler invocation. Project/environment
+advisory ownership, operation leases/fences, deterministic outbox/job IDs,
+immutable manifests, and side-effect journals remain the isolation boundary.
+
+The base `docker-compose.yml` is now the only ordinary worker composition. It
+defines one shared service for each role. Infracost is available only to the plan
+worker; Stripe, SNS, Trivy, fixture handlers, and all unrelated bypasses remain
+disabled. `backend/.env` is ignored, mode `600`, and contains process-local
+activation only.
+
+## Product and project state
+
+- Smart Retail remains unchanged and stable. Focused planner checks prove
+  unchanged immutable input returns backend `NO_OP`; changed source produces one
+  release-only intent/outbox and does not enter Terraform.
+- Project-Tst is no longer disabled by worker scope. Its authenticated
+  current-state response is `mode=shared`, `state=authorized`,
+  `NORMAL_V1_SHARED_MODE_AUTHORIZED`. It does not presently expose a first
+  deployment action because its durable cloud-state record truthfully requires
+  `clean_safe_leftovers`; this is a project-specific residue blocker, not worker
+  configuration.
+- A second disposable supported project proves automatic shared first-release
+  preparation, independent project namespaces, one infrastructure intent/outbox,
+  plan-to-approval/apply continuation, and managed first-release handling without
+  changing Compose or a project allowlist.
+- Overview exposes a sanitized Platform status (`shared`, `canary`, unsupported,
+  or configuration required). Legacy Start Pipeline and developer-facing
+  Terraform/recovery mutations remain retired/hidden. Refresh reads canonical
+  current state and creates no operation.
+
+## Current local acceptance evidence
+
+- Three repository-owned shared containers are running and Docker-healthy:
+  release `NORMAL_V1_RELEASE_CONSUMER_READY`, plan
+  `NORMAL_V1_INFRASTRUCTURE_PLAN_CONSUMER_READY`, and apply
+  `NORMAL_V1_INFRASTRUCTURE_APPLY_CONSUMER_READY`. Each reports `ready=true`.
+- PostgreSQL has exactly three live capability rows (one release, two
+  infrastructure message roles) and zero live project-bound capability metadata.
+- Active operation leases, cross-lane owners, and outbox claims are `0/0/0`.
+- Real PostgreSQL/Redis checks passed for two-project transactional planning,
+  deterministic exact dispatch, concurrent duplicate delivery, fenced
+  plan-completion continuation, consumer lifecycle, and cross-lane ownership.
+- Shared admission rejects a legacy envelope without workspace/auth/expectation
+  evidence and rejects workspace/project substitution before ownership.
+- Shared automatic convergence discovers an exact durable candidate across
+  projects, then reconciles only that frozen project/intent identity.
+- Two authenticated Project-Tst current-state reads returned the same authorized
+  shared state; Project-Tst still has zero deployment intents, so refresh created
+  none.
+- Focused current-state and frontend projection tests passed, as did backend
+  TypeScript/build, frontend build, and `git diff --check`.
+- No deployment job was created against the operational projects and no AWS
+  mutation was performed. AWS evidence in this package is read-only readiness
+  evidence only.
+
+## Remaining work
+
+There is no unresolved P0/P1 shared-worker or ordinary-onboarding configuration
+gap. The next project action is evidence-dependent:
+
+1. For Project-Tst, inspect and clean only its already-verified project-scoped
+   residue through the guarded cleanup workflow; do not bypass the canonical
+   `clean_safe_leftovers` action.
+2. For a clean supported project, run one operator-observed normal-v1 deployment
+   from Overview and reconcile uncertain external effects before retrying.
+3. Deferred, non-blocking productization remains: Trivy enforcement, Stripe,
+   SNS, Node.js 22 migration, and a broader live failure/rollback matrix. Keep
+   their provider gates disabled.
+

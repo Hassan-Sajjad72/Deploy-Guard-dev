@@ -1,0 +1,13 @@
+import { Provider } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { Queue } from "bullmq";
+import { createRedisConnection } from "../projects/pipeline/redis.config";
+export const LIFECYCLE_QUEUE = Symbol("LIFECYCLE_QUEUE");
+export const LIFECYCLE_QUEUE_NAME = "deployguard-infrastructure-lifecycle";
+export const CLEANUP_QUEUE_NAME = LIFECYCLE_QUEUE_NAME;
+export const EMERGENCY_CLEANUP_QUEUE = Symbol("EMERGENCY_CLEANUP_QUEUE");
+export const EMERGENCY_CLEANUP_QUEUE_NAME = "deployguard-emergency-cleanup";
+export type LifecycleJob = { operationId: string; source?: "manual" | "ttl" | "emergency"; emergencyOperationId?: string };
+export type EmergencyCleanupJob = { operationId: string };
+export const lifecycleQueueProvider: Provider = { provide: LIFECYCLE_QUEUE, inject: [ConfigService], useFactory: (config: ConfigService) => new Queue<LifecycleJob>(LIFECYCLE_QUEUE_NAME, { connection: createRedisConnection(config), defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: { age: 86400 }, removeOnFail: { age: 604800 } } }) };
+export const emergencyCleanupQueueProvider: Provider = { provide: EMERGENCY_CLEANUP_QUEUE, inject: [ConfigService], useFactory: (config: ConfigService) => new Queue<EmergencyCleanupJob>(EMERGENCY_CLEANUP_QUEUE_NAME, { connection: createRedisConnection(config), defaultJobOptions: { attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: { age: 86400 }, removeOnFail: { age: 604800 } } }) };

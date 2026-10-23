@@ -1,0 +1,73 @@
+import { strict as assert } from "node:assert";
+import { existsSync, readFileSync } from "node:fs";
+
+const routes = readFileSync(new URL("../src/routes/AppRoutes.jsx", import.meta.url), "utf8");
+const sidebar = readFileSync(new URL("../src/components/layout/Sidebar.jsx", import.meta.url), "utf8");
+const settings = readFileSync(new URL("../src/pages/ProjectSettings.jsx", import.meta.url), "utf8");
+const projectApi = readFileSync(new URL("../src/api/projectApi.js", import.meta.url), "utf8");
+
+const developerBlock = routes.slice(
+  routes.indexOf("<Route element={<ProtectedRoute />}>") ,
+  routes.indexOf('<Route element={<RoleProtectedRoute roles={["admin", "developer"]} />}>'),
+);
+const adminBlock = routes.slice(routes.indexOf('<Route element={<RoleProtectedRoute roles={["admin"]} />}>'));
+const operatorBlock = routes.slice(
+  routes.indexOf('<Route element={<RoleProtectedRoute roles={["admin", "developer"]} />}>'),
+  routes.indexOf('<Route element={<RoleProtectedRoute roles={["admin"]} />}>'),
+);
+
+for (const component of [
+  "AuditLogs",
+  "ProjectDetection",
+  "ProjectPreflight",
+  "ProjectInfrastructure",
+  "ProjectCost",
+  "CostEstimateDetails",
+]) {
+  assert.match(adminBlock, new RegExp(`<${component}[\\s/>]`), `${component} must be admin-routed`);
+  assert.doesNotMatch(developerBlock, new RegExp(`<${component}[\\s/>]`), `${component} must not be developer-routed`);
+}
+
+assert.match(operatorBlock, /<ProjectTroubleshooting[\s/>]/);
+assert.match(operatorBlock, /path="\/projects\/:projectId\/troubleshooting"/);
+assert.doesNotMatch(developerBlock, /<ProjectTroubleshooting[\s/>]/);
+
+assert.doesNotMatch(sidebar.match(/const primary = \[[\s\S]*?\];/)?.[0] || "", /Activity Log/);
+assert.match(sidebar, /user\?\.role === "admin"[\s\S]*Activity Log/);
+assert.match(sidebar, /user\?\.role === "admin"[\s\S]*Operator modules/);
+assert.doesNotMatch(settings, /getDetectionProfile|getProjectDetailedCurrentState|NotificationSettingsPanel|DestroyInfrastructurePanel/);
+assert.match(settings, /runStackDetection[\s\S]*generatePreflightReport/);
+assert.match(settings, /Open Environment/);
+
+for (const retired of [
+  "getRecoveryResumePreview",
+  "resumeProjectRecovery",
+  "prepareNormalReleaseLane",
+  "dispatchNormalReleaseLane",
+  "dispatchNormalFirstReleaseInfrastructurePlan",
+  "dispatchNormalFirstReleaseInfrastructureApply",
+  "getNormalReleaseLaneStatus",
+  "approveTerraformApply",
+  "deployApprovalErrorMessage",
+  "startPipelineRun",
+  "cancelPipelineRun",
+  "retryPipelineRun",
+]) {
+  assert.doesNotMatch(projectApi, new RegExp(`export (?:async )?function ${retired}\\b`));
+}
+
+assert.equal(existsSync(new URL("../src/routes/DeveloperModeOnly.jsx", import.meta.url)), false);
+assert.equal(existsSync(new URL("../src/components/projects/ResumeDeploymentButton.jsx", import.meta.url)), false);
+for (const retiredComponent of [
+  "StartPipelineForm.jsx",
+  "CurrentStateAction.jsx",
+  "DeploymentRecoveryCenter.jsx",
+  "NormalInfrastructurePlanningPanel.jsx",
+  "ReleaseLaneDeveloperDetails.jsx",
+  "DeploymentRecoveryCard.jsx",
+  "IssueEvidenceList.jsx",
+]) {
+  assert.equal(existsSync(new URL(`../src/components/projects/${retiredComponent}`, import.meta.url)), false);
+}
+
+console.log("Operator/admin frontend routing and retired-action verification passed.");

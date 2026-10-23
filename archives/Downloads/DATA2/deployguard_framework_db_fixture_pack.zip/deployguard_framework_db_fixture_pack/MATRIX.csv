@@ -1,0 +1,28 @@
+folder,language,framework,variant,database,shape,health,port
+01_python/01_flask_postgres,Python,Flask,direct app,PostgreSQL,single backend,/health,3000
+01_python/02_flask_factory_mongodb,Python,Flask,application factory,MongoDB,nested backend,/health,3000
+01_python/03_fastapi_mysql,Python,FastAPI,direct app,MySQL,single backend,/health,3000
+01_python/04_fastapi_nested_postgres,Python,FastAPI,nested module,PostgreSQL,nested backend,/health,3000
+01_python/05_django_wsgi_postgres,Python,Django,WSGI,PostgreSQL,single backend,/health,3000
+01_python/06_django_asgi_mysql,Python,Django,ASGI,MySQL,single backend,/health,3000
+01_python/07_streamlit_mongodb,Python,Streamlit,standard,MongoDB,single runtime,/_stcore/health,3000
+02_javascript/01_express_js_postgres,JavaScript,Express,JavaScript,PostgreSQL,single backend,/health,3000
+02_javascript/02_express_ts_mongodb,TypeScript,Express,TypeScript,MongoDB,single backend,/health,3000
+02_javascript/03_fastify_js_mysql,JavaScript,Fastify,JavaScript,MySQL,single backend,/health,3000
+02_javascript/04_fastify_ts_postgres,TypeScript,Fastify,TypeScript,PostgreSQL,single backend,/health,3000
+02_javascript/05_nestjs_mongodb,TypeScript,NestJS,standard,MongoDB,single backend,/health,3000
+02_javascript/06_vite_react_express_postgres,JavaScript,Vite React + Express,full-stack,PostgreSQL,frontend + backend,/api/health,3000
+02_javascript/07_vite_vue_fastify_mysql,JavaScript,Vite Vue + Fastify,full-stack,MySQL,frontend + backend,/api/health,3000
+02_javascript/08_angular_express_mongodb,TypeScript,Angular + Express,full-stack,MongoDB,frontend + backend,/api/health,3000
+02_javascript/09_cra_express_postgres,JavaScript,Create React App + Express,full-stack,PostgreSQL,frontend + backend,/api/health,3000
+02_javascript/10_webpack_react_fastify_mongodb,JavaScript,Webpack React + Fastify,full-stack,MongoDB,frontend + backend,/api/health,3000
+02_javascript/11_next_ssr_postgres,JavaScript,Next.js,SSR,PostgreSQL,single SSR app,/health,3000
+02_javascript/12_next_standalone_mongodb,JavaScript,Next.js,standalone,MongoDB,single SSR app,/health,3000
+02_javascript/13_next_static_express_mysql,JavaScript,Next.js + Express,static export,MySQL,static frontend + backend,/api/health,3000
+02_javascript/14_nuxt_ssr_postgres,TypeScript,Nuxt,SSR,PostgreSQL,single SSR app,/api/health,3000
+02_javascript/15_nuxt_static_fastify_mongodb,TypeScript,Nuxt + Fastify,static,MongoDB,static frontend + backend,/api/health,3000
+02_javascript/16_sveltekit_node_mysql,JavaScript,SvelteKit,adapter-node,MySQL,single SSR app,/health,3000
+02_javascript/17_sveltekit_static_express_postgres,JavaScript,SvelteKit + Express,adapter-static,PostgreSQL,static frontend + backend,/api/health,3000
+02_javascript/18_astro_node_mongodb,JavaScript,Astro,Node,MongoDB,single SSR app,/health,3000
+02_javascript/19_astro_static_fastify_mysql,JavaScript,Astro + Fastify,static,MySQL,static frontend + backend,/api/health,3000
+02_javascript/20_remix_node_postgres,JavaScript,Remix,Node,PostgreSQL,single SSR app,/health,3000

@@ -1,0 +1,96 @@
+version: '3.9'
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+networks:
+  deployguard:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+
+services:
+  postgres:
+    build: { context: ./database, dockerfile: Dockerfile }
+    container_name: deployguard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-deployguard}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-deployguard_secret}
+      POSTGRES_DB: ${DB_DATABASE:-deployguard}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    ports: ["5432:5432"]
+    networks: [deployguard]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U ${DB_USERNAME:-deployguard} -d ${DB_DATABASE:-deployguard}"]
+      interval: 10s; timeout: 5s; retries: 5; start_period: 20s
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    container_name: deployguard-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes: [redis_data:/data]
+    ports: ["6379:6379"]
+    networks: [deployguard]
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 10s; timeout: 5s; retries: 3
+    logging: *logging
+
+  backend:
+    build: { context: ./backend, dockerfile: Dockerfile, target: production }
+    container_name: deployguard-backend
+    restart: unless-stopped
+    env_file: [./backend/.env]
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports: ["3001:3001"]
+    networks: [deployguard]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:3001/api/v1/health || exit 1"]
+      interval: 30s; timeout: 10s; retries: 3; start_period: 40s
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    logging: *logging
+
+  frontend:
+    build: { context: ./frontend, dockerfile: Dockerfile, target: runner }
+    container_name: deployguard-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+    ports: ["3000:3000"]
+    networks: [deployguard]
+    depends_on: [backend]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:3000 || exit 1"]
+      interval: 30s; timeout: 10s; retries: 3; start_period: 40s
+    logging: *logging
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: deployguard-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports: ["9090:9090"]
+    networks: [deployguard]
+    logging: *logging

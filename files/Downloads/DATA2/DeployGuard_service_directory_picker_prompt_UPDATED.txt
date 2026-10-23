@@ -1,0 +1,840 @@
+DEPLOYGUARD — REPAIR ONLY THE SERVICE DIRECTORY PICKER DEFECT
+
+You are working on the DeployGuard repository.
+
+BRANCH:
+test1
+
+MODE:
+Focused defect repair + regression verification.
+
+This is NOT a general cleanup task.
+This is NOT an architecture refactor.
+This is NOT a repository-discovery redesign.
+This is NOT a Railpack change.
+This is NOT permission to modify unrelated production code.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. FREEZE CURRENT SOURCE FIRST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Before making any change:
+
+1. Checkout/confirm branch:
+   test1
+
+2. Record:
+   START_SHA=$(git rev-parse HEAD)
+   WORKTREE_STATUS=$(git status --short)
+
+3. The working tree must be understood before modification.
+
+4. Inspect the CURRENT source directly.
+   Do not trust historical assumptions or old discussion if current code differs.
+
+5. Locate the complete current path for:
+
+   UI:
+   frontend/src/pages/NewProject.jsx
+
+   frontend API:
+   frontend/src/api/projectApi.js
+
+   backend endpoint:
+   GET /api/projects/github/repositories/:owner/:repository/directories
+
+   backend implementation:
+   ProjectsService.listGithubRepositoryDirectories(...)
+
+   service-directory normalization:
+   normalizeServiceDirectory(...)
+
+   project/service creation DTOs and persistence
+
+   any current tests covering:
+   - repository directory browsing
+   - New Project
+   - deployable services
+   - serviceDirectory
+   - deployment selection
+   - frontend certification
+
+DO NOT CHANGE ANYTHING UNTIL YOU HAVE VERIFIED THE CURRENT FLOW.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. OBSERVED DEFECT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+On the New Deployment page, each service has a "Directory" field.
+
+The repository root is represented canonically as:
+
+    .
+
+Current behavior observed in the browser:
+
+A. The field currently initializes with "." even though the user has not yet
+   chosen a service directory.
+
+B. Because the current control uses native datalist behavior, that prefilled "."
+   is also treated as the input/filter text.
+
+C. As a result, ordinary repository directories such as:
+
+    backend
+    frontend
+
+   are not presented naturally from the initial state.
+
+D. Paths containing dots may dominate the suggestions instead.
+
+E. If "." is manually removed, the browser exposes the huge recursive list
+   returned by the backend, for example:
+
+    backend
+    backend/config
+    backend/controllers
+    backend/node_modules
+    backend/node_modules/...
+    backend/node_modules/...
+    ...
+
+   This can contain thousands of entries.
+
+F. Because the list is flat and effectively ordered by repository tree order,
+   important sibling application roots such as:
+
+    frontend
+
+   can become buried far below hundreds/thousands of backend descendants.
+
+G. The frontend directory is NOT actually absent from repository data.
+   Nested frontend paths have been observed, proving that the repository tree
+   contains frontend information.
+
+The defect is therefore primarily the DIRECTORY PICKER PRESENTATION /
+INTERACTION CONTRACT.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. CURRENT BEHAVIOR THAT MUST BE VERIFIED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The current frontend is expected to have behavior equivalent to:
+
+    serviceDirectory: "."
+
+for the initial service and newly-added services.
+
+THIS DEFAULT IS PART OF THE DEFECT.
+
+The desired behavior after repair is:
+
+    serviceDirectory: ""
+
+until the user explicitly chooses a directory.
+
+The current directory control is also expected to be based on:
+
+    <input list="...">
+    <datalist>
+      directories.map(...)
+    </datalist>
+
+The current backend is expected to obtain the exact GitHub tree recursively and
+produce approximately:
+
+    [
+      ".",
+      ...all tree entries normalized as repository-relative directories
+    ]
+
+potentially capped at a large value such as 5,000.
+
+VERIFY THESE FACTS FROM CURRENT SOURCE.
+
+If the current source differs, derive the root cause from current code rather
+than mechanically applying this prompt.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. REQUIRED PRODUCT INVARIANT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A user choosing an application/service directory must be able to immediately
+understand and select the repository root or any real repository directory.
+
+For a repository containing:
+
+    .
+    backend
+    frontend
+    backend/src
+    backend/controllers
+    frontend/src
+    frontend/components
+
+the directory picker must make the important roots immediately discoverable.
+
+At minimum, from an initially EMPTY directory selection, the user must
+naturally see:
+
+    Repository root (.)
+    backend
+    frontend
+
+without manually deleting any prefilled value and without scrolling through
+hundreds of backend descendants.
+
+NO directory may be selected automatically.
+
+The user MUST explicitly choose the service directory before readiness or
+deployment can proceed.
+
+The canonical serviceDirectory values submitted to DeployGuard AFTER EXPLICIT
+SELECTION MUST remain unchanged.
+
+Examples:
+
+    repository root  -> "."
+    backend          -> "backend"
+    frontend         -> "frontend"
+    frontend/app     -> "frontend/app"
+
+DO NOT introduce a second path syntax.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. REPAIR BOUNDARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Prefer a FRONTEND-ONLY repair.
+
+Do NOT modify:
+
+- Railpack
+- BuildPlan semantics
+- Terraform
+- GitHub Actions deployment workflow
+- deployment lifecycle
+- project architecture
+- runtime authority
+- canonical runtime identity
+- environment ownership
+- database ownership
+- AWS integration
+- GitHub App authorization
+- repository/branch authority
+- serviceDirectory persistence semantics
+- normalizeServiceDirectory semantics
+
+unless you reproduce concrete evidence proving one of those components is
+itself defective.
+
+The backend currently returning the exact recursive repository directory tree
+is not by itself a defect.
+
+Do not modify the backend merely to make the UI easier to implement.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. DO NOT SOLVE THIS WITH ANOTHER NATIVE DATALIST BUG
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The important problem is that DeployGuard currently preselects "." before the
+user has chosen a directory, and the same input value is also used as the
+browser's search/filter text.
+
+Do NOT preserve a design where:
+
+    initial serviceDirectory = "."
+           and/or
+    selected serviceDirectory = "."
+           also means
+    active filter query = "."
+
+The repaired initial state MUST be:
+
+    serviceDirectory = ""
+
+with NO selected directory.
+
+Selection state and temporary search/filter text are different concepts.
+
+The UI must distinguish:
+
+1. canonical selected directory
+2. temporary search/filter text
+3. available repository directories
+
+If native <datalist> cannot provide that behavior reliably, replace only this
+directory-picker presentation with a small controlled directory picker /
+combobox.
+
+Do not redesign the entire New Project page.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. RECOMMENDED DIRECTORY-PICKER BEHAVIOR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Implement the smallest maintainable UI behavior satisfying all of these:
+
+INITIAL STATE
+
+NO directory may be preselected.
+
+The initial canonical serviceDirectory value MUST be:
+
+    ""
+
+The Directory control must initially display an empty/unselected state such as:
+
+    Select service directory
+
+The user MUST explicitly choose one of the available directories before
+readiness/deployment can proceed.
+
+"." remains a valid selectable option representing the repository root, but it
+MUST NOT be selected automatically.
+
+Expected initial interaction:
+
+    Directory: [ Select service directory ]
+
+Available choices include:
+
+    Repository root (.)
+    backend
+    frontend
+    ...
+
+Only if the user explicitly selects Repository root must the canonical
+serviceDirectory become:
+
+    "."
+
+This rule applies to BOTH:
+
+1. the initial Service 1
+2. every service created through "+ Add Service"
+
+Both must start with:
+
+    serviceDirectory: ""
+
+ORDERING
+
+Rank the available directories for presentation approximately as:
+
+    1. "." / Repository root
+    2. top-level directories
+    3. deeper directories
+
+Within equivalent groups, use deterministic ordering.
+
+For example:
+
+    .
+    backend
+    frontend
+    packages
+    backend/config
+    backend/controllers
+    backend/src
+    frontend/app
+    frontend/components
+    frontend/src
+    ...
+
+Do not let every descendant of "backend" appear before the top-level
+"frontend" directory.
+
+A simple deterministic ranking is acceptable:
+
+    depth(path)
+    then lexical comparison
+
+with "." explicitly pinned first.
+
+SEARCH / FILTERING
+
+Filtering is allowed and recommended.
+
+When the user intentionally types a search query:
+
+    front
+
+reasonable results should prioritize:
+
+    frontend
+    frontend/app
+    frontend/components
+    frontend/src
+
+When typing:
+
+    backend/con
+
+reasonable results should prioritize:
+
+    backend/controllers
+
+Use case-insensitive matching for discovery.
+
+Prefer:
+
+    exact match
+    prefix match
+    path-segment/prefix match
+    substring match
+
+before weaker matches if implementing ranking.
+
+IMPORTANT:
+
+There is no initial canonical directory selection after this repair.
+
+The initial value is "".
+
+If the user later explicitly selects ".", that selected value must not be
+confused with temporary search/filter text.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. NO DATA LOSS THROUGH FILTERING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Do NOT permanently delete valid repository directories from the selectable
+dataset merely because they look noisy.
+
+Examples include:
+
+    node_modules
+    .next
+    dist
+    build
+    vendor
+    generated directories
+
+They may be unusual deployment roots, but UI presentation must not silently
+change the repository contract.
+
+You MAY:
+
+- rank them lower,
+- show them only when searched,
+- place them below more useful application roots,
+- progressively reveal deeper results,
+- limit rendered suggestions for UI performance while keeping them searchable.
+
+You MUST NOT silently convert:
+
+    backend/foo
+
+into another path or discard a user-selected valid path.
+
+Filtering is PRESENTATION only.
+
+Canonical repository directory authority must remain intact.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. MULTI-SERVICE REQUIREMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The page supports multiple services.
+
+The repair must work independently for every service.
+
+Example:
+
+Service 1:
+    Name: API
+    Directory: backend
+
+Service 2:
+    Name: Web
+    Directory: frontend
+
+The directory search state for Service 1 must not corrupt Service 2.
+
+Adding/removing a service must not corrupt another service's selected
+serviceDirectory.
+
+The persisted CreateProject payload must still carry exact per-service values.
+
+Example:
+
+    services: [
+      {
+        name: "API",
+        serviceDirectory: "backend"
+      },
+      {
+        name: "Web",
+        serviceDirectory: "frontend"
+      }
+    ]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10. REPOSITORY / BRANCH CHANGE BEHAVIOR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Inspect the current selection-gate/race-protection logic before editing.
+
+Do not weaken it.
+
+When repository or branch changes:
+
+- stale directory requests must not overwrite the new repository/branch state
+- the directory option dataset must correspond to the current repository and
+  branch
+- no previous repository directory selection may silently become authoritative
+  for the new repository if invalid
+- existing current selection-race protections must continue to pass
+
+Do not introduce asynchronous stale-state defects while repairing the picker.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+11. ROOT DIRECTORY SEMANTICS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"." is a valid and important canonical service directory.
+
+Do NOT remove root deployment support.
+
+The UI may DISPLAY it more clearly, for example:
+
+    Repository root (.)
+
+If the user explicitly selects repository root, the submitted/stored value
+must remain:
+
+    .
+
+Do not store:
+
+    Repository root
+
+Do not store:
+
+    /
+
+IMPORTANT DISTINCTION:
+
+An empty string is valid ONLY as the temporary initial UI state before the user
+chooses a directory.
+
+An empty string MUST NOT be accepted as a completed service-directory selection
+and MUST NOT be submitted for readiness/project creation/deployment.
+
+Do not alter canonical service-directory normalization.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+12. ACCESSIBILITY / INTERACTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If replacing the native datalist with a custom picker:
+
+Keep the implementation small.
+
+Support normal keyboard interaction where reasonably possible:
+
+- focus input/control
+- open choices
+- type to search
+- arrow through results if implementing a true combobox
+- Enter/select
+- Escape/close where applicable
+
+Use existing DeployGuard design-system conventions where available.
+
+Do not add a large third-party UI framework for this one control.
+
+Prefer existing React and existing project components.
+
+Do not introduce a dependency unless clearly necessary.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+13. TESTS REQUIRED BEFORE CALLING THIS FIXED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Add focused regression coverage.
+
+Tests must prove the PRODUCT BEHAVIOR rather than only testing a helper.
+
+At minimum cover this repository fixture:
+
+    .
+    .github
+    .github/workflows
+    backend
+    backend/config
+    backend/controllers
+    backend/node_modules
+    backend/node_modules/pkg-a
+    backend/node_modules/pkg-b
+    frontend
+    frontend/app
+    frontend/components
+    frontend/src
+
+Verify:
+
+A. Initial Service 1 starts with:
+       serviceDirectory = ""
+
+B. A newly-added service also starts with:
+       serviceDirectory = ""
+
+C. No repository directory, including ".", is automatically selected.
+
+D. Readiness/deployment cannot proceed while a service still has an empty
+   serviceDirectory.
+
+E. Opening the picker from the initial empty state immediately exposes:
+       Repository root (.)
+       backend
+       frontend
+
+F. "." remains a valid canonical directory only when explicitly selected.
+
+G. Top-level "frontend" is not buried behind all descendants of backend in the
+   initial useful result ordering.
+
+H. Searching "front" produces frontend-related results.
+
+I. Selecting "frontend" writes exactly:
+       serviceDirectory = "frontend"
+
+J. Selecting repository root writes exactly:
+       serviceDirectory = "."
+
+K. Selecting nested:
+       frontend/app
+   writes exactly:
+       serviceDirectory = "frontend/app"
+
+L. Two services may independently select:
+       backend
+       frontend
+
+M. Repository/branch refresh does not allow stale directory responses to
+   overwrite the current selection.
+
+N. Existing New Project readiness and create-project behavior still receives
+   exact service directories.
+
+Prefer adding coverage to the existing frontend certification structure rather
+than creating an unrelated testing architecture.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+14. REAL BROWSER VERIFICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Because the original defect is caused partly by browser datalist behavior,
+a helper/unit test alone is insufficient.
+
+Use the project's existing Playwright/pre-final browser infrastructure if now
+available.
+
+Verify in a real browser:
+
+1. Open New Deployment.
+2. Select a repository with backend + frontend directories.
+3. Inspect Service 1 Directory.
+4. Confirm the Directory field initially has NO selected directory.
+5. Open the picker without typing or deleting anything.
+6. Confirm:
+       Repository root (.) is available
+       backend is available
+       frontend is available
+7. Confirm nothing is automatically selected.
+8. Confirm readiness/deployment remains blocked until a directory is explicitly
+   selected.
+9. Search for frontend.
+10. Select frontend.
+11. Add a second service.
+12. Confirm the second service also starts with NO selected directory.
+13. Select backend for one service and frontend for the other.
+14. Confirm values remain independently correct.
+
+If Playwright infrastructure cannot exercise authenticated GitHub data
+deterministically, use the existing supported fixture/mocking approach ONLY at
+the HTTP boundary.
+
+Do not weaken production GitHub authentication.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15. REGRESSION GATES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+After the focused regression passes, run the relevant existing certification
+suite.
+
+At minimum:
+
+- frontend build
+- relevant frontend certification
+- New Project / deployment journey tests
+- deployment-selection tests
+- deployable-service tests
+- API contract tests if affected
+
+Then run the existing full local certification if reasonably available.
+
+The repair is not complete merely because the screenshot looks better.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+16. CHANGE CONTROL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every changed production line must be attributable to this defect.
+
+REQUIRED DEFAULT-VALUE REPAIR:
+
+Do NOT preserve serviceDirectory "." as the default value.
+
+Both:
+- the initial Service 1
+- every service created through "+ Add Service"
+
+must start with:
+
+    serviceDirectory: ""
+
+Do NOT change the available repository directory dataset merely to accomplish
+this. The backend may continue returning "." as the canonical repository-root
+option.
+
+DO NOT:
+
+- remove unrelated legacy code
+- rename architecture components
+- reorganize folders
+- refactor ProjectsService
+- refactor project creation
+- modify lifecycle behavior
+- modify Terraform
+- modify workflow YAML
+- modify Railpack
+- modify runtime identity
+- change database schema
+- perform "while here" cleanup
+- fix unrelated warnings
+- alter CSS globally
+- change other forms to the new picker
+- redesign the page
+
+If you discover another defect, REPORT IT separately.
+
+Do not repair it in this task.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+17. DEFECT CLASSIFICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Expected classification if current source confirms the observed behavior:
+
+    CONFIRMED DEFECT:
+    Service-directory picker presentation/filter interaction.
+
+Expected root cause:
+
+    automatic default serviceDirectory "."
+        +
+    native datalist filtering
+        +
+    flat recursive directory presentation
+        =
+    misleading/unusable directory discovery and an implicit service-root choice
+    that the user did not make.
+
+Do not misclassify this as:
+
+- GitHub tree corruption
+- missing frontend repository data
+- Railpack detection failure
+- deployment architecture failure
+
+unless current evidence actually proves otherwise.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+18. COMMIT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+After all relevant verification is green:
+
+Create ONE focused commit.
+
+Suggested subject:
+
+    fix: make service directory selection deterministic
+
+Do not mix certification-tool installation or unrelated cleanup into this
+commit.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+19. FINAL REPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Return exactly this evidence-oriented summary:
+
+START_SHA=
+FINAL_SHA=
+WORKTREE_BEFORE=
+ROOT_CAUSE=
+DEFECT_CLASSIFICATION=
+FILES_CHANGED=
+BACKEND_CHANGED=YES|NO
+SERVICE_DIRECTORY_CONTRACT_CHANGED=YES|NO
+RAILPACK_CHANGED=YES|NO
+TERRAFORM_CHANGED=YES|NO
+WORKFLOW_CHANGED=YES|NO
+
+ROOT_DIRECTORY_SELECTION=PASS|FAIL
+TOP_LEVEL_DIRECTORY_ORDERING=PASS|FAIL
+FRONTEND_DISCOVERABILITY=PASS|FAIL
+BACKEND_DISCOVERABILITY=PASS|FAIL
+SEARCH_FILTERING=PASS|FAIL
+NESTED_DIRECTORY_SELECTION=PASS|FAIL
+MULTI_SERVICE_DIRECTORY_ISOLATION=PASS|FAIL
+REPOSITORY_BRANCH_RACE_PROTECTION=PASS|FAIL
+CREATE_PROJECT_PAYLOAD_PRESERVATION=PASS|FAIL
+REAL_BROWSER_REGRESSION=PASS|FAIL|UNVERIFIED
+RELEVANT_FRONTEND_CERTIFICATION=PASS|FAIL
+FULL_LOCAL_CERTIFICATION=PASS|FAIL|UNVERIFIED
+
+CONFIRMED_UNRELATED_DEFECTS=
+UNVERIFIED=
+
+FINAL_DIRECTORY_PICKER_REPAIR=PASS|FAIL
+
+Do not report PASS for anything you did not actually execute.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TERMINAL INVARIANT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The repair is correct only if:
+
+    no directory is selected by default,
+
+    both the initial Service 1 and every newly-added service start with
+    serviceDirectory = "",
+
+    readiness/deployment cannot proceed until the user explicitly selects a
+    service directory,
+
+    "." remains an explicit selectable option meaning repository root,
+
+    backend and frontend are immediately discoverable from the initial empty
+    picker,
+
+    intentional search works,
+
+    selecting "." does not corrupt or become confused with temporary search
+    text,
+
+    deep repository trees do not bury sibling application roots,
+
+    every real directory remains selectable/searchable,
+
+    and the exact explicitly-selected repository-relative path reaches the
+    existing DeployGuard serviceDirectory contract unchanged.
+
+Repair that invariant and nothing else.

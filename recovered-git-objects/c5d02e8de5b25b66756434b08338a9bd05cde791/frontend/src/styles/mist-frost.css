@@ -1,0 +1,322 @@
+/*
+ * Dusk Frost — DeployGuard design system foundation.
+ * Frosted dark glass over a misty mountain photo at dusk.
+ *
+ * This file owns (1) the photo background, (2) the theme tokens, remapped so
+ * every page and every former light/dark scope resolves to one dark theme, and
+ * (3) the glass tiers. Page stylesheets read the tokens. Visual only.
+ *
+ * Glass tiers
+ *   --mf-glass         main cards, hero, sidebar, top bar   (56% + blur)
+ *   --mf-glass-dense   tables, logs, code                   (72% + light blur)
+ *   --mf-glass-inner   tiles inside a card (no blur, never a third layer)
+ *   --mf-field         inputs (recessed, darker than the card)
+ * Contrast: the backdrop is dimmed per card (brightness .72 in the filter), so
+ * --mf-muted keeps >= 4.5:1 even over the brightest sky in the photo.
+ */
+:root {
+  --mf-bg-image: url("/bg-mist.webp");
+  --mf-bg-fallback: #1a2029;
+
+  /* Glass */
+  --mf-tint: 12, 17, 27;
+  --mf-glass: rgba(var(--mf-tint), .56);
+  --mf-glass-dense: rgba(var(--mf-tint), .72);
+  --mf-glass-inner: rgba(255, 255, 255, .045);
+  --mf-glass-inner-hover: rgba(255, 255, 255, .09);
+  --mf-field: rgba(6, 10, 18, .34);
+  --mf-glass-fallback: rgba(16, 22, 32, .92);
+  --mf-sheen: linear-gradient(155deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, 0) 45%);
+  --mf-filter: blur(22px) saturate(150%) brightness(.62);
+  --mf-filter-dense: blur(14px) saturate(130%) brightness(.7);
+  --mf-edge: rgba(255, 255, 255, .16);
+  --mf-edge-soft: rgba(255, 255, 255, .09);
+  --mf-border: 1px solid var(--mf-edge);
+  --mf-highlight: inset 0 1px 0 rgba(255, 255, 255, .12);
+  --mf-shadow: 0 18px 50px -12px rgba(2, 6, 14, .5);
+  --mf-shadow-lift: 0 26px 64px -14px rgba(2, 6, 14, .62);
+
+  /* Text */
+  --mf-ink: #f3f6fa;
+  --mf-ink-2: #e4e8ef;
+  --mf-muted: #d6dce6;
+  --mf-faint: #bcc5d2;
+
+  /* One accent: glacier blue */
+  --mf-accent: #a8c8ff;
+  --mf-accent-hover: #c3daff;
+  --mf-accent-ink: #cfe1ff;
+  --mf-on-accent: #0b1526;
+  --mf-accent-soft: rgba(168, 200, 255, .1);
+  --mf-accent-line: rgba(168, 200, 255, .4);
+  --mf-focus: 0 0 0 3px rgba(168, 200, 255, .55);
+
+  /* Status: tinted, low saturation */
+  --mf-success: #b6ebca; --mf-success-dot: #7fd3a1; --mf-success-soft: rgba(127, 211, 161, .15); --mf-success-line: rgba(127, 211, 161, .34);
+  --mf-warning: #f7dcad; --mf-warning-dot: #e8b86b; --mf-warning-soft: rgba(232, 184, 107, .15); --mf-warning-line: rgba(232, 184, 107, .36);
+  --mf-danger: #f9c1be; --mf-danger-dot: #e88783; --mf-danger-soft: rgba(232, 135, 131, .15); --mf-danger-line: rgba(232, 135, 131, .38);
+  --mf-info: var(--mf-accent-ink); --mf-info-dot: var(--mf-accent); --mf-info-soft: var(--mf-accent-soft); --mf-info-line: var(--mf-accent-line);
+
+  /* Radii */
+  --mf-r-hero: 24px;
+  --mf-r-card: 20px;
+  --mf-r-tile: 14px;
+  --mf-r-pill: 999px;
+  --mf-ease: cubic-bezier(.2, .7, .2, 1);
+}
+
+/* ---------- Background: the photo, once, behind everything ---------- */
+html, html[data-theme] { background: transparent; color-scheme: dark; }
+html body {
+  background-attachment: fixed;
+  background-color: var(--mf-bg-fallback);
+  background-image: var(--mf-bg-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  color: var(--mf-ink);
+  min-height: 100vh;
+}
+/* Touch browsers ignore or stretch fixed backgrounds; pin a layer instead. */
+@media (hover: none) and (pointer: coarse) {
+  html body { background-image: none; }
+  html body::before {
+    background: var(--mf-bg-fallback) var(--mf-bg-image) center / cover no-repeat;
+    content: ""; display: block; inset: 0; pointer-events: none; position: fixed; z-index: -1;
+  }
+}
+#root,
+.app-shell, .app-shell .main-area, .app-shell .content, main,
+.admin-shell, .dg-landing, .dg-about, .dg-gate { background: transparent; }
+/* Wrappers never filter the photo; only glass surfaces do. */
+:root:root :is(#root, .app-shell, .app-shell .main-area, .app-shell .content, .admin-shell) { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.app-shell .brand-identity-mark, .brand-identity-mark { filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .35)); }
+
+/* ---------- Tokens: one dark theme on every scope ---------- */
+:root,
+.dg-dark,
+[data-ground="night"],
+.app-shell .sidebar,
+.app-shell:has(.dg-ground-dark) .main-area,
+.admin-shell:has(.dg-ground-dark),
+:root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .ds-drawer-backdrop, .destroy-modal-backdrop) {
+  --dg-canvas: transparent;
+  --dg-surface: var(--mf-glass);
+  --dg-surface-2: var(--mf-glass-inner);
+  --dg-surface-3: rgba(255, 255, 255, .08);
+  --dg-raised: var(--mf-field);
+  --dg-line: rgba(255, 255, 255, .1);
+  --dg-line-strong: rgba(255, 255, 255, .2);
+  --dg-ink: var(--mf-ink); --dg-ink-2: var(--mf-ink-2); --dg-muted: var(--mf-muted); --dg-faint: var(--mf-faint);
+  --dg-primary: var(--mf-accent); --dg-primary-hover: var(--mf-accent-hover); --dg-on-primary: var(--mf-on-accent);
+  --dg-primary-soft: var(--mf-accent-soft); --dg-primary-line: var(--mf-accent-line); --dg-primary-ink: var(--mf-accent-ink);
+  --dg-brand-ink: var(--mf-ink);
+  --dg-lime: var(--mf-accent); --dg-lime-hover: var(--mf-accent-hover); --dg-lime-deep: var(--mf-accent-ink);
+  --dg-link: var(--mf-accent-ink);
+  --dg-signal: var(--mf-accent); --dg-signal-ink: var(--mf-accent-ink); --dg-signal-soft: var(--mf-accent-soft); --dg-signal-line: var(--mf-accent-line);
+  --dg-focus: var(--mf-focus);
+  --dg-shadow: var(--mf-highlight), 0 6px 20px -10px rgba(2, 6, 14, .45);
+  --dg-shadow-md: var(--mf-highlight), var(--mf-shadow);
+  --dg-shadow-lg: var(--mf-highlight), 0 32px 80px -20px rgba(2, 6, 14, .7);
+  --dg-success: var(--mf-success); --dg-success-dot: var(--mf-success-dot); --dg-success-soft: var(--mf-success-soft); --dg-success-line: var(--mf-success-line);
+  --dg-warning: var(--mf-warning); --dg-warning-dot: var(--mf-warning-dot); --dg-warning-soft: var(--mf-warning-soft); --dg-warning-line: var(--mf-warning-line);
+  --dg-danger: var(--mf-danger); --dg-danger-dot: var(--mf-danger-dot); --dg-danger-soft: var(--mf-danger-soft); --dg-danger-line: var(--mf-danger-line);
+  --dg-info: var(--mf-info); --dg-info-dot: var(--mf-info-dot); --dg-info-soft: var(--mf-info-soft); --dg-info-line: var(--mf-info-line);
+  --dg-aws: #f0b56a; --dg-aws-ink: #f4c890; --dg-aws-soft: rgba(240, 181, 106, .14);
+  /* Former night/console surfaces are glass too. */
+  --dg-night: var(--mf-glass-dense); --dg-night-2: var(--mf-glass-inner); --dg-night-3: rgba(255, 255, 255, .08);
+  --dg-night-line: rgba(255, 255, 255, .1); --dg-night-line-strong: rgba(255, 255, 255, .2);
+  --dg-night-ink: var(--mf-ink); --dg-night-ink-2: var(--mf-ink-2); --dg-night-muted: var(--mf-muted);
+  --dg-console: var(--mf-glass-dense); --dg-console-2: rgba(255, 255, 255, .05); --dg-console-line: rgba(255, 255, 255, .12); --dg-console-ink: var(--mf-ink); --dg-console-muted: var(--mf-muted);
+  --dg-glass: var(--mf-glass); --dg-glass-strong: var(--mf-glass-dense); --dg-glass-line: var(--mf-edge); --dg-glass-edge: rgba(255, 255, 255, .12);
+  --dg-glass-filter: var(--mf-filter); --dg-glass-shadow: var(--mf-highlight), var(--mf-shadow);
+  --dg-grid-light: rgba(255, 255, 255, .04);
+  --dg-radius: 16px; --dg-radius-sm: 10px; --dg-radius-lg: 22px;
+  --pg-accent: var(--mf-accent); --pg-ink: var(--mf-accent-ink); --pg-soft: var(--mf-accent-soft); --pg-line: var(--mf-accent-line); --pg-cast: transparent;
+  color-scheme: dark;
+}
+body { color: var(--mf-ink); }
+::selection { background: rgba(168, 200, 255, .38); color: #fff; }
+:focus-visible { outline: 2px solid var(--mf-accent); outline-offset: 2px; }
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible { box-shadow: var(--mf-focus); outline: 2px solid transparent; }
+select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='%23cdd5e1' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+select option, select optgroup { background: #1b222d; color: var(--mf-ink); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--mf-accent); }
+
+/* ---------- Glass tiers (utility classes) ---------- */
+.glass, .glass-dense, .glass-inner { border: var(--mf-border); box-shadow: var(--mf-highlight), var(--mf-shadow); color: var(--mf-ink); }
+.glass { -webkit-backdrop-filter: var(--mf-filter); backdrop-filter: var(--mf-filter); background: var(--mf-sheen), var(--mf-glass); border-radius: var(--mf-r-card); }
+.glass-dense { -webkit-backdrop-filter: var(--mf-filter-dense); backdrop-filter: var(--mf-filter-dense); background: var(--mf-glass-dense); border-radius: var(--mf-r-card); }
+.glass-inner { background: var(--mf-glass-inner); border-color: var(--mf-edge-soft); border-radius: var(--mf-r-tile); box-shadow: var(--mf-highlight); }
+
+/* ---------- Main glass: cards, heroes, chrome ----------
+ * :root:root lifts these above page stylesheets (which load later) so no
+ * solid page background can cover the glass.
+ */
+:root:root :is(
+  .ds-card, .panel, .panel-flat, .metric-card, .ds-chart-card, .empty-state, .ds-empty-state, .loading-state, .auth-card, .admin-section,
+  .dg-home-hero, .dg-home-panel, .dg-home-recent, .dg-home-fleet, .dg-home-empty,
+  .dg-projects-head,
+  .dg-ov-head, .dg-ov-services, .infra-topology-map,
+  .dg-pl-head,
+  .dg-np-head, .dg-np-rail, .dg-np-connect, .dg-np-step,
+  .dg-trouble > .ds-page-header, .dg-set-nav,
+  .dg-bill-hero, .dg-bill-plans,
+  .dg-hero-visual > *, .dg-hero-copy, .dg-landing-main > .dg-delivery, .dg-about-hero, .dg-about-paper, .dg-about-closing,
+  .dg-admin .admin-summary-grid, .project-overview-lifecycle
+):not(:is(
+  .ds-card, .panel, .panel-flat, .project-overview-lifecycle, .dg-home-hero, .dg-home-panel, .dg-home-fleet, .infra-topology-map, .dg-ov-head, .dg-projects-inventory,
+  .ds-modal, .destroy-modal, .ds-details-drawer, .dg-np-head, .dg-hero-visual > *, .dg-hero-copy, .dg-about-hero, .dg-about-paper, .dg-bill-hero, .dg-bill-plans, .dg-bill-plan-grid, .dg-bill-notices, .admin-section, .auth-card, .infrastructure-summary-grid, .admin-summary-grid
+) *) {
+  -webkit-backdrop-filter: var(--mf-filter); backdrop-filter: var(--mf-filter);
+  background: var(--mf-sheen), var(--mf-glass); border: var(--mf-border); box-shadow: var(--mf-highlight), var(--mf-shadow); color: var(--mf-ink);
+}
+/* Never a second glass layer: a card inside a glass surface is an inner tile. */
+:where(
+  .ds-card, .panel, .panel-flat, .project-overview-lifecycle, .dg-home-hero, .dg-home-panel, .dg-home-fleet, .infra-topology-map, .dg-ov-head, .dg-projects-inventory,
+  .ds-modal, .destroy-modal, .ds-details-drawer, .dg-np-head, .dg-hero-visual > *, .dg-hero-copy, .dg-about-hero, .dg-about-paper, .dg-bill-hero, .dg-bill-plans, .dg-bill-plan-grid, .dg-bill-notices, .admin-section, .auth-card, .infrastructure-summary-grid, .admin-summary-grid
+) :is(.ds-card, .panel, .panel-flat, .metric-card, .ds-chart-card, .empty-state, .ds-empty-state, .loading-state) {
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  background: var(--mf-glass-inner); border-color: var(--mf-edge-soft); box-shadow: var(--mf-highlight);
+}
+:root:root .dg-overview .overview-summary-grid { -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+/* One blur layer only: nothing inside a glass surface blurs again (keeps scrolling smooth). */
+:is(
+  .ds-card, .panel, .panel-flat, .project-overview-lifecycle, .dg-home-hero, .dg-home-panel, .dg-home-fleet, .infra-topology-map, .dg-ov-head, .dg-projects-inventory,
+  .ds-modal, .destroy-modal, .ds-details-drawer, .dg-np-head, .dg-np-step, .dg-np-rail, .dg-hero-visual > *, .dg-hero-copy, .dg-about-hero, .dg-about-paper, .dg-bill-hero, .dg-bill-plans, .dg-bill-plan-grid, .dg-bill-notices, .admin-section, .auth-card,
+  .ds-page-header, .dg-pl-head, .dg-projects-head, .dg-set-nav, .infrastructure-summary-grid, .admin-summary-grid, .dg-landing-nav, .dg-about-nav, .app-shell .sidebar, .app-shell .navbar
+) * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+:root:root :is(.dg-home-hero, .dg-projects-head, .dg-ov-head, .dg-pl-head, .dg-np-head, .dg-trouble > .ds-page-header, .dg-hero-visual > *, .dg-landing-main > .dg-delivery) { border-radius: var(--mf-r-hero); }
+:root:root :is(.ds-card, .panel, .panel-flat, .metric-card, .ds-chart-card, .dg-home-panel, .dg-home-recent, .dg-projects-inventory, .dg-ov-services, .dg-np-rail, .dg-set-nav) { border-radius: var(--mf-r-card); }
+:root:root :is(.empty-state, .ds-empty-state) { border-style: dashed; border-color: rgba(255, 255, 255, .24); }
+/* Page heads that used to sit on the bare ground now sit in a hero card. */
+:root:root :is(.dg-projects-head, .dg-pl-head, .dg-home-fleet, .infra-topology-map) { padding: 22px 26px; }
+:root:root :is(.dg-home-fleet, .infra-topology-map, .dg-bill-plans) { border-radius: var(--mf-r-card); }
+:root:root .dg-bill-plans { padding: 24px 26px 26px; }
+:root:root .dg-bill-plan-grid { background: rgba(255, 255, 255, .03); border: 1px solid var(--mf-edge-soft); box-shadow: none; }
+.app-shell .content .ds-page-header:not(:is(.ds-card, .panel, .panel-flat, .ds-modal, .ds-details-drawer) *) {
+  -webkit-backdrop-filter: var(--mf-filter); backdrop-filter: var(--mf-filter);
+  background: var(--mf-sheen), var(--mf-glass); border: var(--mf-border); border-radius: var(--mf-r-hero); box-shadow: var(--mf-highlight), var(--mf-shadow); padding: 24px 28px;
+}
+/* Public pages: copy that would sit on bright sky gets its own glass panel. */
+:root:root .dg-hero-copy { border-radius: var(--mf-r-hero); padding: clamp(28px, 3.4vw, 44px); }
+:root:root .dg-about-hero { border-radius: var(--mf-r-hero); margin: 96px auto 0; max-width: min(1240px, calc(100% - 32px)); padding: clamp(32px, 4.4vw, 56px); }
+:root:root .dg-about-hero::after { content: none; }
+:root:root .dg-about-paper { border-radius: var(--mf-r-hero); margin: 24px auto; max-width: min(1240px, calc(100% - 32px)); }
+:root:root :is(.dg-landing-nav, .dg-about-nav) {
+  -webkit-backdrop-filter: var(--mf-filter); backdrop-filter: var(--mf-filter);
+  background: var(--mf-glass); border: 1px solid var(--mf-edge-soft); border-radius: 18px; box-shadow: var(--mf-highlight), 0 10px 30px -16px rgba(2, 6, 14, .5);
+  margin: 14px auto 0; padding-bottom: 12px; padding-top: 12px; width: min(1320px, calc(100% - 32px));
+}
+:root:root .dg-about-nav { left: 0; right: 0; }
+/* Labels that sit straight on the photo carry a soft local scrim. */
+:root:root :is(.dg-home-fleet > header, .itw-bar, .dg-ov-services > header, .monitoring-section-heading) {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 0 22px rgba(0, 0, 0, .45);
+}
+:root:root :is(.dg-home-fleet > header, .itw-bar, .dg-ov-services > header, .monitoring-section-heading) :is(*, *::before) { text-shadow: inherit; }
+/* Hover lift on interactive cards only. */
+:root:root .dg-home-tile a { background: var(--mf-glass-inner); border: 1px solid var(--mf-edge-soft); box-shadow: var(--mf-highlight); }
+:root:root :is(.dg-home-tile a, .metric-card, .ds-chart-card) { transition: transform 200ms var(--mf-ease), box-shadow 200ms var(--mf-ease), border-color 200ms var(--mf-ease); }
+:root:root :is(.metric-card, .ds-chart-card):hover { border-color: rgba(255, 255, 255, .26); box-shadow: var(--mf-highlight), var(--mf-shadow-lift); transform: translateY(-3px); }
+:root:root .dg-home-tile a:hover { background: var(--mf-glass-inner-hover); border-color: rgba(255, 255, 255, .24); transform: translateY(-2px); }
+
+/* Home gauge core: neutral glow instead of the old lime. */
+.dg-home-gauge circle[fill^="url"] { fill: rgba(255, 255, 255, .035); }
+
+/* Chrome: sidebar and top bar are glass on the same photo. */
+.app-shell .sidebar {
+  -webkit-backdrop-filter: var(--mf-filter); backdrop-filter: var(--mf-filter);
+  background: var(--mf-glass); border-right: 1px solid var(--mf-edge-soft); box-shadow: var(--mf-highlight), 12px 0 40px -20px rgba(2, 6, 14, .5); color: var(--mf-ink-2);
+}
+.app-shell .navbar {
+  -webkit-backdrop-filter: var(--mf-filter); backdrop-filter: var(--mf-filter);
+  background: rgba(var(--mf-tint), .5); border-bottom: 1px solid var(--mf-edge-soft);
+}
+
+/* ---------- Dense glass: tables, logs, code ---------- */
+:root:root :is(.ds-data-table-wrap, .table-wrap, .dg-console, .monitoring-log-viewer, pre.dg-console, .ds-modal, .destroy-modal, .ds-details-drawer, .dg-projects-inventory) {
+  -webkit-backdrop-filter: var(--mf-filter-dense); backdrop-filter: var(--mf-filter-dense);
+  background: var(--mf-sheen), var(--mf-glass-dense); border: var(--mf-border); box-shadow: var(--mf-highlight), var(--mf-shadow); color: var(--mf-ink);
+}
+:root:root .dg-projects-inventory { border-radius: var(--mf-r-card); }
+/* A table or log inside a card is already on glass: dense tint, no second blur. */
+:root:root :is(.ds-card, .panel, .panel-flat, .dg-projects-inventory, .dg-home-panel) :is(.ds-data-table-wrap, .table-wrap, .dg-console, .monitoring-log-viewer, pre) {
+  -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(var(--mf-tint), .42); border-color: var(--mf-edge-soft); box-shadow: none;
+}
+:root:root :is(.ds-data-table-wrap, .table-wrap) { border-radius: var(--mf-r-tile); }
+:root:root :is(.ds-data-table-wrap, .table-wrap) th { background: rgba(255, 255, 255, .05); color: var(--mf-muted); letter-spacing: .06em; }
+:root:root :is(.ds-data-table-wrap, .table-wrap) tbody tr:hover td { background: rgba(255, 255, 255, .06); }
+:root:root pre:not(.dg-console) { background: rgba(var(--mf-tint), .5); border: 1px solid var(--mf-edge-soft); border-radius: 12px; color: var(--mf-ink-2); }
+:root:root :is(code, kbd):not(pre code) { background: rgba(255, 255, 255, .08); border-radius: 6px; color: var(--mf-ink); padding: 1px 5px; }
+
+/* Modals and drawers */
+.ds-modal-backdrop, .destroy-modal-backdrop, .ds-drawer-backdrop,
+:root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .destroy-modal-backdrop, .ds-drawer-backdrop) { background: rgba(6, 10, 18, .5); }
+:root:root :is(.ds-modal, .destroy-modal) { border-radius: var(--mf-r-card); }
+.toast { -webkit-backdrop-filter: var(--mf-filter-dense); backdrop-filter: var(--mf-filter-dense); background: var(--mf-glass-dense); border: var(--mf-border); color: var(--mf-ink); }
+.toast button { color: var(--mf-muted); }
+.toast-success { border-left: 3px solid var(--mf-success-dot); }
+.toast-danger { border-left: 3px solid var(--mf-danger-dot); }
+
+/* ---------- Inner tiles and fields ---------- */
+:root :is(input, select, textarea):where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])) {
+  background-color: var(--mf-field); border: 1px solid rgba(255, 255, 255, .18); border-radius: 12px; box-shadow: inset 0 1px 2px rgba(0, 0, 0, .25); color: var(--mf-ink);
+}
+:root :is(input, select, textarea)::placeholder { color: var(--mf-faint); }
+:root :is(input, select, textarea):hover:not(:disabled) { border-color: rgba(255, 255, 255, .3); }
+:root :is(input, select, textarea):focus { border-color: var(--mf-accent); box-shadow: var(--mf-focus); }
+:root :is(input, select, textarea):disabled { background-color: rgba(255, 255, 255, .04); color: var(--mf-muted); }
+
+/* ---------- Buttons: one accent, pill shape ---------- */
+:root :is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button) { border-radius: var(--mf-r-pill); padding-left: 16px; padding-right: 16px; }
+:root :is(.button, .ds-button-primary) { background: var(--mf-accent); border-color: var(--mf-accent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 8px 22px -10px rgba(120, 160, 230, .7); color: var(--mf-on-accent); }
+:root :is(.button, .ds-button-primary):hover:not(:disabled) { background: var(--mf-accent-hover); border-color: var(--mf-accent-hover); color: var(--mf-on-accent); }
+:root :is(.secondary-button, .ds-button-secondary) { background: rgba(255, 255, 255, .08); border: var(--mf-border); box-shadow: var(--mf-highlight); color: var(--mf-ink); }
+:root :is(.secondary-button, .ds-button-secondary):hover:not(:disabled) { background: rgba(255, 255, 255, .14); border-color: rgba(255, 255, 255, .28); }
+:root :is(.danger-button, .ds-button-danger) { background: #c2524d; border-color: #c2524d; color: #fff; }
+:root :is(.danger-button, .ds-button-danger):hover:not(:disabled) { background: #a8433f; border-color: #a8433f; }
+:root :is(.button, .secondary-button, .subtle-button, .danger-button, .ds-button):focus-visible { box-shadow: var(--mf-focus); }
+:root:root :is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button):disabled { background: rgba(255, 255, 255, .06); border-color: var(--mf-edge-soft); box-shadow: none; color: var(--mf-muted); }
+
+/* ---------- Pills, captions, type ---------- */
+:root :is(.status-badge, .ds-status-chip) { font-family: var(--dg-font); letter-spacing: .01em; }
+.eyebrow, .metric-label, .sidebar-label, :root th { letter-spacing: .06em; }
+:root :is(.eyebrow, .metric-label) { color: var(--mf-muted); font-size: .68rem; }
+.mf-caption { color: var(--mf-muted); font-family: var(--dg-mono); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; }
+.mf-live-dot { animation: mf-pulse 2s ease-in-out infinite; background: var(--mf-success-dot); border-radius: 50%; display: inline-block; height: 8px; width: 8px; }
+@keyframes mf-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(127, 211, 161, .45); } 50% { box-shadow: 0 0 0 6px rgba(127, 211, 161, 0); } }
+@keyframes mf-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* ---------- Sidebar ---------- */
+.app-shell .brand-identity-copy strong, .app-shell .sidebar-account strong { color: var(--mf-ink); }
+.app-shell .brand-identity-copy small { color: var(--mf-muted); letter-spacing: .06em; }
+.app-shell .sidebar-label, .app-shell .sidebar-account small { color: var(--mf-muted); letter-spacing: .06em; }
+.app-shell .sidebar-section, .app-shell .sidebar-footer { border-color: var(--mf-edge-soft); }
+.app-shell .sidebar .nav-link { border-radius: 12px; color: var(--mf-ink-2); }
+.app-shell .sidebar .nav-link .app-icon { color: var(--mf-muted); }
+.app-shell .sidebar .nav-link:hover { background: rgba(255, 255, 255, .08); color: var(--mf-ink); }
+.app-shell .sidebar .nav-link:hover .app-icon { color: var(--mf-ink); }
+.app-shell .sidebar .nav-link.active { background: rgba(255, 255, 255, .13); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 0 0 1px rgba(255, 255, 255, .1); color: #fff; }
+.app-shell .sidebar .nav-link.active .app-icon { color: var(--mf-accent); }
+.app-shell .sidebar .nav-link.active::before { background: var(--mf-accent); box-shadow: none; }
+.app-shell .user-avatar { background: linear-gradient(135deg, #c8dcff, #8fb2ea); color: var(--mf-on-accent); }
+.app-shell .sidebar-logout-button { background: rgba(255, 255, 255, .06); border: 1px solid var(--mf-edge-soft); border-radius: 12px; color: var(--mf-ink-2); }
+.app-shell .sidebar-logout-button:hover { background: var(--mf-danger-soft); border-color: var(--mf-danger-line); color: var(--mf-danger); }
+.app-shell .mobile-navigation-close { color: var(--mf-muted); }
+.app-shell .mobile-navigation-toggle { background: rgba(255, 255, 255, .08); border-color: var(--mf-edge); color: var(--mf-ink); }
+
+/* ---------- Motion ---------- */
+.app-shell .content :is(.workspace-page, .page-stack) > * { animation: mf-rise 480ms var(--mf-ease) both; }
+.app-shell .content :is(.workspace-page, .page-stack) > :nth-child(2) { animation-delay: 60ms; }
+.app-shell .content :is(.workspace-page, .page-stack) > :nth-child(3) { animation-delay: 120ms; }
+.app-shell .content :is(.workspace-page, .page-stack) > :nth-child(n + 4) { animation-delay: 180ms; }
+
+/* ---------- Fallback: no backdrop-filter ---------- */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --mf-glass: rgba(18, 24, 34, .86); --mf-glass-dense: rgba(14, 19, 28, .93); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell .content :is(.workspace-page, .page-stack) > *, .mf-live-dot { animation: none; }
+  :root:root :is(.dg-home-tile a, .metric-card, .ds-chart-card):hover { transform: none; }
+}

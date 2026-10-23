@@ -1,0 +1,213 @@
+# ============================================================
+# DeployGuard Release 1
+# ============================================================
+
+# ------------------------------------------------------------
+# ENVIRONMENT / SECRETS
+# ------------------------------------------------------------
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Allow safe example environment files
+!.env.example
+!.env.sample
+!.env.template
+!**/.env.example
+!**/.env.sample
+!**/.env.template
+
+.envrc
+
+# Private keys / certificates / credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+.aws/
+credentials/
+secrets/
+
+aws-credentials*
+google-credentials*
+service-account*.json
+
+# ------------------------------------------------------------
+# NODE / NPM
+# ------------------------------------------------------------
+node_modules/
+**/node_modules/
+
+.npm/
+.pnpm-store/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------------------------------------
+# BUILD OUTPUT
+# ------------------------------------------------------------
+dist/
+**/dist/
+
+build/
+**/build/
+
+out/
+**/out/
+
+coverage/
+**/coverage/
+
+.vite/
+**/.vite/
+
+.next/
+.nuxt/
+.svelte-kit/
+
+# ------------------------------------------------------------
+# TERRAFORM LOCAL / SENSITIVE / GENERATED
+# ------------------------------------------------------------
+.terraform/
+**/.terraform/
+
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.plan
+
+terraform.tfvars
+*.auto.tfvars
+*.tfvars.json
+
+# Allow safe Terraform examples
+!*.tfvars.example
+!*.tfvars.example.json
+
+crash.log
+crash.*.log
+
+# KEEP .terraform.lock.hcl
+# It should remain committed for reproducible provider versions.
+
+# ------------------------------------------------------------
+# DEPLOYGUARD GENERATED WORKFLOW EVIDENCE
+# ------------------------------------------------------------
+deployguard-result.json
+deployguard-cost-plan.json
+deployguard-project-cost-plan.json
+
+infracost*.json
+infracost*.html
+
+artifacts/
+**/artifacts/
+
+test-results/
+**/test-results/
+
+playwright-report/
+
+# ------------------------------------------------------------
+# DATABASE / LOCAL RUNTIME DATA
+# ------------------------------------------------------------
+*.sqlite
+*.sqlite3
+
+postgres-data/
+pgdata/
+
+# ------------------------------------------------------------
+# PYTHON GENERATED DATA
+# ------------------------------------------------------------
+__pycache__/
+**/__pycache__/
+
+*.pyc
+*.pyo
+*.pyd
+
+.venv/
+venv/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ------------------------------------------------------------
+# LOGS / CACHE / TEMP
+# ------------------------------------------------------------
+logs/
+**/logs/
+
+*.log
+
+tmp/
+**/tmp/
+
+temp/
+**/temp/
+
+.cache/
+**/.cache/
+
+*.tmp
+*.bak
+*.backup
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------
+# IDE / OS
+# ------------------------------------------------------------
+.idea/
+
+.vscode/
+**/.vscode/
+
+*.code-workspace
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------------------------------------------------------------
+# ARCHIVES / BACKUPS / DUPLICATES
+# ------------------------------------------------------------
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
+# ------------------------------------------------------------
+# LARGE GENERATED DOCUMENTS
+# Markdown documentation stays in Git.
+# Final PDF can later be attached to GitHub Release.
+# ------------------------------------------------------------
+*.pdf
+
+# ------------------------------------------------------------
+# PROCESS FILES
+# ------------------------------------------------------------
+*.pid
+*.pid.lock
+
+# ------------------------------------------------------------
+# MISC GENERATED
+# ------------------------------------------------------------
+*.seed

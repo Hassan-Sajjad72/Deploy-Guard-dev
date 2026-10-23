@@ -1,0 +1,114 @@
+import "reflect-metadata";
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ProjectsController } from "../src/projects/projects.controller";
+import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
+import { RailpackDeploymentService } from "../src/projects/railpack-deployment.service";
+
+const user = { id: "11111111-1111-4111-8111-111111111111" } as any;
+
+async function workspaceCallCount(size: number) {
+  const controller = Object.create(ProjectsController.prototype) as any;
+  const projects = Array.from({ length: size }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    name: `project-${index}`,
+    createdAt: new Date(),
+    activity: null,
+  }));
+  let bulkReconciliations = 0;
+  let stateReads = 0;
+  controller.projectsService = { listProjects: async () => projects };
+  controller.githubActionsDeployment = {
+    reconcileVisibleProjects: async (_user: unknown, ids: string[]) => { bulkReconciliations += 1; assert.equal(ids.length, size); },
+  };
+  controller.projectCurrentStateService = {
+    getCurrentState: async (_user: unknown, _id: string, options: unknown) => {
+      stateReads += 1;
+      assert.deepEqual(options, { skipReconciliation: true });
+      return { developerState: "ready", stableRelease: null, stateAuthority: {} };
+    },
+  };
+  await controller.getWorkspaceSummary({ user } as any);
+  assert.equal(bulkReconciliations, 1, `${size} projects must use one bounded active-operation reconciliation`);
+  assert.equal(stateReads, size);
+  return { bulkReconciliations, stateReads };
+}
+
+async function activeOperationCallCount(size: number) {
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  let queries = 0;
+  let remoteReconciliations = 0;
+  service.runs = {
+    find: async () => {
+      queries += 1;
+      return Array.from({ length: size }, (_, index) => ({ id: String(index), status: "running" }));
+    },
+  };
+  service.reconcile = async () => { remoteReconciliations += 1; };
+  await service.reconcileVisibleProjects(user, Array.from({ length: Math.max(1, size) }, (_, index) => String(index)));
+  assert.equal(queries, 1);
+  assert.equal(remoteReconciliations, size);
+}
+
+async function runtimeObservationCoalescing() {
+  const service = Object.create(ProjectCurrentStateService.prototype) as any;
+  service.runtimeObservationCache = new Map();
+  service.runtimeObservationInFlight = new Map();
+  let awsObservations = 0;
+  service.readRuntimeObservation = async () => {
+    awsObservations += 1;
+    await Promise.resolve();
+    return { observedAt: new Date().toISOString(), runtime: "present", resources: { ecs: "present", alb: "present", cloudWatch: "present" }, evidence: null };
+  };
+  const project = { id: "project" };
+  await Promise.all(Array.from({ length: 50 }, () => service.runtimeObservation(project, "generation", "https://example.invalid")));
+  await service.runtimeObservation(project, "generation", "https://example.invalid");
+  assert.equal(awsObservations, 1, "concurrent and immediate Infrastructure/Monitoring reads must share one AWS observation");
+}
+
+async function historicalProjectionIsLocalAndOnce() {
+  const service = Object.create(RailpackDeploymentService.prototype) as any;
+  service.reconciliationInFlight = new Map();
+  service.historicalProjectionComplete = new Set();
+  service.project = async () => ({ deploymentEnvironment: "dev" });
+  service.releases = { findOne: async () => null };
+  let activeQueries = 0;
+  let completedQueries = 0;
+  let projections = 0;
+  service.runs = {
+    find: async ({ where }: any) => {
+      const status = String(where.status?._value || where.status?._type || where.status || "");
+      if (status.includes("completed")) { completedQueries += 1; return [{ id: "completed" }]; }
+      activeQueries += 1;
+      return [];
+    },
+  };
+  // TypeORM FindOperator internals are intentionally opaque; distinguish the
+  // first active query from the one-time completed projection by call order.
+  let calls = 0;
+  service.runs.find = async () => (++calls % 2 === 0 && completedQueries === 0 ? (completedQueries += 1, [{ id: "completed" }]) : (activeQueries += 1, []));
+  service.reconcileCompletedRelease = async () => { projections += 1; };
+  service.reconcileCostEvidence = async () => { throw new Error("ordinary reads must not retry external historical cost collection"); };
+  await service.reconcileActive(user, "project");
+  await service.reconcileActive(user, "project");
+  assert.equal(completedQueries, 1);
+  assert.equal(projections, 1);
+}
+
+void (async () => {
+  const counts = [];
+  for (const size of [1, 10, 50]) counts.push({ size, ...(await workspaceCallCount(size)) });
+  await activeOperationCallCount(0);
+  await activeOperationCallCount(10);
+  await runtimeObservationCoalescing();
+  await historicalProjectionIsLocalAndOnce();
+  const root = join(__dirname, "..", "..");
+  const dashboard = readFileSync(join(root, "frontend", "src", "pages", "Dashboard.jsx"), "utf8");
+  const sidebar = readFileSync(join(root, "frontend", "src", "components", "layout", "Sidebar.jsx"), "utf8");
+  const api = readFileSync(join(root, "frontend", "src", "api", "projectApi.js"), "utf8");
+  assert.match(dashboard, /if \(!hasActiveOperation\) return undefined/);
+  assert.doesNotMatch(sidebar, /setInterval|getProjectCurrentState/);
+  assert.match(api, /detailedCurrentStateRequests/);
+  console.log(`READ_PATH_PERFORMANCE=PASS workspace=${counts.map((item) => `${item.size}:${item.bulkReconciliations}`).join(",")} idle_external_calls=0 aws_observation_fanout=1`);
+})().catch((error) => { console.error(error); process.exitCode = 1; });

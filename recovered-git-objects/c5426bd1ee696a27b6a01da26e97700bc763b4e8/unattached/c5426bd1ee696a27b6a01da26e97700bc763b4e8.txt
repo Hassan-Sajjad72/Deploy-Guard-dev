@@ -1,0 +1,35 @@
+
+import React, { useState } from "react";
+import { createRoot } from "react-dom/client";
+import { DetailsDrawer, Modal, useDialogFocus } from "@design-system";
+import "@styles";
+import "@enterprise";
+
+function Harness() {
+  const [overlay, setOverlay] = useState(null);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationRef = useDialogFocus(() => setNavigationOpen(false), { active: navigationOpen });
+  return <div className="workspace-page" id="workspace">
+    <button id="open-navigation" onClick={() => setNavigationOpen(true)} type="button">Open navigation</button>
+    <aside aria-modal={navigationOpen ? "true" : undefined} hidden={!navigationOpen} id="mobile-navigation" ref={navigationRef} role={navigationOpen ? "dialog" : undefined} tabIndex={navigationOpen ? -1 : undefined}><button id="navigation-first" type="button">First navigation item</button><button id="navigation-last" type="button">Last navigation item</button></aside>
+    <main id="obscured-content" inert={navigationOpen ? "" : undefined}><button id="obscured-action" type="button">Obscured action</button></main>
+    <section id="transformed-surface" style={{ height: 420, marginLeft: 170, overflow: "hidden", width: 690 }}>
+      <button id="open-destroy" onClick={() => setOverlay("destroy")} type="button">Open destroy</button>
+      <button id="open-rollback" onClick={() => setOverlay("rollback")} type="button">Open rollback</button>
+      <button id="open-drawer" onClick={() => setOverlay("drawer")} type="button">Open drawer</button>
+      {overlay === "destroy" ? <Modal labelledBy="destroy-title" onClose={() => setOverlay(null)}>
+        <p className="eyebrow">Permanent project deletion</p><h2 id="destroy-title">Delete this project and its owned resources?</h2>
+        <p>Each recorded generation and the separate project resources will be cleaned by exact identity. Shared platform networking, cluster and load balancer remain untouched. Type <strong>DESTROY</strong> to confirm.</p>
+        <label className="field"><span>Confirmation</span><input autoFocus defaultValue="DESTROY" id="destroy-input" /></label>
+        <div className="overview-modal-actions"><button id="destroy-cancel" type="button">Cancel</button><button id="confirm-destroy" type="button">Confirm destroy</button></div>
+      </Modal> : null}
+      {overlay === "rollback" ? <Modal labelledBy="rollback-title" onClose={() => setOverlay(null)}>
+        <p className="eyebrow">Application release</p><h2 id="rollback-title">Rollback application?</h2>
+        <div className="state"><strong>Previous immutable release</strong><p>The stored image digest and runtime configuration will be reused.</p></div>
+        <p>Repository code will not be rebuilt.</p><div className="overview-modal-actions"><button type="button">Cancel</button><button id="confirm-rollback" type="button">Confirm rollback</button></div>
+      </Modal> : null}
+      {overlay === "drawer" ? <DetailsDrawer labelledBy="drawer-title" onClose={() => setOverlay(null)} title="Attempt details"><p>Drawer evidence</p></DetailsDrawer> : null}
+    </section>
+  </div>;
+}
+createRoot(document.getElementById("root")).render(<Harness />);

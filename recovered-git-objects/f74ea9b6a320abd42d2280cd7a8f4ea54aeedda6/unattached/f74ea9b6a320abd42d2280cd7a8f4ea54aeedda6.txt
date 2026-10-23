@@ -1,0 +1,91 @@
+# DeployGuard Verified Result
+
+Date: 2026-08-01  
+Scope: Railway transformation through Iteration 7 — Environment, Logs, Metrics and Settings.
+
+## Verdict
+
+**NO-GO — Iteration 7 is implemented and locally verified. Iteration 8 launch
+acceptance and Iteration 9 final evidence remain.**
+
+This is not a live AWS deployment claim. No Deploy command, queue publication,
+Terraform, Docker, ECR, ECS, ALB, Stripe, or SNS operation was invoked.
+
+## Iteration 7 completed result
+
+- `/projects/:projectId/requirements` is the single Environment surface. The old
+  `/env` URL redirects there. Required application inputs, managed database
+  selection, and optional variables coexist without a second page or state
+  source; stored secret values remain masked. Raw configuration ownership and
+  fingerprint details were removed from the developer surface.
+- Developer Logs now reads a closed `application-logs` projection. It contains
+  only sanitized timestamp/message events and availability state. The legacy
+  pipeline-run/event log page, live provider stream, and related client APIs and
+  components were removed. Historical pipeline reads are admin-only.
+- Developer Metrics now reads a closed `application-metrics` projection and
+  exposes only CPU, memory, request latency, request rate, and a bounded time
+  range. Provider selection, provider identity, labels, raw errors, and operator
+  observability navigation are absent.
+- Settings is application-focused: project identity, repository/branch,
+  application directory, build/runtime commands, Environment, repository
+  re-analysis, and archive. It no longer fetches detailed current state,
+  detection/preflight reports, environment-key inventories, recovery state,
+  cleanup controls, notification-provider settings, or raw detected runtime
+  evidence.
+- Logs and Metrics use the canonical current-state stable-release decision
+  before requesting application evidence. Provider-shaped runtime/log/health
+  endpoints remain available only to administrators; the new closed projections
+  remain authenticated for admin, developer, and eligible readonly users.
+
+## Verification evidence
+
+Focused backend checks passed:
+
+- `test:developer-observability` — deterministic closed projections discard
+  provider names, labels, raw errors, log group/stream/token identifiers, and
+  secret values;
+- `test:operator-segregation` — legacy pipeline history and provider-shaped
+  observability are admin-only, while closed application logs/metrics retain
+  authenticated developer/readonly access;
+- `test:current-state-consistency`, TypeScript `--noEmit`, and Nest build.
+
+Focused frontend checks passed:
+
+- `test:application-surfaces` — one Environment identity, closed application
+  Logs/Metrics, simple Settings, and removed legacy APIs/routes;
+- `test:operator-segregation-ui`, `test:railway-deployment-pages`,
+  `test:current-state-ui`, and the time/recency regression;
+- Vite production build (167 modules).
+
+Runtime read-only verification:
+
+- frontend HTTP 200 and backend authenticated boundary active on ports 5173 and
+  5000;
+- the new `application-logs` and `application-metrics` routes return HTTP 401
+  without a session;
+- release, infrastructure-plan, and infrastructure-apply Compose consumers are
+  healthy with zero restarts;
+- PostgreSQL: 18 projects, 9 release manifests, 8 stable-projection rows, zero
+  live operation leases, zero cross-lane owners, and zero outbox claims. Four
+  unreleased lease rows are explicitly `expired` historical records;
+- Redis: zero BullMQ keys.
+
+The existing Nest watcher had retained a stale child serving the pre-change
+route table; restarting only that child loaded the compiled Iteration 7 routes.
+No durable or queue state changed. `git diff --check` passes.
+
+## Evidence classification
+
+- **Isolated:** projection sanitization, route/role metadata, frontend
+  application-surface and legacy-removal contracts, and current-state tests.
+- **Local:** backend/frontend type-check/build, HTTP route/auth verification,
+  supervised worker health, and read-only PostgreSQL/Redis inspection.
+- **Live AWS:** not used.
+
+## Genuine limitations and next iteration
+
+Iteration 8 is next: run the complete multi-user/multi-project local launch
+acceptance matrix on real PostgreSQL, Redis, backend, frontend, and shared
+workers, including stack/configuration cases, concurrency, deduplication,
+refresh/restart persistence, isolation, and terminology. Iteration 9 may publish
+a final GO/NO-GO verdict only after that evidence is complete.

@@ -1,0 +1,17 @@
+{
+  "name": "github-auth-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "product:start": "node scripts/local-product.mjs",
+    "product:verify": "node scripts/verify-local-product.mjs",
+    "product:verify:deployment": "npm --prefix backend run demo:fyp-local",
+    "product:verify:recovery": "npm --prefix backend run test:normal-v1-local-failure-recovery:integration",
+    "product:build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "demo:normal-v1-local": "npm --prefix backend run demo:normal-v1-local --",
+    "demo:fyp-local": "npm --prefix backend run demo:fyp-local",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run start:dev",
+    "install:all": "cd frontend && npm install && cd ../backend && npm install"
+  }
+}

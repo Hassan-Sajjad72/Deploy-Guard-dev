@@ -1,0 +1,810 @@
+# DeployGuard UI Presentation Remediation Plan
+
+**Status:** Implementation authority for post-audit UI and presentation work  
+**Purpose:** Convert the existing authenticated DeployGuard product into a clean, structured, professional interface without changing the verified GitHub Actions → AWS deployment architecture.  
+**Primary evidence source:** `docs/DEPLOYGUARD_PRODUCT_UI_AUDIT.md`  
+**Existing product authority:** `FINAL_PRODUCT_SIMPLIFICATION_PLAN.md`
+
+---
+
+## 1. Execution rule
+
+Codex must complete exactly one iteration at a time.
+
+For every iteration:
+
+1. Read this file, the product audit, and the frozen simplification plan.
+2. Inspect the current repository and runtime before changing code.
+3. Implement only the first incomplete iteration.
+4. Reuse real backend evidence and the canonical current-state projection.
+5. Do not fabricate charts, costs, metrics, pipeline stages, health, infrastructure, or audit events.
+6. Verify desktop and mobile behavior.
+7. Update the Progress Ledger in this file.
+8. Report completed work, verification, remaining defects, and the exact next iteration.
+9. Stop.
+
+Same Codex session:
+
+```text
+Continue
+```
+
+New Codex session:
+
+```text
+Read DEPLOYGUARD_UI_PRESENTATION_REMEDIATION_PLAN.md and continue from the first incomplete iteration.
+```
+
+---
+
+## 2. Frozen product boundaries
+
+Keep the existing eight-route product architecture:
+
+| Page | Route |
+|---|---|
+| Landing | `/` |
+| Projects | `/projects` |
+| New Deployment | `/deploy` |
+| Project Overview | `/projects/:projectId` |
+| Pipeline & Recovery | `/projects/:projectId/pipeline` |
+| Infrastructure & FinOps | `/projects/:projectId/infrastructure` |
+| Monitoring | `/projects/:projectId/monitoring` |
+| Admin | `/admin` |
+
+Do not create separate normal-user routes for:
+
+- Security
+- FinOps
+- Usage billing
+- Notifications
+- Detection
+- Preflight
+- Environment
+- Settings
+- Releases
+- Rollback
+- Orchestration
+- State management
+
+Consolidation rules:
+
+| Concern | Destination |
+|---|---|
+| Current project state and lifecycle actions | Overview |
+| CI/CD stages, timings, logs, failure evidence and retry | Pipeline |
+| Trivy or Dockerfile security evidence, when genuinely produced | Pipeline advanced details |
+| AWS resources, Terraform, export and cost estimate | Infrastructure |
+| Runtime application and infrastructure metrics | Monitoring |
+| Users, roles, platform health, projects and audit logs | Admin |
+| Detection and preflight evidence | Expandable Developer details |
+| Usage/subscription billing | Disabled |
+| Notifications/SNS | Disabled |
+
+---
+
+## 3. Visual design rules
+
+### Palette
+
+| Token | Value | Use |
+|---|---:|---|
+| App background | `#F7F8F4` | Main page canvas |
+| Surface | `#FFFFFF` | Cards, tables and dialogs |
+| Soft surface | `#F1F5EE` | Secondary sections |
+| Primary lime | `#B8F34A` | Primary actions and active accents |
+| Primary hover | `#A4DE36` | Primary-action hover |
+| Ink | `#172033` | Main text |
+| Muted text | `#667085` | Secondary text |
+| Violet | `#8B5CF6` | Build and developer evidence |
+| Cyan | `#22C7D6` | Infrastructure and monitoring |
+| Rose | `#F45B7A` | Failures and destructive actions |
+| Amber | `#F5A524` | Warnings |
+| Success | `#22A65A` | Healthy and live states |
+| Border | `#E5E9E0` | Separation |
+
+### Shared presentation requirements
+
+- Use a bright off-white canvas and white cards.
+- Use 12–18px corner radii, visible borders and restrained shadows.
+- Use icons plus text for every state; never rely on color alone.
+- Use shared components instead of raw definition lists or page-specific CSS.
+- Use source, last-updated time and freshness on external-data surfaces.
+- Use explicit `Unavailable`, `Pending`, `Stale`, `Historical` and `Not configured` states.
+- Never substitute unavailable evidence with zero.
+- Long identifiers must use truncation, copy controls and full-value tooltips.
+- Respect keyboard navigation, focus visibility and reduced-motion preferences.
+- Support 1440px, 1024px, 768px and 390px layouts.
+- Do not hide required mobile navigation; use a responsive drawer.
+- Do not show charts when no genuine numeric series exists.
+
+### Required shared components
+
+- `Button`
+- `Card`
+- `MetricCard`
+- `StatusChip`
+- `PageHeader`
+- `Banner`
+- `Modal`
+- `EmptyState`
+- `Skeleton`
+- `DataTable`
+- `CopyValue`
+- `ChartCard`
+- `StageRail`
+- `Tabs`
+- `DetailsDrawer`
+
+---
+
+# 4. Implementation iterations
+
+## Iteration 1 — Shared visual foundation and responsive shell
+
+### Goal
+
+Create one professional design system and authenticated application shell before redesigning individual pages.
+
+### Required work
+
+- Audit current frontend tokens, layout primitives and duplicated CSS.
+- Implement the approved palette and shared typography, spacing, radius, border, shadow and motion tokens.
+- Build the required shared components.
+- Replace conflicting page-level colors with shared tokens.
+- Build a responsive top bar, desktop sidebar and mobile navigation drawer.
+- Standardize loading, warning, failure, live, destroying, destroyed, stale and unavailable states.
+- Fix global wrapping, spacing, joined text, long-value overflow and inconsistent button sizing.
+- Preserve all backend behavior and canonical state logic.
+
+### Done when
+
+- Existing routes still work.
+- No shared route looks like an unstyled administrative form.
+- No required navigation disappears at 390px.
+- Shared components have keyboard and focus support.
+- Reduced-motion behavior works.
+- Frontend component tests and production build pass.
+
+---
+
+## Iteration 2 — Project Overview and canonical lifecycle actions
+
+### Goal
+
+Make Overview a concise state-and-action page rather than a duplicate dashboard.
+
+### Page structure
+
+1. Project header:
+   - project name;
+   - repository and branch;
+   - canonical status;
+   - last updated and evidence freshness.
+
+2. One primary lifecycle card:
+   - ready;
+   - deploying;
+   - failed;
+   - live;
+   - destroying;
+   - destroyed.
+
+3. Maximum four compact summary cards:
+   - current state;
+   - latest release;
+   - application health;
+   - last deployment duration.
+
+4. Five-phase lifecycle rail:
+
+```text
+Analyze → Prepare → Build → Deploy → Verify
+```
+
+### Action contract
+
+| State | Allowed primary actions |
+|---|---|
+| Ready | Deploy |
+| Deploying | View progress |
+| Failed | View Pipeline, Retry |
+| Live | Open Application, Destroy Infrastructure |
+| Destroying | View progress |
+| Destroyed | Deploy Again |
+
+Do not show a normal live-state `Redeploy` button. `Deploy Again` appears after successful destruction.
+
+### Done when
+
+- Overview contains no detailed AWS inventory, audit table, cost chart or pipeline logs.
+- Actions come only from canonical backend state.
+- Destroyed projects show no live URL or current monitoring.
+- Historical failures cannot override a newer state.
+- All lifecycle states pass responsive visual tests.
+
+---
+
+## Iteration 3 — Professional Pipeline & Recovery page
+
+### Goal
+
+Show the real CI/CD execution as an organized timeline with timing evidence and recovery actions.
+
+### Page structure
+
+#### Deployment summary
+
+Maximum four compact cards:
+
+- current attempt;
+- status;
+- total duration;
+- commit and branch.
+
+#### Full technical pipeline timeline
+
+Render only stages supported by real workflow evidence, including where applicable:
+
+1. Repository checkout
+2. Stack detection
+3. Preflight validation
+4. Dockerfile preparation
+5. Docker image build
+6. Dockerfile security validation
+7. Trivy vulnerability scan
+8. ECR image publication
+9. Terraform initialization
+10. Terraform plan
+11. Cost estimation
+12. Policy or approval evaluation
+13. Terraform apply
+14. ECS service deployment
+15. ALB health verification
+16. Stable release promotion
+
+Each stage must show:
+
+- friendly name;
+- icon;
+- status;
+- duration;
+- start and completion time;
+- evidence or log expansion;
+- failure reason when applicable.
+
+#### Focused CI/CD visuals
+
+Use one horizontal stage-duration chart when real stage durations exist.
+
+A second chart may show deployment duration by release when genuine historical data exists.
+
+Do not place runtime CPU, memory, request or error charts here.
+
+#### Attempt history
+
+Use a structured table:
+
+| Attempt | Type | Result | Commit | Duration | Time |
+|---|---|---|---|---|---|
+
+#### Recovery
+
+For eligible failures only:
+
+- failed phase;
+- safe summary;
+- sanitized logs;
+- GitHub Actions link;
+- AI troubleshooting;
+- Retry.
+
+### Required corrections
+
+- Remove joined text such as `LiveLive`.
+- Remove duplicated Overview content.
+- Keep raw workflow identifiers only under Advanced details.
+- Treat GitHub Actions as the execution source of truth.
+- Do not display Trivy when the active workflow produced no Trivy evidence.
+
+### Done when
+
+- The page explains where deployment time was spent.
+- Every displayed stage has real evidence.
+- Failed stages remain failed.
+- Retry creates a linked attempt.
+- Logs and AI inputs contain no secrets.
+- Pipeline and Overview no longer duplicate each other.
+
+---
+
+## Iteration 4 — Infrastructure & FinOps page
+
+### Goal
+
+Replace raw label/value text with a professional resource inventory, topology and truthful cost section.
+
+### Page structure
+
+#### Four compact summary cards
+
+- infrastructure state;
+- AWS region;
+- ECS task state;
+- ALB health.
+
+#### Resource inventory table
+
+| Resource | Identifier | Status | Details |
+|---|---|---|---|
+| ECR | Short identifier | Active | Latest image |
+| ECS service | Short identifier | Healthy | Running / desired / pending |
+| ALB | Short identifier | Healthy | Target health |
+| Terraform state | S3 key | Active | Encryption and freshness |
+
+Each identifier requires:
+
+- abbreviated visible value;
+- copy control;
+- full tooltip;
+- no uncontrolled wrapping.
+
+#### Topology strip
+
+```text
+GitHub Actions → ECR → ECS Fargate → ALB → Application
+```
+
+Every node uses genuine current or historical state.
+
+#### FinOps
+
+When a verified estimate exists:
+
+- estimated monthly cost;
+- estimate source;
+- estimate timestamp;
+- service breakdown;
+- one donut or horizontal bar chart.
+
+When unavailable:
+
+```text
+Cost estimate unavailable
+
+No verified Infracost estimate exists for this release.
+```
+
+#### Terraform
+
+- state status;
+- state key;
+- last apply;
+- last destroy;
+- Export Terraform ZIP.
+
+### Historical behavior
+
+After destroy:
+
+- label resource information `Historical` or `Last known infrastructure`;
+- do not show resources as active;
+- do not show a live endpoint.
+
+### Done when
+
+- No raw definition-list presentation remains.
+- All displayed infrastructure values are real and source-labelled.
+- FinOps remains inside Infrastructure.
+- Export excludes state, secrets, plans and credentials.
+- Mobile layout uses cards or a horizontally safe table.
+
+---
+
+## Iteration 5 — Runtime Monitoring page
+
+### Goal
+
+Show only deployed application and infrastructure health. CI/CD monitoring stays on Pipeline.
+
+### Visibility
+
+Monitoring appears only while active infrastructure exists.
+
+Hide it for:
+
+- ready;
+- never deployed;
+- pre-infrastructure failure;
+- destroyed.
+
+### Page structure
+
+#### Four compact KPI cards
+
+Use real evidence only:
+
+- application status;
+- uptime, when available;
+- running ECS tasks;
+- ALB target health.
+
+When metrics exist, request rate or error rate may replace one card.
+
+#### Maximum four meaningful charts
+
+Only when genuine time-series data exists:
+
+1. Request rate and latency
+2. Error rate or HTTP errors
+3. CPU and memory utilization
+4. Desired, running and pending task trend
+
+#### Health details
+
+- data source;
+- last scrape;
+- freshness;
+- ALB health;
+- ECS task health;
+- Open Grafana.
+
+### Unavailable state
+
+When Prometheus or Grafana is unconfigured:
+
+```text
+Runtime metrics are not configured
+
+Deployment health is still verified through ECS and ALB.
+Configure Prometheus and Grafana to view CPU, memory,
+request, error and latency trends.
+```
+
+Do not render fake charts or zero-valued placeholders.
+
+### Done when
+
+- Monitoring shows real runtime/cloud evidence only.
+- Data source and freshness are visible.
+- Stale evidence is labelled.
+- Monitoring disappears after destroy.
+- Pipeline duration charts are not duplicated here.
+
+---
+
+## Iteration 6 — Admin and Audit Log page
+
+### Goal
+
+Create a structured, read-focused Admin interface and integrate Audit Logs professionally.
+
+### Authorization
+
+- Use existing GitHub-authenticated Admin RBAC.
+- Do not add or restore email/password Admin login.
+- Non-admin users receive 403 or are redirected safely.
+- Never expose tokens, passwords, OAuth secrets or application environment values.
+
+### Tabs
+
+```text
+Overview
+Users & Roles
+Projects & Operations
+Audit Logs
+```
+
+### Admin Overview
+
+Use compact status cards for:
+
+- backend;
+- PostgreSQL;
+- GitHub OAuth/App;
+- GitHub Actions;
+- AWS OIDC;
+- Terraform storage;
+- Prometheus/Grafana.
+
+Use one operation-state chart only when real counts exist.
+
+### Users & Roles
+
+Use a structured table:
+
+| User | GitHub account | Role | Access | Last activity | Action |
+|---|---|---|---|---|---|
+
+Supported actions:
+
+- assign Admin;
+- assign Developer;
+- assign Read-only;
+- disable access;
+- re-enable access.
+
+### Projects & Operations
+
+Filters:
+
+```text
+All · Live · Deploying · Failed · Destroyed
+```
+
+Table:
+
+| Owner | Repository | State | Latest operation | Updated |
+|---|---|---|---|---|
+
+Admin remains read-focused. Do not permit cross-owner Deploy, Retry, Redeploy or Destroy.
+
+### Audit Logs
+
+Use a paginated, searchable table:
+
+| Time | Actor | Action | Resource | Result | Source |
+|---|---|---|---|---|---|
+
+Filters:
+
+- actor;
+- action;
+- project;
+- result;
+- date range;
+- severity.
+
+Selecting a record opens a sanitized details drawer.
+
+Audit events should include existing supported evidence for:
+
+- login/logout;
+- GitHub App connection;
+- repository selection;
+- project creation;
+- `.env` update without values;
+- deploy;
+- retry;
+- destroy;
+- Terraform export;
+- role changes;
+- access changes.
+
+### Done when
+
+- Joined metric text such as `PROJECTS28` cannot occur.
+- Audit is integrated only inside Admin.
+- Backend pagination and filtering work.
+- Role/access mutations create audit records.
+- No sensitive value appears in audit output.
+- Mobile tables have readable card presentation.
+
+---
+
+## Iteration 7 — Projects, New Deployment and Landing completion
+
+### Goal
+
+Complete the focused GitHub-first user journey after authenticated technical pages are stable.
+
+### Landing
+
+Keep the page minimal.
+
+Logged out:
+
+```text
+DeployGuard
+
+We handle the cloud work.
+Your team ships faster.
+
+Connect GitHub, choose a branch, and DeployGuard builds,
+deploys and manages the infrastructure for you.
+
+[ Continue with GitHub ]
+```
+
+Logged in:
+
+```text
+[ Deploy ]
+```
+
+Show a top-right `Admin` action only before GitHub authorization when required by the approved landing behavior. After authentication, use the existing account/avatar menu and role-gated Admin access without duplicating actions.
+
+No dashboard cards or charts belong on Landing.
+
+### Projects
+
+Use attractive project cards containing:
+
+- project name;
+- repository and branch;
+- canonical state;
+- latest operation;
+- last activity.
+
+Filters:
+
+```text
+All · Deploying · Live · Failed · Destroyed
+```
+
+Include only projects with a real deployment operation.
+
+### New Deployment
+
+Use one page:
+
+1. GitHub App connection when required
+2. Repository
+3. Branch
+4. Optional pasted `.env`
+5. Silent analysis
+6. Deploy
+
+Show only:
+
+- Ready
+- Warning
+- Blocked
+
+Do not route users to separate Detection, Preflight or Environment pages.
+
+### Done when
+
+- Landing remains focused.
+- Projects contains only real-attempt projects.
+- New deployment remains one page.
+- `.env` values are never redisplayed.
+- GitHub App install/return works.
+- Responsive end-to-end journey passes.
+
+---
+
+## Iteration 8 — Final visual, responsive and truthfulness certification
+
+### Goal
+
+Verify the complete redesign without hiding missing functionality behind attractive visuals.
+
+### Required viewports
+
+- 1440px
+- 1024px
+- 768px
+- 390px
+
+### Required canonical states
+
+- Ready
+- Deploying
+- Failed
+- Live
+- Destroying
+- Destroyed
+
+### Certification checks
+
+- No horizontal clipping.
+- No hidden required navigation.
+- No joined or overlapping text.
+- No raw API-style definition lists.
+- No duplicated concerns across pages.
+- No fake charts or metrics.
+- No unavailable value represented as zero.
+- No live URL or monitoring after destroy.
+- No Retry on successful operations.
+- No live-state Redeploy control.
+- Deploy Again appears after destroy.
+- No normal-user Admin access.
+- No cross-owner cloud mutation.
+- No secrets in UI, logs, audit or exports.
+- External evidence shows source, freshness and unavailable reason.
+- Keyboard navigation works.
+- Reduced-motion behavior works.
+- Frontend and backend production builds pass.
+- Existing authorization and canonical-state regressions pass.
+
+### Final page ownership
+
+| Page | Presentation responsibility |
+|---|---|
+| Landing | Product promise and primary action |
+| Projects | Project discovery and state cards |
+| Deploy | Repository-to-deployment setup |
+| Overview | Current state and lifecycle actions |
+| Pipeline | CI/CD timeline, timing visuals, attempts and recovery |
+| Infrastructure | AWS inventory, topology, FinOps and Terraform |
+| Monitoring | Runtime and infrastructure health |
+| Admin | Platform health, users, projects and audit |
+
+---
+
+# 5. Progress Ledger
+
+| Iteration | Status | Evidence | Remaining defects |
+|---|---|---|---|
+| 1 — Visual foundation | Complete — 2026-08-05 | Shared design primitives, responsive authenticated drawer, live 1440 px/390 px browser verification, focused frontend regressions and production build passed. | No reproduced Iteration 1 blocker. Page-specific lifecycle/content ownership work is intentionally deferred to Iteration 2 onward. |
+| 2 — Overview | Not started | — | — |
+| 3 — Pipeline | Not started | — | — |
+| 4 — Infrastructure | Not started | — | — |
+| 5 — Monitoring | Not started | — | — |
+| 6 — Admin and Audit | Not started | — | — |
+| 7 — Landing, Projects and Deploy | Not started | — | — |
+| 8 — Final certification | Not started | — | — |
+
+### Iteration 1 completion evidence
+
+Completed only the shared visual foundation and authenticated shell:
+
+- `frontend/src/components/common/DesignSystem.jsx` now supplies the required shared `Button`, `Card`, `MetricCard`, `StatusChip`, `PageHeader`, `Banner`, `Modal`, `EmptyState`, `Skeleton`, `DataTable`, `CopyValue`, `ChartCard`, `StageRail`, `Tabs`, and `DetailsDrawer` primitives. Dialog and drawer primitives support Escape dismissal, focus entry/restoration, accessible labels, and visible focus styling.
+- Existing common loading, empty, error, status, header, and metric surfaces now consume the shared primitives without changing API calls or canonical-state semantics.
+- `AppLayout`, `Navbar`, `Sidebar`, shared icons, and global styles now provide a desktop sidebar and an off-canvas mobile drawer. At 390 px, the drawer preserves Home, Projects, Admin when authorized, selected-project navigation, account identity, and Logout; it closes through both a close control and backdrop.
+- Global tokens, spacing, motion, safe wrapping, table/copy/disclosure styling, status state treatment, and consistent action sizing were added using the approved palette. The static “Cloud delivery ready” claim was replaced by the neutral “GitHub Actions delivery” context. The canonical status/progress and action groups now have explicit spacing, so the reproduced `Live100%`/overlapping-action presentation does not occur.
+- No backend code, routes, canonical project-state logic, authentication/authorization rules, GitHub Actions lifecycle, AWS integration, deployment operation, retry, destroy, or external resource was changed.
+
+Runtime/browser evidence:
+
+- Local product readiness verification passed: frontend, API, PostgreSQL, CORS, GitHub OAuth entry, anonymous API rejection, and retired email/password endpoint absence.
+- On the current live local project `4da59401-2847-4896-b1fa-54e8b649c4c6`, a browser-local authenticated test session (no secret printed or persisted to the repository) verified the existing protected route at 1440 px: no horizontal overflow, desktop sidebar visible, mobile toggle hidden, status and progress rendered as separate lines, and lifecycle action bounds did not overlap.
+- At 390 px on the same live route: no horizontal overflow; the keyboard-focused mobile navigation control opened the drawer; the drawer contained Home, Projects, authorized Admin, Overview, Pipeline, Infrastructure, Monitoring, and Logout; the close control returned the drawer to its closed state. Reduced-motion and focus rules are present in the loaded stylesheet.
+
+Test/build evidence:
+
+- Passed: `test:visual-system`, `test:current-state-ui`, `test:unified-lifecycle`, `test:application-surfaces`, `test:admin-readability`, `test:github-home`, and `test:operator-segregation-ui`.
+- Passed: `npm --prefix frontend run build`.
+- Passed: `git diff --check`.
+
+Remaining defects within this iteration: none reproduced. The live Overview still has page-ownership/action issues such as the existing live-state Redeploy control and duplicate/deep lifecycle content; those are explicitly Iteration 2 scope and were not changed here.
+
+Exact next iteration: **Iteration 2 — Project Overview and canonical lifecycle actions.**
+
+---
+
+# 6. Regression protections
+
+Codex must not:
+
+- change GitHub Actions as the sole deployment engine;
+- re-enable Redis, BullMQ or custom workers;
+- invent inactive Security, billing, usage or notification modules;
+- create extra normal-user routes;
+- alter canonical project-state semantics without reproduced evidence;
+- mark LIVE before workflow success, ECS stability, ALB health and endpoint verification;
+- expose credentials, tokens or environment values;
+- add decorative fake charts;
+- replace unavailable evidence with zero;
+- allow cross-owner mutations through Admin;
+- remove historical pipeline or audit evidence after destroy;
+- break the existing GitHub OAuth, GitHub App, deploy, retry, destroy, Terraform export or reconciliation paths.
+
+For stateful work:
+
+```text
+Validate exact scope and evidence
+→ acquire ownership/lock
+→ execute once
+→ verify internal and external state
+→ persist truthful evidence
+→ release ownership and stop
+```
+
+---
+
+# 7. Final completion condition
+
+The remediation is complete only when:
+
+- all eight routes use the shared light design system;
+- each page owns only its defined information;
+- Pipeline represents real technical stages professionally;
+- Infrastructure uses structured inventory and truthful FinOps;
+- Monitoring uses genuine runtime evidence only;
+- Admin contains functional Audit Logs;
+- desktop and mobile presentation are usable;
+- action visibility follows canonical lifecycle state;
+- no fake data, secret exposure or legacy execution path is introduced;
+- all builds, regression tests and route checks pass.

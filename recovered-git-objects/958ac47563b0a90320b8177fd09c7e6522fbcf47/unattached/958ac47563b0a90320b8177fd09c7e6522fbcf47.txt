@@ -1,0 +1,86 @@
+import "reflect-metadata";
+import { strict as assert } from "node:assert";
+import { ProjectCurrentStateService } from "../src/projects/current-state/project-current-state.service";
+import { DetectionStatus } from "../src/projects/project-detection-profile.entity";
+import { PipelineRunStatus } from "../src/projects/project-pipeline-run.entity";
+import { PreflightValidationStatus } from "../src/projects/project-preflight-report.entity";
+
+const project: any = { repositoryFullName: "owner/application", targetBranch: "main" };
+const profile: any = { commitSha: "a".repeat(40), detectionStatus: DetectionStatus.SUCCESS };
+const preflight: any = { validationStatus: PreflightValidationStatus.PASSED };
+
+function serviceWith(latest: any, stable: any = null) {
+  const service: any = Object.create(ProjectCurrentStateService.prototype);
+  const builder = (): any => ({
+    stable: false,
+    where() { return this; },
+    andWhere() { this.stable = true; return this; },
+    clone() { return builder(); },
+    orderBy() { return this; },
+    async getOne() { return this.stable ? stable : latest; },
+  });
+  service.runRepository = { createQueryBuilder: builder };
+  service.config = { get: (_key: string, fallback?: string) => fallback };
+  return service;
+}
+
+function operation(status: PipelineRunStatus, currentStage: string, metadata: Record<string, unknown> = {}, errorMessage: string | null = null) {
+  return {
+    status,
+    currentStage,
+    metadata: { executionEngine: "github_actions", attempt: 2, deploymentAction: "deploy", ...metadata },
+    commitSha: "b".repeat(40),
+    createdAt: new Date("2026-08-03T12:00:00.000Z"),
+    updatedAt: new Date("2026-08-03T12:02:00.000Z"),
+    completedAt: status === PipelineRunStatus.COMPLETED ? new Date("2026-08-03T12:02:00.000Z") : null,
+    failedAt: status === PipelineRunStatus.FAILED ? new Date("2026-08-03T12:02:00.000Z") : null,
+    errorMessage,
+  };
+}
+
+async function projected(latest: any, stable: any = null) {
+  const service = serviceWith(latest, stable);
+  const base = service.githubActionsReadinessState(project, profile, preflight);
+  return service.withGithubActionsState("project-1", base);
+}
+
+async function run() {
+  const readiness = serviceWith(null).githubActionsReadinessState(project, profile, preflight);
+  assert.deepEqual(
+    { state: readiness.developerState, action: readiness.developerAction, progress: readiness.progress, attempt: readiness.latestAttempt },
+    { state: "ready", action: "deploy", progress: { percentage: 40, phase: "prepare", label: "Ready to Deploy" }, attempt: null },
+  );
+  assert.equal(readiness.developerState === "platform_attention", false, "no GitHub Actions operation must not inherit legacy platform attention");
+  const readyAuthority = serviceWith(null).withStateAuthority(readiness, profile, preflight, null);
+  assert.deepEqual(
+    {
+      state: readyAuthority.stateAuthority?.state,
+      activeOperation: readyAuthority.stateAuthority?.activeOperation,
+      infrastructure: readyAuthority.stateAuthority?.infrastructure.status,
+      monitoring: readyAuthority.stateAuthority?.monitoring.status,
+    },
+    { state: "READY", activeOperation: null, infrastructure: "unknown", monitoring: "not_deployed" },
+  );
+
+  const blocked = serviceWith(null).githubActionsReadinessState(project, { ...profile, detectionStatus: DetectionStatus.FAILED }, preflight);
+  assert.deepEqual([blocked.developerState, blocked.developerAction], ["unsupported", "none"]);
+
+  const building = await projected(operation(PipelineRunStatus.RUNNING, "build_and_push_immutable_image"));
+  assert.deepEqual([building.developerState, building.progress.phase, building.progress.percentage], ["building", "build", 35]);
+
+  const failed = await projected(operation(PipelineRunStatus.FAILED, "build_and_push_immutable_image", { failedStage: "build_and_push_immutable_image" }, "The application build failed."));
+  assert.deepEqual([failed.developerState, failed.canRetry], ["failed_application", true]);
+
+  const stable = operation(PipelineRunStatus.COMPLETED, "healthy", { deployedUrl: "https://app.example.test" });
+  const live = await projected(stable, stable);
+  assert.deepEqual([live.developerState, live.developerAction, live.progress.percentage], ["live", "open_application", 100]);
+
+  const destroying = await projected(operation(PipelineRunStatus.RUNNING, "terraform_plan_and_apply", { deploymentAction: "destroy" }));
+  assert.deepEqual([destroying.developerState, destroying.developerAction, destroying.progress.label], ["destroying", "none", "Destroying application"]);
+
+  const destroyed = await projected(operation(PipelineRunStatus.COMPLETED, "destroyed", { deploymentAction: "destroy" }));
+  assert.deepEqual([destroyed.developerState, destroyed.developerAction, destroyed.progress], ["destroyed", "deploy_again", { percentage: 40, phase: "prepare", label: "Ready to Deploy" }]);
+  console.log("GitHub Actions canonical current-state matrix passed: ready, blocked, building, failed, live, destroying and destroyed.");
+}
+
+run().catch((error) => { console.error(error); process.exitCode = 1; });

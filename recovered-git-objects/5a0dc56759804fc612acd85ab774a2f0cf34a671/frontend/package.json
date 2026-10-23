@@ -1,0 +1,22 @@
+{
+  "name": "deploy-guard-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test:current-state-ui": "node scripts/verify-current-state-ui.mjs",
+    "test:recovery-ui": "node scripts/verify-recovery-ui.mjs",
+    "test:time-recency-ui": "node scripts/verify-time-recency-ui.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,87 @@
+# DeployGuard Verified Result
+
+Date: 2026-08-01  
+Scope: Railway transformation through Iteration 4 — existing-state adoption and reconciliation.
+
+## Verdict
+
+**NO-GO — Iteration 4 is implemented and locally verified, but the Railway-like
+Overview/Deployments redesign and the remaining launch iterations are not complete.**
+
+This result is not a live AWS deployment claim. The new capability remains
+default-off, and verification did not dispatch an operational project job or
+invoke Terraform, Docker, ECR, ECS, ALB, Stripe, or SNS.
+
+## Iteration 4 completed result
+
+- A deterministic, fail-closed operator read model now classifies existing
+  project evidence as `valid`, `adoptable`, `recoverable`, `safe_residue`, or
+  `ambiguous`. A genuinely clean project remains unclassified, so its normal
+  Deploy eligibility is unchanged.
+- `valid` requires one canonical stable release plus fresh verified live/healthy
+  cloud evidence, provisioned infrastructure, consistent Terraform state, and no
+  active lease, cross-lane owner, claim, queue item, or legacy run. `adoptable`
+  requires the same healthy identity without a canonical stable projection.
+- `recoverable` is limited to the same immutable active normal-v1 intent and
+  never creates a replacement identity. `safe_residue` requires a completed
+  destroy, fresh inventory, only verified residue/shared-platform categories,
+  no unknown resources, and a clear execution scope. Every other existing state
+  fails closed as `ambiguous`.
+- The classification is available only from the admin-guarded detailed/current-
+  state boundary and the new admin-only
+  `GET /api/projects/:projectId/current-state/existing-state` projection.
+  Ordinary developer current-state responses contain none of its codes, cleanup
+  actions, inventory, ownership, or state evidence.
+- A valid stable deployment can still project Live/Redeploy. Adoptable, residue,
+  and ambiguous evidence projects only neutral platform attention. The previous
+  projector defect that could expose a stable URL without verified cloud state
+  is corrected: unverified existing state retains historical release identity
+  but no live URL.
+
+## Verification evidence
+
+Passed focused backend checks:
+
+- `test:existing-project-state` — clean, valid, adoptable, recoverable, verified
+  residue, stale inventory, identity conflict, unknown resource, active fence,
+  and invalid Terraform-state cases;
+- `test:developer-current-state` — admin-only classifier/detail routes, project
+  isolation, neutral developer projection, no cleanup/internal-code leakage, and
+  suppression of unverified live URLs;
+- cloud-state reconciliation, Terraform state-safety synchronization, deployment
+  recovery, and normal release-lane current-state regressions;
+- Nest production build.
+
+Passed focused frontend checks:
+
+- sanitized normal release-lane UI and canonical current-state UI contracts;
+- Vite production build.
+
+The running backend hot-reloaded the new dependency graph. Read-only PostgreSQL
+inspection reported 18 projects, 9 release manifests, 2 stable manifests, zero
+active operation leases, zero active cross-lane owners, and zero active outbox
+claims. Project-Tst Canary revision 8 and Smart Retail Pro revision 1 remained
+stable and unchanged. Redis reported zero waiting, active, paused, or delayed
+BullMQ entries. All three repository Compose workers remained healthy with zero
+restarts. The automatic Deploy, billing-provider, and notification-delivery
+gates remained disabled.
+
+`git diff --check` passes.
+
+## Evidence classification
+
+- **Isolated:** five-way classifier fixtures, authorization guards, sanitized
+  projection fixtures, and existing cloud/state/recovery regression suites.
+- **Local:** backend hot reload, backend/frontend builds, worker health, stable
+  lineage and queue/lease/owner/claim read-only checks, and diff verification.
+  No operational deployment command was submitted.
+- **Live AWS:** not used. No cloud mutation or live deployment was attempted.
+
+## Genuine limitations
+
+Iteration 5 is the exact next package: redesign Overview and Deployments around
+the canonical developer projection and remove Developer Details, Terraform
+planning/apply panels, raw run/provider/lifecycle evidence, legacy history
+fallback, and recovery/cloud terminology. Full operator segregation,
+environment/log/metric cleanup, local launch acceptance, stack certification,
+and final controlled AWS acceptance remain after it.

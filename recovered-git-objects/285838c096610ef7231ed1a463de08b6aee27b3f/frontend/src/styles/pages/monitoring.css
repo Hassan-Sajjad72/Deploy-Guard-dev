@@ -1,0 +1,116 @@
+/*
+ * Monitoring — "Observatory" on the shared dark ground. Telemetry is the
+ * visual material: each metric is a luminous series with an area glow. Series
+ * colours are categorical data; green/red are reserved for health; lime marks
+ * the selected range.
+ */
+.app-shell:has(.dg-monitor) .main-area { background: radial-gradient(1000px 420px at 60% -10%, rgba(148, 163, 184, .07), transparent 65%), var(--dg-canvas); }
+.dg-monitor {
+  --s-cpu: var(--mf-accent); --s-mem: #c3b5f0; --s-lat: #9fd6e0; --s-ok: var(--dg-success-dot); --s-bad: var(--dg-danger-dot); --s-avail: var(--dg-warning-dot);
+  gap: 16px; margin: 0 auto; max-width: 1340px;
+}
+.dg-monitor .eyebrow { color: var(--dg-muted); }
+
+/* Header */
+.dg-monitor .ds-page-header { padding-bottom: 4px; }
+.dg-monitor .ds-page-header h1 { color: #fff; font-size: clamp(2.2rem, 3.8vw, 3rem); font-weight: 600; letter-spacing: -.05em; line-height: 1; }
+.dg-monitor .ds-page-header .page-context { color: var(--dg-muted); }
+.dg-monitor .ds-page-header .secondary-button { background: rgba(255, 255, 255, .04); }
+
+/* Toolbar */
+.dg-mon-toolbar { align-items: center; background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 8px 10px 8px 14px; }
+.dg-monitor .monitoring-service-selector { align-items: center; display: flex; gap: 8px; margin: 0; }
+.dg-monitor .monitoring-service-selector span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; }
+.dg-monitor .monitoring-service-selector select { min-height: 32px; min-width: 130px; padding: 4px 30px 4px 10px; }
+.dg-monitor .monitoring-range-controls { background: var(--dg-canvas); border: 1px solid var(--dg-line); border-radius: 9px; display: inline-flex; gap: 2px; margin: 0; padding: 3px; }
+.dg-monitor .monitoring-range-controls button { background: transparent; border: 0; border-radius: 6px; box-shadow: none; color: var(--dg-ink-2); font-family: var(--dg-mono); font-size: .76rem; min-height: 28px; padding: 4px 14px; }
+.dg-monitor .monitoring-range-controls button.button { background: var(--mf-accent); box-shadow: none; color: var(--mf-on-accent); }
+.dg-monitor .monitoring-range-controls button:not(.button):hover { color: #fff; }
+.dg-mon-refresh { align-items: center; color: var(--dg-muted); display: inline-flex; font-family: var(--dg-mono); font-size: .72rem; gap: 8px; margin-left: auto; }
+.dg-mon-refresh::before { animation: dg-mon-pulse 2s ease-in-out infinite; background: var(--dg-success-dot); border-radius: 50%; box-shadow: 0 0 8px var(--dg-success-dot); content: ""; height: 6px; width: 6px; }
+@keyframes dg-mon-pulse { 50% { opacity: .3; } }
+
+/* Board */
+.dg-mon-board { display: grid; gap: 14px; }
+.dg-monitor .monitoring-summary-grid { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.dg-monitor .monitoring-summary-grid .metric-card {
+  --series: var(--s-cpu); background: radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--series) 18%, transparent), transparent 60%), var(--dg-surface);
+  border: 1px solid var(--dg-line); border-radius: 16px; gap: 8px; overflow: hidden; padding: 18px 20px 20px; position: relative;
+}
+.dg-monitor .monitoring-summary-grid .metric-card::after { background: linear-gradient(90deg, var(--series), transparent); bottom: 0; content: ""; display: block; height: 2px; left: 0; position: absolute; right: 30%; }
+.dg-monitor .monitoring-summary-grid .metric-card:nth-child(2) { --series: var(--s-mem); }
+.dg-monitor .monitoring-summary-grid .metric-card:nth-child(3) { --series: var(--s-lat); }
+.dg-monitor .monitoring-summary-grid .metric-card:nth-child(4) { --series: var(--dg-faint); }
+.dg-monitor .monitoring-summary-grid .metric-card.tone-success { --series: var(--s-ok); }
+.dg-monitor .metric-label { align-items: center; color: var(--dg-muted); display: inline-flex; gap: 8px; }
+.dg-monitor .metric-label::before { background: var(--series, var(--dg-faint)); border-radius: 50%; content: ""; height: 8px; width: 8px; }
+.dg-monitor .monitoring-summary-grid .metric-card strong { color: #fff; font-size: 2.4rem; font-weight: 500; letter-spacing: -.05em; }
+.dg-monitor .monitoring-summary-grid .metric-card.tone-success strong { color: var(--s-ok); }
+
+.dg-monitor .monitoring-chart-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dg-monitor .monitoring-chart-grid .ds-chart-card { background: linear-gradient(180deg, var(--dg-surface-2), var(--dg-surface)); border: 1px solid var(--dg-line); border-radius: 16px; display: grid; gap: 8px; padding: 16px 18px 12px; }
+.dg-monitor .ds-chart-card h2 { color: #fff; font-size: .95rem; font-weight: 600; margin: 0 0 2px; }
+.dg-monitor .ds-chart-card p { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .7rem; }
+.dg-monitor .monitoring-line-chart { --series: var(--s-cpu); }
+.dg-monitor .monitoring-line-chart.metric-memory { --series: var(--s-mem); }
+.dg-monitor .monitoring-line-chart.metric-httpLatency { --series: var(--s-lat); }
+.dg-monitor .monitoring-line-chart.metric-healthyHosts { --series: var(--s-ok); }
+.dg-monitor .monitoring-line-chart.metric-unhealthyHosts { --series: var(--s-bad); }
+.dg-monitor .monitoring-line-chart.metric-runtimeAvailability { --series: var(--s-avail); }
+.dg-monitor .monitoring-sample-chart { background: transparent; display: block; height: 180px; overflow: visible; width: 100%; }
+.dg-monitor .monitoring-sample-chart line { stroke: rgba(148, 163, 184, .12); stroke-dasharray: 3 5; stroke-width: 1; }
+.dg-monitor .monitoring-sample-chart text { fill: var(--dg-faint); font-family: var(--dg-mono); font-size: 10px; }
+.dg-monitor .monitoring-fill-top { stop-color: var(--series); stop-opacity: .35; }
+.dg-monitor .monitoring-fill-bottom { stop-color: var(--series); stop-opacity: 0; }
+.dg-monitor .monitoring-sample-chart polyline { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--series) 60%, transparent)); stroke: var(--series); stroke-linejoin: round; stroke-width: 2; }
+.dg-monitor .monitoring-sample-chart circle { fill: var(--series); opacity: 0; r: 3; transition: opacity 120ms; }
+.dg-monitor .monitoring-sample-chart circle:last-of-type { opacity: 1; }
+.dg-monitor .monitoring-sample-chart:hover circle { opacity: .7; }
+.dg-monitor .monitoring-chart-axis { color: var(--dg-faint); display: flex; font-family: var(--dg-mono); font-size: .66rem; justify-content: space-between; }
+
+.dg-monitor .empty-state { background: var(--dg-surface); border-color: var(--dg-line-strong); }
+
+/* Bottom: health + logs */
+.dg-mon-bottom { align-items: start; display: grid; gap: 14px; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); }
+.dg-monitor .monitoring-health-card { border-radius: 16px; overflow: hidden; padding: 0; }
+.dg-monitor .monitoring-health-details > summary { align-items: center; background: var(--dg-surface-2); border-bottom: 1px solid var(--dg-line); cursor: pointer; display: flex; justify-content: space-between; list-style: none; padding: 14px 16px; }
+.dg-monitor .monitoring-health-details > summary > span { display: grid; gap: 4px; }
+.dg-monitor .monitoring-health-details > summary strong { color: #fff; display: block; font-size: .95rem; }
+.dg-monitor .monitoring-health-grid { display: grid; grid-template-columns: 1fr; padding: 4px 0; }
+.dg-monitor .monitoring-health-grid article { border-bottom: 1px solid var(--dg-line); display: grid; gap: 3px; padding: 10px 16px; }
+.dg-monitor .monitoring-health-grid article:last-child { border-bottom: 0; }
+.dg-monitor .monitoring-health-grid span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .6rem; letter-spacing: .06em; text-transform: uppercase; }
+.dg-monitor .monitoring-health-grid strong { color: var(--dg-ink); font-size: .86rem; font-weight: 500; }
+.dg-monitor .monitoring-health-grid a { color: var(--dg-signal-ink); font-weight: 560; }
+
+.dg-monitor .monitoring-log-card { --dg-card-bg: var(--dg-surface); border-radius: 16px; display: grid; gap: 10px; padding: 16px 18px; }
+.dg-monitor .monitoring-section-heading { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
+.dg-monitor .monitoring-section-heading h2 { color: #fff; font-size: 1rem; margin: 4px 0; }
+.dg-monitor .monitoring-section-heading p { color: var(--dg-muted); font-size: .8rem; margin: 0; }
+.dg-monitor .monitoring-log-actions { align-items: center; display: flex; gap: 8px; }
+.dg-monitor .monitoring-log-connection { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .72rem; margin: 0; }
+.dg-monitor .monitoring-log-search input { font-family: var(--dg-mono); font-size: .8rem; min-height: 34px; }
+.dg-monitor .monitoring-log-viewer { background: var(--mf-glass-dense); border: 1px solid var(--dg-line); border-radius: 12px; box-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset; font-size: .76rem; max-height: 380px; min-height: 240px; overflow: auto; padding: 10px 0; position: relative; }
+.dg-monitor .monitoring-log-line { display: grid; gap: 14px; grid-template-columns: 84px 90px minmax(0, 1fr); padding: 2px 14px; }
+.dg-monitor .monitoring-log-line:hover { background: rgba(148, 163, 184, .06); }
+.dg-monitor .monitoring-log-line time { color: var(--dg-muted); }
+.dg-monitor .monitoring-log-line span { color: var(--dg-signal-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-monitor .monitoring-log-line code { background: transparent; color: #d7e0ec; white-space: pre-wrap; }
+.dg-monitor .monitoring-log-empty { color: var(--dg-muted); margin: 0; padding: 14px; }
+
+@media (max-width: 1000px) {
+  .dg-mon-bottom { grid-template-columns: 1fr; }
+  .dg-monitor .monitoring-chart-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .dg-monitor .monitoring-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dg-mon-refresh { margin-left: 0; }
+  .dg-monitor .monitoring-log-line { grid-template-columns: 72px minmax(0, 1fr); }
+  .dg-monitor .monitoring-log-line span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .dg-mon-refresh::before { animation: none; } }
+
+/* Legacy counters: health list entries and log lines are rows, not boxes. */
+.dg-monitor .monitoring-health-grid article { background: transparent; border: 0; border-bottom: 1px solid var(--dg-line); border-radius: 0; box-shadow: none; margin: 0; }
+.dg-monitor .monitoring-health-details > summary .ds-status-chip { white-space: nowrap; }
+.dg-monitor .monitoring-log-line { animation: none !important; border: 0 !important; box-shadow: none !important; }

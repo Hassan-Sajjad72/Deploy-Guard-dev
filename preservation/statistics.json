@@ -1,0 +1,13 @@
+{
+  "candidate_file_paths": 10648,
+  "new_unique_artifact_blobs": 2968,
+  "new_artifact_bytes": 172458230,
+  "history_commits": 130,
+  "history_branches": 61,
+  "snapshot_branches": 4,
+  "recovered_source_blobs": 2225,
+  "exclusions_by_reason": {
+    "sensitive/runtime/temporary": 263,
+    "metadata/cache/generated": 29243
+  }
+}

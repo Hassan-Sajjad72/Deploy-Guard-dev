@@ -1,0 +1,92 @@
+# DeployGuard Final Result
+
+Date: 2026-08-01  
+Scope: shared normal-v1 activation, local PostgreSQL/Redis, backend/frontend,
+repository-owned Docker workers, and read-only runtime/AWS readiness. No AWS
+mutation or operational deployment publication was authorized.
+
+## Verdict
+
+**GO — shared multi-project normal-v1 platform readiness is locally verified.**
+
+Ordinary supported project onboarding no longer requires a project UUID edit,
+worker rebuild, or per-project Compose file. Canary mode remains available for
+exact controlled tests, while shared mode is the active reusable configuration.
+
+Project-Tst is no longer `NORMAL_RELEASE_LANE_STATUS_DISABLED`: it is authorized
+in shared mode. Its current next action is intentionally
+`clean_safe_leftovers`, based on existing project-specific residue evidence.
+That blocker must not be misreported as a shared-worker failure or bypassed to
+manufacture a Deploy action.
+
+## Implemented result
+
+1. Added an explicit shared/canary activation policy used consistently by
+   planning, execution, current-state, ownership, release composition, and all
+   three supervised worker runtimes.
+2. Removed project UUID requirements from shared readiness/capability
+   registration while retaining exact `dev`, role, message, account/region, and
+   durable project authorization checks.
+3. Added immutable workspace/auth/source/contract/manifest/account/region
+   evidence to shared envelopes and durable pre-ownership revalidation.
+4. Required complete shared evidence at queue admission, so legacy or substituted
+   payloads cannot reach ownership or a handler.
+5. Made automatic convergence shared-pool aware while preserving exact
+   project/intent reconciliation and bounded retry behavior.
+6. Kept one base Compose service per role, restricted Infracost to plan, removed
+   the Smart Retail override, and retained default-off provider/fixture gates.
+7. Added sanitized platform availability to canonical current state and Overview;
+   retired legacy deployment/Terraform/recovery controls stay unavailable to
+   developers.
+8. Corrected two directly exposed regressions: the BullMQ integration fixture now
+   models the durable auth/preflight schema, and cross-lane regression expectations
+   now enforce the retired legacy command boundary.
+
+## Verification
+
+Passed backend checks include:
+
+- `test:normal-v1-shared-activation`;
+- two-project `test:transactional-planner:postgres`;
+- `test:outbox-dispatcher:integration`;
+- `test:inactive-v1-consumer:integration`;
+- `test:cross-lane-controlled-activation`;
+- infrastructure plan continuation and infrastructure consumer supervision;
+- first-release planning, managed first-release handler, release execution,
+  current-state, status, planning, convergence, and worker-envelope checks;
+- TypeScript no-emit and Nest production build.
+
+Passed frontend checks include normal release-lane actions, release view,
+authoritative current-state projection, and production Vite build.
+
+The live local runtime reports:
+
+| Service | Mode/scope | Health |
+|---|---|---|
+| normal-v1 release | shared, `dev`, no project UUID | `ready=true`, healthy |
+| infrastructure plan | shared, `dev`, no project UUID | `ready=true`, healthy |
+| infrastructure apply | shared, `dev`, no project UUID | `ready=true`, healthy |
+
+Worker capability rows contain role/runtime metadata only and no project binding.
+Post-verification active leases, cross-lane owners, and outbox claims are all
+zero. Backend port `5000` and frontend port `5173` are live; the unauthenticated
+API correctly returns `401` and the frontend returns `200`.
+
+## Evidence classification
+
+- **Isolated:** immutable identity conflicts, shared/canary activation, NO_OP vs
+  changed-source planning, first-release continuation, and UI projections.
+- **Local:** real PostgreSQL, Redis/BullMQ, authenticated current-state,
+  independently supervised processes, shared Docker health, deterministic job
+  delivery, concurrency, restart-safe durable identity, and builds.
+- **Live AWS:** read-only worker credential/client readiness only. No Terraform,
+  Docker publication, ECR/ECS/ALB mutation, rollback, deletion, or other AWS
+  mutation occurred.
+
+## Next action
+
+For Project-Tst, use its guarded **Open Resource Cleanup** action and resolve only
+the verified project-scoped residue. For a clean supported project, the next
+controlled action is one Overview **Deploy** click; inspect durable journals and
+external state before retrying any ambiguous mutation.
+

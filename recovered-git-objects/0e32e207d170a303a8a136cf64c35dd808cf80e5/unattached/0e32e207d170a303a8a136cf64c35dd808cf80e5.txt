@@ -1,0 +1,33 @@
+{
+  "name": "deploy-guard-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:operator-segregation-ui": "node scripts/verify-operator-segregation-ui.mjs",
+    "test:application-surfaces": "node scripts/verify-application-surfaces.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "test:current-state-ui": "node scripts/verify-current-state-ui.mjs",
+    "test:visual-system": "node scripts/verify-visual-system.mjs",
+    "test:github-home": "node scripts/verify-github-home.mjs",
+    "test:admin-readability": "node scripts/verify-admin-readability.mjs",
+    "test:deploy-journey": "node scripts/verify-deploy-journey.mjs",
+    "test:unified-lifecycle": "node scripts/verify-unified-lifecycle.mjs",
+    "test:pipeline-recovery": "node scripts/verify-pipeline-recovery.mjs",
+    "test:professional-pipeline": "node scripts/verify-professional-pipeline.mjs",
+    "test:destroy-lifecycle-ui": "node scripts/verify-destroy-lifecycle-ui.mjs",
+    "test:overview-lifecycle": "node scripts/verify-overview-lifecycle.mjs",
+    "test:recovery-ui": "node scripts/verify-recovery-ui.mjs",
+    "test:time-recency-ui": "node scripts/verify-time-recency-ui.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0"
+  },
+  "devDependencies": {}
+}

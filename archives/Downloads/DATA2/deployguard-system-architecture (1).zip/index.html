@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeployGuard — Architecture Flowchart</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #fff;
+      color: #111;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      border-bottom: 1px solid #f0f0f0;
+      padding: 18px 32px;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    header h1 { font-size: 13px; font-weight: 600; color: #111; }
+    header span { font-size: 11px; color: #bbb; }
+
+    /* ── Scroll canvas ── */
+    .canvas {
+      overflow-x: auto;
+      padding: 40px 32px 60px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Start / End pill ── */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #111;
+      border-radius: 999px;
+      padding: 4px 18px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: .04em;
+      color: #111;
+      align-self: flex-start;
+      margin-left: 88px;
+    }
+
+    /* ── Vertical connector ── */
+    .v-line {
+      width: 1px;
+      height: 20px;
+      background: #ddd;
+      margin-left: 88px;
+    }
+    .v-arrow {
+      width: 0;
+      height: 0;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-top: 5px solid #ddd;
+      margin-left: 85px;
+    }
+
+    /* ── Phases row ── */
+    .phases {
+      display: flex;
+      align-items: flex-start;
+      gap: 0;
+      margin-top: 28px;
+    }
+
+    /* ── Single phase column ── */
+    .phase {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 180px;
+    }
+
+    .phase-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 14px;
+      cursor: pointer;
+      user-select: none;
+      background: none;
+      border: none;
+      font-family: inherit;
+      padding: 0;
+    }
+    .phase-num {
+      font-size: 9px;
+      font-family: monospace;
+      color: #ccc;
+    }
+    .phase-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #555;
+    }
+    .phase-toggle {
+      font-size: 11px;
+      color: #ccc;
+    }
+    .phase-header:hover .phase-title { color: #111; }
+
+    /* ── Collapsed placeholder ── */
+    .collapsed-box {
+      width: 160px;
+      border: 1px dashed #e0e0e0;
+      border-radius: 4px;
+      padding: 12px;
+      text-align: center;
+      font-size: 10px;
+      color: #ccc;
+    }
+
+    /* ── Node card ── */
+    .node {
+      width: 160px;
+      border: 1px solid #e8e8e8;
+      border-radius: 4px;
+      padding: 8px 10px;
+      background: #fff;
+    }
+    .node-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: #222;
+      line-height: 1.4;
+    }
+    .node-sub {
+      font-size: 9.5px;
+      color: #aaa;
+      margin-top: 3px;
+      line-height: 1.5;
+    }
+    .node.decision { border-color: #bbb; }
+    .node.decision .node-label { color: #444; }
+    .node.success  { border-color: #86efac; }
+    .node.success .node-label  { color: #15803d; }
+    .node.warning  { border-color: #fcd34d; }
+    .node.warning .node-label  { color: #b45309; }
+    .node.error    { border-color: #fca5a5; }
+    .node.error .node-label    { color: #dc2626; }
+
+    .diamond { color: #999; margin-right: 3px; font-size: 10px; }
+
+    /* ── Node connector (vertical) ── */
+    .node-conn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .node-conn .line {
+      width: 1px;
+      height: 14px;
+      background: #e0e0e0;
+    }
+    .node-conn .arrow {
+      width: 0; height: 0;
+      border-left: 3px solid transparent;
+      border-right: 3px solid transparent;
+      border-top: 4px solid #e0e0e0;
+    }
+
+    /* ── Horizontal phase connector ── */
+    .h-conn {
+      display: flex;
+      align-items: flex-start;
+      padding-top: 32px;
+      padding-bottom: 0;
+      flex-shrink: 0;
+    }
+    .h-conn .h-line {
+      width: 28px;
+      height: 1px;
+      background: #e0e0e0;
+      margin-top: 1px;
+    }
+    .h-conn .h-arrow {
+      width: 0; height: 0;
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
+      border-left: 5px solid #e0e0e0;
+      margin-top: -3px;
+    }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid #f0f0f0;
+      padding: 14px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    footer .meta {
+      font-size: 9.5px;
+      font-family: monospace;
+      color: #ccc;
+    }
+    footer .legend {
+      display: flex;
+      gap: 16px;
+    }
+    footer .legend span {
+      font-size: 9.5px;
+      color: #bbb;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    footer .legend .dot {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 1px;
+      border: 1px solid;
+    }
+    footer .legend .dot.d { border-color: #bbb; }
+    footer .legend .dot.s { border-color: #86efac; }
+    footer .legend .dot.w { border-color: #fcd34d; }
+    footer .legend .dot.e { border-color: #fca5a5; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>DeployGuard</h1>
+    <span>—</span>
+    <span>Architecture Flowchart</span>
+  </header>
+
+  <div class="canvas">
+
+    <!-- Start -->
+    <div class="pill">Start</div>
+    <div class="v-line"></div>
+    <div class="v-arrow"></div>
+
+    <!-- Phases -->
+    <div class="phases">
+
+      <!-- ── Phase 01 ── -->
+      <div class="phase" id="phase-p1">
+        <button class="phase-header" onclick="toggle('p1')">
+          <span class="phase-num">01</span>
+          <span class="phase-title">Foundation</span>
+          <span class="phase-toggle" id="toggle-p1">−</span>
+        </button>
+        <div id="body-p1">
+          <div class="node"><span class="node-label">User Authentication</span><p class="node-sub">GitHub OAuth + Email / Password</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Role-Based Access Control</span><p class="node-sub">Admin · Developer · Read-Only</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">PostgreSQL Audit Logging</span><p class="node-sub">via TypeORM</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Dashboard UI</span><p class="node-sub">Next.js Frontend</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">GitHub Repository Linking</span><p class="node-sub">Branch selection</p></div>
+        </div>
+        <div class="collapsed-box" id="collapsed-p1" style="display:none;">5 steps</div>
+      </div>
+
+      <div class="h-conn"><div class="h-line"></div><div class="h-arrow"></div></div>
+
+      <!-- ── Phase 02 ── -->
+      <div class="phase" id="phase-p2">
+        <button class="phase-header" onclick="toggle('p2')">
+          <span class="phase-num">02</span>
+          <span class="phase-title">Core Engine</span>
+          <span class="phase-toggle" id="toggle-p2">−</span>
+        </button>
+        <div id="body-p2">
+          <div class="node"><span class="node-label">Shallow Repository Clone</span><p class="node-sub">Minimise network transfer</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Stack Detection</span><p class="node-sub">package.json · requirements.txt · Gemfile</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Framework Identification</span><p class="node-sub">Next.js · Express · Django · FastAPI</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Generate Deployment Profile</span><p class="node-sub">Runtime · Port · Build Cmd · Health Check</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Template Match?</span><p class="node-sub">Select or request custom Dockerfile</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Select Docker Template</span><p class="node-sub">Distroless / Alpine · Multi-stage</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Pre-Flight Validation</span><p class="node-sub">JSON report for user review</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Async Queue Job</span><p class="node-sub">Redis / BullMQ</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Trigger GitHub Actions CI/CD</span><p class="node-sub">Tag image with Git hash</p></div>
+        </div>
+        <div class="collapsed-box" id="collapsed-p2" style="display:none;">9 steps</div>
+      </div>
+
+      <div class="h-conn"><div class="h-line"></div><div class="h-arrow"></div></div>
+
+      <!-- ── Phase 03 ── -->
+      <div class="phase" id="phase-p3">
+        <button class="phase-header" onclick="toggle('p3')">
+          <span class="phase-num">03</span>
+          <span class="phase-title">DevSecOps</span>
+          <span class="phase-toggle" id="toggle-p3">−</span>
+        </button>
+        <div id="body-p3">
+          <div class="node"><span class="node-label">Build Docker Image</span><p class="node-sub">Push to AWS ECR</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Aqua Trivy Security Scan</span><p class="node-sub">CVE database check</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Vulnerability Severity?</span><p class="node-sub">CRITICAL · HIGH · MEDIUM · LOW</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node error"><span class="node-label">Block Deployment</span><p class="node-sub">Generate remediation commands</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node warning"><span class="node-label">Manual User Approval</span><p class="node-sub">MEDIUM severity gate</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node success"><span class="node-label">Record & Continue</span><p class="node-sub">LOW — no block</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Generate Terraform Plan</span><p class="node-sub">All AWS resources</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Infracost API</span><p class="node-sub">Pre-deployment cost estimate</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Cost vs Tier Limit?</span><p class="node-sub">Exceeds · Warning · Within budget</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node success"><span class="node-label">Proceed to Infrastructure</span><p class="node-sub">Within budget</p></div>
+        </div>
+        <div class="collapsed-box" id="collapsed-p3" style="display:none;">10 steps</div>
+      </div>
+
+      <div class="h-conn"><div class="h-line"></div><div class="h-arrow"></div></div>
+
+      <!-- ── Phase 04 ── -->
+      <div class="phase" id="phase-p4">
+        <button class="phase-header" onclick="toggle('p4')">
+          <span class="phase-num">04</span>
+          <span class="phase-title">Infrastructure</span>
+          <span class="phase-toggle" id="toggle-p4">−</span>
+        </button>
+        <div id="body-p4">
+          <div class="node"><span class="node-label">Acquire DynamoDB Lock</span><p class="node-sub">Prevent concurrent deploys</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Lock Acquired?</span><p class="node-sub">Queue if busy</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Terraform Apply</span><p class="node-sub">VPC · Subnets · NAT · ALB · ECS Fargate Spot</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">AWS Cloud Map</span><p class="node-sub">Service discovery · Internal DNS</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">AWS EFS Provision</span><p class="node-sub">Persistent storage · KMS encryption</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Deploy to ECS Fargate Spot</span><p class="node-sub">CPU auto-scaling</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Heartbeat Update</span><p class="node-sub">Every 30 seconds</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Deployment Successful?</span><p class="node-sub">Health gate</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node success"><span class="node-label">Release Lock · Save State</span><p class="node-sub">Terraform state → S3 versioning</p></div>
+        </div>
+        <div class="collapsed-box" id="collapsed-p4" style="display:none;">9 steps</div>
+      </div>
+
+      <div class="h-conn"><div class="h-line"></div><div class="h-arrow"></div></div>
+
+      <!-- ── Phase 05 ── -->
+      <div class="phase" id="phase-p5">
+        <button class="phase-header" onclick="toggle('p5')">
+          <span class="phase-num">05</span>
+          <span class="phase-title">AI & Observability</span>
+          <span class="phase-toggle" id="toggle-p5">−</span>
+        </button>
+        <div id="body-p5">
+          <div class="node"><span class="node-label">ALB Layer 7 Health Checks</span><p class="node-sub">Ping /health endpoint</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Health Check Pass?</span><p class="node-sub">Spot interruption handling</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Stream ECS Logs via SSE</span><p class="node-sub">Prometheus metrics dashboard</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">AWS SNS Alerts</span><p class="node-sub">Queued → Building → Deployed / Failed</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>Deployment Failed?</span><p class="node-sub">Route to AI diagnosis</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node success"><span class="node-label">Live Deployment</span><p class="node-sub">Monitoring active</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Multi-Source Log Aggregation</span><p class="node-sub">GitHub · Terraform · CloudWatch · Trivy</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Intelligent Log Preprocessing</span><p class="node-sub">10 000 lines → 50–200 key lines</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Structured Prompt Engineering</span><p class="node-sub">LLM API · Temperature = 0.3</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node decision"><span class="node-label"><span class="diamond">◇</span>AI Response Valid?</span><p class="node-sub">Retry / fallback model</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Root Cause + Fix Steps</span><p class="node-sub">Log cross-references included</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Conversational Chatbot</span><p class="node-sub">Follow-up Q&A · 5-message context</p></div>
+        </div>
+        <div class="collapsed-box" id="collapsed-p5" style="display:none;">12 steps</div>
+      </div>
+
+      <div class="h-conn"><div class="h-line"></div><div class="h-arrow"></div></div>
+
+      <!-- ── Phase 06 ── -->
+      <div class="phase" id="phase-p6">
+        <button class="phase-header" onclick="toggle('p6')">
+          <span class="phase-num">06</span>
+          <span class="phase-title">Delivery</span>
+          <span class="phase-toggle" id="toggle-p6">−</span>
+        </button>
+        <div id="body-p6">
+          <div class="node"><span class="node-label">Subscription & Billing</span><p class="node-sub">Free · Pro tier · Payment gateway</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Usage Tracking</span><p class="node-sub">Tier limit alerts</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">One-Click Terraform Export</span><p class="node-sub">.zip download · No vendor lock-in</p></div>
+          <div class="node-conn"><div class="line"></div><div class="arrow"></div></div>
+          <div class="node"><span class="node-label">Infrastructure Destroy</span><p class="node-sub">Dual-confirmation · terraform destroy</p></div>
+        </div>
+        <div class="collapsed-box" id="collapsed-p6" style="display:none;">4 steps</div>
+      </div>
+
+    </div><!-- /phases -->
+
+    <!-- End -->
+    <div class="v-line" style="margin-top:16px;"></div>
+    <div class="v-arrow"></div>
+    <div class="pill" style="margin-top:8px;">Complete</div>
+
+  </div><!-- /canvas -->
+
+  <footer>
+    <span class="meta">deployguard · 6 phases · 54 nodes</span>
+    <div class="legend">
+      <span><span class="dot d"></span>Decision</span>
+      <span><span class="dot s"></span>Success</span>
+      <span><span class="dot w"></span>Gate</span>
+      <span><span class="dot e"></span>Block</span>
+    </div>
+  </footer>
+
+  <script>
+    function toggle(id) {
+      const body = document.getElementById('body-' + id);
+      const collapsed = document.getElementById('collapsed-' + id);
+      const btn = document.getElementById('toggle-' + id);
+      const isOpen = body.style.display !== 'none';
+      body.style.display = isOpen ? 'none' : 'block';
+      collapsed.style.display = isOpen ? 'block' : 'none';
+      btn.textContent = isOpen ? '+' : '−';
+    }
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,22 @@
+import { Link } from "react-router-dom";
+import LoadingState from "../components/common/LoadingState.jsx";
+import { useAuth } from "../hooks/useAuth.js";
+import AppIcon from "../components/common/AppIcon.jsx";
+
+const features = [
+  ["Automatic setup", "DeployGuard detects the application and prepares a deployment without repository boilerplate."],
+  ["Safe container build", "A deployment-ready container configuration is generated and checked before every build."],
+  ["Cost-aware deployment", "Cloud cost is estimated before resources are created, with one clear approval when needed."],
+  ["Deployment visibility", "Follow a release from repository preparation to a healthy live application."],
+];
+
+export default function Landing() {
+  const { isAuthenticated, isLoading, role, logout } = useAuth();
+  if (isLoading) return <div className="landing-loading"><LoadingState message="Checking your DeployGuard session..." /></div>;
+  return <div className="landing-page">
+    <div aria-hidden="true" className="landing-ambient"><span /><span /><span /></div>
+    <header className="landing-nav"><Link className="brand landing-brand" to="/"><span className="brand-mark"><span /></span><span>DeployGuard<small>Deployment platform</small></span></Link><nav>{isAuthenticated ? <><details className="landing-account"><summary>Account</summary><Link to="/projects">Projects</Link><button onClick={() => logout()} type="button">Sign out</button></details>{role === "admin" ? <Link className="secondary-button" to="/admin">Admin</Link> : null}<Link className="button" to="/deploy">Deploy</Link></> : <Link className="button" to="/auth/github"><AppIcon name="github" size={17} />Continue with GitHub</Link>}</nav></header>
+    <main><section className="landing-hero"><div className="landing-hero-copy"><p className="eyebrow">GitHub-first cloud delivery</p><h1>You build the idea. DeployGuard handles the cloud.</h1><p className="landing-lead">Connect GitHub, choose a branch, and we build, deploy, monitor, and manage the infrastructure for you.</p><div className="quick-actions">{isAuthenticated ? <Link className="button landing-primary-cta" to="/deploy">Deploy <AppIcon name="arrow" size={18} /></Link> : <Link className="button landing-primary-cta" to="/auth/github"><AppIcon name="github" size={18} />Continue with GitHub</Link>}</div><div className="landing-proof"><span>GitHub App access</span><span>One Deploy click</span><span>Live status sync</span></div></div><aside className="landing-flow"><div className="landing-flow-header"><div><p className="eyebrow">One deployment flow</p><strong>Repository to live application</strong></div></div><ol><li>Connect GitHub</li><li>Choose repository and branch</li><li>Analyze and prepare</li><li>Deploy with GitHub Actions</li><li>Open the live app</li></ol><p>DeployGuard supplies the workflow, secure AWS connection, image registry, Terraform, and runtime infrastructure.</p></aside></section><section className="landing-features"><div className="landing-section-heading"><p className="eyebrow">One integrated product</p><h2>Cloud delivery without cloud setup work</h2><p>Everything remains visible, but the platform complexity stays out of your way.</p></div><div className="landing-feature-grid">{features.map(([title, description], index) => <article key={title}><span className="feature-index">0{index + 1}</span><h3>{title}</h3><p>{description}</p></article>)}</div></section></main>
+    <footer className="landing-footer">Built for SMEs, students, and teams that need repeatable cloud deployments.</footer>
+  </div>;
+}

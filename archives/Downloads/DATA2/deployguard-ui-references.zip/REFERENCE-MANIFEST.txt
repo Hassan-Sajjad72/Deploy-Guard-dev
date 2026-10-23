@@ -1,0 +1,17 @@
+DeployGuard UI Reference Set
+
+Priority:
+1. TARGET screenshots = inspiration/visual direction.
+2. CURRENT-OLD screenshots = content/structure context; do not blindly copy their visual styling.
+3. BAD-test4 screenshots = failure examples; explicitly avoid their global mint/washed-out treatment.
+
+Page mapping:
+Landing: SS-02 structure/context, SS-19 negative example. Required correction: dark premium hero with architecture diagram integrated into background/right-side visual; no green decorative dominance.
+Home: SS-09 inspiration, SS-10/SS-11 structure/content.
+Project Overview: SS-01 structure/content, SS-03 lifecycle success-line target, SS-16 negative example.
+Pipeline: SS-12 inspiration, SS-13/SS-14 structure/content, SS-17 negative example.
+Infrastructure: SS-15 inspiration, SS-07 supporting operations/cost context, SS-18 negative example.
+Monitoring: SS-15 primary industry inspiration; use data-dense monitoring/observability treatment, not infra page styling.
+Billing/Plan & Usage: SS-04 pricing inspiration, SS-08 Infracost information-density inspiration, SS-05/SS-06 current content/structure.
+
+Global rule: same product design system does NOT mean same page palette/template. Use semantic colors consistently, but page-specific layouts and visual treatments. Green only for success/healthy/passed/active states unless a reference explicitly justifies more. Normal text must remain high-contrast.

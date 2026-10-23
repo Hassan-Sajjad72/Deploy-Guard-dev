@@ -1,0 +1,1468 @@
+# DeployGuard Final Product Simplification and Integration Plan
+
+**Status:** Implementation authority  
+**Primary goal:** Convert DeployGuard into a simple GitHub-first, one-click deployment product while preserving the technical depth required for the FYP.  
+**Execution rule:** Codex completes one integration iteration, updates this file, reports the result, and stops. In the same Codex session, the operator replies only **`Continue`** to start the next incomplete iteration.
+
+---
+
+## 1. Final product decision
+
+DeployGuard will use:
+
+- **GitHub OAuth as the only user sign-in method**
+- **DeployGuard GitHub App** for repository authorization
+- **GitHub Actions as the only deployment execution engine**
+- **AWS OIDC temporary credentials** for GitHub Actions
+- **Docker, ECR, Terraform, ECS Fargate and ALB** for deployment
+- **PostgreSQL** for product state, operation history and audit evidence
+
+The normal user must not configure:
+
+- AWS access keys or secret keys
+- AWS role ARNs
+- GitHub PATs or workflow names
+- Terraform backend settings
+- container ports owned by DeployGuard
+- `HOST`, `PORT` or `NODE_ENV`
+- Redis, BullMQ or worker processes
+
+The normal user provides only:
+
+- GitHub authorization
+- repository
+- branch
+- optional application-owned environment variables
+- one Deploy click
+
+---
+
+## 2. Supported and disabled scope
+
+### Supported
+
+- GitHub OAuth login
+- GitHub App installation and repository access
+- repository and branch selection
+- optional application environment variables
+- stack and application-root detection
+- build/start/port inference
+- Dockerfile/template generation
+- structural pre-flight validation
+- GitHub Actions dispatch and synchronization
+- immutable ECR image
+- Terraform plan/apply/destroy
+- ECS Fargate and ALB deployment
+- live URL and health verification
+- deployment history
+- duplicate-click idempotency
+- restart/missed-status recovery
+- failure logs and AI troubleshooting
+- retry and redeploy
+- Terraform export
+- confirmed destroy
+- infrastructure summary
+- deployment health monitoring
+- RBAC and audit log
+- Infracost estimate when available
+
+### Intentionally disabled or out of scope
+
+- email/password signup and login
+- Redis and BullMQ deployment execution
+- custom deployment workers and release lanes
+- Trivy enforcement
+- subscription billing
+- usage-tier enforcement
+- notifications and SNS
+- Prometheus
+- CloudWatch integration
+- ECS runtime log streaming
+- full application APM, traces, CPU and memory charts unless genuinely implemented later
+
+---
+
+## 3. Absolute minimum page architecture
+
+Use exactly **seven product routes**.
+
+| # | Page | Route | Purpose |
+|---|---|---|---|
+| 1 | Home / GitHub Login | `/` | GitHub sign-in, Deploy button, compact project list |
+| 2 | New Deployment | `/deploy` | GitHub App connection, repository, branch, optional ENV and Deploy |
+| 3 | Project / Deployment | `/projects/:projectId` | Progress, live result, redeploy and destroy |
+| 4 | Logs & Recovery | `/projects/:projectId/logs` | Failure evidence, AI troubleshooting, retry and attempt history |
+| 5 | Infrastructure | `/projects/:projectId/infrastructure` | AWS, Terraform, ECR, ECS, ALB, state and cost evidence |
+| 6 | Monitoring | `/projects/:projectId/monitoring` | Real deployment health, ECS/ALB status and GitHub Actions activity |
+| 7 | Admin | `/admin` | Users/roles, audit log and platform status |
+
+
+### Visual design direction
+
+The simplified workflow must feel modern and memorable, not like a plain administrative dashboard.
+
+#### Brand palette
+
+Use a dark-first DeployGuard theme with reusable design tokens:
+
+| Token | Value | Use |
+|---|---:|---|
+| App background | `#080D1A` | Main page background |
+| Elevated surface | `#11182A` | Cards, drawers and modals |
+| Secondary surface | `#172036` | Hover and nested sections |
+| Primary | `#7C3AED` | Main actions and active navigation |
+| Primary highlight | `#A855F7` | Controlled gradients and hover states |
+| Technical accent | `#22D3EE` | Active deployment phase and links |
+| Success | `#22C55E` | Live and completed states |
+| Warning | `#F59E0B` | Non-blocking warnings |
+| Destructive | `#F43F5E` | Failed and destroy actions |
+| Primary text | `#F8FAFC` | Main text |
+| Muted text | `#94A3B8` | Supporting text |
+| Border | `rgba(148,163,184,0.18)` | Subtle separation |
+
+The main brand treatment may use a restrained gradient:
+
+```text
+linear-gradient(135deg, #7C3AED 0%, #A855F7 52%, #22D3EE 100%)
+```
+
+Use this gradient only for the main Deploy/Continue button, selected progress treatment and limited hero emphasis. Do not apply it to every card.
+
+#### Required visual elements
+
+- a subtle radial glow or technical grid in major empty backgrounds
+- recognizable GitHub, repository, branch, environment, build, cloud and health icons
+- a five-phase deployment rail with icons and a clear animated active state
+- compact status chips for Ready, Deploying, Live, Failed and Destroying
+- attractive project cards showing repository, branch, current state and last update
+- soft elevation, 12–16px corner radii and restrained borders
+- meaningful hover, pressed, loading and disabled states
+- skeleton loading rather than blank screens
+- small transitions for page/state changes, normally 150–250ms
+- success check animation and a clear failure treatment
+- a distinct destructive confirmation modal and destroy-running banner
+
+#### Visual restraint
+
+Do not use:
+
+- large empty white or gray areas
+- unrelated colors on every component
+- excessive glassmorphism
+- constant animations
+- gradients behind long body text
+- fake charts or decorative infrastructure data
+- tiny low-contrast text
+- raw technical identifiers as visual labels
+
+#### Accessibility
+
+- meet WCAG AA contrast for normal text and controls
+- never communicate state through color alone
+- pair status colors with icons and text
+- preserve keyboard focus indicators
+- respect reduced-motion preferences
+- use readable type sizes and touch/click targets
+
+#### Design-system rule
+
+Create shared tokens and reusable components before styling individual pages. No page may introduce private hard-coded colors when an equivalent token exists.
+
+
+### Routes that must not remain primary pages
+
+These capabilities must be consolidated into the seven routes above:
+
+```text
+/projects/:id/detection
+/projects/:id/preflight
+/projects/:id/environment
+/projects/:id/pipeline
+/projects/:id/settings
+/projects/:id/costs
+/projects/:id/troubleshooting
+/projects/:id/state-management
+/projects/:id/storage
+/projects/:id/orchestration
+/projects/:id/rollback
+/projects/:id/releases
+```
+
+Old URLs may redirect to the correct consolidated page or open the correct section, but they must not remain visible normal-user destinations.
+
+---
+
+## 4. Complete normal-user workflow
+
+```mermaid
+flowchart TD
+    A["Home"] --> B{"Signed in with GitHub?"}
+
+    B -- "No" --> C["Continue with GitHub"]
+    C --> D["GitHub OAuth"]
+    D --> E["Return to /deploy"]
+
+    B -- "Yes" --> E
+
+    E --> F{"GitHub App connected?"}
+
+    F -- "No" --> G["Install GitHub App<br/>one button"]
+    G --> H["GitHub installation"]
+    H --> I["Return automatically to /deploy"]
+
+    F -- "Yes" --> J["Repository setup"]
+    I --> J
+
+    J --> K["Select repository"]
+    K --> L["Select branch"]
+    L --> M["Optional ENV key/value rows"]
+    M --> N["Silent repository analysis"]
+
+    N --> O{"Structurally deployable?"}
+
+    O -- "No" --> P["Inline blocker<br/>No workflow dispatch<br/>No AWS mutation"]
+    P --> K
+
+    O -- "Yes" --> Q["Deploy"]
+
+    Q --> R["Create project and one idempotent operation"]
+    R --> S["Dispatch fixed GitHub Actions workflow"]
+    S --> T["Project deployment page"]
+
+    T --> U["Analyze"]
+    U --> V["Prepare"]
+    V --> W["Build"]
+    W --> X["Deploy"]
+    X --> Y["Verify"]
+
+    U -- "Failure" --> Z["Failure banner"]
+    V -- "Failure" --> Z
+    W -- "Failure" --> Z
+    X -- "Failure" --> Z
+    Y -- "Failure" --> Z
+
+    Z --> ZA["Logs & Recovery"]
+    ZA --> ZB["Sanitized logs<br/>AI troubleshooting<br/>Retry<br/>Attempt history"]
+    ZB --> T
+
+    Y -- "Success" --> AA["Application Live"]
+    AA --> AB["Open Application"]
+    AA --> AC["Redeploy"]
+    AA --> AD["Infrastructure"]
+    AA --> AE["Monitoring"]
+    AA --> AF["Destroy"]
+```
+
+---
+
+## 5. Internal platform workflow
+
+This remains hidden from the normal user.
+
+```mermaid
+flowchart TD
+    A["Repository and branch selected"] --> B["GitHub App installation token"]
+    B --> C["Read or clone repository"]
+    C --> D["Resolve commit"]
+    D --> E["Detect stack and application root"]
+    E --> F["Infer install/build/start/port/health"]
+    F --> G["Select or generate Docker strategy"]
+    G --> H["Run structural pre-flight"]
+    H --> I["Generate or verify deployguard.yml"]
+    I --> J["Create idempotent deployment operation"]
+    J --> K["Dispatch central reusable GitHub Actions workflow"]
+    K --> L["GitHub OIDC temporary AWS credentials"]
+    L --> M["Build Docker image"]
+    M --> N["Push immutable image to ECR"]
+    N --> O["Terraform plan/apply"]
+    O --> P["ECS Fargate and ALB"]
+    P --> Q["Health verification"]
+    Q --> R["Synchronize status and live URL"]
+    R --> S["Persist operation history and audit evidence"]
+```
+
+---
+
+## 6. Page contracts
+
+## 6.1 Home / GitHub Login
+
+### Logged out
+
+Show only:
+
+```text
+DeployGuard
+
+Deploy your application from GitHub.
+
+[ Continue with GitHub ]
+```
+
+No email field, password field or signup form.
+
+### Logged in
+
+Show:
+
+```text
+DeployGuard
+
+[ Deploy New Project ]
+
+Your projects
+- project name
+- current state: Ready / Deploying / Live / Failed / Destroyed
+- last updated time
+```
+
+Selecting a project opens `/projects/:projectId`.
+
+---
+
+## 6.2 New Deployment
+
+### GitHub App not connected
+
+```text
+Connect your repositories
+
+[ Install GitHub App ]
+```
+
+After installation, return automatically to `/deploy`.
+
+### GitHub App connected
+
+Show only:
+
+```text
+Repository
+[ Select repository ]
+
+Branch
+[ Select branch ]
+
+Environment variables — Optional
+[ KEY ] [ VALUE ]
+[ Add variable ]
+
+[ Deploy ]
+```
+
+### Environment-variable policy
+
+- The user may provide zero or more key/value pairs.
+- Values are encrypted or otherwise protected by the existing backend mechanism.
+- Missing application-owned variables do not automatically disable Deploy.
+- DeployGuard may show a warning for likely missing variables.
+- The user may continue and accept that the application can fail.
+- Platform-owned variables are never requested.
+
+Example warning:
+
+```text
+This repository may require DATABASE_URL.
+You can continue without it, but the application may fail.
+
+[ Deploy Anyway ]
+```
+
+### Structural blockers
+
+Deployment must stop before workflow dispatch and AWS mutation when:
+
+- repository is empty
+- repository or branch cannot be accessed
+- language/framework is unsupported
+- dependency manifest is missing
+- application root is unsafe or ambiguous
+- no usable build/start strategy exists
+- workflow cannot be created or verified
+
+Show one simple inline message. Do not redirect to separate Detection or Pre-flight pages.
+
+---
+
+## 6.3 Project / Deployment
+
+This is the canonical project state page.
+
+### Before first deployment
+
+```text
+Ready to Deploy
+
+Repository analysis is complete.
+
+[ Deploy ]
+```
+
+### Deploying
+
+```text
+Project name
+
+Deploying                                  40%
+
+Analyze → Prepare → Build → Deploy → Verify
+
+Building your application
+```
+
+### Friendly stage labels
+
+| Internal evidence | User-facing label |
+|---|---|
+| repository analysis | Analyzing your application |
+| workflow preparation | Preparing deployment |
+| `checkout_application` | Preparing source code |
+| `configure_aws_credentials_through_oidc` | Connecting securely to AWS |
+| dependency install / build | Building your application |
+| image push | Publishing the application image |
+| Terraform plan/apply | Creating cloud infrastructure |
+| ECS rollout | Launching your application |
+| ALB verification | Verifying the live application |
+
+Raw identifiers may appear only inside advanced diagnostics on the Logs page.
+
+### Success
+
+```text
+Your application is live
+
+[ Open Application ]
+
+[ Redeploy ] [ Destroy ]
+
+Logs · Infrastructure · Monitoring
+```
+
+### Failure
+
+```text
+Deployment failed during Build
+
+The application could not be built.
+
+[ View Pipeline Logs ]
+[ Retry ]
+```
+
+The failure banner must be prominent but must not replace the complete project page.
+
+---
+
+## 6.4 Logs & Recovery
+
+Show:
+
+- ordered deployment attempts
+- operation type: deploy, retry, redeploy or destroy
+- GitHub Actions run link
+- friendly failed phase
+- safe error summary
+- sanitized GitHub Actions logs
+- AI troubleshooting
+- retry
+- raw technical details in an expandable advanced section
+
+Example:
+
+```text
+Attempt 4 — Live
+Attempt 3 — Failed
+Attempt 2 — Destroyed
+Attempt 1 — Failed
+```
+
+AI troubleshooting must:
+
+- accept only a failed GitHub Actions operation
+- use synchronized sanitized evidence
+- preserve project authorization
+- avoid unsupported diagnosis
+- return evidence-only guidance when the AI provider is unavailable
+
+---
+
+## 6.5 Infrastructure
+
+Show only real evidence.
+
+### Summary
+
+```text
+AWS Region
+Execution engine: GitHub Actions
+Container registry: ECR
+Compute: ECS Fargate
+Load balancer: ALB
+Terraform state: encrypted S3
+Current status
+```
+
+### Resources
+
+- ECR repository
+- immutable image tag and digest
+- ECS cluster and service
+- task-definition revision
+- desired/running/pending counts
+- ALB and target health
+- live endpoint
+
+### Terraform
+
+- state status
+- state key
+- last apply
+- last destroy
+- Export Terraform button
+
+### Cost
+
+- latest Infracost estimate when available
+- truthful unavailable state when not available
+
+### Storage
+
+Show EFS or persistent-storage information only when genuinely configured.
+
+---
+
+## 6.6 Monitoring
+
+Show only currently supported health evidence:
+
+- GitHub Actions workflow status
+- current friendly stage
+- latest deployment status
+- ALB target health
+- ECS desired/running/pending tasks
+- last health verification
+- current live URL
+- recent deploy/retry/redeploy/destroy events
+
+Do not show empty CPU, memory, traces or runtime-log panels while Prometheus and CloudWatch are disabled.
+
+---
+
+## 6.7 Admin
+
+GitHub-authenticated admins only.
+
+### Users & Roles
+
+- GitHub account
+- role: Admin, Developer or Read-only
+- account status
+
+### Audit Log
+
+Record:
+
+- GitHub login/logout
+- GitHub App connection
+- repository selection
+- project creation
+- environment update
+- deployment
+- failure
+- retry
+- redeploy
+- Terraform export
+- destroy
+- role change
+
+### Platform Status
+
+Show real readiness for:
+
+- backend
+- PostgreSQL
+- GitHub App
+- GitHub Actions integration
+- AWS/OIDC configuration
+- Terraform state bucket
+
+---
+
+## 7. Destroy workflow
+
+```mermaid
+flowchart TD
+    A["Live application<br/>100%"] --> B["Click Destroy"]
+    B --> C["Confirmation popup"]
+    C --> D{"Confirm destroy?"}
+
+    D -- "No" --> A
+    D -- "Yes" --> E["Destroy running banner/popup"]
+
+    E --> F["Dispatch GitHub Actions destroy"]
+    F --> G["Terraform destroy"]
+    G --> H["Remove ECS, ALB, ECR and managed resources"]
+    H --> I["Reconcile S3 state and operation history"]
+
+    I -- "Failure" --> J["Destroy failed banner<br/>View logs / Retry"]
+    I -- "Success" --> K["Close running popup automatically"]
+    K --> L["Show brief success toast"]
+    L --> M["Project returns to Ready to Deploy"]
+    M --> N["Deploy Again"]
+```
+
+### Required behavior
+
+During destroy:
+
+- show a persistent running popup/banner
+- disable Deploy, Redeploy and duplicate Destroy
+- provide a View Progress action
+- preserve the live URL until destruction is confirmed complete, or clearly mark it as being removed
+
+After successful destroy:
+
+- close the running popup automatically
+- show a short “Infrastructure destroyed” toast
+- remove the live URL
+- remove the 100% Live state
+- keep repository analysis and configuration
+- return the page to **Ready to Deploy**
+- show **Deploy Again**
+- preserve all deployment and destroy history
+
+Do not fake backward progress from 100% through the deployment phases.
+
+---
+
+## 8. Canonical state model
+
+The frontend and backend must use one shared state contract.
+
+| State | Headline | Primary action |
+|---|---|---|
+| unauthenticated | Continue with GitHub | Continue with GitHub |
+| GitHub App missing | Connect repositories | Install GitHub App |
+| repository incomplete | Choose repository | Select repository |
+| structurally blocked | Repository needs attention | Fix or choose another repository |
+| ready | Ready to Deploy | Deploy |
+| queued/running | Deploying | View progress |
+| failed | Deployment failed | View logs / Retry |
+| live | Application Live | Open Application |
+| destroying | Destroying application | View progress |
+| destroyed | Ready to Deploy | Deploy Again |
+
+### Five visible lifecycle phases
+
+```text
+Analyze → Prepare → Build → Deploy → Verify
+```
+
+No legacy 23-stage denominator may influence the visible progress.
+
+---
+
+
+## 9. Stack detection maturity contract
+
+Stack detection remains automatic and mostly invisible to the normal user, but it must produce a trustworthy deployment contract before any workflow dispatch or AWS mutation.
+
+### Required detection outputs
+
+For every analyzed repository and selected branch, persist:
+
+- repository commit SHA used for analysis
+- detected application roots
+- primary application root selected for deployment
+- language and runtime
+- framework
+- package manager and lockfile
+- install command
+- build command
+- production start command
+- application port
+- health-check path
+- output/artifact directory where applicable
+- static, server-rendered, API, worker or mixed workload classification
+- Dockerfile strategy: repository-provided, generated template or unsupported
+- required and optional application environment-variable names
+- persistent-storage requirement when evidence exists
+- confidence level and evidence for each important inference
+- structural blockers, warnings and unresolved ambiguity
+
+### Maturity rules
+
+- Detection must be based on repository evidence, not filename guesses alone.
+- Selected branch and exact commit must be part of the detection cache key.
+- A stale detection result must never be reused after the commit changes.
+- Monorepositories must be scanned for multiple candidate application roots.
+- The detector must rank candidates and explain why one was selected.
+- Ambiguous candidates must block automatic deployment unless a safe deterministic choice exists.
+- Existing user Dockerfiles may be used only after safety and deployability validation.
+- Generated Dockerfiles must use centralized templates with pinned versions.
+- `PORT`, `HOST`, `NODE_ENV`, AWS credentials and GitHub tokens must not be treated as user-owned required environment variables.
+- Likely missing application environment variables may produce warnings without blocking Deploy.
+- Missing build/start evidence, inaccessible roots and structurally unsupported repositories must block before GitHub Actions dispatch.
+- Detection failures must return one concise user-facing blocker plus expandable technical evidence.
+- Detection must be idempotent and reproducible for the same repository, branch and commit.
+- Manual overrides must be limited, explicit, validated and auditable; they must not silently replace detector evidence.
+
+### Supported maturity targets
+
+At minimum, test representative fixtures for:
+
+- Node.js with npm, yarn and pnpm
+- Express or similar Node API
+- React/Vite static frontend
+- Next.js server-rendered application
+- Python with `requirements.txt`
+- Python with `pyproject.toml`
+- Django
+- FastAPI
+- repository-provided Dockerfile
+- monorepository with frontend and backend applications
+- nested application root
+- empty repository
+- unsupported repository
+- ambiguous multiple application roots
+- missing production start command
+- environment-variable references without provided values
+
+### User experience
+
+The normal New Deployment page must remain simple:
+
+```text
+Repository
+Branch
+Optional environment variables
+Deploy
+```
+
+Detection runs silently after repository and branch selection. Only these outcomes are shown:
+
+- ready to deploy
+- non-blocking warning
+- one actionable structural blocker
+
+Full evidence is available only through Developer details or authorized diagnostics.
+
+
+## 10. Legacy retirement rules
+
+The GitHub Actions path is authoritative.
+
+Remove or disconnect all production dependencies on:
+
+- legacy release lanes
+- Redis/BullMQ deployment queues
+- deployment outbox drain
+- infrastructure-plan workers
+- infrastructure-apply workers
+- release workers
+- worker capability registration
+- deployment leases and worker fencing
+- legacy progress denominators
+- old mutation routes
+- old normal-v1 scripts
+- old frontend controls
+
+Deletion must be dependency-aware:
+
+1. Replace every active reader/projector/route with the GitHub Actions operation model.
+2. Verify builds and live routes.
+3. Remove unreachable providers, scripts and source.
+4. Preserve only historical database evidence required for audit/history.
+5. Prove no normal product path can invoke the retired system.
+
+---
+
+## 11. Implementation protocol for Codex
+
+For every iteration:
+
+1. Read this file and current repository/runtime state.
+2. Find the first incomplete iteration.
+3. Perform only that iteration.
+4. Execute the full vertical journey through frontend, backend, database and external systems as required.
+5. Do not mark complete based only on builds or unit tests.
+6. Fix defects discovered inside the iteration.
+7. Update the Progress Ledger and iteration evidence in this file.
+8. Report completed work, live verification, remaining defects, genuine blockers and the exact next iteration.
+9. Stop.
+
+### Operator continuation
+
+Same Codex session:
+
+```text
+Continue
+```
+
+New Codex session:
+
+```text
+Read FINAL_PRODUCT_SIMPLIFICATION_PLAN.md and continue from the first incomplete iteration.
+```
+
+### Manual blockers
+
+Codex must not stop for repository inspection, local services, migrations, tests, GitHub API operations supported by existing credentials, AWS operations supported by configured credentials or routine confirmation.
+
+Codex may stop only for a genuinely interactive external action it cannot perform, such as GitHub user consent when no installation exists. It must state one exact manual action and stop.
+
+---
+
+# 12. Integration iterations
+
+## Iteration 1 — Canonical state model and route consolidation foundation
+
+### Goal
+
+Create one GitHub Actions-based product state contract and remove active dependence on retired legacy release-lane state.
+
+### Complete journey
+
+```text
+existing project
+→ detection/pre-flight state
+→ current-state API
+→ Home/Project rendering
+→ no legacy progress or platform-attention leakage
+```
+
+### Required work
+
+- define the canonical state model in Section 8
+- make GitHub Actions readiness and operations authoritative
+- remove legacy 23-stage progress calculations
+- make the five visible phases canonical
+- create shared frontend state mapping
+- define redirects for old primary routes
+- preserve current deploy/retry/redeploy/destroy behavior
+- add regression tests for ready, blocked, deploying, failed, live, destroying and destroyed states
+
+### Done when
+
+- one backend projection and one frontend mapping agree
+- a ready project shows Ready to Deploy
+- no deployment attempt shows no fake operation
+- legacy disabled state cannot create Platform Attention
+- visible progress uses only five phases
+- old routes have a documented consolidation target
+- backend/frontend builds and current-state tests pass
+
+---
+
+
+## Iteration 2 — Visual design system and attractive application shell
+
+### Goal
+
+Create the shared DeployGuard visual system and application shell before implementing the simplified pages, so the final product is attractive, consistent and not a collection of separately styled screens.
+
+### Complete journey
+
+```text
+open DeployGuard
+→ branded GitHub-first shell
+→ clear primary action
+→ attractive project cards
+→ consistent loading, success, warning, failure and destroy states
+```
+
+### Required work
+
+- audit the current frontend styling, tokens and reusable components
+- implement the palette and visual rules defined in the Visual design direction
+- create shared color, typography, spacing, radius, border, shadow and motion tokens
+- create reusable Button, Card, StatusChip, Modal, Banner, EmptyState, Skeleton and PageHeader components
+- create the responsive top bar/sidebar shell used by all authenticated routes
+- create the five-phase deployment rail and friendly stage component
+- create project-card and repository-selection visual patterns
+- create consistent success, warning, failure, loading and destroying treatments
+- preserve responsive behavior, keyboard navigation and reduced-motion support
+- remove conflicting old page-level colors and duplicated visual primitives
+- do not create fake content or change backend behavior during this iteration
+
+### Done when
+
+- Home, New Deployment and Project shell examples use the same design tokens
+- the primary Deploy/Continue action is visually prominent
+- Ready, Deploying, Live, Failed and Destroying states are immediately distinguishable by icon, text and color
+- no normal page looks like an unstyled administrative form
+- no page introduces arbitrary hard-coded palette values
+- mobile and desktop layouts remain usable
+- accessibility contrast and focus checks pass
+- frontend build and component tests pass
+
+---
+
+## Iteration 3 — GitHub-only authentication and Home
+
+### Goal
+
+Remove email/password from the supported product journey and create the minimal GitHub-first Home page.
+
+### Complete journey
+
+```text
+logged-out visitor
+→ Continue with GitHub
+→ GitHub OAuth
+→ authenticated Home
+→ compact project list
+→ Deploy New Project
+```
+
+### Required work
+
+- remove email/password forms and normal-user links
+- preserve secure sessions, RBAC and ownership
+- preserve audit events
+- build logged-out and logged-in Home states
+- show compact truthful project states
+- route Deploy New Project to `/deploy`
+- ensure admin role remains available through GitHub-authenticated users
+
+### Done when
+
+- no email/password login or signup is reachable from normal UI
+- GitHub login succeeds
+- logout succeeds
+- project list is authorized
+- selecting a project opens its canonical Project page
+- Home contains one primary Deploy action
+- authentication and authorization tests pass
+
+---
+
+
+## Iteration 4 — Mature stack detection and deployment-contract engine
+
+### Goal
+
+Upgrade stack detection from basic framework recognition into a reproducible, evidence-backed deployment-contract engine that is safe for monorepositories, nested applications and real production deployment.
+
+### Complete journey
+
+```text
+select repository and branch
+→ resolve exact commit
+→ discover candidate application roots
+→ identify runtime/framework/package manager
+→ infer install/build/start/port/health
+→ inspect Docker strategy and environment references
+→ rank evidence and confidence
+→ produce ready, warning or structural blocker
+→ persist versioned deployment contract
+```
+
+### Required work
+
+- audit the current detector, templates, pre-flight rules and existing fixtures
+- create or harden one versioned deployment-contract schema
+- key detection by installation, repository, branch and exact commit SHA
+- invalidate stale results when branch head or relevant configuration changes
+- support multiple candidate roots and monorepository ranking
+- preserve evidence for every important inference
+- distinguish hard evidence, inferred defaults and unresolved ambiguity
+- detect language, framework, package manager, lockfile and runtime version evidence
+- infer install, build and production start commands
+- infer application port and health path without asking users for platform-owned values
+- detect static, SSR, API, worker and mixed workload shapes where supported
+- inspect repository Dockerfiles and select safe repository-provided or generated strategy
+- extract likely application-owned environment-variable names without exposing values
+- exclude `PORT`, `HOST`, `NODE_ENV`, AWS credentials, GitHub tokens and platform-owned settings from user-required ENV
+- produce non-blocking ENV warnings and blocking structural failures
+- prevent workflow dispatch and AWS mutation when the deployment contract is structurally unsafe
+- persist detector version, evidence, confidence, warnings, blockers and selected root
+- expose concise user outcomes and expandable Developer details
+- create representative repository fixtures covering the maturity targets in Section 9
+- remove contradictory duplicate detection logic from frontend or legacy services
+
+### Done when
+
+- the same repository, branch and commit produces the same deployment contract
+- a changed commit is re-analyzed rather than receiving stale results
+- Node, React/Vite, Next.js, Python, Django and FastAPI fixtures pass
+- npm, yarn, pnpm, `requirements.txt` and `pyproject.toml` cases pass
+- nested roots and monorepositories are ranked correctly
+- ambiguous multi-root repositories stop with one actionable blocker
+- a repository Dockerfile is validated before selection
+- generated Docker strategy uses centralized pinned templates
+- likely missing application ENV produces a warning but does not disable Deploy
+- structurally impossible repositories stop before workflow dispatch and AWS mutation
+- full evidence is available in authorized diagnostics while the normal UI remains simple
+- backend/frontend builds and detector regression suites pass
+
+---
+
+## Iteration 5 — Single-page New Deployment journey
+
+### Goal
+
+Consolidate GitHub App connection, repository selection, branch selection, optional ENV and deployment initiation into `/deploy`.
+
+### Complete journey
+
+```text
+Home
+→ Deploy New Project
+→ install/connect GitHub App when needed
+→ repository
+→ branch
+→ optional ENV
+→ silent analysis
+→ Deploy
+```
+
+### Required work
+
+- automatically skip installation state when already connected
+- link existing installations without uninstall/reinstall
+- list only installation-authorized repositories
+- auto-select default branch when safe
+- allow branch change
+- show optional ENV key/value rows
+- never request platform-owned values
+- run silent stack/root/command/port/Docker/pre-flight/workflow analysis
+- show simple inline structural blockers
+- allow deploy with missing optional or likely application ENV warnings
+- create the project only once and create one idempotent deployment operation
+- redirect directly to the canonical Project page
+
+### Done when
+
+- a new GitHub user reaches deployment from one setup page
+- no Detection, Pre-flight or Environment page is required
+- zero ENV values are accepted
+- user-provided ENV values persist securely
+- unsupported repositories stop before workflow dispatch/AWS mutation
+- double-clicking Deploy creates one effective operation
+- live frontend/API journey passes
+
+---
+
+## Iteration 6 — Unified Project deployment lifecycle
+
+### Goal
+
+Implement the single progress/live/failed Project page.
+
+### Complete journey
+
+```text
+Deploy
+→ Analyze
+→ Prepare
+→ Build
+→ Deploy
+→ Verify
+→ Live or Failed
+```
+
+### Required work
+
+- implement the five-phase rail
+- map raw GitHub Actions identifiers to friendly labels
+- synchronize current stage and progress
+- preserve raw identifiers only in advanced diagnostics
+- refresh automatically during execution
+- recover after browser refresh
+- reconcile after backend restart or missed polling interval
+- show failure banner with View Pipeline Logs and Retry
+- show live URL, Open Application, Redeploy and Destroy on success
+- keep Infrastructure and Monitoring links visible only when useful
+
+### Done when
+
+- a real repository deploys through GitHub Actions
+- the user never sees AWS credentials or internal step names
+- progress survives browser refresh
+- fresh backend process reconciles remote truth
+- failed runs never appear successful
+- live URL is healthy and displayed
+- frontend and backend state agree
+
+---
+
+## Iteration 7 — Logs, AI troubleshooting, retry and history
+
+### Goal
+
+Consolidate all recovery functionality into `/projects/:projectId/logs`.
+
+### Complete journey
+
+```text
+deployment failure
+→ failure banner
+→ Logs & Recovery
+→ safe evidence
+→ AI troubleshooting
+→ retry
+→ successful linked attempt
+→ truthful history
+```
+
+### Required work
+
+- show ordered attempts
+- show friendly failed phase and error
+- fetch and sanitize GitHub Actions logs
+- preserve workflow link
+- restore/verify AI troubleshooting
+- enforce project authorization
+- allow retry only for eligible failed operations
+- preserve retry linkage
+- prevent historical failures from corrupting current healthy state
+- expose raw technical evidence only in advanced details
+
+### Done when
+
+- unauthenticated access is denied
+- non-owner access is denied
+- safe logs contain no credential leakage
+- AI troubleshooting uses only failed-operation evidence
+- provider failure returns evidence-only guidance
+- retry creates a new linked operation
+- original failure remains in history
+- retry can complete successfully
+
+---
+
+## Iteration 8 — Live actions, redeploy and complete destroy UX
+
+### Goal
+
+Complete the live-project management journey, including the required destroy popup/banner behavior.
+
+### Complete journey
+
+```text
+Live
+→ Open Application
+→ new commit or Redeploy
+→ new immutable release
+→ Destroy
+→ confirmation
+→ destroy-running popup
+→ completed destroy
+→ popup closes
+→ Ready to Deploy
+→ Deploy Again
+```
+
+### Required work
+
+- preserve stable URL during redeploy
+- create new immutable image for a new commit
+- keep attempt history truthful
+- require explicit destroy confirmation
+- show destroy-running popup/banner
+- disable duplicate mutations while destroy runs
+- expose View Progress
+- synchronize GitHub Actions destroy
+- remove ECS, ALB, ECR and managed resources
+- verify encrypted S3 state has zero managed resources
+- close popup automatically after success
+- remove live URL
+- return project to Ready to Deploy
+- show Deploy Again
+- preserve history
+
+### Done when
+
+- redeploy succeeds with a distinct immutable tag
+- destroy failure is truthful and retryable
+- successful destroy removes managed AWS resources
+- popup behavior matches Section 7
+- project returns to ready state without reselecting repository
+- Deploy Again works
+
+---
+
+## Iteration 9 — Infrastructure, Monitoring and Admin evidence pages
+
+### Goal
+
+Preserve FYP technical depth without adding complexity to the normal deployment flow.
+
+### Complete journey
+
+```text
+Live project
+→ Infrastructure
+→ real AWS/Terraform evidence
+→ Monitoring
+→ real deployment health
+→ Admin
+→ roles/audit/platform status
+```
+
+### Required work
+
+- build Infrastructure page from real data
+- include Terraform export
+- include truthful Infracost state
+- show EFS only when genuinely configured
+- build Monitoring page from GitHub Actions, ECS and ALB evidence
+- do not show fake runtime metrics
+- build Admin tabs for users/roles, audit and platform status
+- keep pages authorized
+- remove unsupported/disabled surfaces from navigation
+- redirect old routes to consolidated destinations
+
+### Done when
+
+- all displayed infrastructure fields are real
+- Terraform export contains no state or secrets
+- monitoring shows only supported evidence
+- Admin role management and audit work
+- normal users cannot access admin controls
+- disabled modules remain absent
+- old navigation no longer exposes retired pages
+- route and application-surface tests pass
+
+---
+
+## Iteration 10 — Legacy retirement and final integrated cleanup
+
+### Goal
+
+Remove remaining production reachability of the retired worker/release-lane system and complete the simplified product shell.
+
+### Complete journey
+
+```text
+clean startup
+→ GitHub login
+→ GitHub App
+→ new deployment
+→ live
+→ failure/retry
+→ redeploy
+→ infrastructure/monitoring
+→ destroy
+→ ready again
+```
+
+### Required work
+
+- scan production graph for Redis/BullMQ/outbox/worker/release-lane dependencies
+- replace active readers before deleting source
+- remove old executable scripts
+- remove old mutation routes
+- remove legacy frontend controls
+- remove legacy progress/state logic
+- remove orphan Docker services
+- retain only historical data required for truthful history/audit
+- ensure one startup command and one product workflow
+- run complete route, secret and dependency scans
+
+### Done when
+
+- no normal route, command, provider or startup path invokes the old system
+- PostgreSQL-only supported startup succeeds
+- GitHub Actions remains the only deployment execution path
+- all seven routes work
+- old routes redirect or are absent as designed
+- no credential-like backup exists
+- backend/frontend builds, migrations and regression suites pass
+- complete vertical journey passes
+
+---
+
+## Final Certification — Overall FYP product
+
+This is a separate final step after Iterations 1–10.
+
+### Certification journey
+
+```text
+GitHub login
+→ GitHub App install/connect
+→ repository
+→ branch
+→ optional ENV
+→ deploy
+→ live URL
+→ failure evidence
+→ AI troubleshooting
+→ retry
+→ redeploy
+→ Terraform export
+→ infrastructure
+→ monitoring
+→ destroy
+→ ready to deploy again
+→ admin/audit verification
+```
+
+### Required verdict
+
+Return exactly one:
+
+```text
+FINAL PRODUCT: YES
+```
+
+or:
+
+```text
+FINAL PRODUCT: NO
+```
+
+### YES requires
+
+- all seven pages work through production wiring and the shared visual system is consistently applied
+- no reproduced implementation blocker remains
+- GitHub Actions is the only execution engine
+- no PAT or AWS credentials are requested from the application user
+- startup, builds and migrations pass
+- authentication and authorization pass
+- failure/retry/redeploy/recovery work
+- Terraform export and destroy work
+- AWS and S3 reconciliation is truthful
+- disabled modules remain disabled
+- no secret is exposed
+- stack detection is reproducible, evidence-backed and verified across the required fixtures
+- no legacy worker/release-lane path is reachable
+
+### NO requires
+
+- exact reproduced defects
+- exact external/manual blocker, if any
+- new bounded vertical iterations only when genuinely necessary
+
+---
+
+# 13. Final testing matrix
+
+| Test | Expected result |
+|---|---|
+| Logged-out visitor | Only Continue with GitHub |
+| GitHub OAuth | Successful session and redirect |
+| Logout | Session cleared |
+| GitHub App absent | One Install button |
+| GitHub App already connected | Installation step skipped |
+| Repository list | Installation-authorized repositories only |
+| Branch | Default selected; alternatives available |
+| No ENV | Deploy allowed |
+| ENV supplied | Stored and used securely |
+| Likely missing ENV | Warning; deployment may continue |
+| Empty/unsupported repository | Inline blocker; no AWS mutation |
+| Detection cache | Exact repository, branch and commit; no stale reuse |
+| Monorepository | Correct root selected or actionable ambiguity blocker |
+| Detection evidence | Versioned contract with confidence and evidence |
+| Package managers | npm, yarn and pnpm handled |
+| Python packaging | requirements.txt and pyproject.toml handled |
+| Application ENV detection | Platform-owned keys excluded |
+| Workflow missing | Automatically generated/verified |
+| Double Deploy click | One effective operation |
+| OIDC | Automatic temporary AWS credentials |
+| Raw step names | Hidden from normal UI |
+| Browser refresh | State restored |
+| Backend restart | Remote run reconciled |
+| Build failure | Failure banner and Logs action |
+| Safe logs | No secret leakage |
+| AI troubleshooting | Failed-run evidence only |
+| Retry | New linked attempt |
+| New commit redeploy | New immutable ECR tag |
+| Live result | Healthy URL shown |
+| Infrastructure | Real ECR/ECS/ALB/Terraform evidence |
+| Monitoring | Real GitHub Actions/ECS/ALB health only |
+| Terraform export | No state or credentials |
+| Destroy confirmation | Required |
+| Destroy running | Popup/banner remains visible |
+| Destroy completion | Popup closes; state becomes Ready to Deploy |
+| Deploy Again | Works without recreating repository setup |
+| Authorization | Other user receives 403 |
+| Admin | Users/roles/audit/platform status work |
+| Legacy path | Not reachable |
+| Disabled modules | Not visible or callable |
+| Startup | One supported command |
+| Builds/migrations | Pass |
+
+---
+
+# 14. Progress Ledger
+
+**Updated:** 2026-08-03 — Iteration 1 completed  
+**First incomplete iteration:** Iteration 2 — Visual design system and attractive application shell
+
+## Iteration status
+
+- Iteration 1: Completed — GitHub Actions/detection/pre-flight are now the normal-user current-state authority; legacy project routes redirect to canonical sections.
+- Iteration 2: Not started
+- Iteration 3: Not started
+- Iteration 4: Not started
+- Iteration 5: Not started
+- Iteration 6: Not started
+- Iteration 7: Not started
+- Iteration 8: Not started
+- Iteration 9: Not started
+- Iteration 10: Not started
+- Final Certification: Not started
+
+## Completed evidence
+
+### Iteration 1 — Canonical state model and route consolidation foundation
+
+- Replaced the normal-user `GET /api/projects/:projectId/current-state` projection's active dependency on the retired release-lane/cloud-state graph. Its authority is now the authenticated project, persisted detection result, persisted structural pre-flight and GitHub Actions operation history. Detailed legacy evidence remains isolated to the administrator-only detailed endpoint pending its dedicated retirement iteration.
+- A GitHub Actions-ready project with no operation now returns exactly `ready`, `deploy`, `40%`, `prepare`, `Ready to Deploy`, no `latestAttempt`, and the truthful message that analysis/pre-flight are complete and no deployment has started. The 40% represents completed Analyze and Prepare phases of the five-phase product lifecycle, never a legacy 23-stage denominator.
+- Structural detection/pre-flight failure returns a concise `unsupported` normal-user state with no deployment action and no GitHub Actions/AWS mutation path.
+- GitHub Actions operation projection covers ready, blocked, building, failed, live, destroying and destroyed states. Destroy completion is explicitly represented as `destroyed` with `Deploy Again`, while its visible lifecycle returns to the truthful Ready-to-Deploy readiness baseline.
+- Frontend phase mapping uses only Analyze → Prepare → Build → Deploy → Verify. Ready/destroyed projects mark Analyze and Prepare complete, retain no fake operation, and do not render Platform Attention merely because legacy state exists.
+- Redirect consolidation is active: detection, pre-flight, environment, pipeline, settings, state-management, orchestration, rollback and releases redirect to the canonical project page; troubleshooting redirects to Logs; costs/storage redirect to Infrastructure.
+- Regression evidence passed:
+  - `backend: npm run test:github-actions-current-state` — ready, blocked, building, failed, live, destroying and destroyed matrix.
+  - `backend: npm run test:current-state-consistency`.
+  - `backend: npm run build`.
+  - `frontend: npm run test:current-state-ui`.
+  - `frontend: npm run build`.
+  - `git diff --check`.
+- Live product evidence through the supported PostgreSQL-backed runtime:
+  - `Basic-ExpressJS-Server` (`801e020b-4551-41d8-b86f-cc2acb8e6b74`) returned HTTP 200 from authenticated `/current-state`: `ready`, Deploy, 40% Prepare, no attempt, no Platform Attention.
+  - `Celestial-Cuisine-Restaurant-Project` returned HTTP 200: structural blocker, no deployment action, no Platform Attention.
+  - `react-pomodoro` returned HTTP 200: destroyed, Deploy Again, 40% Prepare, no live URL, preserving its operation history.
+  - Authenticated browser verification of the ready project showed “Ready to Deploy,” “No deployment has started yet,” a Deploy action, no Platform Attention and no raw OIDC stage identifier.
+  - Authenticated browser redirects verified live: `/pipeline` → canonical project, `/troubleshooting` → `/logs`, `/costs` → `/infrastructure`, `/detection` → canonical project.
+
+### Defects found and fixed inside Iteration 1
+
+- The initial relative legacy-route redirects incorrectly resolved `/projects/:projectId/pipeline` to `/`. Replaced them with parameter-aware canonical redirects and re-verified each target in the live frontend.
+- The normal-user current-state endpoint still evaluated disabled legacy release-lane state before GitHub Actions readiness, allowing stale Platform Attention/progress leakage. It now uses the GitHub Actions/detection/pre-flight projection; the legacy pure projection also treats a disabled lane as historical evidence rather than a blocker.
+
+## Current blockers
+
+None. The local runtime was started with the supported product command and PostgreSQL migrations completed with no pending migrations.
+
+## Exact next iteration
+
+**Iteration 2 — Visual design system and attractive application shell**
+
+---
+
+# 15. Initial Codex instruction
+
+Use this once to start:
+
+```text
+Read FINAL_PRODUCT_SIMPLIFICATION_PLAN.md completely.
+
+Treat it as the implementation authority for the final DeployGuard product simplification.
+
+Inspect the current repository, database, runtime and existing verified GitHub Actions architecture. Start with the first incomplete iteration in the Progress Ledger.
+
+Complete only that full vertical iteration. Fix defects discovered inside its scope. Verify through the live frontend, backend, database and relevant external systems—not only builds or unit tests.
+
+Update this file with truthful progress, evidence, defects, blockers and the exact next iteration. Then stop.
+```
+
+After Codex returns, use only:
+
+```text
+Continue
+```

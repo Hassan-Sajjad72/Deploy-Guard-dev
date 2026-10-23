@@ -1,0 +1,1 @@
+PASS: 27 fixtures; required files, DB ENV, JSON, Python syntax validated

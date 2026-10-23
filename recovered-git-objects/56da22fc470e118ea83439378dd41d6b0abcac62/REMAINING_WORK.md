@@ -1,0 +1,469 @@
+# DeployGuard Active Implementation Queue
+
+Status: Iteration 9 final evidence complete; transformation program closed, 2026-08-01  
+Authority: this is the sole active queue. `RAILWAY_PRODUCT_CONTRACT.md` defines
+intended behavior; all other reports and trackers are historical evidence.
+
+## Protected baseline
+
+Do not redesign the shared normal-v1 workers, activation policy, immutable
+intents/manifests, deterministic outbox/BullMQ identities, ownership, leases,
+fencing, heartbeat, journals, reconciliation, isolation, stable/latest separation,
+unchanged-source `NO_OP`, or durable history.
+
+The audited local baseline remains three live shared `dev` capabilities with no
+project binding, zero active production BullMQ work, and zero active operation
+leases, cross-lane owners, or outbox claims. Stripe and SNS remain disabled and
+deferred. Live AWS mutation remains outside this program.
+
+## Current active queue
+
+**None. There is no unresolved P0 or P1 launch blocker in the transformation
+program scope.**
+
+### Completed post-closure browser acceptance correction
+
+The initial Iteration 9 GO evidence missed one browser-visible case for project
+`7ff60e82-e166-4d3b-9ea7-78203370e59f` (`render-examples/express-hello-world`,
+`main`). Its stack contract was supported and configuration-complete, but the
+developer response was `platform_attention / none`.
+
+Read-only durable inspection proved two mapper inputs were responsible:
+
+- `inventory_error` was incorrectly counted as positive project resource
+  evidence even though the scope had no known resource, deployment, Terraform
+  state, stable release, lease, owner or claim;
+- the sole historical first-release plan stopped at
+  `REMOTE_CANARY_PLAN_NOT_ALLOWED` before Terraform initialization, but status
+  mapping labelled it `NORMAL_FIRST_RELEASE_STATUS_MALFORMED` and had no
+  bounded retry-ready representation.
+
+The completed correction distinguishes inventory availability from positive
+project resource evidence and recognizes only that exact immutable
+pre-execution failure signature as retry-ready. Known/unknown resources,
+residue, active work, identity conflicts and all other malformed failures still
+produce protected operator attention. The authenticated API now returns
+`ready / deploy`; both Overview and Deployments render one Deploy button after
+refresh. Verification did not call Deploy: the project remains at one
+historical intent/outbox, zero release manifests and zero active lease, owner or
+claim. Backend projection, existing-state, retry eligibility, planning,
+dispatch-contract and current-state tests, frontend Overview/Deployments tests,
+both production builds and browser DOM verification pass. The prior GO verdict
+is retained only after this correction and revalidation.
+
+The subsequent browser pass exposed one remaining presentation contradiction:
+the canonical API was already `ready / deploy` with `applicationError=null` and
+`canRetry=false`, but `CanonicalDeploymentView` could retain an earlier command
+rejection in local component state. The queue was reopened when the first
+object-identity-based correction was reported as persistent in the restarted
+application.
+
+The completed runtime audit proved that this sentence has only one frontend
+owner: the child's command-failure hook populated from the normal Deploy
+command response. It was not supplied by either parent, browser storage,
+router state, a service worker/query cache, the historical-attempt mapper or
+the canonical response. The invalidation contract now uses an explicit
+successful canonical-fetch version from each parent page. A new command failure
+still renders; the next successful canonical fetch removes it. Current backend-
+owned application and platform failures remain fail-closed and visible.
+
+The real Vite frontend was stopped/restarted twice. A fresh authenticated
+browser context, Overview → Deployments → Overview, hard refresh, tab
+close/reopen and post-second-restart reload all returned one Deploy button and
+zero alerts while retaining Latest attempt history. A local browser harness
+intercepted the simulated command before the network, proved the alert appears,
+advanced the canonical fetch version and proved it disappears; it also proved
+the separate backend application-error surface remains. The exact project
+still has one historical intent/outbox, no release manifest and no active
+lease, owner or claim. No Deploy request, queue publication or AWS operation
+occurred. A stale UI guard that expected the retired cleanup control in
+developer Settings now enforces its absence. The reopened acceptance item is
+closed.
+
+Iteration 8 passed the full local launch matrix. Three authenticated developer
+workspaces with two private projects each, cross-workspace denial, encrypted and
+masked secret isolation, Express/Python/config-required detection, unchanged
+`no_op`, changed-source `release_only`, same-project serialization,
+different-project progress, duplicate request/click, automatic non-cloud first
+release, browser refresh, stable/latest separation, BullMQ worker restart and
+zero leaked lifecycle state are verified. The final browser evidence is at
+`docs/architecture/two-lane-migration/evidence/fyp-local-demo/latest.json`.
+
+Iteration 9 consolidated implementation, isolated, local-runtime and live-AWS
+evidence in `FINAL_RESULT.md`. The final verdict is **GO for the defined local-
+launch contract**, explicitly not a live AWS deployment certification. No live
+AWS mutation was performed.
+
+## Iteration 1 authoritative exposure inventory
+
+The inventory was rebuilt from `AppRoutes.jsx`, `Sidebar.jsx`, all 35 page
+modules, routed child components, 135 frontend API exports, Nest controllers,
+service authorization calls, and the 97-field current-state return object.
+It is the pre-Iteration-2 exposure snapshot used to derive the remaining work,
+not a statement that the raw current-state exposure still exists. The completed
+Iteration 2 evidence below supersedes its current-state and developer-page
+projection observations; dispositions scheduled for Iterations 3–7 remain active.
+
+### Route and page classification
+
+| Route/page | Current exposure and calls | Classification | Required disposition |
+|---|---|---|---|
+| `/`, `/login`, `/signup`, `/auth/github`, `/403` | Landing/authentication/authorization result | public/developer | keep; concise auth errors only |
+| `/dashboard` — `Dashboard` | `getWorkspaceSummary`; project/release totals, Continue/Open links | developer | consume sanitized workspace developer summaries only |
+| `/projects` — `Projects` | `getWorkspaceSummary`; status and next-action reconstruction | developer | consume canonical developer state/action only |
+| `/projects/new` — `NewProject` | GitHub status/repositories/inspection, create, detection, preflight, workspace warnings, archive conflict | developer | keep repository selection/analyze; replace cloud-resource warnings/review links with platform attention |
+| `/billing` — `Billing` | billing summary/provider actions plus workspace release summary/history | mixed | usage/release read model is developer-safe; provider mutations are workspace-owner/deferred; remove raw lifecycle code |
+| `/activity` and `/audit-logs` — `AuditLogs` | raw audit categories, resource IDs, actor operations | operator/admin | remove from ordinary navigation and require admin/operator backend authorization |
+| `/projects/:id` — `ProjectDetails` | project + 97-field current state; detection/preflight mutation; exact normal-v1 actions | mixed developer/operator | retain one developer action and stable/latest/progress; remove run IDs, cloud/resource state, modes, raw details and Terraform approval |
+| `/projects/:id/pipeline` — `ProjectPipeline` | current state plus legacy `ProjectPipelineRun` fallback; exact normal-v1 actions | mixed developer/deprecated | make Deployments developer-safe and v1-authoritative; preserve legacy history only as sanitized read-only history |
+| `/projects/:id/requirements` — `DeploymentRequirements` | project + get/resolve required application values | developer | canonical Environment page; retain masked app-owned values and managed/external DB choice without platform internals |
+| `/projects/:id/env` — `ProjectEnvVars` | project plus environment CRUD through child component | developer compatibility | consolidate with Environment; preserve masked CRUD and immutable configuration identity |
+| `/projects/:id/logs` — `ProjectPipelineLogs` | current state and legacy pipeline run/event APIs | deprecated implementation of developer Logs | replace with sanitized application logs; legacy events become read-only deployment history, not the Logs source |
+| `/projects/:id/observability/metrics` — `ProjectMetrics` | current state + runtime metrics; exposes Prometheus/CloudWatch selector | mixed developer/operator | retain application metrics/ranges; remove provider selector and cloud terminology |
+| `/projects/:id/settings` — `ProjectSettings` | project/repository/branch/overrides/env/current state/detection/preflight; notifications; admin-only cleanup child | mixed | retain app settings/archive; move detection internals, provider settings and cleanup to operator routes |
+| `/projects/:id/recovery` — `ProjectRecovery` | raw recovery issue/evidence; configuration redirect or read-only recovery | deprecated developer route / operator evidence | developer-owned issues route to Environment/Settings; platform recovery becomes neutral `platform_attention`; detailed route admin-only |
+| `/projects/:id/detection` — `ProjectDetection` | detailed detection profile and rerun | operator diagnostic / developer summary | expose only supported/unsupported/app-owned correction in developer state; protect details |
+| `/projects/:id/preflight` — `ProjectPreflight` | detailed preflight, generated Docker evidence, rerun | operator diagnostic / developer summary | expose only configuration/build/start blockers; protect detailed report |
+| `/admin/users` — `AdminUsers` | user listing and role mutation | operator/admin | keep backend and frontend admin-only |
+| `/admin/cloud-cleanup` — `AdminCloudCleanup` | inventory refresh/export, destroy, cleanup, manual review, emergency cleanup | operator/admin | keep protected; never link from developer state |
+| troubleshooting, infrastructure, orchestration, runtime, application-log, release, rollback, security, Terraform-state, storage, cost and scan-detail project routes | detailed cloud/runtime/security/cost evidence and mutations | operator/admin | retain only under admin routes and explicit backend authorization |
+| wildcard redirect | navigation fallback | public compatibility | keep |
+
+The selected-project sidebar already contains the six contractual labels. The
+global sidebar additionally exposes Activity Log and Plan & usage; Activity Log
+is operator-only, while Plan & usage is a mixed developer-read/workspace-owner
+surface. Admin Cloud Cleanup and Operator modules are visually role-gated, but
+backend field separation remains required.
+
+### Meaningful button and command classification
+
+| Action family | Current entry points | Classification |
+|---|---|---|
+| Sign in/out, GitHub connect, choose repo/branch, create project | auth pages, `NewProject`, Settings | developer |
+| Save genuinely required values, managed/external database selection, masked env CRUD | Requirements, Environment | developer |
+| Save project details/repository/branch/app directory/build/start/health overrides; archive | Settings | developer, subject to project manage authorization |
+| Deploy/Redeploy, open stable app | Overview/Deployments | developer canonical action |
+| Run detection/generate preflight | Overview, New Project, Detection, Preflight, Settings | automatic platform step; direct detailed controls move to operator, except app-owned re-analysis after a source-setting change |
+| Plan infrastructure / Approve and apply / Deploy application / Deploy release | `NormalInfrastructurePlanningPanel` and `normalReleaseAction.js` | internal orchestration currently exposed; only Deploy/Redeploy and policy-based Approve Cost may remain developer actions |
+| Terraform confirmation (`Apply this exact reviewed Terraform plan to AWS?`) | Overview and Deployments | prohibited developer action |
+| Internal run IDs, lifecycle codes, outbox state, effect counts, provider modes and raw events | Developer Details/release panels | operator/admin |
+| Audit filtering and raw audit rows | Activity Log | operator/admin |
+| App-log filters and application metric range | Logs/Metrics | developer |
+| Prometheus/CloudWatch source selection | Metrics | operator configuration |
+| Billing checkout/portal/cancel | Plan & usage | deferred provider work; workspace-owner only if later productized |
+| Cost estimate approve/reject/settings | Cost pages | workspace-owner cost approval only where policy permits; detailed estimate/settings operator |
+| Security scan trigger/approve/findings | Security pages | operator/admin; sanitized application-owned finding may be developer guidance |
+| Rollback/scaling, state validation/recovery/force unlock, storage provision/restore, Terraform export, troubleshooting | admin project modules | operator/admin |
+| Destroy, cleanup, residue TTL/manual review/emergency cleanup | Settings admin child and Admin Cloud Cleanup | operator/admin only |
+| `StartPipelineForm`, `ResumeDeploymentButton`, `DeploymentRecoveryCenter`, generic `CurrentStateAction` | currently unrouted/dead or historical components | deprecated until proven needed by a protected operator flow |
+
+### Frontend API boundary classification
+
+- **Developer read/write:** authentication; authorized project/workspace list;
+  GitHub repository/branch inspection; project create/update/archive; requirements;
+  masked environment values; sanitized current state; application logs/metrics;
+  and one canonical Deploy/Redeploy command.
+- **Operator/admin:** all `adminApi` calls; audit log; troubleshooting; detailed
+  detection/preflight; infrastructure/readiness/events/discovery; Terraform state;
+  storage operations; orchestration status/events/releases/rollback/scaling;
+  security scans; detailed cost settings/estimates; cloud inventory/cleanup;
+  Terraform export; internal notification delivery tests.
+- **Retired/deprecated:** `/automation/start`, legacy pipeline start/cancel/retry/
+  approve-apply, `/deploy`, `/infrastructure/plan`, `/infrastructure/apply`, and
+  `/orchestration/deploy`. Backend mutation routes correctly return
+  `LEGACY_DEPLOYMENT_EXECUTION_RETIRED`; frontend exports and legacy read fallback
+  remain compatibility debt.
+- **Internal exact normal-v1 commands:** prepare/release dispatch/infrastructure
+  plan dispatch/infrastructure apply dispatch are valid protected boundaries, but
+  the frontend must call them only through one canonical orchestration command.
+  Direct developer apply dispatch is prohibited.
+
+### API consumer inventory
+
+The complete routed and routed-child API import inventory is below. Calls are
+grouped by the component that can invoke them; page modules without an entry are
+render-only. `developer`, `mixed`, `operator`, and `deprecated` use the route and
+action decisions above.
+
+- **developer:** `AuthContext` — `getCurrentUser`, `loginUser`, `logoutUser`,
+  `signupUser`; `GithubConnecting` — `getGithubAuthUrl`; `AppLayout` —
+  `recordProjectView`; `CommandPalette` — `getProjects`; `Dashboard` and
+  `Projects` — `getWorkspaceSummary`; `DeploymentRequirements` —
+  `getDeploymentRequirements`, `getProject`, `resolveDeploymentRequirements`;
+  `ProjectEnvVars` — `getProject`; `EnvironmentVariablesPanel` —
+  `bulkUpsertProjectEnvVars`, `createProjectEnvVar`, `deleteProjectEnvVar`,
+  `getProjectEnvVars`, `updateProjectEnvVar`.
+- **developer creation/analyze, with detailed diagnostics to sanitize:**
+  `NewProject` — `archiveProject`, `createProject`, `generatePreflightReport`,
+  `getGithubAuthUrl`, `getGithubConnectionStatus`, `getGithubRepositories`,
+  `getWorkspaceSummary`, `inspectGithubRepository`, `runStackDetection`;
+  `PreflightPanel` — `generatePreflightReport`, `getPreflightReport`;
+  `StackDetectionPanel` — `getDetectionProfile`, `runStackDetection`.
+- **mixed developer/operator:** `ProjectDetails` — `generatePreflightReport`,
+  `getProject`, `getProjectCurrentState`, `runStackDetection`; `ProjectPipeline`
+  — `getPipelineRuns`, `getProject`, `getProjectCurrentState`;
+  `ProjectSettings` — `archiveProject`, `generatePreflightReport`,
+  `getDetectionProfile`, `getPreflightReport`, `getProject`,
+  `getProjectBranches`, `getProjectCurrentState`, `getProjectEnvVars`,
+  `runStackDetection`, `updateProject`, `updateProjectBranch`,
+  `updateProjectRepository`; `Billing` — `cancelBilling`,
+  `createBillingCheckout`, `createBillingPortal`, `getBillingSummary`,
+  `getWorkspaceSummary`; `DatabaseTierSettings` — `getProjectDatabaseTier`,
+  `updateProjectDatabaseTier`; `NotificationSettingsPanel` —
+  `getNotificationSettings`, `subscribeNotifications`, `testNotification`,
+  `updateNotificationSettings`.
+- **deprecated developer implementation/operator evidence:**
+  `ProjectPipelineLogs` — `getPipelineRun`, `getPipelineRunEvents`,
+  `getPipelineRuns`, `getProject`, `getProjectCurrentState`; `ProjectRecovery` —
+  `getProject`, `getProjectCurrentState`; `ResumeDeploymentButton` —
+  `getRecoveryResumePreview`, `resumeProjectRecovery`; `normalReleaseAction` —
+  `dispatchNormalFirstReleaseInfrastructureApply`,
+  `dispatchNormalFirstReleaseInfrastructurePlan`, `dispatchNormalReleaseLane`,
+  `prepareNormalReleaseLane`.
+- **developer read after provider/detail sanitization:** `ProjectLogs` —
+  `getObservabilityLogs`, `getProjectCurrentState`; `ProjectMetrics` —
+  `getObservabilityRuntimeMetrics`, `getProjectCurrentState`;
+  `EcsLogsStream` — `getObservabilityLogStreamUrl`; `ProjectModuleStatusStrip` —
+  `getProjectCurrentState`.
+- **operator diagnostic:** `AuditLogs` — `getAuditLogs`; `ProjectDetection` —
+  `getDetectionProfile`, `getProject`, `runStackDetection`; `ProjectPreflight` —
+  `generatePreflightReport`, `getPreflightReport`, `getProject`,
+  `getProjectCurrentState`; `ProjectInfrastructure` — `createTerraformExport`,
+  `downloadTerraformExport`, `getProject`; `ProjectDeployPanel` —
+  `getDeploymentReadiness`, `getInfrastructure`, `getInfrastructureEvents`,
+  `getServiceDiscovery`; `ProjectObservability` — `getObservabilityHealth`,
+  `getObservabilityRuntimeMetrics`, `getObservabilitySummary`,
+  `getProjectCurrentState`; `ProjectTroubleshooting` —
+  `followUpTroubleshooting`, `getProjectCurrentState`,
+  `getTroubleshootingSession`, `getTroubleshootingSessions`,
+  `startTroubleshooting`; `ProjectSecurity` — `getProject`,
+  `getProjectCurrentState`, `getSecurityScans`; `SecurityScanDetails` —
+  `getProject`, `getSecurityScan`, `getSecurityScanFindings`.
+- **operator cloud/state/history:** `ProjectOrchestration` —
+  `getOrchestrationEvents`, `getOrchestrationStatus`, `rollbackOrchestration`,
+  `updateOrchestrationScaling`; `ProjectReleases` — `getOrchestrationReleases`;
+  `ProjectRollback` — `rollbackOrchestration`; `ProjectStateManagement` —
+  `clearStaleTerraformLockfile`, `forceReleaseTerraformLock`, `getProject`,
+  `getTerraformState`, `getTerraformStateLocks`,
+  `getTerraformStateSafetySnapshot`, `getTerraformStateValidation`,
+  `getTerraformStateVersions`, `recoverTerraformState`,
+  `validateTerraformState`; `ProjectStorage` — `getBackups`, `getProject`,
+  `getProjectStorage`, `getStorageEvents`, `getStorageMountConfig`,
+  `getStorageRecommendation`, `provisionStorage`, `requestBackupRestore`,
+  `updateStorageSettings`; `DestroyInfrastructurePanel` — `cancelDestroy`,
+  `createCloudCleanupChallenge`, `createDestroyChallenge`,
+  `downloadProjectCleanupReport`, `getDestroyReview`, `getDestroyStatus`,
+  `getProjectResources`, `markCloudResourcesManualReview`,
+  `refreshProjectResources`, `requestCloudCleanup`, `requestDestroy`,
+  `retryDestroy`, `updateProjectResourceTtl`.
+- **operator cost/admin:** `ProjectCost` — `createCostEstimate`,
+  `getCostEstimates`, `getCostSettings`, `getProject`, `updateCostSettings`;
+  `CostEstimateDetails` — `approveCostEstimate`, `getCostEstimate`, `getProject`,
+  `getProjectCurrentState`, `rejectCostEstimate`; `AdminUsers` — `getUsers`,
+  `updateUserRole`; `AdminCloudCleanup` — `cleanupSafeOrphans`,
+  `cleanupSelectedCloudResources`, `createCentralCleanupChallenge`,
+  `createEmergencyCleanupChallenge`, `downloadCloudCleanupReport`,
+  `executeEmergencyCleanup`, `getCloudCleanupResources`,
+  `getCloudCleanupSummary`, `getEmergencyCleanupOperations`,
+  `getEmergencyCleanupPreview`, `markCloudResourcesManualReview`,
+  `markProjectCleanupComplete`, `refreshCloudCleanupInventory`,
+  `refreshProjectResources`, `requestDestroy`, `retryCentralProjectDestroy`.
+
+### Current-state field classification
+
+`ProjectCurrentStateService.getCurrentState()` returns 97 top-level fields to
+admin, developer, and eligible readonly users. Every field is classified below.
+
+**Inputs containing developer-safe facts only after explicit projection (15):**
+`projectName`, `repositoryFullName`, `branch`, `releaseLane`, `userFacingStatus`,
+`deploymentRequirements`, `time`, `progressPercentage`, `progress`,
+`liveDeployment`, `existingStableDeployment`, `repository`, `database`,
+`stackDetection`, `recentActivity`.
+
+These objects are not safe wholesale. The new mapper may take only repository/
+branch/commit, masked missing configuration, simple progress, latest attempt,
+verified stable release/URL, estimated cost, and application error facts. It must
+drop release intent references, outbox state, lifecycle codes, provider/internal
+database identity, raw warnings, and unverified/historical URLs.
+
+**Developer compatibility fields to replace with the canonical projection (26):**
+`phase`, `overallStatus`, `currentStep`, `currentStepLabel`, `currentStage`,
+`failedStage`, `blockedBy`, `blockedByStage`, `nextAction`, `continueAction`,
+`currentRunState`, `lifecycleStatus`, `currentStageStatus`, `statusExplanation`,
+`deploymentStatus`, `healthStatus`, `latestPipelineStatus`, `latestRunStatus`,
+`activeRunCount`, `activeRun`, `appLiveVerified`, `latestPipeline`, `failureClass`,
+`hasStackDetection`, `hasPreflight`, `hasPipelineRun`.
+
+**Operator/admin-only evidence (56):** `projectId`, `runId`, `approvalRequired`,
+`approvalEligible`, `approvalBlockedReason`, `terraformApproval`,
+`currentRecoveryIssue`, `previousDeploymentIssue`, `recoveryIssue`,
+`databaseServiceBinding`, `setupRequired`, `terraformStateSafety`,
+`activitySnapshot`, `lastFailureAt`, `lastMeaningfulActivityAt`, `continueHref`,
+`failedProjectContinuity`, `stateStatus`, `lockStatus`, `hasTerraformPlan`,
+`hasRealDeployment`, `showFullLifecycle`, `automationStatus`, `approvalState`,
+`runControls`, `infrastructureStatus`, `resourceStatus`, `cleanupStatus`,
+`cloudVerificationStatus`, `inventoryStatus`, `adminActionRequired`,
+`cloudNextAction`, `lastCloudVerifiedAt`, `cloudState`,
+`deploymentReconciliation`, `currentDeployment`, `historicalHealthIssue`,
+`deployButtonEnabled`, `deployDisabledReasons`, `latestPipelineRunId`,
+`isDeploymentJobActive`, `activePipelineRunId`, `latestRunIsStale`,
+`infrastructureProvisioned`, `safeMode`, `applyEnabled`, `modes`,
+`environmentModes`, `normalV1Availability`, `deploymentContract`, `preflight`,
+`modules`, `stages`, `lifecycle`, `lifecycleVersion`, `externalCi`.
+
+### Code-bearing field classification
+
+All currently developer-accessible code fields are internal mapper inputs, never
+finished developer output:
+
+- `releaseLane.safeCodes[]`, `intent.lifecycleCode`, `history[].code`;
+- operation preflight/security/service-health/event/log `safeCode` values;
+- `normalV1Availability.safeCode`;
+- recovery `code`, stage `diagnosticCode`, `failureClass` and legacy failure code;
+- workspace release-history `lifecycleCode`;
+- retired endpoint `LEGACY_DEPLOYMENT_EXECUTION_RETIRED` codes.
+
+Developer-owned auth/source/configuration/build/runtime/health/cost conditions may
+map to a sanctioned `developerState`, `developerAction`, and concise message, but
+their raw code remains hidden. All `NORMAL_*`, `FIRST_RELEASE_*`, `RELEASE_LANE_*`,
+Terraform/state/cloud/residue/worker/ownership/lease/outbox/IAM/provider codes map
+to `platform_attention` or an operator projection. Unsupported detection maps only
+to “This repository type is not yet supported.”
+
+## Completed P0 implementation packages
+
+### Completed Iteration 2 evidence — canonical sanitized developer projection
+
+The closed `DeveloperProjectCurrentState` type, pure fail-closed projector,
+ordinary sanitized current-state route, admin-only detailed route, shared
+workspace projection, authorization/project-isolation checks, exhaustive mapper
+fixtures, and sanitized frontend consumers are implemented and verified. The
+projector preserves stable/latest separation, rejects conflicting identity and
+unverified URLs, and emits no raw lifecycle, cloud, Terraform, queue, ownership,
+lease, fence, journal, worker, or recovery evidence. Focused backend/frontend
+tests, type-checks/builds, and `git diff --check` pass; see `FINAL_RESULT.md`.
+
+### Completed Iteration 3 evidence — one automatic Deploy command and cost policy
+
+The authenticated `POST /api/projects/:projectId/deploy` boundary now composes
+the existing exact planners and dispatchers without starting workers. A durable
+command marker binds the immutable operation across duplicate requests and
+process restart. The default-off continuation scheduler reviews the exact saved
+plan, persists a deterministic Infracost policy decision, exact-dispatches apply
+only after automatic/owner/operator authorization, and prepares/dispatches the
+first release only after the manifest is applied. Above-threshold Approve Cost is
+project-owner-only; destructive/broad work pauses for an operator; unavailable or
+non-real cost evidence fails closed. Internal prepare/dispatch routes are
+admin-only, and the frontend uses only Deploy/Redeploy or Approve Cost.
+
+Focused pure, serializable disposable PostgreSQL, real isolated PostgreSQL/Redis
+dispatcher/consumer, current-state, authorization, ownership, frontend, build,
+and diff checks pass. The operational gate remains off and queue/lease/owner/claim
+counts remain zero; see `FINAL_RESULT.md`.
+
+### Completed Iteration 4 evidence — existing-state adoption and reconciliation
+
+The pure fail-closed classifier and admin-only read boundary now distinguish
+valid, adoptable, recoverable, conclusively safe residue, and ambiguous existing
+state. It requires fresh cloud evidence, consistent Terraform state and a clear
+execution scope before valid/adoptable/cleanup decisions; recovery is bound to
+the same active immutable v1 intent. Cleanup is enabled only for fresh,
+post-destroy, exact verified residue with no unknown identity. Developer current
+state exposes none of these internals: valid stable state may show Live/Redeploy;
+adoptable, residue and ambiguous state show only platform attention, and an
+unverified stable URL is suppressed. Read-only operational checks preserved both
+stable releases and reported zero active leases, owners, claims, or BullMQ work.
+Focused classifier, cloud/state/recovery/current-state, authorization, frontend,
+build and diff checks pass; see `FINAL_RESULT.md`.
+
+### Completed Iteration 5 evidence — Railway-like Overview and Deployments
+
+Project Overview and Deployments now share one `CanonicalDeploymentView` backed
+only by the closed developer current-state projection. It renders Analyze, Build,
+Prepare, Deploy and Verify; one state-derived Deploy/Redeploy/Approve Cost/
+Provide Configuration/Open Application action; separate latest-attempt and
+verified-stable cards; estimated cost; application logs; and a stable URL only
+from canonical stable evidence. Refresh reloads the same durable projection.
+
+Neither page imports legacy pipeline-run history, detailed current state,
+operator panels, or page-specific deployment action logic. Developer Details,
+Terraform, inventory, cleanup, residue, recovery, raw run/lifecycle/safe-code/
+provider evidence, and legacy fallback wording are absent. Focused frontend
+presentation/current-state/release tests, backend developer projection/command/
+existing-state regressions, both production builds, read-only runtime health,
+and `git diff --check` pass; see `FINAL_RESULT.md`.
+
+## Completed P1 launch packages
+
+### Completed Iteration 6 evidence — operator/admin segregation
+
+Activity Log and the detailed recovery, detection/preflight, troubleshooting,
+security, cost, infrastructure/export, resource lifecycle/cleanup, orchestration,
+state, storage and platform-health surfaces now sit behind matching frontend and
+backend admin authorization. Ordinary navigation exposes none of them. Developer
+current-state, Deploy/Approve Cost and source-setting re-analysis remain intact;
+Project Settings does not request or link detailed diagnostics for non-admins.
+
+Twelve unused legacy/internal `projectApi` commands and nine unrouted developer-
+era control/detail components were removed. `test:automation` is now an explicit
+ten-route `410 LEGACY_DEPLOYMENT_EXECUTION_RETIRED` guard and proves that retired
+requests do not reach an execution dependency, create a run or publish queue
+work. Focused backend role-metadata, retirement, current-state and Deploy tests;
+frontend route/removal and Overview tests; canonical project-continuity,
+lifecycle and security regressions; both builds; read-only runtime health; and
+`git diff --check` pass. The stale continuity fixture was
+updated from pre-Iteration-2 status fields to the closed developer projection.
+Application-focused Logs/Metrics/Settings work was completed in Iteration 7;
+see `FINAL_RESULT.md`.
+
+### Completed Iteration 7 evidence — Environment, Logs, Metrics and Settings
+
+`/requirements` is now the single Environment identity and the old `/env` URL
+redirects to it. Required inputs, managed bindings and optional masked variables
+share that boundary; raw ownership/fingerprint details are absent. Developer
+Logs and Metrics consume closed authenticated application projections after the
+canonical stable-release check. Provider identity, labels, raw errors, log
+groups/streams/tokens, and the legacy pipeline-event log surface were removed;
+provider-shaped endpoints and historical pipeline reads are admin-only.
+
+Settings now contains only application identity, source/branch, application
+path, build/runtime commands, Environment, re-analysis and archive. It does not
+fetch or expose detailed lifecycle, recovery, cleanup, provider notifications,
+or operator diagnostics. Focused backend projection/authorization/current-state
+tests, frontend route/application-surface regressions, both production builds,
+read-only local runtime health, and `git diff --check` pass. See
+`FINAL_RESULT.md`.
+
+### Completed Iteration 8 evidence — local launch acceptance
+
+The complete multi-user/workspace/project, stack, configuration, concurrency,
+deduplication, refresh, restart, isolation and terminology matrix passed on real
+local PostgreSQL/Redis/backend/frontend/shared workers. Directly exposed stale
+fixture assertions, missing details-route authentication middleware, Compose env
+loading, and developer terminology were corrected. No cloud/provider mutation
+occurred; see `FINAL_RESULT.md` and the signed local-demo evidence.
+
+### Completed Iteration 9 evidence — final closure
+
+The authoritative evidence was regenerated from the protected focused tests,
+signed browser fixture and read-only operational state. Backend/frontend
+type-checks and production builds pass; all shared consumer processes are live
+with fresh capabilities; queues have no waiting, active or delayed work; and
+active leases, owners and claims are `0/0/0`.
+
+The final infrastructure supervision regression exposed a fixture-isolation
+defect. The fixture now uses a unique Compose project, containers, ports,
+volumes and network; pins canary configuration; waits for host-visible
+PostgreSQL readiness; and cleans only its own resources. The corrected test
+passes without touching operational data or leaving resources.
+
+`FINAL_RESULT.md` records the final **GO** verdict for the program's local-
+launch contract, separately reports that live AWS was not exercised, and lists
+only explicitly deferred non-blocking provider work. No further program
+iteration remains.
+
+## Deferred, non-blocking scope
+
+Stripe provider billing, SNS delivery, optional provider/security integrations,
+and live AWS deployment mutation are outside this local launch program. Their
+gates remain disabled and their absence is not represented as passing evidence.

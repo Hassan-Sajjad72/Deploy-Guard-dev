@@ -1,0 +1,73 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { getWorkspaceSummary } from "../api/projectApi.js";
+import AppIcon from "../components/common/AppIcon.jsx";
+import ErrorState from "../components/common/ErrorState.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
+import { StatusBadge } from "../components/common/Premium.jsx";
+import { useAuth } from "../hooks/useAuth.js";
+import { formatRelativeTime } from "../utils/time.js";
+import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+import { conciseProjectSummary } from "../utils/overviewLifecyclePresentation.js";
+
+export default function Dashboard() {
+  const { role } = useAuth();
+  const [summaries, setSummaries] = useState([]);
+  const [workspace, setWorkspace] = useState({});
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try { const response = await getWorkspaceSummary(); setSummaries(response.summaries || []); setWorkspace(response); setError(""); }
+    catch (caught) { setError(caught.message); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const visibleSummaries = useMemo(
+    () => summaries.filter(({ currentState }) => projectStatePresentation(currentState).state !== "DESTROYED"),
+    [summaries]
+  );
+  const hasActiveOperation = visibleSummaries.some(({ currentState }) => projectStatePresentation(currentState).active);
+  useEffect(() => {
+    if (!hasActiveOperation) return undefined;
+    const refresh = () => { if (document.visibilityState === "visible") void load(); };
+    const timer = window.setInterval(refresh, 8000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [hasActiveOperation, load]);
+
+  const view = useMemo(() => {
+    const active = visibleSummaries.filter(({ currentState }) => projectStatePresentation(currentState).active);
+    const live = visibleSummaries.filter(({ currentState }) => !projectStatePresentation(currentState).active && projectStatePresentation(currentState).state === "LIVE" && Boolean(currentState?.stableRelease));
+    const attention = (workspace.needsAttention || []).filter(({ currentState }) => projectStatePresentation(currentState).state !== "DESTROYED");
+    const recentlyViewed = (workspace.recentlyViewed || []).filter(({ currentState }) => projectStatePresentation(currentState).state !== "DESTROYED");
+    const recentDeployments = visibleSummaries
+      .filter(({ currentState }) => currentState?.latestAttempt || currentState?.stateAuthority?.latestCompletedOperation)
+      .sort((left, right) => {
+        const leftTime = left.currentState?.latestAttempt?.completedAt || left.currentState?.latestAttempt?.startedAt || left.currentState?.latestAttempt?.createdAt || 0;
+        const rightTime = right.currentState?.latestAttempt?.completedAt || right.currentState?.latestAttempt?.startedAt || right.currentState?.latestAttempt?.createdAt || 0;
+        return new Date(rightTime).getTime() - new Date(leftTime).getTime();
+      })
+      .slice(0, 5);
+    const hasDeploymentEvidence = visibleSummaries.some(({ currentState }) => Boolean(
+      projectStatePresentation(currentState).operation
+      || currentState?.latestAttempt
+      || currentState?.stableRelease
+      || currentState?.stateAuthority?.latestCompletedOperation
+    ));
+    return { active, attention, hasDeploymentEvidence, live, recentDeployments, recentlyViewed };
+  }, [visibleSummaries, workspace]);
+
+  return <div className="workspace-page dashboard-page">
+    <header className="workspace-heading"><div><p className="eyebrow">Workspace</p><h1>Home</h1><p>See active deployments and projects that need attention.</p></div>{role !== "readonly" ? <Link className="button" to="/projects/new"><AppIcon name="plus" size={16} />Create project</Link> : null}</header>
+    {error ? <ErrorState message={error} /> : null}{loading ? <LoadingState message="Loading workspace…" /> : null}
+    {!loading && !visibleSummaries.length && !error ? <section className="workspace-empty-state"><div className="empty-orbit"><AppIcon name="github" size={28} /></div><h2>Create your first project</h2><p>Connect a GitHub repository and configure the application before deployment.</p>{role !== "readonly" ? <Link className="button" to="/projects/new">Create Project</Link> : null}</section> : null}
+    {!loading && visibleSummaries.length ? <>
+      <section className="workspace-stat-strip workspace-stat-strip-compact" aria-label="Workspace summary"><div><span>Total projects</span><strong>{visibleSummaries.length}</strong></div><div><span>Live</span><strong>{view.live.length}</strong></div><div><span>Deploying</span><strong className={view.active.length ? "text-info" : ""}>{view.active.length}</strong></div><div><span>Needs attention</span><strong className={view.attention.length ? "text-danger" : ""}>{view.attention.length}</strong></div></section>
+      {!view.hasDeploymentEvidence ? <section className="panel-flat" data-dashboard-empty-deployments="true"><div className="calm-empty"><span className="success-check"><AppIcon name="box" size={15} /></span><div><strong>No deployment attempts yet</strong><p>These projects contain repository readiness information, but no deployment run or stable release has been recorded.</p></div></div></section> : null}
+      <section className="panel-flat dashboard-attention"><div className="compact-section-heading"><div><p className="eyebrow">Needs attention</p><h2>Projects requiring action</h2></div><span className="count-chip">{view.attention.length}</span></div><div className="active-run-list">{view.attention.map(({ project, currentState }) => <article className="active-run-item" key={project.id}><span className="active-run-identity"><strong>{project.name}</strong><small>{conciseProjectSummary(currentState)}</small></span><StatusBadge status={currentState?.developerState || "platform_attention"} /><Link className="text-link" to={`/projects/${project.id}`}>Open project</Link></article>)}{!view.attention.length ? <div className="compact-empty"><strong>No projects need attention.</strong></div> : null}</div></section>
+      <section aria-label="Recent deployments, including Active deployments" className="active-runs-card panel-flat dashboard-deployments"><div className="compact-section-heading"><div><p className="eyebrow">Deployments</p><h2>Recent deployments</h2></div><span className="count-chip">{view.recentDeployments.length}</span></div><div className="active-run-list">{view.recentDeployments.map(({ project, currentState }) => { const attempt = currentState.latestAttempt; const timestamp = attempt?.completedAt || attempt?.startedAt || attempt?.createdAt; return <article className="active-run-item" data-workspace-release={currentState.developerState} key={project.id}><span className={`run-status-ring${projectStatePresentation(currentState).active ? " is-active" : ""}`} /><span className="active-run-identity"><strong>{project.name}</strong><small>{attempt ? `Attempt ${attempt.attempt || "—"} · ${formatRelativeTime(timestamp)}` : conciseProjectSummary(currentState)}</small></span><StatusBadge status={currentState.developerState} /><Link className="text-link" to={`/projects/${project.id}/pipeline`}>View run <AppIcon name="arrow" size={14} /></Link></article>; })}{!view.recentDeployments.length ? <div className="compact-empty"><strong>No deployment history yet.</strong><span>Completed and active runs will appear here.</span></div> : null}</div></section>
+      {view.recentlyViewed.length ? <section className="panel-flat dashboard-recent-projects"><div className="compact-section-heading"><div><p className="eyebrow">Recent activity</p><h2>Recently used projects</h2></div><Link className="text-link" to="/projects">View all projects</Link></div><div className="active-run-list">{view.recentlyViewed.slice(0, 5).map(({ project }) => <article className="active-run-item" key={project.id}><span className="active-run-identity"><strong>{project.name}</strong><small>Viewed {formatRelativeTime(project.activity?.lastViewedAt)}</small></span><Link className="text-link" to={`/projects/${project.id}`}>Open</Link></article>)}</div></section> : null}
+    </> : null}
+  </div>;
+}

@@ -1,0 +1,119 @@
+[
+  {
+    "path": "/home/hassan-sajjad/Projects/Deploy-Guard",
+    "valid": true,
+    "head": "24d199f8c809d4bde7b84a78a8905eabe7e1c549",
+    "common": "/home/hassan-sajjad/Projects/Deploy-Guard/.git",
+    "refs": "24d199f8c809d4bde7b84a78a8905eabe7e1c549 refs/heads/Docker-templates\n8884cb85afbc49d466bc8b66bb12eeb4771ebf6a refs/heads/main\n24d199f8c809d4bde7b84a78a8905eabe7e1c549 refs/remotes/origin/Docker-templates\n8884cb85afbc49d466bc8b66bb12eeb4771ebf6a refs/remotes/origin/HEAD\n8884cb85afbc49d466bc8b66bb12eeb4771ebf6a refs/remotes/origin/main",
+    "status": "",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-final-container-setup",
+    "valid": true,
+    "head": "082f98568633a9fd48428eb6a1416f6c82f5300f",
+    "common": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.git",
+    "refs": "e5c19bf7369d744c6ab0714fcd75a2d6c93accf5 refs/codex/turn-diffs/captures/1792785142712/e9a07330-045e-46d2-aadd-0cc6ab0f6ddc/base\n7fa0b0f744317a025c7a1c1e7c10168b20c7bab7 refs/heads/arena/01a0f0e4-deploy-guard-dev\nf937d3dd11f4ca6ff0883981e116791881333037 refs/heads/codex/certification-part3-workflow-20260824\n9ee58449809cc398de4d9f5c3ea88e48ee769372 refs/heads/codex/default-generated-dockerfile-20260815211611\n5bad63f58c78dc09e82c59f5975f0cea58e5b4a0 refs/heads/codex/destroy-capture-plan-exit\n1260bf21bf80ff98228975fcf9ce51017792e041 refs/heads/codex/destroy-exact-aws-errors\n93a4c93593d30e2d9ab30c6399887e7e5c0000b1 refs/heads/codex/destroy-no-change-state-refresh\n99d2c185d8e9324ddc280aeb6db889d77cd1e7cb refs/heads/codex/destroy-stale-state-extinction\nbf55551a7f7b17abc9f1cd389524acfb89526776 refs/heads/codex/fix-bounded-fullstack-routing-20260816\n59b1446c20efd095ebce3ba1e9a23dd9991165f7 refs/heads/codex/fix-destroy-runtime-contract\n9f778e131d099eff6be4e9f17f84bee6d9c333a1 refs/heads/codex/fix-generation-efs-token\n96f60c0a32cef2317c1bcd1fdc79fe9079f9ca3a refs/heads/codex/fix-mongodb-runtime-validation-20260815\n3a365608e295cf2856b32b16b3743a76602edc05 refs/heads/codex/fix-promotion-route-convergence-20260813\n23b202e17ac3630424b967d961c447a1ee264e45 refs/heads/codex/fix-terraform-formatting\n383ef59ab1bc51054a0446b069c15bf7db4ac17a refs/heads/codex/m0-workflow-identity-20261010\nce994813eae3b0befb8989133694ea35cdfe19ab refs/heads/codex/pin-failed-candidate-cleanup-20260819\n3077786c54733fb28adb5cb13cf892157d0ff294 refs/heads/codex/pin-managed-database-engines-workflow-20260815\n256a50dd05187541b56023d0a47efefe790a536e refs/heads/codex/pin-mongodb-validation-workflow-20260815\n3e158a553162ee7a80b546080bd7a83d792180a6 refs/heads/codex/pin-promotion-route-convergence-20260813\n9190a1e06d11a76d1fbf731154cf53a58b86e701 refs/heads/codex/publish-fail-closed-reliability-clean-20260823\n6bb4bd88634b3f2657934b2a336fb4a41b7d36e2 refs/heads/codex/publish-failed-candidate-cleanup-20260819\nd76309ab54403608ae06c14c1a400bf00a4943ce refs/heads/codex/publish-final-generation-invariants\ndf620aac9c43e643f36d67b9a007a07fd7a4d13e refs/heads/codex/publish-generation-lifecycle\n95791eaa8013ed960bde2740b6cbc1bbfc80a2e3 refs/heads/codex/publish-local-certification-workflow-20260822\nd150c4369389fe24c87e42e041e710d8bbe7b4b7 refs/heads/codex/publish-managed-database-reconciliation\n48bee78e84f7e52c50788e3660a9910a1d628bac refs/heads/codex/publish-reliability-workflow-20260822\n19a3eb6cc73e7dd559b56ec24179d77ad7bfd932 refs/heads/codex/publish-reliability-workflow-clean-20260822\n446a72ec3364acc3f1a128e065e0d205e911e7ab refs/heads/codex/publish-rollback-generation-guard\na22daadb88b56bfcd94dc047e7f286a0ca5465f2 refs/heads/codex/publish-security-continuation-20260823\n30a8a61b7e7c273b7ad3687da5f35dbe5521c070 refs/heads/codex/repin-generated-dockerfile-workflow-20260815211727\n521f045d438fead7d596b56f1b3a5cfe8d37f316 refs/heads/codex/state-aware-deployment-recovery\naf84755921df12fbd5240351c6e80b93725e9787 refs/heads/container-setup\n1c671585f15691aa238a0eef28432186d20ec83c refs/heads/container-setup-local-preserved\naf84755921df12fbd5240351c6e80b93725e9787 refs/heads/container-setup-sanitized-docfix\n082f98568633a9fd48428eb6a1416f6c82f5300f refs/heads/final-container-setup\n721f63e5e8a3226bc2d0040aa4739328148a90a2 refs/heads/main\n15ad07bf4a7726e1436266e0bf1a964d463cee4d refs/heads/master\n6c9f104b67bf0e292cca851fdfaff88bbf42bd51 refs/heads/safety/detection-readiness-20260827\n6dda9a7fc2c605885e0426acc6ac54fa8c5cc590 refs/heads/test1\n3ac3d951f9a339a177a627acd306fc54bc6b8ac1 refs/heads/test2\n288626901ab5ce2175832ff535e28868a4fd5ec2 refs/heads/test3\n7ea68c1f96d96fcebdc5963a1e256c9b091cd1ae refs/heads/test4\n7ea68c1f96d96fcebdc5963a1e256c9b091cd1ae refs/heads/test5\n7ea68c1f96d96fcebdc5963a1e256c9b091cd1ae refs/heads/test6\n417c2e96e54a55f517ac1d1bfe7d82f40ea75a6b refs/heads/test7\n7799fbd07d6c0d3988d3a6235a43254519fa0cf4 refs/heads/version1\n4922706b43c7156d7e822665d498203401ddc69b refs/remotes/origin/HEAD\n7fa0b0f744317a025c7a1c1e7c10168b20c7bab7 refs/remotes/origin/arena/01a0f0e4-deploy-guard-dev\n0747e2662d32b8ece7314af58164a4f7e1b0ea86 refs/remotes/origin/codex-immutable-release\nf937d3dd11f4ca6ff0883981e116791881333037 refs/remotes/origin/codex/certification-part3-workflow-20260824\n0def2608f708a2cfcbc93c4b816694b39b44bafa refs/remotes/origin/codex/certification-part3-workflow-20260824-final\n5bad63f58c78dc09e82c59f5975f0cea58e5b4a0 refs/remotes/origin/codex/destroy-capture-plan-exit\n93a4c93593d30e2d9ab30c6399887e7e5c0000b1 refs/remotes/origin/codex/destroy-no-change-state-refresh\n99d2c185d8e9324ddc280aeb6db889d77cd1e7cb refs/remotes/origin/codex/destroy-stale-state-extinction\n59b1446c20efd095ebce3ba1e9a23dd9991165f7 refs/remotes/origin/codex/fix-destroy-runtime-contract\nce994813eae3b0befb8989133694ea35cdfe19ab refs/remotes/origin/codex/pin-failed-candidate-cleanup-20260819\n9190a1e06d11a76d1fbf731154cf53a58b86e701 refs/remotes/origin/codex/publish-fail-closed-reliability-clean-20260823\n6bb4bd88634b3f2657934b2a336fb4a41b7d36e2 refs/remotes/origin/codex/publish-failed-candidate-cleanup-20260819\n95791eaa8013ed960bde2740b6cbc1bbfc80a2e3 refs/remotes/origin/codex/publish-local-certification-workflow-20260822\nb7ea8992a981b9fba413d1689c39965dfc853568 refs/remotes/origin/codex/publish-reliability-workflow-20260822\n19a3eb6cc73e7dd559b56ec24179d77ad7bfd932 refs/remotes/origin/codex/publish-reliability-workflow-clean-20260822\na22daadb88b56bfcd94dc047e7f286a0ca5465f2 refs/remotes/origin/codex/publish-security-continuation-20260823\n4c69fd8cc351de8bb2b3592394985e267295ad37 refs/remotes/origin/codex/publish-trivy-removal-20260823\naf84755921df12fbd5240351c6e80b93725e9787 refs/remotes/origin/container-setup\n4922706b43c7156d7e822665d498203401ddc69b refs/remotes/origin/main\n6dda9a7fc2c605885e0426acc6ac54fa8c5cc590 refs/remotes/origin/test1\n3ac3d951f9a339a177a627acd306fc54bc6b8ac1 refs/remotes/origin/test2\n1d5a243a4e3c45c9d9d6d688bd65db2471991ea5 refs/remotes/origin/test3\n417c2e96e54a55f517ac1d1bfe7d82f40ea75a6b refs/remotes/origin/test7\n7799fbd07d6c0d3988d3a6235a43254519fa0cf4 refs/remotes/origin/version1\n2dc6e8e2558806f1091a703896db4efd76ba3159 refs/stash\nf17352cce4f5497c60c1437bdc8cc579b366a148 refs/tags/deployguard-final-freeze",
+    "status": "M monitoring/grafana.Dockerfile",
+    "remote_target": "Deploy-Guard-dev"
+  },
+  {
+    "path": "/home/hassan-sajjad/deployguard_framework_apps_organized (1)/deployguard_framework_apps_organized",
+    "valid": true,
+    "head": "8a145feeecbaf16f433da72c3f15c66a87d39d0b",
+    "common": "/home/hassan-sajjad/deployguard_framework_apps_organized (1)/deployguard_framework_apps_organized/.git",
+    "refs": "f766bb5ac407a81630eb6f083ae9568127b26e3d refs/heads/Angular_Express_MongoDB\n7ee44672340fd5d3d70e72a993eb25e224d4d489 refs/heads/Astro_Node_MongoDB\nd36890aeb095e57487695a2bd4b6d0c863002e36 refs/heads/Astro_Static_Fastify_MySQL\n3d988ba711f71aa043ffad779a061d8cf5b39b46 refs/heads/CRA_Express_PostgreSQL\n85ffc68431b1fe27990dfa1508a76d10c55146d7 refs/heads/Django_ASGI_MySQL\n2271f70089e5282aadc3f7fa07e55ce278d4b856 refs/heads/Django_WSGI_PostgreSQL\n00ce971c33b71ede180b5435c9e5875ca6397547 refs/heads/Express_JS_PostgreSQL\n5fa25c5024074d21730094dc4c5ad5ec2eaac11a refs/heads/Express_TS_MongoDB\ne36dba5666b60faf328a4441eb18e2252f33d272 refs/heads/FastAPI_MySQL\n402b8dfc391bac6f82f833605eae9d623e4ab4b9 refs/heads/FastAPI_Nested_PostgreSQL\n5f3d440d96b374786cad79b5a8b84d41a8d1a0e9 refs/heads/Fastify_JS_MySQL\n35bef0a5cff03092565930e673ca90a5a5aa8140 refs/heads/Fastify_TS_PostgreSQL\n75844f8b66f9fc12c195de7d44e2bc43ff8a2920 refs/heads/Flask_Factory_MongoDB\n91e7a44a58e66d25c2c8070343ece720171acdcb refs/heads/Flask_PostgreSQL\n5e4a57dfdfce1a0d503bdc665ac54d249c03d4dd refs/heads/NestJS_MongoDB\nf4a49a2e17055009859e851ecc52ef2a81dad842 refs/heads/NextJS_SSR_PostgreSQL\nfd0785fd038fbf58cb72ec4d7c9c6d00ab3ff7b5 refs/heads/NextJS_Standalone_MongoDB\nf228bae78d6b66b51c7b9b18b6597fb534cabb24 refs/heads/NextJS_Static_Express_MySQL\nab7a7ae7bfca15804d8ee64d0df9ab9def4363fb refs/heads/Nuxt_SSR_PostgreSQL\na4d7b28232efe8596d4263a6c671758be4f39f93 refs/heads/Nuxt_Static_Fastify_MongoDB\na1e0d1c4dfb0ce394ad4bd2407ff4f5cf485a238 refs/heads/Remix_Node_PostgreSQL\nc418d0fc8047c365398d474ecb7654a42e9f69f3 refs/heads/Streamlit_MongoDB\n19d53f501dedbb8b4f479d3b19d1891e4b58ac2b refs/heads/SvelteKit_Node_MySQL\n6b1cbb0fb7b97be4ed759eba5afaa7babcf18c96 refs/heads/SvelteKit_Static_Express_PostgreSQL\n608068b67b8fc5723caaf1138d4312e5e9e15b09 refs/heads/Vite_React_Express_PostgreSQL\n925acee5e93f447d3ec96dd89dfb8f9c3bf0fe5c refs/heads/Vite_Vue_Fastify_MySQL\n21ae631f71a6b34fd642907c614cb0e17ce4494b refs/heads/Webpack_React_Fastify_MongoDB\n8a145feeecbaf16f433da72c3f15c66a87d39d0b refs/heads/main\nf766bb5ac407a81630eb6f083ae9568127b26e3d refs/remotes/origin/Angular_Express_MongoDB\n7ee44672340fd5d3d70e72a993eb25e224d4d489 refs/remotes/origin/Astro_Node_MongoDB\nd36890aeb095e57487695a2bd4b6d0c863002e36 refs/remotes/origin/Astro_Static_Fastify_MySQL\n3d988ba711f71aa043ffad779a061d8cf5b39b46 refs/remotes/origin/CRA_Express_PostgreSQL\n85ffc68431b1fe27990dfa1508a76d10c55146d7 refs/remotes/origin/Django_ASGI_MySQL\n2271f70089e5282aadc3f7fa07e55ce278d4b856 refs/remotes/origin/Django_WSGI_PostgreSQL\n00ce971c33b71ede180b5435c9e5875ca6397547 refs/remotes/origin/Express_JS_PostgreSQL\n5fa25c5024074d21730094dc4c5ad5ec2eaac11a refs/remotes/origin/Express_TS_MongoDB\ne36dba5666b60faf328a4441eb18e2252f33d272 refs/remotes/origin/FastAPI_MySQL\n402b8dfc391bac6f82f833605eae9d623e4ab4b9 refs/remotes/origin/FastAPI_Nested_PostgreSQL\n5f3d440d96b374786cad79b5a8b84d41a8d1a0e9 refs/remotes/origin/Fastify_JS_MySQL\n35bef0a5cff03092565930e673ca90a5a5aa8140 refs/remotes/origin/Fastify_TS_PostgreSQL\n75844f8b66f9fc12c195de7d44e2bc43ff8a2920 refs/remotes/origin/Flask_Factory_MongoDB\n91e7a44a58e66d25c2c8070343ece720171acdcb refs/remotes/origin/Flask_PostgreSQL\n5e4a57dfdfce1a0d503bdc665ac54d249c03d4dd refs/remotes/origin/NestJS_MongoDB\nf4a49a2e17055009859e851ecc52ef2a81dad842 refs/remotes/origin/NextJS_SSR_PostgreSQL\nfd0785fd038fbf58cb72ec4d7c9c6d00ab3ff7b5 refs/remotes/origin/NextJS_Standalone_MongoDB\nf228bae78d6b66b51c7b9b18b6597fb534cabb24 refs/remotes/origin/NextJS_Static_Express_MySQL\nab7a7ae7bfca15804d8ee64d0df9ab9def4363fb refs/remotes/origin/Nuxt_SSR_PostgreSQL\na4d7b28232efe8596d4263a6c671758be4f39f93 refs/remotes/origin/Nuxt_Static_Fastify_MongoDB\na1e0d1c4dfb0ce394ad4bd2407ff4f5cf485a238 refs/remotes/origin/Remix_Node_PostgreSQL\nc418d0fc8047c365398d474ecb7654a42e9f69f3 refs/remotes/origin/Streamlit_MongoDB\n19d53f501dedbb8b4f479d3b19d1891e4b58ac2b refs/remotes/origin/SvelteKit_Node_MySQL\n6b1cbb0fb7b97be4ed759eba5afaa7babcf18c96 refs/remotes/origin/SvelteKit_Static_Express_PostgreSQL\n608068b67b8fc5723caaf1138d4312e5e9e15b09 refs/remotes/origin/Vite_React_Express_PostgreSQL\n925acee5e93f447d3ec96dd89dfb8f9c3bf0fe5c refs/remotes/origin/Vite_Vue_Fastify_MySQL\n21ae631f71a6b34fd642907c614cb0e17ce4494b refs/remotes/origin/Webpack_React_Fastify_MongoDB\n8a145feeecbaf16f433da72c3f15c66a87d39d0b refs/remotes/origin/main",
+    "status": "",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/deployguard-release-1",
+    "valid": true,
+    "head": "cea45d150f2ac5af17dfb5c218556bf6fc7ec242",
+    "common": "/home/hassan-sajjad/deployguard-release-1/.git",
+    "refs": "cea45d150f2ac5af17dfb5c218556bf6fc7ec242 refs/heads/main\ncea45d150f2ac5af17dfb5c218556bf6fc7ec242 refs/remotes/origin/main",
+    "status": "?? LOCAL_DOCKER.md\n?? README.md",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/deployguard-m0-clean-xeBIfY/checkout",
+    "valid": true,
+    "head": "eed9d3a94535d0af9b95db8ea2a9cef9b14af1fc",
+    "common": "/home/hassan-sajjad/deployguard-m0-clean-xeBIfY/checkout/.git",
+    "refs": "eed9d3a94535d0af9b95db8ea2a9cef9b14af1fc refs/heads/codex/m0-workflow-identity-20261010\need9d3a94535d0af9b95db8ea2a9cef9b14af1fc refs/remotes/origin/codex/m0-workflow-identity-20261010",
+    "status": "M backend/package-lock.json\n M frontend/package-lock.json\n?? scripts/verify-dependency-security.cjs",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev-test3",
+    "valid": true,
+    "head": "1d5a243a4e3c45c9d9d6d688bd65db2471991ea5",
+    "common": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev-test3/.git",
+    "refs": "1d5a243a4e3c45c9d9d6d688bd65db2471991ea5 refs/heads/test3\n1d5a243a4e3c45c9d9d6d688bd65db2471991ea5 refs/remotes/origin/test3\nf17352cce4f5497c60c1437bdc8cc579b366a148 refs/tags/deployguard-final-freeze",
+    "status": "",
+    "remote_target": "Deploy-Guard-dev"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/deployguard-team-runtime",
+    "valid": true,
+    "head": "644edec681e9804212597d72ae9ca3bfddf4690d",
+    "common": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/deployguard-team-runtime/.git",
+    "refs": "644edec681e9804212597d72ae9ca3bfddf4690d refs/heads/main\n644edec681e9804212597d72ae9ca3bfddf4690d refs/remotes/origin/main",
+    "status": "",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/.deployguard-rollback-pin-publish",
+    "valid": false,
+    "head": "",
+    "common": "",
+    "refs": "",
+    "status": "",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/.deployguard-efs-token-publish",
+    "valid": false,
+    "head": "",
+    "common": "",
+    "refs": "",
+    "status": "",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/.deployguard-terraform-fmt-publish",
+    "valid": false,
+    "head": "",
+    "common": "",
+    "refs": "",
+    "status": "",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/.deployguard-generation-publish",
+    "valid": false,
+    "head": "",
+    "common": "",
+    "refs": "",
+    "status": "",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/.deployguard-final-publish",
+    "valid": false,
+    "head": "",
+    "common": "",
+    "refs": "",
+    "status": "",
+    "remote_target": "other"
+  },
+  {
+    "path": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev",
+    "valid": true,
+    "head": "7799fbd07d6c0d3988d3a6235a43254519fa0cf4",
+    "common": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/.git",
+    "refs": "e5c19bf7369d744c6ab0714fcd75a2d6c93accf5 refs/codex/turn-diffs/captures/1792785142712/e9a07330-045e-46d2-aadd-0cc6ab0f6ddc/base\n7fa0b0f744317a025c7a1c1e7c10168b20c7bab7 refs/heads/arena/01a0f0e4-deploy-guard-dev\nf937d3dd11f4ca6ff0883981e116791881333037 refs/heads/codex/certification-part3-workflow-20260824\n9ee58449809cc398de4d9f5c3ea88e48ee769372 refs/heads/codex/default-generated-dockerfile-20260815211611\n5bad63f58c78dc09e82c59f5975f0cea58e5b4a0 refs/heads/codex/destroy-capture-plan-exit\n1260bf21bf80ff98228975fcf9ce51017792e041 refs/heads/codex/destroy-exact-aws-errors\n93a4c93593d30e2d9ab30c6399887e7e5c0000b1 refs/heads/codex/destroy-no-change-state-refresh\n99d2c185d8e9324ddc280aeb6db889d77cd1e7cb refs/heads/codex/destroy-stale-state-extinction\nbf55551a7f7b17abc9f1cd389524acfb89526776 refs/heads/codex/fix-bounded-fullstack-routing-20260816\n59b1446c20efd095ebce3ba1e9a23dd9991165f7 refs/heads/codex/fix-destroy-runtime-contract\n9f778e131d099eff6be4e9f17f84bee6d9c333a1 refs/heads/codex/fix-generation-efs-token\n96f60c0a32cef2317c1bcd1fdc79fe9079f9ca3a refs/heads/codex/fix-mongodb-runtime-validation-20260815\n3a365608e295cf2856b32b16b3743a76602edc05 refs/heads/codex/fix-promotion-route-convergence-20260813\n23b202e17ac3630424b967d961c447a1ee264e45 refs/heads/codex/fix-terraform-formatting\n383ef59ab1bc51054a0446b069c15bf7db4ac17a refs/heads/codex/m0-workflow-identity-20261010\nce994813eae3b0befb8989133694ea35cdfe19ab refs/heads/codex/pin-failed-candidate-cleanup-20260819\n3077786c54733fb28adb5cb13cf892157d0ff294 refs/heads/codex/pin-managed-database-engines-workflow-20260815\n256a50dd05187541b56023d0a47efefe790a536e refs/heads/codex/pin-mongodb-validation-workflow-20260815\n3e158a553162ee7a80b546080bd7a83d792180a6 refs/heads/codex/pin-promotion-route-convergence-20260813\n9190a1e06d11a76d1fbf731154cf53a58b86e701 refs/heads/codex/publish-fail-closed-reliability-clean-20260823\n6bb4bd88634b3f2657934b2a336fb4a41b7d36e2 refs/heads/codex/publish-failed-candidate-cleanup-20260819\nd76309ab54403608ae06c14c1a400bf00a4943ce refs/heads/codex/publish-final-generation-invariants\ndf620aac9c43e643f36d67b9a007a07fd7a4d13e refs/heads/codex/publish-generation-lifecycle\n95791eaa8013ed960bde2740b6cbc1bbfc80a2e3 refs/heads/codex/publish-local-certification-workflow-20260822\nd150c4369389fe24c87e42e041e710d8bbe7b4b7 refs/heads/codex/publish-managed-database-reconciliation\n48bee78e84f7e52c50788e3660a9910a1d628bac refs/heads/codex/publish-reliability-workflow-20260822\n19a3eb6cc73e7dd559b56ec24179d77ad7bfd932 refs/heads/codex/publish-reliability-workflow-clean-20260822\n446a72ec3364acc3f1a128e065e0d205e911e7ab refs/heads/codex/publish-rollback-generation-guard\na22daadb88b56bfcd94dc047e7f286a0ca5465f2 refs/heads/codex/publish-security-continuation-20260823\n30a8a61b7e7c273b7ad3687da5f35dbe5521c070 refs/heads/codex/repin-generated-dockerfile-workflow-20260815211727\n521f045d438fead7d596b56f1b3a5cfe8d37f316 refs/heads/codex/state-aware-deployment-recovery\naf84755921df12fbd5240351c6e80b93725e9787 refs/heads/container-setup\n1c671585f15691aa238a0eef28432186d20ec83c refs/heads/container-setup-local-preserved\naf84755921df12fbd5240351c6e80b93725e9787 refs/heads/container-setup-sanitized-docfix\n082f98568633a9fd48428eb6a1416f6c82f5300f refs/heads/final-container-setup\n721f63e5e8a3226bc2d0040aa4739328148a90a2 refs/heads/main\n15ad07bf4a7726e1436266e0bf1a964d463cee4d refs/heads/master\n6c9f104b67bf0e292cca851fdfaff88bbf42bd51 refs/heads/safety/detection-readiness-20260827\n6dda9a7fc2c605885e0426acc6ac54fa8c5cc590 refs/heads/test1\n3ac3d951f9a339a177a627acd306fc54bc6b8ac1 refs/heads/test2\n288626901ab5ce2175832ff535e28868a4fd5ec2 refs/heads/test3\n7ea68c1f96d96fcebdc5963a1e256c9b091cd1ae refs/heads/test4\n7ea68c1f96d96fcebdc5963a1e256c9b091cd1ae refs/heads/test5\n7ea68c1f96d96fcebdc5963a1e256c9b091cd1ae refs/heads/test6\n417c2e96e54a55f517ac1d1bfe7d82f40ea75a6b refs/heads/test7\n7799fbd07d6c0d3988d3a6235a43254519fa0cf4 refs/heads/version1\n4922706b43c7156d7e822665d498203401ddc69b refs/remotes/origin/HEAD\n7fa0b0f744317a025c7a1c1e7c10168b20c7bab7 refs/remotes/origin/arena/01a0f0e4-deploy-guard-dev\n0747e2662d32b8ece7314af58164a4f7e1b0ea86 refs/remotes/origin/codex-immutable-release\nf937d3dd11f4ca6ff0883981e116791881333037 refs/remotes/origin/codex/certification-part3-workflow-20260824\n0def2608f708a2cfcbc93c4b816694b39b44bafa refs/remotes/origin/codex/certification-part3-workflow-20260824-final\n5bad63f58c78dc09e82c59f5975f0cea58e5b4a0 refs/remotes/origin/codex/destroy-capture-plan-exit\n93a4c93593d30e2d9ab30c6399887e7e5c0000b1 refs/remotes/origin/codex/destroy-no-change-state-refresh\n99d2c185d8e9324ddc280aeb6db889d77cd1e7cb refs/remotes/origin/codex/destroy-stale-state-extinction\n59b1446c20efd095ebce3ba1e9a23dd9991165f7 refs/remotes/origin/codex/fix-destroy-runtime-contract\nce994813eae3b0befb8989133694ea35cdfe19ab refs/remotes/origin/codex/pin-failed-candidate-cleanup-20260819\n9190a1e06d11a76d1fbf731154cf53a58b86e701 refs/remotes/origin/codex/publish-fail-closed-reliability-clean-20260823\n6bb4bd88634b3f2657934b2a336fb4a41b7d36e2 refs/remotes/origin/codex/publish-failed-candidate-cleanup-20260819\n95791eaa8013ed960bde2740b6cbc1bbfc80a2e3 refs/remotes/origin/codex/publish-local-certification-workflow-20260822\nb7ea8992a981b9fba413d1689c39965dfc853568 refs/remotes/origin/codex/publish-reliability-workflow-20260822\n19a3eb6cc73e7dd559b56ec24179d77ad7bfd932 refs/remotes/origin/codex/publish-reliability-workflow-clean-20260822\na22daadb88b56bfcd94dc047e7f286a0ca5465f2 refs/remotes/origin/codex/publish-security-continuation-20260823\n4c69fd8cc351de8bb2b3592394985e267295ad37 refs/remotes/origin/codex/publish-trivy-removal-20260823\naf84755921df12fbd5240351c6e80b93725e9787 refs/remotes/origin/container-setup\n4922706b43c7156d7e822665d498203401ddc69b refs/remotes/origin/main\n6dda9a7fc2c605885e0426acc6ac54fa8c5cc590 refs/remotes/origin/test1\n3ac3d951f9a339a177a627acd306fc54bc6b8ac1 refs/remotes/origin/test2\n1d5a243a4e3c45c9d9d6d688bd65db2471991ea5 refs/remotes/origin/test3\n417c2e96e54a55f517ac1d1bfe7d82f40ea75a6b refs/remotes/origin/test7\n7799fbd07d6c0d3988d3a6235a43254519fa0cf4 refs/remotes/origin/version1\n2dc6e8e2558806f1091a703896db4efd76ba3159 refs/stash\nf17352cce4f5497c60c1437bdc8cc579b366a148 refs/tags/deployguard-final-freeze",
+    "status": "M .claude/settings.local.json\n D AGENTS.md\n D DESIGN.md\n D DeployGuard_FYP2_Presentation_Data.md\n D TEAMMATE_SETUP.md\n D backend/STRIPE_TESTING.md\n D docs/DeployGuard_Viva_Master_Notes.md\n D docs/DeployGuard_Viva_Master_Notes_v2.html\n D docs/DeployGuard_Viva_Master_Notes_v2.md\n D docs/diagrams/auth-sequence.png\n D docs/diagrams/auth-sequence.svg\n D docs/diagrams/aws-vpc.png\n D docs/diagrams/aws-vpc.svg\n D docs/diagrams/database-overview.png\n D docs/diagrams/database-overview.svg\n D docs/diagrams/deployment-sequence.png\n D docs/diagrams/deployment-sequence.svg\n D docs/diagrams/failure-handling.png\n D docs/diagrams/failure-handling.svg\n D docs/diagrams/module-dependencies.png\n D docs/diagrams/module-dependencies.svg\n D docs/diagrams/overall-architecture.png\n D docs/diagrams/overall-architecture.svg\n D install-vs-code-official.sh\n D presentation_assets/github-actions-rentmate.png\n D presentation_assets/rentmate-infrastructure.png\n D presentation_assets/rentmate-live-app.png\n D presentation_assets/rentmate-monitoring.png\n D presentation_assets/rentmate-overview.png\n D presentation_assets/rentmate-pipeline.png\n D presentation_assets/smart-retail-live-app.png\n D presentation_assets/smart-retail-overview.png\n D presentation_assets/test2-dashboard.png\n?? \"DOC Document.docx\"\n?? \"frontend/.modal-browser-v7Q5aN/chrome/Default/Network Persistent State\"\n?? \"frontend/.modal-browser-v7Q5aN/chrome/Default/SCT Auditing Pending Reports\"\n?? frontend/.modal-browser-v7Q5aN/chrome/Default/Storage/ext/nmmhkkegccagdldgiimedpiccmgmieda/def/.com.google.Chrome.T1Yqhh\n?? frontend/.modal-browser-v7Q5aN/chrome/Default/TransportSecurity",
+    "remote_target": "Deploy-Guard-dev"
+  }
+]

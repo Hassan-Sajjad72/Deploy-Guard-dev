@@ -1,0 +1,96 @@
+# DeployGuard Verified Result
+
+Date: 2026-08-01  
+Scope: Railway transformation through Iteration 8 — multi-user/multi-project local launch acceptance.
+
+## Verdict
+
+**NO-GO — Iteration 8 is complete and locally verified. Iteration 9 final
+evidence remains before a launch verdict may be published.**
+
+This is not a live AWS deployment claim. No Terraform, Docker image, ECR, ECS,
+ALB, Stripe, SNS, or deployment-provider mutation was invoked.
+
+## Iteration 8 completed result
+
+- A disposable authenticated Nest/PostgreSQL fixture proved three developer
+  workspaces with two private projects each. Each session listed only its two
+  owned projects; cross-workspace project and environment requests returned
+  `403`. One stored secret was encrypted at rest, returned only as a mask, and
+  neither plaintext nor ciphertext appeared in HTTP responses.
+- Stack detection passed clean Express and Python cases plus the explicit
+  configuration-required safety cases. The serializable planner proved eight
+  concurrent identical requests create one intent, unchanged source is
+  `no_op`, changed source is `release_only`, and a second project proceeds
+  independently. Real PostgreSQL advisory-lock and BullMQ duplicate/restart
+  delivery checks passed.
+- The managed first-release supervised fixture completed one exact job through
+  real disposable PostgreSQL/Redis and an independent non-cloud worker. It
+  truthfully withheld a stable URL because no provider deployment was executed.
+- The final browser demo used one canonical Overview Deploy command. It created
+  one durable operation, published and consumed one deterministic BullMQ job,
+  rendered Analyze/Build/Prepare/Deploy/Verify and Live, and restored the same
+  stable/latest state across Overview, Deployments, Dashboard and Plan & Usage
+  after refresh. It left one provenance row, three succeeded effects, and zero
+  live leases, owners or claims. Evidence: [local FYP demo](docs/architecture/two-lane-migration/evidence/fyp-local-demo/latest.md).
+- The shared Compose release worker was gracefully restarted only after queues
+  showed zero waiting/active/delayed work and PostgreSQL showed zero live
+  leases/owners/claims. It returned to `NORMAL_V1_RELEASE_CONSUMER_READY`; both
+  infrastructure workers remained healthy.
+- The developer terminology guard covers every routed developer page and the
+  selected-project navigation. Plan & Usage no longer renders Terraform or raw
+  v1 lifecycle wording. Ordinary navigation contains only the six project
+  surfaces and no operator controls.
+
+## Defects corrected during acceptance
+
+- The final demo runner now loads the repository backend environment for
+  Compose interpolation without logging or persisting values.
+- Disposable supervised fixtures explicitly pin canary/non-cloud activation so
+  they cannot inherit shared production authorization settings.
+- The fixture assertions now use the closed developer current-state response;
+  internal evidence checks use the admin-only details route.
+- Authentication middleware now covers the admin current-state details route.
+- Explicit test-only local execution can exercise the real developer UI despite
+  intentionally absent cloud inventory, while that marker is excluded from the
+  developer response and cannot activate outside `NODE_ENV=test` plus both
+  fixture gates.
+- Stale requirements and browser-demo assertions were aligned with the retired
+  Developer Mode/internal-diagnostics contract.
+
+## Verification evidence
+
+Passed backend checks include multi-user PostgreSQL isolation, stack detection,
+deployment requirements, transactional planner PostgreSQL concurrency,
+configuration-lock serialization, real PostgreSQL/Redis concurrency and worker
+restart, managed first-release supervised runtime, normal deployment command
+PostgreSQL identity, developer current-state, operator authorization, shared
+activation, release planning, TypeScript `--noEmit`, and Nest production build.
+
+Passed frontend checks include developer terminology, application surfaces,
+operator segregation, Railway Overview/Deployments, current-state UI, and the
+Vite production build (167 modules). `git diff --check` passes.
+
+Operational read-only evidence: 7 users, 18 active projects, two owners with at
+least two projects, Smart Retail with one stable release, Project-Tst Canary
+with preserved historical releases and one stable release, zero active
+operation leases, zero active cross-lane owners, and zero outbox claims. Both
+normal queues had zero waiting, active, or delayed jobs before and after the
+controlled release-worker restart.
+
+## Evidence classification
+
+- **Isolated:** stack/configuration fixtures, planning/idempotency, first-release
+  non-cloud execution, authorization, projection and terminology contracts.
+- **Local runtime:** real PostgreSQL/Redis, authenticated backend, Vite/headless
+  browser, independent worker, BullMQ delivery, Compose worker health/restart,
+  builds and durable read-only inspection.
+- **Live AWS:** not used; historical Smart Retail and Project-Tst evidence was
+  read only.
+
+## Deferred scope and next iteration
+
+Stripe billing and SNS delivery remain explicitly deferred and disabled. Live
+AWS mutation remains outside this transformation program. Iteration 9 is next:
+consolidate final evidence, require no unresolved P0/P1 launch blocker, and
+publish the precise GO or NO-GO verdict without performing live AWS mutation.

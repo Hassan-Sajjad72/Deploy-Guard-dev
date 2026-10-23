@@ -1,0 +1,51 @@
+import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { useAuth } from "../../hooks/useAuth.js";
+import AppIcon from "../common/AppIcon.jsx";
+
+const primary = [
+  { icon: "dashboard", label: "Dashboard", to: "/dashboard" },
+  { icon: "box", label: "Projects", to: "/projects" },
+  { icon: "cost", label: "Plan & usage", to: "/billing" },
+];
+
+const projectNavigation = [
+  { icon: "dashboard", label: "Overview", path: "" },
+  { icon: "pipeline", label: "Deployments", path: "pipeline" },
+  { icon: "settings", label: "Environment", path: "requirements" },
+  { icon: "logs", label: "Logs", path: "logs" },
+  { icon: "activity", label: "Metrics", path: "observability/metrics" },
+  { icon: "settings", label: "Settings", path: "settings" },
+];
+
+const moduleNavigation = [
+  { icon: "search", label: "Detection", path: "detection" },
+  { icon: "code", label: "Pre-flight", path: "preflight" },
+  { icon: "shield", label: "Security", path: "security" },
+  { icon: "cost", label: "Cost & FinOps", path: "costs" },
+  { icon: "infrastructure", label: "Infrastructure", path: "infrastructure" },
+  { icon: "state", label: "Terraform State", path: "state" },
+  { icon: "storage", label: "Storage", path: "storage" },
+  { icon: "deploy", label: "Orchestration", path: "orchestration" },
+  { icon: "activity", label: "Runtime", path: "observability" },
+  { icon: "deploy", label: "Releases", path: "orchestration/releases" },
+  { icon: "logs", label: "Application Logs", path: "observability/logs" },
+  { icon: "activity", label: "Metrics", path: "observability/metrics" },
+];
+
+function ProjectLinks({ links, projectId }) {
+  return links.map((link) => { const to = link.path ? `/projects/${projectId}/${link.path}` : `/projects/${projectId}`; return <NavLink className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} end={!link.path} key={link.label} to={to}><AppIcon name={link.icon} size={17} />{link.label}</NavLink>; });
+}
+
+export default function Sidebar() {
+  const { logout, user } = useAuth();
+  const { projectId } = useParams();
+  const navigate = useNavigate();
+  async function handleLogout() { await logout().catch(() => undefined); navigate("/", { replace: true }); }
+  return <aside className="sidebar">
+    <div className="sidebar-brand-row"><div className="brand"><span className="brand-mark"><span /></span><span>DeployGuard<small>Deployment platform</small></span></div></div>
+    <nav aria-label="Main navigation" className="sidebar-primary-nav">{primary.map((link) => <NavLink className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} key={link.to} to={link.to}><AppIcon name={link.icon} size={17} />{link.label}</NavLink>)}</nav>
+    {user?.role === "admin" ? <div className="sidebar-section"><p className="sidebar-label">Admin</p><nav aria-label="Admin navigation"><NavLink className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} to="/activity"><AppIcon name="logs" size={17} />Activity Log</NavLink><NavLink className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} to="/admin/cloud-cleanup"><AppIcon name="infrastructure" size={17} />Cloud Cleanup</NavLink></nav></div> : null}
+    {projectId ? <div className="sidebar-section"><p className="sidebar-label">Selected project</p><nav aria-label="Project navigation"><ProjectLinks links={projectNavigation} projectId={projectId} />{user?.role === "admin" ? <details className="sidebar-advanced-nav"><summary>Operator modules</summary><div><ProjectLinks links={moduleNavigation} projectId={projectId} /></div></details> : null}</nav></div> : null}
+    <div className="sidebar-footer"><div className="sidebar-account">{user?.avatarUrl ? <img alt="" className="user-avatar" src={user.avatarUrl} /> : <span className="user-avatar">{String(user?.name || user?.email || "U").charAt(0).toUpperCase()}</span>}<span><strong>{user?.githubLogin ? `@${user.githubLogin}` : user?.name || user?.email || "User"}</strong><small>{user?.githubId || user?.githubLogin ? "GitHub account" : "Email account"}</small></span></div><button className="sidebar-logout-button" onClick={handleLogout} type="button"><AppIcon name="arrow" size={15} />Logout</button></div>
+  </aside>;
+}

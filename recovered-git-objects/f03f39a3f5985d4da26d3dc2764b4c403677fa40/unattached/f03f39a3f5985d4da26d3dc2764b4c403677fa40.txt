@@ -1,0 +1,114 @@
+# DeployGuard Verified Result
+
+Date: 2026-08-01  
+Scope: Railway transformation Iteration 0 alignment and baseline. No application
+source change, deployment publication, or AWS mutation was authorized.
+
+## Verdict
+
+**NO-GO — the protected shared normal-v1 engine is locally healthy, but the
+Railway-like developer product contract is not yet implemented end to end.**
+
+This supersedes the former broad GO wording. Shared-worker readiness is a verified
+foundation, not a launch verdict. Current developer pages still expose internal
+Terraform approval/details and the canonical response does not yet implement the
+required sanitized `developerState`/`developerAction` contract.
+
+## Authoritative baseline
+
+- Product intent is now controlled solely by `RAILWAY_PRODUCT_CONTRACT.md`.
+- `REMAINING_WORK.md` is the sole active implementation queue.
+- Older reports, trackers, proposals, audits, and PDFs are historical/reference
+  evidence and do not override verified code or protected safety invariants.
+- Application source was unchanged during Iteration 0; the pre/post application
+  tree SHA-256 is recorded in verification evidence below.
+
+## Repository and schema evidence
+
+- Backend exposes the authoritative project current-state boundary and immutable
+  normal-v1 planning/execution records, but its types currently contain generic
+  module/status/action shapes rather than the finished Railway developer contract.
+- The frontend selected-project navigation already has the required six top-level
+  developer destinations: Overview, Deployments, Environment, Logs, Metrics, and
+  Settings. Operator modules are separately nested for admins.
+- Source inspection found ordinary developer render paths that still expose
+  “Developer details” and Terraform apply confirmation; the Deployments page can
+  still read legacy pipeline history when no v1 operation is projected.
+- PostgreSQL baseline: 60 applied migrations (latest `1760000059000`), 80
+  application tables, 7 users, 18 projects, 20 deployment intents, 8
+  infrastructure manifests, and 9 release manifests at observation time.
+
+## Runtime evidence
+
+| Component | Verified local state |
+|---|---|
+| PostgreSQL | running on repository local runtime |
+| Redis | Redis 7.4.9 running; queue state inspected read-only |
+| Backend | listening on port 5000; unauthenticated API correctly returns 401 |
+| Frontend | listening on port 5173 and returns 200 |
+| normal-v1 release worker | shared `dev`, Docker healthy, `ready=true` |
+| infrastructure-plan worker | shared `dev`, Docker healthy and live; last result terminal, `ready=false`, `REMOTE_CANARY_PLAN_NOT_ALLOWED` |
+| infrastructure-apply worker | shared `dev`, Docker healthy, `ready=true` |
+
+Exactly three live capability rows were present, one per worker role/message
+contract, with runtime metadata and no project UUID binding. Active operation
+leases, cross-lane ownership rows, and claimed outboxes were `0 / 0 / 0` after
+verification. Both production BullMQ queues reported zero active, waiting,
+paused, waiting-child, delayed, and prioritized jobs. Existing historical Redis
+keys and pending/published/dead-letter database history were preserved.
+
+An independently initiated disposable Express project appeared during the
+read-only baseline. Its infrastructure intent failed at the remote-canary guard
+with `REMOTE_CANARY_PLAN_NOT_ALLOWED`; one historical publication and one failure
+journal exist, with no active lease, owner, or claim. Its terminal health result
+explains the plan worker's current `ready=false` state while the process and live
+capability heartbeat continue. Iteration 0 neither initiated nor retried it, and
+it is not evidence of AWS success.
+
+## Focused verification evidence
+
+Passed backend contract checks:
+
+- stack detection (14 JavaScript/Python framework fixtures);
+- Docker-template and deployability-preflight checks;
+- shared normal-v1 activation;
+- later- and first-release planning;
+- normal-v1 current-state;
+- real PostgreSQL transactional planning and plan continuation;
+- real PostgreSQL/Redis exact outbox dispatch and consumer integration;
+- backend TypeScript no-emit and production build.
+
+Passed frontend checks:
+
+- normal release-lane action behavior;
+- normal release view;
+- authoritative current-state projection;
+- production Vite build.
+
+`test:legacy-retirement-ui` is not a declared frontend command; that attempted
+baseline command failed as a missing script rather than an application test
+failure. The repository instead declares focused normal-release, current-state,
+recovery, and recency UI checks. This test-inventory gap is evidence for the next
+exposure audit, not a fabricated pass.
+
+The application-tree digest before documentation changes was:
+`37e2ed47cf6d991af31e2b683c0705f7744b14224dfa28098fc50036694a5855`.
+
+## Evidence classification
+
+- **Isolated:** detection/templates/preflight, activation policy, planning,
+  current-state mapping, and UI projection contracts.
+- **Local:** real PostgreSQL and Redis/BullMQ, deterministic exact dispatch,
+  consumer/ownership boundaries, worker Docker health, ports, TypeScript, and
+  production builds.
+- **Live AWS:** not used for Iteration 0. No live deployment, Terraform apply,
+  image publication, ECS/ALB mutation, rollback, cleanup, or AWS success claim.
+
+## Genuine limitations at this verdict
+
+The developer/operator exposure inventory is not yet object-complete; the
+sanitized developer projection, automatic first-deployment continuation,
+existing-state classification, Railway-like pages, backend authorization
+segregation, and multi-user launch acceptance remain unverified. Candidate stack
+adapters have focused detector/template evidence but are not launch-certified
+until the complete normal-v1 local acceptance path passes.

@@ -1,0 +1,44 @@
+import { strict as assert } from "node:assert";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+void (async () => {
+  const root = process.cwd();
+  const source = await readFile(join(root, "src/orchestration-contracts/infrastructure/v1-infrastructure-manifest-apply.service.ts"), "utf8");
+  const planner = await readFile(join(root, "src/orchestration-contracts/infrastructure/v1-infrastructure-manifest-plan.service.ts"), "utf8");
+  const runner = await readFile(join(root, "scripts/run-v1-infrastructure-canary-apply.ts"), "utf8");
+
+  assert.match(source, /TWO_LANE_CANARY_APPLY_ENABLED/);
+  assert.match(source, /TWO_LANE_CANARY_APPLY_REVISION/);
+  assert.match(source, /TWO_LANE_CANARY_EXPECTED_AWS_ACCOUNT/);
+  assert.doesNotMatch(source, /manifest\.revision !== "3"/);
+  assert.match(source, /manifest\.status !== "planned"/);
+  assert.match(source, /CANARY_APPLY_PLAN_HASH_MISMATCH/);
+  assert.match(source, /CANARY_APPLY_BACKEND_SCOPE_MISMATCH/);
+  assert.match(source, /CANARY_APPLY_OFFLINE_PROVIDER_PLAN/);
+  assert.match(source, /create <= 0 \|\| update !== 0 \|\| replace !== 0 \|\| remove !== 0/);
+  assert.match(source, /managedDatabase && databaseTypes\.some/);
+  assert.match(source, /aws_ecs_task_definition/);
+  assert.match(source, /aws_ecs_service/);
+  assert.match(source, /runTerraformApply\(workspace, \{\}, "tfplan"\)/);
+  assert.match(source, /runTerraformShowStateJson/);
+  assert.match(source, /item\.mode === "managed"/);
+  assert.match(source, /status = "applying"/);
+  assert.match(source, /status = "applied"/);
+  assert.match(source, /status = "manual_review"/);
+  assert.match(source, /TERRAFORM_APPLY_OUTCOME_UNCERTAIN/);
+  assert.doesNotMatch(source, /persistFailed/);
+  assert.match(source, /InactiveReleaseLaneOwnershipService/);
+  assert.match(source, /ownership\.renew/);
+  assert.match(source, /ownership\.release/);
+  assert.doesNotMatch(source, /runTerraformPlan\(/);
+  assert.doesNotMatch(source, /runTerraformDestroy\(/);
+  assert.doesNotMatch(source, /ReleaseManifest|BullMQ|ECR.*push|RegisterTaskDefinition|CreateService/);
+  assert.match(runner, /CANARY_APPLY_CONFIGURATION_INVALID/);
+  assert.doesNotMatch(runner, /NestFactory|consumer|publish/);
+  assert.match(planner, /offline_plan_mode: manifest\.stateBackend === "local_mock"/);
+  process.stdout.write("v1 infrastructure manifest apply safety verification passed\n");
+})().catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.message : "verification failed"}\n`);
+  process.exitCode = 1;
+});

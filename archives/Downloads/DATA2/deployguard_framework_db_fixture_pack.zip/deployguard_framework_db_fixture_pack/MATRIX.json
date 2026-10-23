@@ -1,0 +1,272 @@
+[
+  {
+    "folder": "01_python/01_flask_postgres",
+    "language": "Python",
+    "framework": "Flask",
+    "variant": "direct app",
+    "database": "PostgreSQL",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "01_python/02_flask_factory_mongodb",
+    "language": "Python",
+    "framework": "Flask",
+    "variant": "application factory",
+    "database": "MongoDB",
+    "shape": "nested backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "01_python/03_fastapi_mysql",
+    "language": "Python",
+    "framework": "FastAPI",
+    "variant": "direct app",
+    "database": "MySQL",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "01_python/04_fastapi_nested_postgres",
+    "language": "Python",
+    "framework": "FastAPI",
+    "variant": "nested module",
+    "database": "PostgreSQL",
+    "shape": "nested backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "01_python/05_django_wsgi_postgres",
+    "language": "Python",
+    "framework": "Django",
+    "variant": "WSGI",
+    "database": "PostgreSQL",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "01_python/06_django_asgi_mysql",
+    "language": "Python",
+    "framework": "Django",
+    "variant": "ASGI",
+    "database": "MySQL",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "01_python/07_streamlit_mongodb",
+    "language": "Python",
+    "framework": "Streamlit",
+    "variant": "standard",
+    "database": "MongoDB",
+    "shape": "single runtime",
+    "health": "/_stcore/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/01_express_js_postgres",
+    "language": "JavaScript",
+    "framework": "Express",
+    "variant": "JavaScript",
+    "database": "PostgreSQL",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/02_express_ts_mongodb",
+    "language": "TypeScript",
+    "framework": "Express",
+    "variant": "TypeScript",
+    "database": "MongoDB",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/03_fastify_js_mysql",
+    "language": "JavaScript",
+    "framework": "Fastify",
+    "variant": "JavaScript",
+    "database": "MySQL",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/04_fastify_ts_postgres",
+    "language": "TypeScript",
+    "framework": "Fastify",
+    "variant": "TypeScript",
+    "database": "PostgreSQL",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/05_nestjs_mongodb",
+    "language": "TypeScript",
+    "framework": "NestJS",
+    "variant": "standard",
+    "database": "MongoDB",
+    "shape": "single backend",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/06_vite_react_express_postgres",
+    "language": "JavaScript",
+    "framework": "Vite React + Express",
+    "variant": "full-stack",
+    "database": "PostgreSQL",
+    "shape": "frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/07_vite_vue_fastify_mysql",
+    "language": "JavaScript",
+    "framework": "Vite Vue + Fastify",
+    "variant": "full-stack",
+    "database": "MySQL",
+    "shape": "frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/08_angular_express_mongodb",
+    "language": "TypeScript",
+    "framework": "Angular + Express",
+    "variant": "full-stack",
+    "database": "MongoDB",
+    "shape": "frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/09_cra_express_postgres",
+    "language": "JavaScript",
+    "framework": "Create React App + Express",
+    "variant": "full-stack",
+    "database": "PostgreSQL",
+    "shape": "frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/10_webpack_react_fastify_mongodb",
+    "language": "JavaScript",
+    "framework": "Webpack React + Fastify",
+    "variant": "full-stack",
+    "database": "MongoDB",
+    "shape": "frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/11_next_ssr_postgres",
+    "language": "JavaScript",
+    "framework": "Next.js",
+    "variant": "SSR",
+    "database": "PostgreSQL",
+    "shape": "single SSR app",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/12_next_standalone_mongodb",
+    "language": "JavaScript",
+    "framework": "Next.js",
+    "variant": "standalone",
+    "database": "MongoDB",
+    "shape": "single SSR app",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/13_next_static_express_mysql",
+    "language": "JavaScript",
+    "framework": "Next.js + Express",
+    "variant": "static export",
+    "database": "MySQL",
+    "shape": "static frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/14_nuxt_ssr_postgres",
+    "language": "TypeScript",
+    "framework": "Nuxt",
+    "variant": "SSR",
+    "database": "PostgreSQL",
+    "shape": "single SSR app",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/15_nuxt_static_fastify_mongodb",
+    "language": "TypeScript",
+    "framework": "Nuxt + Fastify",
+    "variant": "static",
+    "database": "MongoDB",
+    "shape": "static frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/16_sveltekit_node_mysql",
+    "language": "JavaScript",
+    "framework": "SvelteKit",
+    "variant": "adapter-node",
+    "database": "MySQL",
+    "shape": "single SSR app",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/17_sveltekit_static_express_postgres",
+    "language": "JavaScript",
+    "framework": "SvelteKit + Express",
+    "variant": "adapter-static",
+    "database": "PostgreSQL",
+    "shape": "static frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/18_astro_node_mongodb",
+    "language": "JavaScript",
+    "framework": "Astro",
+    "variant": "Node",
+    "database": "MongoDB",
+    "shape": "single SSR app",
+    "health": "/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/19_astro_static_fastify_mysql",
+    "language": "JavaScript",
+    "framework": "Astro + Fastify",
+    "variant": "static",
+    "database": "MySQL",
+    "shape": "static frontend + backend",
+    "health": "/api/health",
+    "port": 3000
+  },
+  {
+    "folder": "02_javascript/20_remix_node_postgres",
+    "language": "JavaScript",
+    "framework": "Remix",
+    "variant": "Node",
+    "database": "PostgreSQL",
+    "shape": "single SSR app",
+    "health": "/health",
+    "port": 3000
+  }
+]

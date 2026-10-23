@@ -1,0 +1,129 @@
+# DeployGuard Active Implementation Queue
+
+Status: Iteration 0 baseline, 2026-08-01  
+Authority: this is the sole active queue. The intended product is defined only by
+`RAILWAY_PRODUCT_CONTRACT.md`; other trackers/reports are historical evidence.
+
+## Protected baseline — do not redesign
+
+Shared normal-v1 release, infrastructure-plan, and infrastructure-apply workers;
+shared/canary activation; immutable intents/manifests; deterministic outbox and
+BullMQ identities; advisory ownership; leases/fencing/heartbeat; journals;
+bounded reconciliation; isolation; stable/latest separation; unchanged-source
+`NO_OP`; and truthful durable history are verified foundations.
+
+The local baseline has three running Docker-healthy shared `dev` worker roles and
+exactly three live capability rows with role/runtime metadata and no project
+binding. Release and apply report `ready=true`; plan remains live but reports the
+truthful terminal result of an independently initiated rejected job and therefore
+`ready=false`. Active operation leases, cross-lane owners, and outbox claims are
+zero. PostgreSQL, Redis, backend, and frontend are live. Stripe and SNS remain
+disabled, deferred non-blocking productization scope.
+
+## P0 launch blockers
+
+### Iteration 1 — developer/operator exposure audit
+
+- Inventory every frontend page, route, navigation item, button, and API call.
+- Inventory every developer-visible current-state field, action, and safe code.
+- Classify each object as developer, operator/admin, deprecated, or unsupported.
+- Record exact file-level Iteration 2–7 implementation tasks here.
+
+Known evidence to resolve in that audit:
+
+- `ProjectDetails.jsx` and `ProjectPipeline.jsx` still request Terraform apply
+  confirmation and expose internal “Developer details.”
+- `ProjectPipeline.jsx` can still fall back to legacy `ProjectPipelineRun` reads
+  when no v1 operation is projected.
+- detailed components still contain Terraform, recovery, cleanup, residue, and
+  inventory terminology; backend authorization and render reachability require
+  object-by-object classification.
+- the canonical current-state response has generic module/action types but no
+  authoritative `developerState`/`developerAction` contract.
+- worker health presentation must distinguish process readiness from a truthful
+  terminal job result without leaking the raw platform safe code to developers.
+
+### Iteration 2 — canonical sanitized developer projection
+
+- Implement the exact Railway developer projection in the product contract.
+- Make minimum developer pages consume it without reconstructing platform state.
+- Keep detailed internal evidence behind backend-authorized operator/admin scope.
+- Add focused authorization, sanitization, consistency, and stable-URL tests.
+
+### Iteration 3 — automatic first-deployment orchestration and cost policy
+
+- Connect one developer Deploy action to existing exact normal-v1 boundaries.
+- Automatically continue plan → cost policy → apply → first release when safe.
+- Preserve immutable identity, exact dispatch, refresh safety, deduplication, and
+  release-only source changes.
+- Expose only authorized workspace-owner cost approval; keep Terraform approval
+  operator-only.
+
+### Iteration 4 — existing-state adoption and reconciliation
+
+- Implement operator-only valid/adoptable/recoverable/safe-residue/ambiguous
+  classification.
+- Preserve Project-Tst and other truthful history/resources.
+- Remove cleanup/inventory internals from developer responses and project valid
+  existing stable deployments as normal Redeploy state.
+
+### Iteration 5 — Railway-like Overview and Deployments
+
+- Replace operator-oriented developer presentation with one Deploy/Redeploy flow,
+  simple progress, cost, logs, latest/stable separation, and verified URL.
+- Remove prohibited Terraform/AWS/queue/worker/cleanup/recovery terminology and
+  raw codes from ordinary developer render paths.
+
+## P1 launch blockers
+
+### Iteration 6 — operator/admin segregation
+
+- Move cloud, infrastructure, recovery, cleanup, and diagnostics to protected
+  operator/admin routes and enforce backend authorization.
+- Remove dead/retired developer mutations without weakening operator capability.
+
+### Iteration 7 — Environment, Logs, Metrics, and Settings
+
+- Use canonical project/operation identity across all minimum pages.
+- Provide simple masked environment management and application-focused logs and
+  metrics; remove legacy status inconsistencies.
+
+### Iteration 8 — local launch acceptance
+
+- Run the product-contract matrix with real PostgreSQL, Redis, backend, frontend,
+  and shared Docker workers across multiple users/workspaces/projects.
+- Include clean Express/Python, required configuration, Smart Retail stable state,
+  Project-Tst history, `NO_OP`, release-only changes, first deployment,
+  concurrency/serialization, duplicate click, refresh, restart, isolation, secret
+  safety, stable/latest separation, and residue cleanup checks.
+- Certify only stacks that pass the complete adapter path.
+
+### Iteration 9 — final evidence
+
+- Require no unresolved P0/P1 launch blocker.
+- Consolidate evidence and a precise GO/NO-GO in `FINAL_RESULT.md` without creating
+  another queue or completion percentage.
+
+## Iteration 0 observations
+
+- The shared engine baseline is locally healthy, but it is not by itself a
+  Railway-like product launch verdict.
+- During read-only observation an independently initiated disposable Express
+  project produced one infrastructure intent that failed safely with
+  `REMOTE_CANARY_PLAN_NOT_ALLOWED`; its outbox was historically published once,
+  one failure journal exists, and no active lease/owner/claim remains. The plan
+  worker process/capability remains live and Docker-healthy, while its sanitized
+  status is terminal and not ready. Iteration 0 did not create, retry, clean, or
+  mutate that evidence.
+- Production release and infrastructure BullMQ queues have zero active, waiting,
+  paused, waiting-child, delayed, or prioritized jobs. Historical job keys were
+  preserved rather than treated as active residue.
+- Full adapter acceptance for the seven candidate stacks remains unproven; the
+  product contract therefore labels them candidates rather than launch-supported.
+
+## Deferred, non-blocking scope
+
+Stripe billing provider delivery, SNS notification delivery, broader optional
+security/provider integrations, and live AWS deployment mutation are outside this
+transformation's P0/P1 local launch acceptance. Their gates remain disabled and
+their absence must not be represented as product evidence.

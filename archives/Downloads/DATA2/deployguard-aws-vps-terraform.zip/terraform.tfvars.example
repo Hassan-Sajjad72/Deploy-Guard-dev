@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and replace the three values below.
+
+aws_region = "us-east-1"
+
+# YOUR current public IP, not the EC2 IP.
+admin_cidr = "YOUR_PUBLIC_IP/32"
+
+# Example:
+apps_domain = "apps.example.com"
+acme_email  = "you@example.com"
+
+# Selected for this FYP:
+instance_type  = "t3a.medium"
+root_volume_gib = 30

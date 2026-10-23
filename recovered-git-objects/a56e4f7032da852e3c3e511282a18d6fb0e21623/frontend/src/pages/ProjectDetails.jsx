@@ -1,0 +1,124 @@
+import { useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { dispatchNormalReleaseLane, generatePreflightReport, getProject, getProjectCurrentState, prepareNormalReleaseLane, runStackDetection } from "../api/projectApi.js";
+import AppIcon from "../components/common/AppIcon.jsx";
+import ErrorState from "../components/common/ErrorState.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
+import { CollapsiblePanel, StatusBadge } from "../components/common/Premium.jsx";
+import { useToast } from "../hooks/useToast.js";
+import DeploymentRecoveryCard from "../components/projects/DeploymentRecoveryCard.jsx";
+import ReleaseLaneDeveloperDetails from "../components/projects/ReleaseLaneDeveloperDetails.jsx";
+import ReleaseLaneStableSummary from "../components/projects/ReleaseLaneStableSummary.jsx";
+import NormalReleaseOperationPanel from "../components/projects/NormalReleaseOperationPanel.jsx";
+import { useAuth } from "../hooks/useAuth.js";
+import { releaseLaneBlocksStart } from "../utils/releaseLaneStart.js";
+
+function statusLabel(state) {
+  if (state.releaseLane?.intent?.operation?.terminalResult === "live") return "live";
+  if (state.releaseLane?.intent?.operation?.terminalResult === "failed") return "failed";
+  if (["queued", "running", "reconciling"].includes(state.releaseLane?.state)) return "deploying";
+  if (state.releaseLane?.state === "prepared") return "prepared";
+  if (state.lifecycleStatus === "approval_required") return "approval required";
+  if (state.currentRunState?.status === "paused") return "approval required";
+  if (state.currentRunState?.status === "running") return "deploying";
+  if (state.currentRunState?.status === "failed") return "run failed";
+  return String(state.deploymentStatus || "unknown").replaceAll("_", " ");
+}
+function date(value) { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—"; }
+function human(value) { return String(value || "unknown").replaceAll("_", " "); }
+function releaseLaneMessage(releaseLane) {
+  if (releaseLane?.state === "prepared") return releaseLane?.intent?.firstRelease ? "First release foundation prepared; infrastructure execution is not enabled." : "Release prepared; execution is not enabled.";
+  if (releaseLane?.state === "queued") return "Release prepared and queued for controlled execution.";
+  if (releaseLane?.state === "running") return "Release execution is in progress.";
+  if (releaseLane?.state === "reconciling") return "Release outcome is being reconciled safely.";
+  if (releaseLane?.state === "completed") return "Release intent completed.";
+  if (releaseLane?.state === "cancelled") return "Prepared release was cancelled.";
+  if (releaseLane?.state === "blocked") return "Prepared release requires review before execution.";
+  return "";
+}
+
+export default function ProjectDetails() {
+  const { projectId } = useParams();
+  const navigate = useNavigate();
+  const { notify } = useToast();
+  const { role } = useAuth();
+  const [project, setProject] = useState(null);
+  const [state, setState] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const releaseLaneStartInFlight = useRef(false);
+  async function load() { try { const [p, s] = await Promise.all([getProject(projectId), getProjectCurrentState(projectId)]); setProject(p.project); setState(s); setError(""); } catch (caught) { setError(caught.message); } }
+  useEffect(() => { load(); }, [projectId]);
+  useEffect(() => { if (!state?.isDeploymentJobActive && !["queued", "running", "reconciling"].includes(state?.releaseLane?.state)) return undefined; const timer = window.setInterval(load, 5000); return () => window.clearInterval(timer); }, [state?.isDeploymentJobActive, state?.releaseLane?.state, projectId]);
+
+  async function executeNextAction() {
+    const action = state.nextAction; if (!action?.enabled) return;
+    const isNormalReleaseStart = action.type === "start_pipeline";
+    if (isNormalReleaseStart && releaseLaneStartInFlight.current) return;
+    if (isNormalReleaseStart) releaseLaneStartInFlight.current = true;
+    setBusy(true); setError("");
+    let releaseQueued = false;
+    try {
+      if (action.type === "run_stack_detection") await runStackDetection(projectId);
+      else if (action.type === "generate_preflight") await generatePreflightReport(projectId);
+      else if (action.type === "start_pipeline") {
+        if (releaseLaneBlocksStart(state)) {
+          await load();
+          notify(releaseLaneMessage(state.releaseLane) || "Release state restored.", "success");
+          return;
+        }
+        const response = await prepareNormalReleaseLane(projectId);
+        const releaseLane = response?.releaseLane;
+        if (releaseLane?.state === "prepared") {
+          if (releaseLane?.firstRelease) {
+            await load();
+            notify("First release foundation prepared; infrastructure execution is not enabled.", "success");
+            return;
+          }
+          const dispatched = await dispatchNormalReleaseLane(projectId);
+          if (dispatched?.releaseLane?.state !== "dispatched") {
+            throw new Error(dispatched?.releaseLane?.safeCodes?.[0] || "Release dispatch is blocked.");
+          }
+          releaseQueued = true;
+        } else {
+          throw new Error(releaseLane?.safeCodes?.[0] || "Release preparation is blocked.");
+        }
+      }
+      else { navigate(action.href || `/projects/${projectId}/pipeline`); return; }
+      await load(); notify(releaseQueued ? "Release prepared and queued for controlled execution." : `${action.label} completed or started.`, "success");
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      if (isNormalReleaseStart) releaseLaneStartInFlight.current = false;
+      setBusy(false);
+    }
+  }
+
+  if (!project || !state) return error ? <ErrorState message={error} /> : <LoadingState message="Loading project overview…" />;
+  const currentRecoveryIssue = state.currentRecoveryIssue || state.recoveryIssue;
+  const currentRunSupersedesHistoricalHealth = Boolean(state.currentRunState && ["running", "paused", "inactive"].includes(state.currentRunState.status));
+  const needsAttention = Boolean(currentRecoveryIssue) || ["failed", "blocked"].includes(state.overallStatus);
+  const showRecovery = Boolean(currentRecoveryIssue);
+  const progress = state.progressPercentage ?? state.progress?.percentage ?? 0;
+  const liveVerificationFailed = !currentRunSupersedesHistoricalHealth && state.infrastructureProvisioned && !state.appLiveVerified && ["unhealthy", "stale_live_record"].includes(state.deploymentStatus);
+  const visualProgress = liveVerificationFailed && progress >= 100 ? 92 : progress;
+  const stack = [state.stackDetection?.language, state.stackDetection?.framework].filter(Boolean).join(" · ") || "Not detected";
+  const releaseOperation = state.releaseLane?.intent?.operation;
+  const overviewActionAllowed = ["run_stack_detection", "generate_preflight", "start_pipeline"].includes(state.nextAction?.type);
+  const canStartNormalRelease = ["admin", "developer"].includes(role)
+    && state.nextAction?.type === "start_pipeline"
+    && state.nextAction?.enabled
+    && !showRecovery
+    && !releaseLaneBlocksStart(state);
+  return <div className="workspace-page project-home-page">
+    <header className="project-page-header"><div className="project-title-lockup"><span className="project-glyph project-glyph-large"><AppIcon name="box" size={21} /></span><div><div className="project-title-row"><h1>{project.name}</h1><StatusBadge status={state.lifecycleStatus || state.currentRunState?.status || state.deploymentStatus || "unknown"}>{statusLabel(state)}</StatusBadge></div><p><AppIcon name="github" size={14} />{project.repositoryFullName}<span>·</span><AppIcon name="branch" size={14} />{project.targetBranch}</p>{project.description ? <p className="project-description">{project.description}</p> : null}</div></div></header>
+    {error ? <ErrorState message={error} /> : null}
+    {releaseLaneMessage(state.releaseLane) ? <section className="state muted" role="status">{releaseLaneMessage(state.releaseLane)}</section> : null}
+    {(!state.environmentModes?.trivyScanEnabled || state.environmentModes?.securityGateMode === "bypass") && state.environmentModes?.finopsMockMode ? <section className="state warning"><strong>Demo deployment mode active:</strong> security and cost gates are not blocking.</section> : null}
+    <section className="project-trust-grid" aria-label="Authoritative project status"><article><span>Current run</span><strong>{human(state.currentRunState?.status || state.latestPipelineStatus)}</strong></article><article><span>Health</span><strong>{state.previousDeploymentIssue && currentRunSupersedesHistoricalHealth ? "Pending re-evaluation" : human(state.healthStatus)}</strong></article><article><span>Resources</span><strong>{human(state.resourceStatus)}</strong></article><article><span>Next action</span><strong>{state.nextAction?.label || human(state.cloudNextAction)}</strong></article></section>
+    <div className="project-control-layout"><main className="project-control-main">{releaseOperation ? <NormalReleaseOperationPanel busy={busy} canStart={canStartNormalRelease} onStart={executeNextAction} releaseLane={state.releaseLane} startLabel={state.nextAction?.label} /> : <section className={`deployment-canvas panel-flat ${needsAttention ? "deployment-canvas-failed" : ""}`}><div className="deployment-canvas-header"><div><p className="eyebrow">Current run</p><div className="deployment-stage-title"><span className={state.isDeploymentJobActive ? "active-stage-beacon" : ""} /><h2>{state.currentStepLabel}</h2></div><p>{liveVerificationFailed ? "Infrastructure provisioned, but app live verification failed." : state.statusExplanation || state.userFacingStatus}</p></div><div className="deployment-progress-value"><strong>{liveVerificationFailed ? "Infra ready" : `${progress}%`}</strong><span>{statusLabel(state)}</span></div></div><div className="deployment-progress-track"><span style={{ width: `${visualProgress}%` }} /></div><dl className="deployment-run-summary"><div><dt title="Identifies one pipeline or deployment execution.">Run ID</dt><dd title={state.runId || undefined}>{state.runId || "Not started"}</dd></div><div><dt>Started</dt><dd>{date(state.latestPipeline?.startedAt)}</dd></div><div><dt>Cloud verified</dt><dd>{date(state.lastCloudVerifiedAt)}</dd></div><div><dt>Stack</dt><dd>{stack}</dd></div></dl><div className="simple-primary-actions">{!showRecovery && state.nextAction?.enabled && overviewActionAllowed ? <button className="button" disabled={busy} onClick={executeNextAction} type="button">{busy ? "Working…" : state.nextAction.label}</button> : null}</div></section>}
+      {showRecovery && currentRecoveryIssue ? <DeploymentRecoveryCard issue={currentRecoveryIssue} projectId={projectId} readOnly /> : null}
+      {state.previousDeploymentIssue && currentRunSupersedesHistoricalHealth ? <section className="panel-flat historical-deployment-context"><p className="eyebrow">Previous deployment</p><h2>{state.previousDeploymentIssue.title}</h2><p>{state.previousDeploymentIssue.message}</p><small>Detected path: {state.deploymentContract?.healthPath || state.previousDeploymentIssue.healthPath || "Not detected"}</small></section> : null}
+    </main><aside className="project-control-aside"><ReleaseLaneStableSummary releaseLane={state.releaseLane} />{!state.releaseLane?.stableRelease && state.existingStableDeployment?.url ? <section className="project-live-card panel-flat"><div className="live-card-status"><span /><strong>Existing deployment</strong></div><h2>Previous stable URL</h2><p>{state.existingStableDeployment.url}</p><small>Run {state.existingStableDeployment.pipelineRunId?.slice(0, 8) || "unknown"} · separate from the current run</small><a className="secondary-button" href={state.existingStableDeployment.url} rel="noreferrer" target="_blank">Open existing deployment</a></section> : !state.releaseLane?.stableRelease && state.liveDeployment?.available ? <section className="project-live-card panel-flat"><div className="live-card-status"><span /><strong>Live · verified</strong></div><h2>Deployment URL</h2><p>{state.liveDeployment.hostname}</p><a className="secondary-button" href={state.liveDeployment.url} rel="noreferrer" target="_blank">Open deployment</a></section> : !state.releaseLane?.stableRelease && state.liveDeployment?.stale ? <section className="panel-flat stale-deployment-card"><p className="eyebrow">Deployment URL stale</p><h2>Open deployment disabled</h2><p>The stored URL could not be verified. Refresh cloud state or redeploy.</p><button className="secondary-button" disabled type="button">Deployment URL stale</button></section> : null}<CollapsiblePanel summary="Developer details"><dl className="developer-detail-grid">{state.liveDeployment?.historicalHostname ? <div><dt>Historical URL</dt><dd>{state.liveDeployment.historicalHostname} · stale historical URL</dd></div> : null}<div><dt>External CI</dt><dd>{state.environmentModes?.githubActionsRequired ? "Required" : "Optional"}</dd></div><div><dt>Trivy</dt><dd>{state.environmentModes?.trivyScanEnabled ? state.environmentModes?.securityGateMode === "bypass" ? "Advisory only" : "Enabled" : "Bypassed"}</dd></div><div><dt>FinOps integration</dt><dd>{state.environmentModes?.finopsMockMode ? "Mock / API disabled" : "Infracost enabled"}</dd></div><div><dt>AI assistant</dt><dd>{state.environmentModes?.aiAssistantEnabled ? "Enabled" : "Disabled"}</dd></div></dl>{["admin", "developer"].includes(role) ? <ReleaseLaneDeveloperDetails releaseLane={state.releaseLane} /> : null}</CollapsiblePanel></aside></div>
+  </div>;
+}

@@ -1,0 +1,275 @@
+import { Inject, Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { hostname } from "os";
+import { randomUUID } from "crypto";
+import { DataSource, EntityManager } from "typeorm";
+import { validateWorkerEnvelopeV1, workerEnvelopeJobId } from "../contracts/worker-envelope.validator";
+import { DeployGuardWorkerEnvelopeV1 } from "../contracts/worker-envelope.types";
+import { assertFrozenQueueRouting, outboxRetryDelayMs, workerRoleForMessageType } from "./outbox-dispatcher.pure";
+import {
+  OUTBOX_JOB_PUBLISHER,
+  OutboxDeliveryClaimV1,
+  OutboxDispatchResultV1,
+  OutboxJobPublisher,
+} from "./outbox-dispatcher.types";
+
+type CandidateRow = {
+  id: string;
+  intentId: string;
+  workerEnvelope: DeployGuardWorkerEnvelopeV1;
+  status: string;
+};
+
+type ClaimRow = {
+  id: string;
+  intentId: string;
+  workerEnvelope: DeployGuardWorkerEnvelopeV1;
+  claimFencingToken: string;
+  attemptCount: number;
+  claimExpiresAt: Date;
+};
+
+@Injectable()
+export class DurableOutboxDispatcherService {
+  readonly dispatcherId: string;
+  private readonly leaseMs: number;
+  private readonly capabilityRetryMs: number;
+  private readonly retryBaseMs: number;
+  private readonly retryMaximumMs: number;
+
+  constructor(
+    private readonly dataSource: DataSource,
+    @Inject(OUTBOX_JOB_PUBLISHER)
+    private readonly publisher: OutboxJobPublisher,
+    private readonly config: ConfigService,
+  ) {
+    this.dispatcherId = this.config.get<string>(
+      "OUTBOX_DISPATCHER_ID",
+      `${hostname()}:${process.pid}:${randomUUID()}`,
+    );
+    this.leaseMs = this.positiveInteger("OUTBOX_DELIVERY_LEASE_MS", 30_000);
+    this.capabilityRetryMs = this.positiveInteger("OUTBOX_CAPABILITY_RETRY_MS", 10_000);
+    this.retryBaseMs = this.positiveInteger("OUTBOX_RETRY_BASE_MS", 1_000);
+    this.retryMaximumMs = this.positiveInteger("OUTBOX_RETRY_MAX_MS", 60_000);
+  }
+
+  async dispatchOne(): Promise<OutboxDispatchResultV1> {
+    const claim = await this.claimNext();
+    if (!claim) return { status: "idle" };
+    if ("blocked" in claim) return claim.blocked;
+    if ("deadLetter" in claim) return claim.deadLetter;
+
+    try {
+      const published = await this.publisher.publish(claim.envelope, claim.deterministicJobId);
+      const finalized = await this.completeDelivery(claim, published.jobId);
+      return finalized
+        ? { status: "published", outboxId: claim.outboxId, jobId: published.jobId }
+        : { status: "ownership_lost", outboxId: claim.outboxId, jobId: published.jobId };
+    } catch {
+      const retryable = await this.failDelivery(claim, "REDIS_DELIVERY_UNAVAILABLE");
+      return retryable
+        ? { status: "retryable", outboxId: claim.outboxId, reason: "REDIS_DELIVERY_UNAVAILABLE" }
+        : { status: "ownership_lost", outboxId: claim.outboxId };
+    }
+  }
+
+  async dispatchBatch(limit = 25) {
+    const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const results: OutboxDispatchResultV1[] = [];
+    for (let index = 0; index < safeLimit; index += 1) {
+      const result = await this.dispatchOne();
+      results.push(result);
+      if (result.status === "idle") break;
+    }
+    return results;
+  }
+
+  async claimNext(): Promise<
+    | OutboxDeliveryClaimV1
+    | { blocked: Extract<OutboxDispatchResultV1, { status: "blocked" }> }
+    | { deadLetter: Extract<OutboxDispatchResultV1, { status: "dead_letter" }> }
+    | null
+  > {
+    return this.dataSource.transaction("READ COMMITTED", async (manager) => {
+      const candidates = await manager.query(
+        `SELECT id, intent_id AS "intentId", worker_envelope AS "workerEnvelope", status
+         FROM orchestration_outbox
+         WHERE available_at <= clock_timestamp()
+           AND (
+             status IN ('pending', 'failed')
+             OR (status = 'publishing' AND claim_expires_at <= clock_timestamp())
+           )
+         ORDER BY available_at ASC, created_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1`,
+      ) as CandidateRow[];
+      const candidate = candidates[0];
+      if (!candidate) return null;
+
+      let envelope: DeployGuardWorkerEnvelopeV1;
+      try {
+        const [clock] = await manager.query(`SELECT clock_timestamp() AS now`);
+        envelope = validateWorkerEnvelopeV1(candidate.workerEnvelope, new Date(clock.now));
+        assertFrozenQueueRouting(envelope);
+      } catch {
+        await manager.query(
+          `UPDATE orchestration_outbox
+           SET status = 'dead_letter', last_error = 'INVALID_WORKER_ENVELOPE',
+               claimed_by = NULL, claim_expires_at = NULL, updated_at = clock_timestamp()
+           WHERE id = $1`,
+          [candidate.id],
+        );
+        return {
+          deadLetter: {
+            status: "dead_letter",
+            outboxId: candidate.id,
+            reason: "INVALID_WORKER_ENVELOPE",
+          },
+        };
+      }
+
+      if (!await this.hasCompatibleWorker(manager, envelope)) {
+        await manager.query(
+          `UPDATE orchestration_outbox
+           SET status = 'pending', last_error = 'WORKER_PROTOCOL_UNAVAILABLE',
+               available_at = clock_timestamp() + ($2::bigint * interval '1 millisecond'),
+               claimed_by = NULL, claim_expires_at = NULL, updated_at = clock_timestamp()
+           WHERE id = $1`,
+          [candidate.id, this.capabilityRetryMs],
+        );
+        return {
+          blocked: {
+            status: "blocked",
+            outboxId: candidate.id,
+            reason: "WORKER_PROTOCOL_UNAVAILABLE",
+          },
+        };
+      }
+
+      const claimedResult = await manager.query(
+        `UPDATE orchestration_outbox
+         SET status = 'publishing', claimed_by = $2,
+             claim_expires_at = clock_timestamp() + ($3::bigint * interval '1 millisecond'),
+             claim_fencing_token = claim_fencing_token + 1,
+             attempt_count = attempt_count + 1,
+             last_error = NULL, updated_at = clock_timestamp()
+         WHERE id = $1
+         RETURNING id, intent_id AS "intentId", worker_envelope AS "workerEnvelope",
+                   claim_fencing_token AS "claimFencingToken",
+                   attempt_count AS "attemptCount",
+                   claim_expires_at AS "claimExpiresAt"`,
+        [candidate.id, this.dispatcherId, this.leaseMs],
+      );
+      const claimed = this.returningRows<ClaimRow>(claimedResult);
+      if (!claimed[0]) return null;
+      return {
+        outboxId: claimed[0].id,
+        intentId: claimed[0].intentId,
+        ownerId: this.dispatcherId,
+        fencingToken: claimed[0].claimFencingToken,
+        deliveryAttempt: claimed[0].attemptCount,
+        leaseExpiresAt: new Date(claimed[0].claimExpiresAt),
+        envelope,
+        deterministicJobId: workerEnvelopeJobId(envelope),
+      };
+    });
+  }
+
+  async completeDelivery(claim: OutboxDeliveryClaimV1, publishedJobId: string) {
+    if (publishedJobId !== claim.deterministicJobId) return false;
+    return this.dataSource.transaction("READ COMMITTED", async (manager) => {
+      const result = await manager.query(
+        `UPDATE orchestration_outbox
+         SET status = 'published', published_job_id = $4, published_at = clock_timestamp(),
+             claimed_by = NULL, claim_expires_at = NULL, last_error = NULL,
+             updated_at = clock_timestamp()
+         WHERE id = $1 AND status = 'publishing' AND claimed_by = $2
+           AND claim_fencing_token = $3::bigint
+           AND claim_expires_at > clock_timestamp()
+         RETURNING intent_id AS "intentId"`,
+        [claim.outboxId, claim.ownerId, claim.fencingToken, publishedJobId],
+      );
+      const rows = this.returningRows<{ intentId: string }>(result);
+      if (!rows[0]) return false;
+      await manager.query(
+        `UPDATE deployment_intents
+         SET status = 'enqueued', enqueued_at = COALESCE(enqueued_at, clock_timestamp()),
+             updated_at = clock_timestamp()
+         WHERE id = $1 AND status = 'planned'`,
+        [rows[0].intentId],
+      );
+      return true;
+    });
+  }
+
+  async failDelivery(claim: OutboxDeliveryClaimV1, safeErrorCode: "REDIS_DELIVERY_UNAVAILABLE") {
+    const delay = outboxRetryDelayMs(
+      claim.deliveryAttempt,
+      this.retryBaseMs,
+      this.retryMaximumMs,
+    );
+    const result = await this.dataSource.query(
+      `UPDATE orchestration_outbox
+       SET status = 'failed', last_error = $4,
+           available_at = clock_timestamp() + ($5::bigint * interval '1 millisecond'),
+           claimed_by = NULL, claim_expires_at = NULL, updated_at = clock_timestamp()
+       WHERE id = $1 AND status = 'publishing' AND claimed_by = $2
+         AND claim_fencing_token = $3::bigint
+         AND claim_expires_at > clock_timestamp()`,
+      [claim.outboxId, claim.ownerId, claim.fencingToken, safeErrorCode, delay],
+    );
+    return this.affectedRows(result) > 0;
+  }
+
+  private async hasCompatibleWorker(
+    manager: EntityManager,
+    envelope: DeployGuardWorkerEnvelopeV1,
+  ) {
+    const role = workerRoleForMessageType(envelope.protocol.messageType);
+    const rows = await manager.query(
+      `SELECT worker_id
+       FROM worker_capabilities
+       WHERE role = $1
+         AND expires_at > clock_timestamp()
+         AND minimum_protocol <= $2
+         AND maximum_protocol >= $2
+         AND supported_message_types @> $3::jsonb
+       ORDER BY expires_at DESC
+       LIMIT 1`,
+      [
+        role,
+        envelope.protocol.schemaVersion,
+        JSON.stringify([envelope.protocol.messageType]),
+      ],
+    );
+    return rows.length > 0;
+  }
+
+  private positiveInteger(key: string, fallback: number) {
+    const value = Number(this.config.get<string>(key, String(fallback)));
+    return Number.isInteger(value) && value > 0 ? value : fallback;
+  }
+
+  private returningRows<T>(result: unknown): T[] {
+    if (
+      Array.isArray(result)
+      && result.length === 2
+      && Array.isArray(result[0])
+      && typeof result[1] === "number"
+    ) {
+      return result[0] as T[];
+    }
+    return Array.isArray(result) ? result as T[] : [];
+  }
+
+  private affectedRows(result: unknown) {
+    if (
+      Array.isArray(result)
+      && result.length === 2
+      && typeof result[1] === "number"
+    ) {
+      return result[1];
+    }
+    return 0;
+  }
+}

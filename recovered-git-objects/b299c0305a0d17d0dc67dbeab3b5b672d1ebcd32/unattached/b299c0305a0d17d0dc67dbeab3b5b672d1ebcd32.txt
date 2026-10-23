@@ -1,0 +1,52 @@
+import UserRoleSelect from "./UserRoleSelect.jsx";
+
+function formatDate(value) {
+  if (!value) {
+    return "-";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+export default function UserTable({ onAccessChange, onRoleChange, updatingUserId, users }) {
+  return (
+    <div className="table-wrap panel">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Provider</th>
+            <th>Role</th>
+            <th>Access</th>
+            <th>Last login</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {users.map((user) => (
+            <tr key={user.id}>
+              <td>{user.name || "-"}</td>
+              <td>{user.email || "-"}</td>
+              <td>{user.provider || "-"}</td>
+              <td>{user.role}</td>
+              <td>{user.enabled ? "Enabled" : "Disabled"}</td>
+              <td>{formatDate(user.lastLoginAt)}</td>
+              <td>
+                <UserRoleSelect
+                  disabled={updatingUserId === user.id}
+                  onChange={(role) => onRoleChange(user.id, role)}
+                  value={user.role}
+                />
+                <button className="subtle-button" disabled={updatingUserId === user.id} onClick={() => onAccessChange(user.id, !user.enabled)} type="button">{user.enabled ? "Disable" : "Enable"}</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

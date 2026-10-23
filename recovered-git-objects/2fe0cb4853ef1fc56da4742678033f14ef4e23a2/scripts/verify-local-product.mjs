@@ -1,0 +1,69 @@
+import process from "node:process";
+
+const apiBase = (process.env.PRODUCT_API_URL || "http://localhost:5000").replace(/\/$/, "");
+const frontendBase = (process.env.PRODUCT_FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+
+if (!process.env.PRODUCT_VERIFY_ALLOW_REMOTE && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(apiBase)) {
+  throw new Error("Refusing to create the verification account on a non-local API. Set PRODUCT_VERIFY_ALLOW_REMOTE=true to override.");
+}
+
+async function request(url, options = {}, expected = 200) {
+  const response = await fetch(url, options);
+  const contentType = response.headers.get("content-type") || "";
+  const body = contentType.includes("application/json") ? await response.json() : await response.text();
+  if (response.status !== expected) {
+    throw new Error(`${options.method || "GET"} ${url} returned ${response.status}: ${JSON.stringify(body)}`);
+  }
+  return { response, body };
+}
+
+const ready = await request(`${apiBase}/api/health/ready`);
+if (ready.body.status !== "ready" || ready.body.dependencies?.database?.status !== "up" || ready.body.dependencies?.redis?.status !== "up" || ready.body.dependencies?.outbox?.status !== "up") {
+  throw new Error(`API dependency readiness failed: ${JSON.stringify(ready.body)}`);
+}
+
+const frontend = await request(frontendBase);
+if (!String(frontend.body).includes('id="root"')) throw new Error("Frontend HTML does not contain the React root element");
+
+const cors = await fetch(`${apiBase}/api/auth/me`, {
+  method: "OPTIONS",
+  headers: { Origin: frontendBase, "Access-Control-Request-Method": "GET" },
+});
+if (!cors.ok || cors.headers.get("access-control-allow-origin") !== frontendBase) {
+  throw new Error("Frontend origin is not accepted by the API CORS policy");
+}
+
+const credentials = {
+  name: "DeployGuard Product Verification",
+  email: "product.verify@deployguard.local",
+  password: "DeployGuardVerify1234",
+};
+let auth = await fetch(`${apiBase}/api/auth/signup`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(credentials),
+});
+if (!auth.ok) {
+  auth = await fetch(`${apiBase}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: credentials.email, password: credentials.password }),
+  });
+}
+if (!auth.ok) throw new Error(`Local authentication verification failed with HTTP ${auth.status}`);
+const cookie = auth.headers.get("set-cookie")?.split(";")[0];
+if (!cookie) throw new Error("Authentication did not issue a session cookie");
+
+for (const path of ["/api/auth/me", "/api/projects", "/api/templates"]) {
+  await request(`${apiBase}${path}`, { headers: { Cookie: cookie } });
+}
+
+console.log("DeployGuard local product verification passed.");
+console.log("  frontend: served");
+console.log("  CORS: connected");
+console.log("  API: ready");
+console.log("  PostgreSQL: ready");
+console.log("  Redis: ready");
+console.log("  durable outbox: no actionable backlog");
+console.log("  signup/login session: working");
+console.log("  authenticated projects/templates APIs: working");

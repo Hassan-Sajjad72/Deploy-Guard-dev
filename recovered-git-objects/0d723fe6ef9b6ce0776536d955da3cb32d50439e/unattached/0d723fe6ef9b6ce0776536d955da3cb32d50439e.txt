@@ -1,0 +1,54 @@
+import { Injectable, ServiceUnavailableException } from "@nestjs/common";
+import { DataSource } from "typeorm";
+
+const requiredColumns = [
+  ["project_pipeline_runs", "id"],
+  ["project_pipeline_runs", "project_id"],
+  ["project_pipeline_runs", "triggered_by_user_id"],
+  ["project_pipeline_runs", "status"],
+  ["project_pipeline_runs", "metadata"],
+  ["project_pipeline_runs", "created_at"],
+  ["project_pipeline_events", "id"],
+  ["project_pipeline_events", "pipeline_run_id"],
+  ["project_pipeline_events", "project_id"],
+] as const;
+
+export async function assertProductStartSchemaIntegrity(dataSource: DataSource) {
+  const missing = await dataSource.query(
+    `
+      WITH required(table_name, column_name) AS (
+        VALUES ${requiredColumns.map(([table, column]) => `('${table}', '${column}')`).join(", ")}
+      )
+      SELECT required.table_name, required.column_name
+      FROM required
+      LEFT JOIN information_schema.columns columns
+        ON columns.table_schema = 'public'
+       AND columns.table_name = required.table_name
+       AND columns.column_name = required.column_name
+      WHERE columns.column_name IS NULL
+      ORDER BY required.table_name, required.column_name
+    `,
+  ) as Array<{ table_name: string; column_name: string }>;
+
+  if (missing.length) {
+    const details = missing.map((entry) => `${entry.table_name}.${entry.column_name}`).join(", ");
+    throw new Error(
+      `DeployGuard database schema is incomplete (${details}). Run the registered migrations before starting the product.`,
+    );
+  }
+}
+
+@Injectable()
+export class ProductStartSchemaIntegrityService {
+  constructor(private readonly dataSource: DataSource) {}
+
+  async assertReady() {
+    try {
+      await assertProductStartSchemaIntegrity(this.dataSource);
+    } catch (error) {
+      throw new ServiceUnavailableException(
+        error instanceof Error ? error.message : "DeployGuard database schema is incomplete.",
+      );
+    }
+  }
+}

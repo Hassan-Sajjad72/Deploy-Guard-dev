@@ -1,0 +1,143 @@
+export type CurrentStateStatus =
+  | "not_started"
+  | "waiting"
+  | "running"
+  | "passed"
+  | "failed"
+  | "blocked"
+  | "skipped"
+  | "requires_approval"
+  | "disabled_by_config"
+  | "warning"
+  | "unavailable";
+
+export type PipelineStageStatus =
+  | "not_started"
+  | "pending"
+  | "running"
+  | "passed"
+  | "failed"
+  | "blocked"
+  | "warning"
+  | "unavailable"
+  | "skipped"
+  | "requires_approval"
+  | "disabled_by_config";
+
+export type ProjectModuleState = {
+  status: CurrentStateStatus;
+  label: string;
+  message: string;
+  action: string | null;
+  actionLabel: string | null;
+  href: string;
+  required: boolean;
+  lastUpdatedAt: Date | null;
+};
+
+export type ResolvedPipelineStage = {
+  stage: string;
+  label: string;
+  status: PipelineStageStatus;
+  required: boolean;
+  startedAt: Date | null;
+  endedAt: Date | null;
+  durationMs: number | null;
+  message: string;
+  error: string | null;
+  blockedByStage: string | null;
+  blockedReason: string | null;
+  canRetry: boolean;
+  canSkip: boolean;
+  source: string;
+  diagnosticCode?: string | null;
+  internalStageKey?: string;
+  userFacingStageKey?: string;
+  userFacingStageName?: string;
+};
+
+export type ResolvedLifecycleStage = ResolvedPipelineStage & {
+  order: number;
+  technicalStages: string[];
+};
+
+export type NextAction = {
+  type: string;
+  label: string;
+  message: string;
+  description: string;
+  href: string;
+  method: "GET" | "POST" | "PATCH";
+  enabled: boolean;
+  disabledReasons: string[];
+  disabledReason: string | null;
+};
+
+export type DeveloperState =
+  | "ready"
+  | "preparing"
+  | "queued"
+  | "building"
+  | "deploying"
+  | "verifying"
+  | "live"
+  | "configuration_required"
+  | "approval_required"
+  | "failed_application"
+  | "platform_attention"
+  | "unsupported";
+
+export type DeveloperAction =
+  | "deploy"
+  | "redeploy"
+  | "provide_configuration"
+  | "approve_cost"
+  | "open_application"
+  | "none";
+
+export type DeveloperProgressPhase =
+  | "analyze"
+  | "build"
+  | "prepare"
+  | "deploy"
+  | "verify"
+  | null;
+
+export type DeveloperProjectCurrentState = {
+  developerState: DeveloperState;
+  developerAction: DeveloperAction;
+  developerMessage: string;
+  progress: {
+    percentage: number;
+    phase: DeveloperProgressPhase;
+    label: string;
+  };
+  repository: string | null;
+  branch: string | null;
+  commit: string | null;
+  latestAttempt: {
+    status: DeveloperState;
+    outcome: "completed" | "cancelled" | "blocked" | null;
+    releaseRevision: string | null;
+    commit: string | null;
+    occurredAt: string | null;
+  } | null;
+  stableRelease: {
+    revision: string;
+    commit: string;
+    promotedAt: string;
+    rollbackAvailable: boolean;
+  } | null;
+  stableUrl: string | null;
+  estimatedCost: {
+    status: "estimated" | "approval_required" | "unavailable";
+    currency: string | null;
+    monthly: number | null;
+  } | null;
+  missingConfiguration: string[];
+  applicationError: {
+    category: "repository" | "configuration" | "build" | "runtime" | "health";
+    message: string;
+  } | null;
+  canRetry: boolean;
+};

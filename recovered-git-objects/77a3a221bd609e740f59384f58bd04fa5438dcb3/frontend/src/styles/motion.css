@@ -1,0 +1,177 @@
+/*
+ * Motion — every animation answers one user question, in under 400ms.
+ *
+ *   Did my press register?        press scale                  100ms
+ *   Is it working?                inline spinner, skeleton     loop (loading only)
+ *   Did it succeed / fail?        check pop / shake + ring     250ms / 150ms
+ *   Is this input wrong?          field shake + border         150ms / 200ms
+ *   Was it copied?                check swap on the button     250ms (held ~1.6s)
+ *   Where am I / where did I go?  sidebar indicator slide, page rise   200ms / 320ms
+ *   What just changed state?      badge colour fade, node completion pop   200ms / 300ms
+ *   Is this still running?        live/running pulse (2s loop), flowing connector
+ *   Where did this layer come from?  modal spring, drawer slide, popover, toast
+ *
+ * Exceptions to the 400ms ceiling: background drift, skeleton shimmer, the
+ * live pulse and loading spinners (continuous state indicators), and the 800ms
+ * progress fill. Nothing loops inside tables or logs. prefers-reduced-motion
+ * removes all of it (see the end of this file and mist-frost.css).
+ */
+:root {
+  --mo-press: 100ms;
+  --mo-fast: 150ms;
+  --mo-base: 200ms;
+  --mo-emph: 250ms;
+  --mo-spring: 350ms;
+  --mo-out: cubic-bezier(.2, .7, .2, 1);
+  --mo-in: cubic-bezier(.4, 0, 1, 1);
+  --mo-overshoot: cubic-bezier(.34, 1.56, .64, 1);
+  --mo-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230b1220' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+}
+
+/* ---------- 1. Feedback ---------- */
+/* Press: the button gives way under the pointer before any network reply. */
+:root:root:root :is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button, .dg-cta, .dg-cta-secondary,
+  .dg-projects-open, .dg-home-row-action, .dg-home-secondary, .ds-copy-button, .sidebar-logout-button, .pg-node, .itw-node):active:not(:disabled) {
+  transform: scale(.97); transition-duration: var(--mo-press);
+}
+
+/* Outcome: a success check pops onto the button; a failure shakes it in the danger colour. */
+:is(button, .button, .ds-button, .secondary-button, .danger-button, .danger-text-button, .dg-cta):is(.ds-flash-success, .ds-flash-danger) { position: relative; }
+.ds-flash-success { animation: mo-ring-success var(--mo-spring) var(--mo-out); }
+.ds-flash-success::after {
+  animation: mo-check-in var(--mo-emph) var(--mo-overshoot) both, mo-fade-out var(--mo-base) var(--mo-in) 600ms forwards;
+  background: var(--ds-success-dot) var(--mo-check) center / 11px no-repeat; border-radius: 50%; box-shadow: 0 0 0 2px var(--ds-data), 0 4px 10px rgba(0, 0, 0, .35);
+  content: ""; height: 18px; pointer-events: none; position: absolute; right: -6px; top: -7px; width: 18px; z-index: 2;
+}
+:root:root:root .ds-flash-danger { animation: mo-shake var(--mo-fast) linear, mo-ring-danger var(--mo-spring) var(--mo-out); border-color: var(--ds-danger-line); }
+@keyframes mo-ring-success { 0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, .55); } 100% { box-shadow: 0 0 0 7px rgba(52, 211, 153, 0); } }
+@keyframes mo-ring-danger { 0% { box-shadow: 0 0 0 0 rgba(248, 113, 113, .6); } 100% { box-shadow: 0 0 0 7px rgba(248, 113, 113, 0); } }
+@keyframes mo-check-in { 0% { opacity: 0; transform: scale(.3) rotate(-20deg); } 100% { opacity: 1; transform: none; } }
+@keyframes mo-fade-out { to { opacity: 0; transform: scale(.8); } }
+@keyframes mo-shake { 0%, 100% { translate: 0; } 20% { translate: -3px; } 45% { translate: 3px; } 70% { translate: -2px; } 90% { translate: 1px; } }
+
+/* Busy: an inline spinner takes the icon's place; width is locked by actionFeedback.js. */
+:root:root:root :is(button, .button, .ds-button, .secondary-button, .danger-button, .danger-text-button, .dg-cta)[aria-busy="true"] { cursor: progress; transform: none; }
+:is(button, .button, .ds-button, .secondary-button, .danger-button, .danger-text-button, .dg-cta)[aria-busy="true"] > .app-icon { display: none; }
+:root:root:root :is(button, .button, .ds-button, .secondary-button, .danger-button, .danger-text-button, .dg-cta)[aria-busy="true"]::before {
+  animation: mo-spin 700ms linear infinite; border: 2px solid currentColor; border-radius: 50%; border-right-color: transparent;
+  content: ""; display: inline-block; flex: 0 0 auto; height: 13px; opacity: .85; width: 13px;
+}
+@keyframes mo-spin { to { transform: rotate(1turn); } }
+
+/* Invalid input: the field shakes once and its border eases to danger. */
+:root :is(input, select, textarea) { transition: border-color var(--mo-base) var(--mo-out), box-shadow var(--mo-base) var(--mo-out), background-color var(--mo-base) var(--mo-out); }
+:root:root :is(input, select, textarea):is(:user-invalid, [aria-invalid="true"]) {
+  animation: mo-shake var(--mo-fast) linear; border-color: var(--ds-danger-dot); box-shadow: 0 0 0 3px var(--ds-danger-soft);
+}
+
+/* Copy: the button turns into a check while "Copied" is shown. */
+.ds-copy-button { transition: background-color var(--mo-base) var(--mo-out), border-color var(--mo-base) var(--mo-out), color var(--mo-base) var(--mo-out); }
+:root:root .ds-copy-button[aria-label="Copied"] { background: var(--ds-success-soft); border-color: var(--ds-success-line); color: var(--ds-success); }
+.ds-copy-button[aria-label="Copied"]::before {
+  animation: mo-check-in var(--mo-emph) var(--mo-overshoot) both; background: var(--ds-success-dot) var(--mo-check) center / 9px no-repeat;
+  border-radius: 50%; content: ""; display: inline-block; height: 13px; margin-right: 5px; vertical-align: -2px; width: 13px;
+}
+
+/* ---------- 2. Loading ---------- */
+/* Skeletons sweep; the generic spinner is not shown where content will appear. */
+:root:root .loading-state .loading-indicator { display: none; }
+:root:root .loading-state { align-items: stretch; }
+:root:root .loading-state .ds-skeleton { max-width: none; }
+:root:root .ds-skeleton span {
+  animation: mo-shimmer 1.4s ease-in-out infinite; background: linear-gradient(90deg, rgba(255, 255, 255, .05) 0%, rgba(255, 255, 255, .05) 35%, rgba(255, 255, 255, .14) 50%, rgba(255, 255, 255, .05) 65%, rgba(255, 255, 255, .05) 100%);
+  background-size: 250% 100%; border-radius: var(--ds-r-pill); height: 10px;
+}
+@keyframes mo-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+
+/* Progress and budget bars fill from zero on first render. */
+:root:root:root :is(.dg-bill-meter b, .dg-home-progress i, .pipeline-duration-bar i, .deployment-progress-track span) {
+  animation: ds-fill 800ms var(--mo-out) both; background: linear-gradient(90deg, #6fa51f, var(--ds-accent));
+}
+
+/* ---------- 3. State changes ---------- */
+/* Badges fade between states instead of snapping. */
+:root :is(.status-badge, .ds-status-chip) { transition: background-color var(--mo-base) var(--mo-out), border-color var(--mo-base) var(--mo-out), color var(--mo-base) var(--mo-out); }
+:root :is(.status-badge, .ds-status-chip) .status-dot { transition: background-color var(--mo-base) var(--mo-out); }
+/* Queued/pending states pulse too — they are "waiting", which is also alive. */
+:is(.status-badge, .ds-status-chip):is([data-status="queued"], [data-status="preparing"], [data-status="building"], [data-status="verifying"]) .status-dot { animation: ds-pulse var(--ds-pulse) ease-in-out infinite; }
+/* Restraint: nothing loops inside tables or logs. */
+:root:root :is(.ds-data-table-wrap, .table-wrap, .dg-console, .monitoring-log-viewer) :is(.status-dot, .status-badge, .ds-status-chip) { animation: none; }
+:root:root :is(.ds-data-table-wrap, .table-wrap, .dg-console, .monitoring-log-viewer) .status-dot { animation: none; }
+
+/* A stage completing is felt: a short pop as it turns green. */
+:root:root .pg-node.just-completed { animation: mo-pop 300ms var(--mo-out); }
+:root:root .pg-node.just-completed .pg-node-icon { animation: mo-check-in var(--mo-emph) var(--mo-overshoot) both; }
+:root:root .pg-node .pg-node-icon { transition: background-color var(--mo-base) var(--mo-out), border-color var(--mo-base) var(--mo-out); }
+@keyframes mo-pop { 0% { transform: scale(1); } 45% { transform: scale(1.05); } 100% { transform: scale(1); } }
+
+/* Retired legacy motion: on-load "confirm" pops and glows fired on every refresh (not on a real
+ * change), and scans looped inside data surfaces. Completion is shown by .just-completed only. */
+:root:root:root :is(
+  .pipeline-stage-row.is-passed .pipeline-stage-icon, .ds-stage-rail .is-passed > span, .pipeline-stage-row.is-running::before,
+  [data-authoritative-state="LIVE"] .status-badge.tone-success, [data-canonical-state="LIVE"] .status-badge.tone-success,
+  [data-authoritative-state="LIVE"] .overview-lifecycle-card, [data-canonical-state="LIVE"] .overview-lifecycle-card,
+  .architecture-connector::after, .architecture-outcome, .deployment-journey .is-current .deployment-journey-marker
+) { animation: none; }
+/* Decorative loops answer no question: the launch-sequence dots and the Home kicker dot hold still. */
+:root:root:root :is(.dg-np-route i, .dg-home-kicker-dot) { animation: none !important; }
+/* A deploying fleet tile is running: it uses the shared 2s pulse. */
+:root:root:root .dg-home-tile:is(.is-deploying, .is-destroying) .dg-home-tile-light { animation: ds-pulse var(--ds-pulse) ease-in-out infinite; color: var(--ds-info-dot); }
+/* Running stage markers share the one 2s pulse. */
+:root:root:root :is(.ds-stage-rail .is-running > span, .pipeline-stage-row.is-running .pipeline-stage-icon) { animation: ds-pulse var(--ds-pulse) ease-in-out infinite; color: var(--ds-accent); }
+
+/* ---------- 4. Navigation and layers ---------- */
+/* Page entrance: fade + rise, 60ms stagger, under 400ms each. */
+:root:root .app-shell .content :is(.workspace-page, .page-stack) > *, :root:root .dg-landing-main > * { animation-duration: 320ms; }
+
+/* Sidebar: one indicator slides to the active item. */
+.app-shell .sidebar .nav-link { position: relative; z-index: 1; }
+:root:root .app-shell .sidebar.has-indicator::after {
+  background: var(--ds-accent-soft); border-radius: var(--ds-r-tile); box-shadow: inset 0 0 0 1px var(--ds-accent-line); content: ""; display: block;
+  height: var(--nav-indicator-height); left: 12px; pointer-events: none; position: absolute; right: 12px; top: var(--nav-indicator-top);
+  transition: top var(--mo-base) var(--mo-out), height var(--mo-base) var(--mo-out); z-index: 0;
+}
+:root:root .app-shell .sidebar.has-indicator .nav-link.active { background: transparent; box-shadow: none; }
+
+/* Modals spring in like a pane of glass settling; drawers slide from their edge. */
+:root:root :is(.ds-modal, .destroy-modal) { animation: mo-spring-in var(--mo-spring) var(--mo-out) both; }
+:root:root .ds-details-drawer { animation: mo-drawer-in var(--mo-spring) var(--mo-out) both; }
+:is(.ds-modal-backdrop, .destroy-modal-backdrop, .ds-drawer-backdrop) { animation: mo-fade-in var(--mo-fast) var(--mo-out) both; }
+@keyframes mo-spring-in { 0% { opacity: 0; transform: scale(.96); } 60% { opacity: 1; transform: scale(1.02); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes mo-drawer-in { 0% { opacity: 0; transform: translateX(28px); } 65% { opacity: 1; transform: translateX(-4px); } 100% { opacity: 1; transform: none; } }
+@keyframes mo-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* Popovers grow from their anchor. */
+:root:root details[open] > .landing-account-popover { animation: mo-pop-in 140ms var(--mo-out) both; transform-origin: top right; }
+@keyframes mo-pop-in { from { opacity: 0; transform: scale(.95) translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* Toasts slide in from the edge and fade out; hover pauses dismissal (ToastContext). */
+:root:root .toast { animation: mo-toast-in 280ms var(--mo-overshoot) both; }
+:root:root .toast.is-leaving { animation: mo-toast-out 180ms var(--mo-in) forwards; }
+@keyframes mo-toast-in { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
+@keyframes mo-toast-out { to { opacity: 0; transform: translateX(16px); } }
+
+/* ---------- 5. Hover: everything clickable answers the pointer ---------- */
+a { transition: color var(--mo-fast) var(--mo-out), text-decoration-color var(--mo-fast) var(--mo-out), opacity var(--mo-fast) var(--mo-out); }
+:root:root :is(.text-link, .pg-job-link, .dg-home-recent-all, .dg-ov-domain a, .pipeline-stage-evidence a):hover { color: var(--ds-accent); text-decoration: underline; text-decoration-color: currentColor; text-underline-offset: 3px; }
+:root:root :is(.dg-projects-row, .dg-home-row, .dg-home-recent li a, .dg-ov-roster-row, .billing-invoice-row) { transition: background-color var(--mo-fast) var(--mo-out); }
+:root:root :is(.ds-data-table-wrap, .table-wrap) td { transition: background-color var(--mo-fast) var(--mo-out); }
+:root:root details > summary { transition: color var(--mo-fast) var(--mo-out); }
+:root:root details > summary:hover { color: var(--ds-ink); }
+:root:root :is(.dg-projects-filters button, .ds-tabs button, .dg-set-nav .ds-tabs button) { transition: background-color var(--mo-fast) var(--mo-out), color var(--mo-fast) var(--mo-out); }
+
+/* ---------- 6. Restraint ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root:root:root *, :root:root:root *::before, :root:root:root *::after { animation: none !important; transition: none !important; }
+  :root:root:root :is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button, .dg-cta, .dg-cta-secondary, .pg-node, .itw-node):active { transform: none; }
+  /* Outcomes still read without motion: the check stays visible for its lifetime. */
+  .ds-flash-success::after { opacity: 1; }
+}
+
+/* Current items are still links: a quiet response instead of none. */
+:root:root .app-shell .sidebar .nav-link.active:hover { background: rgba(255, 255, 255, .05); color: #fff; }
+:root:root :is(.dg-projects-filters button.is-active, .dg-set-nav .ds-tabs button:is(.is-active, [aria-selected="true"])):hover { background: rgba(255, 255, 255, .18) !important; }
+:root:root :is(.landing-brand, .brand-identity) { transition: opacity var(--mo-fast) var(--mo-out); }
+:root:root a:is(.landing-brand, .brand):hover { opacity: .82; }
+/* The active settings tab's fill is pinned by a legacy important layer; it answers hover with a ring. */
+:root:root .dg-set-nav .ds-tabs button:is(.is-active, [aria-selected="true"]):hover { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22) !important; }

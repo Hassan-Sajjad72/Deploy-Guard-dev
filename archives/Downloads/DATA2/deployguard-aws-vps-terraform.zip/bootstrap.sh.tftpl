@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+exec > >(tee /var/log/deployguard-bootstrap.log | logger -t deployguard-bootstrap -s 2>/dev/console) 2>&1
+
+echo "== DeployGuard VPS bootstrap starting =="
+
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+apt-get upgrade -y
+apt-get install -y ca-certificates curl gnupg jq git unzip
+
+# Docker Engine - official Docker apt repository.
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+
+. /etc/os-release
+cat >/etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $UBUNTU_CODENAME
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+
+# Administrator convenience only; customer containers never receive Docker socket access.
+usermod -aG docker ubuntu || true
+
+# Single-node Swarm. Idempotent if cloud-init/user-data is replayed.
+SWARM_STATE="$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)"
+if [ "$SWARM_STATE" != "active" ]; then
+  PRIVATE_IP="$(ip -4 route get 1.1.1.1 | awk '{print $7; exit}')"
+  docker swarm init --advertise-addr "$PRIVATE_IP"
+fi
+
+NODE_ID="$(docker node ls -q | head -n1)"
+docker node update --label-add deployguard.runtime=true "$NODE_ID" >/dev/null
+
+# Platform directories for the one-VPS FYP runtime.
+install -d -m 0755 /opt/deployguard
+install -d -m 0755 /opt/deployguard/traefik
+install -d -m 0700 /opt/deployguard/backups
+install -d -m 0755 /opt/deployguard/monitoring
+install -d -m 0750 /opt/deployguard/runtime-agent
+
+# Shared ingress network expected by the current RuntimeSpec mapper.
+if ! docker network inspect deployguard-edge >/dev/null 2>&1; then
+  docker network create \
+    --driver overlay \
+    --attachable \
+    --label deployguard.owner=platform \
+    deployguard-edge
+fi
+
+# Persistent ACME state.
+touch /opt/deployguard/traefik/acme.json
+chmod 600 /opt/deployguard/traefik/acme.json
+
+# Traefik service name becomes deployguard-edge_traefik, which matches the
+# current DeployGuard runtime monitoring default.
+cat >/opt/deployguard/traefik/stack.yml <<'STACK'
+version: "3.9"
+
+services:
+  traefik:
+    image: ${traefik_image}
+    command:
+      - --providers.swarm=true
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=deployguard-edge
+
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+
+      - --certificatesresolvers.letsencrypt.acme.email=${acme_email}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+
+      - --accesslog=true
+      - --accesslog.format=json
+      - --log.level=INFO
+      - --api.dashboard=false
+      - --metrics.prometheus=true
+
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: host
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/deployguard/traefik/acme.json:/letsencrypt/acme.json
+
+    networks:
+      - edge
+
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+networks:
+  edge:
+    external: true
+    name: deployguard-edge
+STACK
+
+docker stack deploy -c /opt/deployguard/traefik/stack.yml deployguard-edge
+
+cat >/etc/deployguard-runtime.env <<EOF
+DEPLOYGUARD_APPS_DOMAIN=${apps_domain}
+DEPLOYGUARD_TRAEFIK_SERVICE_NAME=deployguard-edge_traefik
+DEPLOYGUARD_RUNTIME_AGENT_SOCKET=/run/deployguard-agent.sock
+DEPLOYGUARD_LOCAL_BACKUP_TARGET=/opt/deployguard/backups
+EOF
+chmod 600 /etc/deployguard-runtime.env
+
+cat >/opt/deployguard/BOOTSTRAP_STATUS.txt <<EOF
+DeployGuard base RuntimeNode bootstrap completed.
+
+Installed:
+- Docker Engine
+- Docker Compose plugin
+- single-node Docker Swarm
+- deployguard-edge overlay network
+- Traefik on ports 80/443
+- persistent ACME storage
+- local backup directory
+- runtime-agent directory
+- monitoring directory
+
+Apps domain configured: ${apps_domain}
+
+The DeployGuard Runtime Agent executable itself must be installed from the
+DeployGuard repository/release artifact. Its artifact location is intentionally
+not invented by this infrastructure bootstrap.
+EOF
+
+echo "== DeployGuard VPS bootstrap complete =="
+docker node ls
+docker service ls

@@ -1,0 +1,81 @@
+/* Deployment setup: a guided configuration flow with an always-visible context rail. */
+.dg-newproj { gap: 24px; margin-inline: auto; max-width: 1380px; }
+.dg-np-head h1 { font-size: clamp(1.95rem, 3.3vw, 2.6rem); margin-bottom: 7px; }
+.dg-np-head p { color: var(--dg-ink-2); max-width: 68ch; }
+.dg-np-connect { align-items: flex-start; background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius-lg); display: flex; gap: 18px; padding: clamp(20px, 4vw, 32px); }
+.dg-np-connect > div { display: grid; gap: 10px; min-width: 0; }
+.dg-np-connect h2 { font-size: 1.2rem; }
+.dg-np-connect p { max-width: 66ch; }
+.dg-np-connect-mark { align-items: center; background: var(--dg-primary-soft); border: 1px solid var(--dg-primary-line); border-radius: 12px; color: var(--dg-primary-strong); display: inline-flex; flex: 0 0 auto; height: 48px; justify-content: center; width: 48px; }
+.dg-np-layout { align-items: start; display: grid; gap: clamp(24px, 4vw, 52px); grid-template-columns: minmax(210px, .32fr) minmax(0, 1fr); }
+.dg-np-rail { border-right: 1px solid var(--dg-line); padding: 8px clamp(18px, 3vw, 34px) 8px 0; position: sticky; top: 96px; }
+.deployment-journey { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; }
+.deployment-journey li { align-items: start; color: var(--dg-muted); display: grid; gap: 11px; grid-template-columns: 30px minmax(0, 1fr); min-height: 74px; position: relative; }
+.deployment-journey li:not(:last-child)::after { background: var(--dg-line); content: ""; left: 14px; position: absolute; top: 30px; bottom: 0; width: 1px; }
+.deployment-journey-marker { align-items: center; background: var(--dg-surface); border: 1px solid var(--dg-line-strong); border-radius: 50%; color: var(--dg-muted); display: inline-flex; font-family: var(--dg-mono); font-size: .67rem; height: 29px; justify-content: center; position: relative; width: 29px; z-index: 1; }
+.deployment-journey li > div { display: grid; gap: 4px; padding: 2px 0 15px; }
+.deployment-journey li strong { color: var(--dg-ink-2); font-size: .84rem; font-weight: 550; }
+.deployment-journey li small { color: var(--dg-muted); font-size: .74rem; line-height: 1.4; overflow-wrap: anywhere; }
+.deployment-journey li.is-complete .deployment-journey-marker { background: var(--dg-success-soft); border-color: var(--dg-success-line); color: var(--dg-success); }
+.deployment-journey li.is-complete:not(:last-child)::after { background: var(--dg-success-line); }
+.deployment-journey li.is-current .deployment-journey-marker, .deployment-journey li.is-ready .deployment-journey-marker { background: var(--dg-primary-soft); border-color: var(--dg-primary); color: var(--dg-primary-strong); }
+.deployment-journey li.is-current strong, .deployment-journey li.is-ready strong { color: var(--dg-ink); font-weight: 620; }
+.dg-np-rail-note { border-top: 1px solid var(--dg-line); color: var(--dg-muted); font-size: .76rem; line-height: 1.5; margin-top: 6px; padding-top: 14px; }
+.dg-np-steps { background: var(--dg-surface); border: 1px solid var(--dg-line); border-radius: var(--dg-radius-lg); min-width: 0; overflow: hidden; }
+.dg-np-step { border-bottom: 1px solid var(--dg-line); display: grid; gap: 18px; padding: clamp(20px, 3vw, 28px); }
+.dg-np-step:last-child { border-bottom: 0; }
+.dg-np-step > header { align-items: flex-start; display: flex; gap: 13px; }
+.dg-np-step > header > div { flex: 1; min-width: 0; }
+.dg-np-step > header h2 { font-size: 1.04rem; margin: 2px 0 4px; }
+.dg-np-step > header p { color: var(--dg-muted); font-size: .82rem; line-height: 1.5; }
+.dg-np-step-number { align-items: center; background: var(--dg-surface-2); border: 1px solid var(--dg-line); border-radius: 50%; color: var(--dg-muted); display: inline-flex; flex: 0 0 auto; font-family: var(--dg-mono); font-size: .7rem; height: 30px; justify-content: center; width: 30px; }
+.dg-np-step.is-complete .dg-np-step-number { background: var(--dg-success-soft); border-color: var(--dg-success-line); color: var(--dg-success); }
+.dg-np-step.is-current .dg-np-step-number, .dg-np-step.is-ready .dg-np-step-number { background: var(--dg-primary-soft); border-color: var(--dg-primary-line); color: var(--dg-primary-strong); }
+.dg-np-step .new-project-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dg-np-step .field { min-width: 0; }
+.dg-np-service { background: var(--dg-surface-2); border: 1px solid var(--dg-line); border-radius: 12px; display: grid; gap: 16px; padding: 17px; }
+.dg-np-service + .dg-np-service { margin-top: 12px; }
+.dg-np-service-head { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.dg-np-service-head strong { align-items: center; color: var(--dg-ink); display: inline-flex; gap: 9px; }
+.dg-np-service-head strong > span { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .7rem; }
+.dg-np-repo-field { grid-column: 1 / -1; }
+.dg-np-hint { background: var(--dg-info-soft); border-left: 3px solid var(--dg-info-dot); border-radius: 0 8px 8px 0; color: var(--dg-ink-2); font-size: .82rem; padding: 11px 14px; }
+.deploy-review-summary { border: 1px solid var(--dg-line); border-radius: 10px; margin: 0; overflow: hidden; }
+.deploy-review-summary > div { display: grid; gap: 12px; grid-template-columns: minmax(110px, .32fr) minmax(0, 1fr); padding: 10px 13px; }
+.deploy-review-summary > div + div { border-top: 1px solid var(--dg-line); }
+.deploy-review-summary dt { color: var(--dg-muted); font-family: var(--dg-mono); font-size: .65rem; letter-spacing: .035em; text-transform: uppercase; }
+.deploy-review-summary dd { color: var(--dg-ink-2); font-size: .82rem; margin: 0; overflow-wrap: anywhere; }
+.new-project-actions { align-items: center; border-top: 1px solid var(--dg-line); display: flex; justify-content: flex-end; margin-top: 2px; padding-top: 16px; }
+.service-directory-combobox { position: relative; }
+.service-directory-combobox > input { padding-right: 34px; }
+.service-directory-tree { -webkit-backdrop-filter: var(--glass-blur-chrome); backdrop-filter: var(--glass-blur-chrome); background: var(--data-surface-raised); border: 1px solid var(--dg-line-strong); border-radius: 10px; box-shadow: var(--dg-shadow-md); left: 0; list-style: none; margin: 5px 0 0; max-height: 280px; overflow: auto; padding: 6px; position: absolute; right: 0; z-index: 40; }
+.service-directory-tree ul { list-style: none; margin: 0; padding-left: 16px; }
+.service-directory-tree-item { min-width: 0; }
+.service-directory-tree-row { align-items: center; display: flex; gap: 5px; min-height: 34px; }
+.service-directory-tree-toggle, .service-directory-tree-spacer { align-items: center; background: transparent; border: 0; color: var(--dg-muted); display: inline-flex; flex: 0 0 auto; height: 26px; justify-content: center; width: 26px; }
+.service-directory-tree-toggle:hover { background: var(--dg-surface-3); border-radius: 5px; }
+.service-directory-tree-directory { background: transparent; border: 0; border-radius: 6px; color: var(--dg-ink-2); flex: 1; min-height: 30px; overflow: hidden; padding: 5px 8px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.service-directory-tree-directory:hover, .service-directory-tree-item[aria-selected="true"] > .service-directory-tree-row > .service-directory-tree-directory { background: var(--dg-primary-soft); color: var(--dg-primary-strong); }
+
+@media (max-width: 980px) {
+  .dg-np-layout { grid-template-columns: minmax(175px, .28fr) minmax(0, 1fr); gap: 24px; }
+}
+@media (max-width: 760px) {
+  .dg-np-layout { grid-template-columns: 1fr; }
+  .dg-np-rail { border-bottom: 1px solid var(--dg-line); border-right: 0; padding: 0 0 14px; position: static; }
+  .deployment-journey { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .deployment-journey li { align-content: start; display: grid; grid-template-columns: 1fr; min-height: 0; }
+  .deployment-journey li:not(:last-child)::after { height: 1px; left: 29px; right: -5px; top: 14px; width: auto; }
+  .deployment-journey li > div { padding: 7px 8px 0 0; }
+  .deployment-journey li small { display: none; }
+  .dg-np-rail-note { margin-top: 12px; }
+}
+@media (max-width: 540px) {
+  .dg-np-step .new-project-fields { grid-template-columns: 1fr; }
+  .dg-np-repo-field { grid-column: auto; }
+  .dg-np-step > header { flex-wrap: wrap; }
+  .dg-np-step > header > .secondary-button { margin-left: 43px; }
+  .deploy-review-summary > div { grid-template-columns: 1fr; gap: 4px; }
+  .dg-np-connect { flex-direction: column; }
+  .new-project-actions .button { width: 100%; }
+}

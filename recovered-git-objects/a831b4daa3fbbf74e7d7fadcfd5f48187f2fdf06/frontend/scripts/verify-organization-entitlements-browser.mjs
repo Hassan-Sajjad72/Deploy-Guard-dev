@@ -1,0 +1,25 @@
+import { strict as assert } from "node:assert";
+import { chromium } from "@playwright/test";
+import { createServer } from "vite";
+const server=await createServer({define:{"import.meta.env.VITE_API_BASE_URL":JSON.stringify("")},server:{host:"127.0.0.1",port:0},logLevel:"error"});let browser;
+try{
+  await server.listen();browser=await chromium.launch({executablePath:process.env.DG_CHROME_BIN||"/usr/bin/google-chrome",args:["--no-sandbox"],headless:true});const page=await browser.newPage(),organizationId="22222222-2222-4222-8222-222222222222";let published=0,verified=false;
+  const result={organization:{id:organizationId,name:"Agency fixture",kind:"agency"},version:null,limits:{members:null,projects:null,environments:null,agencyClients:null,evidenceRetentionDays:null,aiRequestsPerDay:null,aiBudgetUsdPerDay:null},usage:{members:1,projects:0,environments:0,agencyClients:0},history:[],meteringEvents:[],minimumEvidenceRetentionDays:90,limitDisclosure:"Unconfigured limits do not promise unlimited capacity."};
+  const errors=[];page.on("pageerror",(error)=>errors.push(error.message));
+  await page.route("**/api/**",async(route)=>{const path=new URL(route.request().url()).pathname,method=route.request().method();if(!path.startsWith("/api/")){await route.continue();return;}let body;
+    if(path==="/api/auth/me")body={user:{id:2,role:"developer",githubLogin:"owner"}};
+    else if(path==="/api/admin-auth/me")body={user:{id:1,role:"admin",internalAdminRole:"billing",email:"operator@example.test"}};
+    else if(path==="/api/admin/billing/workspaces")body={organizations:[result.organization]};
+    else if(path==="/api/admin/verify-identity"){assert.equal(route.request().postDataJSON().password,"fixture-only");verified=true;body={expiresAt:new Date(Date.now()+900000).toISOString()};}
+    else if(path.endsWith("/entitlements")&&method==="GET")body=result;
+    else if(path.endsWith("/entitlements")&&method==="POST"){assert.ok(verified);const input=route.request().postDataJSON();assert.equal(input.limits.members,3);assert.equal(input.limits.agencyClients,2);assert.equal(input.limits.evidenceRetentionDays,90);assert.equal(input.tier,"agency");assert.match(input.idempotencyKey,/^[a-f0-9-]{36}$/);published++;const version={id:"version-fixture",version:published,tier:input.tier,limits:input.limits,reason:input.reason,createdAt:new Date().toISOString()};Object.assign(result,{version,limits:input.limits,history:[version]});body={version};}
+    else if(path.includes("/activity"))body={};else{await route.fulfill({status:404,json:{message:`Unexpected fixture ${path}`}});return;}await route.fulfill({json:body});});
+  const origin=`http://127.0.0.1:${server.httpServer.address().port}`;await page.goto(`${origin}/admin/entitlements`,{waitUntil:"domcontentloaded"});await page.getByRole("heading",{name:"Organization entitlements",exact:true}).waitFor();await page.getByLabel("Workspace",{exact:true}).selectOption(organizationId);await page.getByRole("heading",{name:"Publish reviewed limits",exact:true}).waitFor();assert.equal(await page.getByRole("button",{name:"Publish immutable entitlement version",exact:true}).isDisabled(),true);
+  await page.getByLabel("Administrator password",{exact:true}).fill("fixture-only");await page.getByRole("button",{name:"Verify identity",exact:true}).click();await page.getByRole("heading",{name:"Verify sensitive-action identity",exact:true}).waitFor({state:"hidden"});assert.equal(published,0);
+  await page.getByLabel("Members",{exact:true}).fill("3");await page.getByLabel("Active agency clients",{exact:true}).fill("2");await page.getByLabel("Evidence retention (days)",{exact:true}).fill("90");await page.getByLabel("Reason for entitlement change",{exact:true}).fill("Reviewed agency pilot capacity.");await page.getByLabel("I reviewed the exact limits and their effect on this workspace.",{exact:true}).check();
+  assert.deepEqual(await page.locator("form").evaluateAll((forms)=>forms.flatMap((form)=>Array.from(form.elements).filter((element)=>element.willValidate&&!element.validity.valid).map((element)=>({name:element.name,message:element.validationMessage})))),[]);
+  await page.getByRole("button",{name:"Publish immutable entitlement version",exact:true}).click();
+  await page.getByText("A new immutable entitlement version was recorded.",{exact:true}).waitFor();assert.equal(published,1);
+  await page.goto(`${origin}/workspaces/${organizationId}/entitlements`,{waitUntil:"domcontentloaded"});await page.getByRole("heading",{name:"Agency fixture entitlements",exact:true}).waitFor();assert.equal(await page.getByRole("button",{name:"Publish immutable entitlement version",exact:true}).count(),0);await page.getByText("Version 1 · agency",{exact:false}).waitFor();await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));assert.deepEqual(errors,[]);
+  console.log("Focused entitlement browser identity verification, reviewed limits, immutable history and customer read-only checks passed.");
+}finally{if(browser)await browser.close();await server.close();}

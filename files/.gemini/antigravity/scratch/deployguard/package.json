@@ -1,0 +1,26 @@
+{
+  "name": "deployguard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zero-configuration cloud deployment platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=apps/backend",
+    "dev:frontend": "npm run dev --workspace=apps/frontend",
+    "build:backend": "npm run build --workspace=apps/backend",
+    "build:frontend": "npm run build --workspace=apps/frontend",
+    "build:shared": "npm run build --workspace=packages/shared-types",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "migration:generate": "npm run migration:generate --workspace=apps/backend",
+    "migration:run": "npm run migration:run --workspace=apps/backend",
+    "migration:revert": "npm run migration:revert --workspace=apps/backend"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

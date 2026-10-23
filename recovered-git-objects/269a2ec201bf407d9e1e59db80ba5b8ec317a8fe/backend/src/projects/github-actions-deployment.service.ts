@@ -1,0 +1,249 @@
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { InjectRepository } from "@nestjs/typeorm";
+import { DataSource, Repository } from "typeorm";
+import { ElasticLoadBalancingV2Client, DescribeLoadBalancersCommand } from "@aws-sdk/client-elastic-load-balancing-v2";
+import { LogSanitizerService } from "../observability/log-sanitizer.service";
+import { User, UserRole } from "../users/user.entity";
+import { ProjectDetectionProfile, DetectionStatus } from "./project-detection-profile.entity";
+import { ProjectPipelineRun, PipelineRunStatus } from "./project-pipeline-run.entity";
+import { Project } from "./project.entity";
+import { GithubAppService } from "./github-app.service";
+import { GithubActionsService } from "./pipeline/github-actions.service";
+import { GithubActionsOidcTrustService } from "./github-actions-oidc-trust.service";
+import { githubActionsStagePresentation } from "./pipeline/github-actions-stage-presentation";
+import { DeploymentContractService } from "./deployment-contract.service";
+
+const ACTIVE = [PipelineRunStatus.QUEUED, PipelineRunStatus.RUNNING];
+
+@Injectable()
+export class GithubActionsDeploymentService {
+  constructor(
+    @InjectRepository(Project) private readonly projects: Repository<Project>,
+    @InjectRepository(ProjectPipelineRun) private readonly runs: Repository<ProjectPipelineRun>,
+    @InjectRepository(ProjectDetectionProfile) private readonly profiles: Repository<ProjectDetectionProfile>,
+    private readonly dataSource: DataSource,
+    private readonly githubApp: GithubAppService,
+    private readonly actions: GithubActionsService,
+    private readonly oidcTrust: GithubActionsOidcTrustService,
+    private readonly sanitizer: LogSanitizerService,
+    private readonly config: ConfigService,
+    private readonly deploymentContracts: DeploymentContractService,
+  ) {}
+
+  async deploy(user: User, projectId: string) {
+    const project = await this.project(user, projectId);
+    return this.withProjectLock(projectId, async (runRepository) => {
+      const active = await this.reconcileActive(user, project, runRepository);
+      if (active) return this.result("no_op", "This deployment is already progressing.", active);
+      return this.dispatch(user, projectId, runRepository, null, "deploy");
+    });
+  }
+
+  async retry(user: User, projectId: string) {
+    const project = await this.project(user, projectId);
+    return this.withProjectLock(projectId, async (runRepository) => {
+      const active = await this.reconcileActive(user, project, runRepository);
+      if (active) return this.result("no_op", "This deployment is already progressing.", active);
+      const failed = await this.latestRun(projectId, runRepository);
+      if (!failed || failed.status !== PipelineRunStatus.FAILED) throw new BadRequestException("Only the latest failed GitHub Actions deployment can be retried.");
+      const action = failed.metadata?.deploymentAction === "destroy" ? "destroy" : "deploy";
+      return this.dispatch(user, projectId, runRepository, failed, action);
+    });
+  }
+
+  async destroy(user: User, projectId: string, confirmationPhrase: string) {
+    if (confirmationPhrase !== "DESTROY") throw new BadRequestException("Type DESTROY to confirm permanent infrastructure removal.");
+    const project = await this.project(user, projectId);
+    return this.withProjectLock(projectId, async (runRepository) => {
+      const active = await this.reconcileActive(user, project, runRepository);
+      if (active) return this.result("no_op", "A GitHub Actions operation is already progressing.", active);
+      return this.dispatch(user, projectId, runRepository, null, "destroy");
+    });
+  }
+
+  async latest(user: User, projectId: string) {
+    const project = await this.project(user, projectId);
+    const operation = await this.latestRun(projectId, this.runs);
+    if (!operation) return { operation: null };
+    await this.reconcile(user, project, operation);
+    const stableUrl = await this.stableUrl(projectId, operation.id);
+    return { operation: this.response(operation, stableUrl) };
+  }
+
+  async history(user: User, projectId: string) {
+    const project = await this.project(user, projectId);
+    const operations = await this.runs.createQueryBuilder("run")
+      .where("run.projectId = :projectId", { projectId })
+      .andWhere("run.metadata ->> 'executionEngine' = 'github_actions'")
+      .orderBy("run.createdAt", "DESC").getMany();
+    for (const operation of operations.filter((run) => ACTIVE.includes(run.status))) await this.reconcile(user, project, operation);
+    const stableUrl = operations.find((run) => run.status === PipelineRunStatus.COMPLETED && typeof run.metadata?.deployedUrl === "string")?.metadata?.deployedUrl as string | undefined;
+    return { operations: operations.map((run) => this.response(run, stableUrl || null)) };
+  }
+
+  private async dispatch(user: User, projectId: string, runRepository: Repository<ProjectPipelineRun>, retryOf: ProjectPipelineRun | null, action: "deploy" | "destroy") {
+    const project = await this.project(user, projectId);
+    const profile = await this.profiles.findOne({ where: { projectId } });
+    if (!profile || profile.detectionStatus !== DetectionStatus.SUCCESS) throw new ForbiddenException("Run successful stack detection before deploying.");
+    const contract = await this.deploymentContracts.requireForProject(projectId);
+    this.deploymentContracts.assertDeployable(contract, project);
+    const workflow = await this.githubApp.ensureWorkflow(user.id, project.repositoryFullName, project.targetBranch, project.githubInstallationId);
+    const oidcTrustSubject = await this.githubApp.oidcTrustSubject(user.id, project.repositoryFullName, project.githubInstallationId);
+    await this.oidcTrust.ensureRepositoryAuthorized(project.repositoryFullName, oidcTrustSubject);
+    const count = await runRepository.createQueryBuilder("run").where("run.projectId = :projectId", { projectId }).andWhere("run.metadata ->> 'executionEngine' = 'github_actions'").getCount();
+    const stableUrl = await this.stableUrl(projectId);
+    const operation = await runRepository.save(runRepository.create({
+      projectId, triggeredByUserId: user.id, detectionProfileId: profile.id,
+      repositoryUrl: project.repositoryUrl, repositoryFullName: project.repositoryFullName,
+      targetBranch: project.targetBranch, commitSha: profile.commitSha,
+      status: PipelineRunStatus.QUEUED, currentStage: "workflow_dispatch", startedAt: new Date(),
+      githubWorkflowStatus: "dispatching", metadata: {
+        executionEngine: "github_actions", workflowPath: workflow.path, deploymentAction: action, attempt: count + 1,
+        ...(retryOf ? { retryOfOperationId: retryOf.id } : {}), ...(stableUrl ? { stableDeployedUrl: stableUrl } : {}),
+      },
+    }));
+    const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
+    try {
+      const result = await this.actions.triggerWorkflow({
+        repositoryFullName: project.repositoryFullName, targetBranch: project.targetBranch, token: credential.token,
+        inputs: {
+          deployment_action: action,
+          deployment_operation_id: operation.id, project_id: project.id,
+          aws_region: this.config.get("AWS_REGION", "us-east-1"),
+          aws_role_arn: this.config.get("DEPLOYGUARD_GITHUB_ACTIONS_ROLE_ARN", ""),
+          vpc_id: this.config.get("DEPLOYGUARD_VPC_ID", ""),
+          public_subnet_ids: this.config.get("DEPLOYGUARD_PUBLIC_SUBNET_IDS", ""),
+          app_port: String(profile.expectedPort || 8501),
+          health_check_path: profile.framework === "streamlit" ? "/_stcore/health" : profile.healthCheckPath || "/",
+          terraform_state_bucket: this.config.get("DEPLOYGUARD_TERRAFORM_STATE_BUCKET", ""),
+          container_profile: profile.selectedTemplate || "custom-dockerfile",
+          output_directory: this.safeOutputDirectory(profile),
+        },
+      });
+      operation.githubWorkflowRunId = result.workflowRunId;
+      operation.githubWorkflowStatus = "queued";
+      operation.status = PipelineRunStatus.RUNNING;
+      operation.currentStage = "github_actions";
+      await runRepository.save(operation);
+      return this.result("accepted", action === "destroy" ? "Confirmed destroy dispatched to GitHub Actions." : retryOf ? "Retry dispatched to GitHub Actions." : "Deployment dispatched to GitHub Actions.", operation);
+    } catch (error) {
+      operation.status = PipelineRunStatus.FAILED;
+      operation.currentStage = "workflow_dispatch";
+      operation.githubWorkflowStatus = "dispatch_failed";
+      operation.failedAt = new Date();
+      operation.errorMessage = "GitHub Actions dispatch failed.";
+      operation.metadata = { ...(operation.metadata || {}), conclusion: "failure" };
+      await runRepository.save(operation);
+      throw error;
+    }
+  }
+
+  private safeOutputDirectory(profile: ProjectDetectionProfile) {
+    if (!profile.staticOutput) return ".";
+    const value = typeof profile.rawProfile?.outputDirectory === "string" ? profile.rawProfile.outputDirectory.trim() : "";
+    if (!value || value.startsWith("/") || value.split("/").includes("..") || !/^[A-Za-z0-9._/-]+$/.test(value)) {
+      throw new ForbiddenException("Run successful stack detection with a safe build output directory before deploying.");
+    }
+    return value;
+  }
+
+  private async reconcile(user: User, project: Project, operation: ProjectPipelineRun) {
+    if (!ACTIVE.includes(operation.status)) return operation;
+    const credential = await this.githubApp.tokenForRepository(user.id, project.repositoryFullName, project.githubInstallationId);
+    if (!operation.githubWorkflowRunId) {
+      const known = (await this.runs.createQueryBuilder("run").select("run.githubWorkflowRunId", "id").where("run.projectId = :projectId", { projectId: project.id }).andWhere("run.githubWorkflowRunId IS NOT NULL").getRawMany()).map((row) => String(row.id));
+      operation.githubWorkflowRunId = await this.actions.findWorkflowRunAfter(project.repositoryFullName, project.targetBranch, operation.startedAt || operation.createdAt, credential.token, known);
+      if (!operation.githubWorkflowRunId) {
+        const ageMs = Date.now() - new Date(operation.startedAt || operation.createdAt).getTime();
+        if (ageMs >= 120_000) {
+          operation.status = PipelineRunStatus.FAILED;
+          operation.githubWorkflowStatus = "run_not_found";
+          operation.currentStage = "workflow_run_discovery";
+          operation.failedAt = new Date();
+          operation.errorMessage = "GitHub Actions did not expose a workflow run for the accepted dispatch.";
+          operation.metadata = { ...(operation.metadata || {}), conclusion: "failure", failedStage: "workflow_run_discovery", safeLog: "No GitHub Actions run was found after the dispatch recovery window. No secret-bearing log was stored." };
+          return this.runs.save(operation);
+        }
+        return operation;
+      }
+    }
+    const remote = await this.actions.getWorkflowRun(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
+    operation.githubWorkflowStatus = String(remote.status || "unknown");
+    operation.commitSha = String(remote.head_sha || operation.commitSha || "");
+    operation.metadata = { ...(operation.metadata || {}), workflowUrl: remote.html_url };
+    const jobs = await this.actions.getWorkflowJobs(project.repositoryFullName, operation.githubWorkflowRunId, credential.token);
+    const currentStep = jobs.jobs?.flatMap((job) => job.steps || []).find((step) => step.status === "in_progress");
+    if (currentStep?.name) operation.currentStage = this.stage(currentStep.name);
+    if (remote.status === "completed") {
+      const success = remote.conclusion === "success";
+      operation.status = success ? PipelineRunStatus.COMPLETED : PipelineRunStatus.FAILED;
+      operation.completedAt = success ? new Date() : null;
+      operation.failedAt = success ? null : new Date();
+      if (success) {
+        const destroyed = operation.metadata?.deploymentAction === "destroy";
+        operation.currentStage = destroyed ? "destroyed" : "healthy";
+        const url = destroyed ? null : await this.loadBalancerUrl(project.id);
+        operation.metadata = { ...(operation.metadata || {}), conclusion: "success", ...(destroyed ? { destroyedAt: new Date().toISOString() } : url ? { deployedUrl: url, stableDeployedUrl: url } : {}) };
+      } else {
+        const failedJob = jobs.jobs?.find((job) => job.conclusion === "failure");
+        const failedStep = failedJob?.steps?.find((step) => step.conclusion === "failure");
+        operation.currentStage = this.stage(failedStep?.name || failedJob?.name || "github_actions");
+        let safeLog = "GitHub Actions did not return a failed-job log.";
+        if (failedJob?.id) {
+          try { safeLog = this.sanitizer.sanitize(await this.actions.getJobLog(project.repositoryFullName, failedJob.id, credential.token)).slice(-24_000); } catch { /* retain safe fallback */ }
+        }
+        const failedPresentation = githubActionsStagePresentation(operation.currentStage);
+        operation.errorMessage = operation.currentStage === "configure_aws_credentials_through_oidc"
+          ? "DeployGuard could not connect securely to AWS. This is a platform configuration defect; no application credential or project setting is required."
+          : `GitHub Actions failed during ${failedPresentation.label}.`;
+        operation.metadata = { ...(operation.metadata || {}), conclusion: String(remote.conclusion || "failure"), failedStage: operation.currentStage, safeLog };
+      }
+    }
+    return this.runs.save(operation);
+  }
+
+  private async withProjectLock<T>(projectId: string, work: (runs: Repository<ProjectPipelineRun>) => Promise<T>) {
+    const runner = this.dataSource.createQueryRunner();
+    await runner.connect();
+    try {
+      await runner.query("SELECT pg_advisory_lock(hashtext($1))", [`github-actions:${projectId}`]);
+      return await work(runner.manager.getRepository(ProjectPipelineRun));
+    } finally {
+      try { await runner.query("SELECT pg_advisory_unlock(hashtext($1))", [`github-actions:${projectId}`]); } finally { await runner.release(); }
+    }
+  }
+
+  private latestRun(projectId: string, repository: Repository<ProjectPipelineRun>, statuses?: PipelineRunStatus[]) {
+    const query = repository.createQueryBuilder("run").where("run.projectId = :projectId", { projectId }).andWhere("run.metadata ->> 'executionEngine' = 'github_actions'");
+    if (statuses?.length) query.andWhere("run.status IN (:...statuses)", { statuses });
+    return query.orderBy("run.createdAt", "DESC").getOne();
+  }
+
+  private async reconcileActive(user: User, project: Project, repository: Repository<ProjectPipelineRun>) {
+    const active = await repository.createQueryBuilder("run").where("run.projectId = :projectId", { projectId: project.id }).andWhere("run.metadata ->> 'executionEngine' = 'github_actions'").andWhere("run.status IN (:...statuses)", { statuses: ACTIVE }).orderBy("run.createdAt", "DESC").getMany();
+    for (const operation of active) {
+      await this.reconcile(user, project, operation);
+      if (ACTIVE.includes(operation.status)) return operation;
+    }
+    return null;
+  }
+
+  private async stableUrl(projectId: string, excludingId?: string) {
+    const query = this.runs.createQueryBuilder("run").where("run.projectId = :projectId", { projectId }).andWhere("run.status = :status", { status: PipelineRunStatus.COMPLETED }).andWhere("run.metadata ->> 'executionEngine' = 'github_actions'").andWhere("run.metadata ->> 'deployedUrl' IS NOT NULL");
+    if (excludingId) query.andWhere("run.id != :excludingId", { excludingId });
+    const stable = await query.orderBy("run.completedAt", "DESC").getOne();
+    return typeof stable?.metadata?.deployedUrl === "string" ? stable.metadata.deployedUrl : null;
+  }
+
+  private async loadBalancerUrl(projectId: string) {
+    const name = `dg-${projectId.toLowerCase().replaceAll("_", "-").slice(0, 25)}`;
+    const response = await new ElasticLoadBalancingV2Client({ region: this.config.get("AWS_REGION", "us-east-1") }).send(new DescribeLoadBalancersCommand({ Names: [name] }));
+    return response.LoadBalancers?.[0]?.DNSName ? `http://${response.LoadBalancers[0].DNSName}` : null;
+  }
+
+  private stage(value: string) { return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 80) || "github_actions"; }
+  private async project(user: User, id: string) { const project = await this.projects.findOne({ where: { id } }); if (!project) throw new NotFoundException("Project not found."); if (project.ownerUserId !== user.id) throw new ForbiddenException("Project operations are restricted to the project owner."); return project; }
+  private result(state: "accepted" | "no_op", message: string, run: ProjectPipelineRun) { return { deployment: { state, message, operation: this.response(run, typeof run.metadata?.stableDeployedUrl === "string" ? run.metadata.stableDeployedUrl : null) } }; }
+  private response(run: ProjectPipelineRun, stableUrl: string | null = null) { const destroyed = run.metadata?.deploymentAction === "destroy" && run.status === PipelineRunStatus.COMPLETED; const stage = githubActionsStagePresentation(run.currentStage); const failedStage = typeof run.metadata?.failedStage === "string" ? githubActionsStagePresentation(run.metadata.failedStage) : null; const oidcFailure = failedStage?.key === "configure_aws_credentials_through_oidc"; return { id: run.id, status: run.status, stage: stage.key, stageLabel: stage.label, deploymentAction: run.metadata?.deploymentAction === "destroy" ? "destroy" : "deploy", workflowRunId: run.githubWorkflowRunId, workflowStatus: run.githubWorkflowStatus, deployedUrl: destroyed ? null : (typeof run.metadata?.deployedUrl === "string" ? run.metadata.deployedUrl : stableUrl) || null, workflowUrl: typeof run.metadata?.workflowUrl === "string" ? run.metadata.workflowUrl : null, commitSha: run.commitSha, attempt: Number(run.metadata?.attempt || 1), retryOfOperationId: typeof run.metadata?.retryOfOperationId === "string" ? run.metadata.retryOfOperationId : null, conclusion: typeof run.metadata?.conclusion === "string" ? run.metadata.conclusion : null, failedStage: failedStage?.key || null, failedStageLabel: failedStage?.label || null, failureOwner: oidcFailure ? "platform" : null, safeLog: typeof run.metadata?.safeLog === "string" ? run.metadata.safeLog : null, errorMessage: oidcFailure ? "DeployGuard could not connect securely to AWS. This is a platform configuration defect; no application credential or project setting is required." : run.errorMessage || null, createdAt: run.createdAt, completedAt: run.completedAt, failedAt: run.failedAt }; }
+}

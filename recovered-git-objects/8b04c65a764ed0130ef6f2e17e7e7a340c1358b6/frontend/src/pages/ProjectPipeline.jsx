@@ -1,0 +1,54 @@
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import { getProject, getProjectCurrentState } from "../api/projectApi.js";
+import AppIcon from "../components/common/AppIcon.jsx";
+import ErrorState from "../components/common/ErrorState.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
+import CanonicalDeploymentView from "../components/projects/CanonicalDeploymentView.jsx";
+
+const ACTIVE = new Set(["preparing", "queued", "building", "deploying", "verifying"]);
+
+export default function ProjectPipeline() {
+  const { projectId } = useParams();
+  const [project, setProject] = useState(null);
+  const [currentState, setCurrentState] = useState(null);
+  const [canonicalFetchVersion, setCanonicalFetchVersion] = useState(0);
+  const [error, setError] = useState("");
+
+  async function load() {
+    try {
+      const [projectResponse, current] = await Promise.all([
+        getProject(projectId),
+        getProjectCurrentState(projectId),
+      ]);
+      setProject(projectResponse.project);
+      setCurrentState(current);
+      setCanonicalFetchVersion((version) => version + 1);
+      setError("");
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  useEffect(() => { load(); }, [projectId]);
+  useEffect(() => {
+    if (!ACTIVE.has(currentState?.developerState)) return undefined;
+    const timer = window.setInterval(load, 4000);
+    return () => window.clearInterval(timer);
+  }, [currentState?.developerState, projectId]);
+
+  if (!project || !currentState) {
+    return <div className="workspace-page">{error ? <ErrorState message={error} onRetry={load} /> : <LoadingState message="Loading deployments…" />}</div>;
+  }
+
+  return <div className="workspace-page project-pipeline-page">
+    <header className="project-page-header">
+      <div className="project-title-lockup">
+        <span className="project-glyph project-glyph-large"><AppIcon name="pipeline" size={21} /></span>
+        <div><h1>Deployments</h1><p>{project.name} <span>·</span> {currentState.branch || project.targetBranch}</p></div>
+      </div>
+    </header>
+    {error ? <ErrorState message={error} onRetry={load} /> : null}
+    <CanonicalDeploymentView canonicalFetchVersion={canonicalFetchVersion} currentState={currentState} onRefresh={load} projectId={projectId} />
+  </div>;
+}

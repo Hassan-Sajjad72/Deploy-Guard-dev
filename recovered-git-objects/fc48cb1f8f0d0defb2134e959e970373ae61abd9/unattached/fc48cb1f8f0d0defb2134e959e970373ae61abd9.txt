@@ -1,0 +1,77 @@
+# DeployGuard Final Deployment-Readiness Result
+
+Date: 2026-08-01  
+Scope: code, local PostgreSQL/Redis, authenticated browser fixtures, repository-owned workers, and read-only AWS identity/access checks. No deployment job or AWS mutation was authorized or performed.
+
+## Verdict
+
+**GO for one controlled AWS deployment test through the normal-v1 UI.**
+
+The normal-v1 release, infrastructure-plan, and infrastructure-apply workers are running and healthy for exactly `5a294142-f12c-4ffc-ab9a-c4b096ebd659/dev`. The developer UI has one canonical Deploy/Redeploy path, first-deployment continuation is refresh-safe, unchanged source is a backend-authoritative no-op, and legacy developer mutation paths are retired.
+
+## Authoritative product state
+
+- Smart Retail Pro read-only status: completed first release, stable ReleaseManifest revision 1, applied InfrastructureManifest revision 2, terminal result Live.
+- Historical superseded infrastructure and failed recovery records remain unchanged.
+- Security: disabled/deferred by explicit scope; no fabricated pass and no false release failure.
+- Billing and notifications: Stripe and SNS disabled/deferred.
+- Current queues: release and infrastructure waiting/active/delayed counts all zero.
+- Current ownership residue: zero active operation leases, cross-lane owners, reconciliation leases, and outbox claims.
+
+## Worker/tooling readiness
+
+| Worker | Health | Scope | AWS access | Tools / secret boundary |
+|---|---|---|---|---|
+| normal-v1 release | `ready=true` | exact Smart Retail/dev | AWS SDK read verified | Docker 20.10.24, Node 20.20.2; no Infracost |
+| infrastructure plan | `ready=true` | exact Smart Retail/dev | STS read verified | Terraform 1.10.5, Infracost 2.12.2, AWS CLI 2.35.17 |
+| infrastructure apply | `ready=true` | exact Smart Retail/dev | STS read verified | Terraform 1.10.5, AWS CLI 2.35.17; no Infracost |
+
+Compose persists only environment references, not secret values. `backend/.env` is Git-ignored and mode `600`. Fixture mode, Trivy, Stripe, SNS, and broad allowlists are off.
+
+## Implemented corrections
+
+1. Recovered completed first-release projection through the stable release's applied infrastructure lineage with conflict rejection.
+2. Added truthful deferred-security evidence and UI handling.
+3. Restricted Infracost to the plan worker and added the missing AWS credential provider contract for all real workers.
+4. Added the canonical plan → approval/apply → applied foundation → first release `nextAction` state machine and sanitized plan/cost review.
+5. Added typed backend `NO_OP` for unchanged immutable source/configuration.
+6. Made Requirements save-only and retired all remaining developer legacy deployment/retry/cancel/resume/Terraform-approval mutations.
+7. Reduced developer navigation to Overview, Deployments, Environment, Logs, Metrics, and Settings; protected cloud internals and mutations as admin/operator capabilities.
+8. Added developer-safe failure/reconciliation messages.
+9. Corrected two acceptance-fixture defects: ECS restart evidence now returns the exact requested service identity, and later-release fixtures explicitly disable inherited first-release gates.
+
+## Verification
+
+Passed focused backend checks:
+
+- normal release status, planning, execution, and current-state;
+- managed first-release supervised runtime;
+- infrastructure plan, apply, and uncertain-apply supervised runtimes;
+- browser-backed normal-v1 failure/recovery and worker-restart convergence;
+- durable outbox PostgreSQL/Redis concurrency;
+- cross-lane ownership PostgreSQL enforcement;
+- project continuity/legacy retirement authorization;
+- TypeScript no-emit and Nest production build.
+
+Passed focused frontend checks:
+
+- normal release-lane UI and release view;
+- current-state consistency and recovery UI;
+- production Vite build;
+- rendered authenticated browser evidence for Analyze, Build, Prepare, Deploy, Verify, Live, stable release, refresh persistence, and absence of legacy mutation requests.
+
+`git diff --check` passed. Disposable fixtures, ports, child processes, Redis prefixes, and databases were removed by their verification harnesses.
+
+## Evidence classification
+
+- **Isolated:** deterministic handler, planner/apply adapters, concurrency, identity conflict, and projection fixtures passed.
+- **Local:** real PostgreSQL, Redis/BullMQ, HTTP authentication, independent worker processes, browser DOM refresh, Compose health, and teardown passed.
+- **Live AWS:** read-only identity/client access and previously existing Smart Retail stable evidence only. No new build, push, Terraform, ECS, ALB, rollback, deletion, or other AWS mutation occurred.
+
+## Deferred limitations
+
+Trivy enforcement, Stripe, SNS, Node.js 22 migration, stricter current-state observer separation, and the broader live failure/rollback matrix remain documented productization/operational-hardening work. They are explicitly non-blocking for the single controlled deployment test and remain disabled where applicable.
+
+## Exact next UI action
+
+Open Smart Retail Pro's **Overview** page and click **Redeploy** once. If the immutable source and configuration are unchanged, the backend will truthfully return `NO_OP`; do not retry or bypass it.

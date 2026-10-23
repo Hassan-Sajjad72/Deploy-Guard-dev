@@ -1,0 +1,796 @@
+ .gitignore                                         |   16 +
+ README.md                                          |  121 -
+ backend/.env.example                               |   95 +-
+ backend/package-lock.json                          |  656 ++--
+ backend/package.json                               |   24 +-
+ backend/scripts/verify-automation-controls.ts      |  188 +-
+ backend/scripts/verify-docker-templates.ts         |   42 +-
+ backend/scripts/verify-security-policy.ts          |   84 +-
+ backend/scripts/verify-stack-detection.ts          |  316 +-
+ backend/src/admin/admin.controller.ts              |   80 +-
+ backend/src/app.module.ts                          |  412 +--
+ backend/src/audit-log/audit-log.controller.ts      |    2 +-
+ backend/src/audit-log/audit-log.entity.ts          |    8 +-
+ backend/src/audit-log/audit-log.service.ts         |   86 +-
+ backend/src/audit-log/dto/audit-log-query.dto.ts   |   20 +-
+ backend/src/auth/auth.controller.ts                |    2 +-
+ backend/src/auth/auth.service.ts                   |    5 +-
+ .../middleware/authenticated-user.middleware.ts    |    3 +-
+ backend/src/data-source.ts                         |   94 +-
+ backend/src/finops/finops-policy.service.ts        |   10 +
+ backend/src/finops/finops.config.ts                |   18 +-
+ backend/src/finops/finops.controller.ts            |    2 +-
+ backend/src/finops/finops.module.ts                |    6 +-
+ backend/src/finops/finops.service.ts               |   36 +-
+ backend/src/finops/infracost.service.ts            |    2 +-
+ backend/src/finops/project-cost-estimate.entity.ts |    8 +-
+ .../project-cost-resource-breakdown.entity.ts      |    4 +-
+ backend/src/finops/project-cost-settings.entity.ts |    4 +-
+ .../infrastructure-readiness.service.ts            |   62 +-
+ .../src/infrastructure/infrastructure.config.ts    |    9 +-
+ .../infrastructure/infrastructure.controller.ts    |   21 +-
+ .../src/infrastructure/infrastructure.module.ts    |   71 +-
+ .../src/infrastructure/infrastructure.service.ts   | 1171 ++++++-
+ ...project-deployment-readiness-snapshot.entity.ts |    2 +-
+ .../project-infrastructure-environment.entity.ts   |   42 +-
+ .../project-infrastructure-event.entity.ts         |   17 +-
+ .../project-service-discovery-record.entity.ts     |    4 +-
+ .../src/infrastructure/terraform-runner.service.ts |   82 +-
+ backend/src/main.ts                                |    4 +-
+ ...760000011000-StoreEncryptedGithubAccessToken.ts |    3 +-
+ .../github-actions-metrics.service.ts              |   20 +-
+ backend/src/observability/log-sanitizer.service.ts |    1 +
+ backend/src/observability/observability.config.ts  |    9 +-
+ .../src/observability/observability.controller.ts  |   37 +-
+ backend/src/observability/observability.module.ts  |    2 -
+ backend/src/observability/observability.service.ts |   21 +
+ .../src/observability/pipeline-metrics.service.ts  |   10 +-
+ .../project-log-stream-session.entity.ts           |    8 +-
+ .../project-observability-event.entity.ts          |    2 +-
+ .../project-pipeline-metric-summary.entity.ts      |    4 +-
+ .../project-runtime-metric-snapshot.entity.ts      |    4 +-
+ .../observability/project-stage-metric.entity.ts   |    8 +-
+ backend/src/observability/trivy-metrics.service.ts |    6 +-
+ backend/src/orchestration/alb.service.ts           |    1 +
+ backend/src/orchestration/autoscaling.service.ts   |    1 +
+ backend/src/orchestration/ecs.service.ts           |  364 ++
+ backend/src/orchestration/orchestration.config.ts  |    2 +-
+ .../src/orchestration/orchestration.controller.ts  |   50 +-
+ backend/src/orchestration/orchestration.module.ts  |    6 +-
+ backend/src/orchestration/orchestration.service.ts |   89 +-
+ .../src/orchestration/project-deployment.entity.ts |   20 +-
+ .../project-orchestration-event.entity.ts          |   21 +-
+ .../project-rollback-record.entity.ts              |   32 +-
+ .../project-spot-interruption-event.entity.ts      |   12 +-
+ .../orchestration/project-stable-release.entity.ts |   26 +-
+ backend/src/orchestration/rollback.service.ts      |   76 +-
+ backend/src/pipeline.worker.ts                     |   11 -
+ .../pipeline-stage-resolver.service.ts             |  198 +-
+ .../current-state/project-current-state.service.ts | 1695 ++++++++-
+ .../current-state/project-current-state.types.ts   |  141 +
+ .../detection/deployment-profile.service.ts        |  136 +-
+ .../detection/repository-workspace.service.ts      |   27 +-
+ .../projects/detection/stack-detection.service.ts  |  317 +-
+ .../detection/template-matching.service.ts         |   14 +
+ backend/src/projects/dto/create-env-var.dto.ts     |   19 +-
+ backend/src/projects/dto/create-project.dto.ts     |    5 +
+ backend/src/projects/dto/update-env-var.dto.ts     |   20 +-
+ backend/src/projects/dto/update-project.dto.ts     |   20 +-
+ .../src/projects/pipeline/docker-build.service.ts  |   19 +-
+ backend/src/projects/pipeline/ecr.service.ts       |   26 +-
+ .../projects/pipeline/github-actions.service.ts    |   79 +-
+ .../projects/pipeline/pipeline-stage-presenter.ts  |   91 +-
+ backend/src/projects/pipeline/pipeline-status.ts   |    3 +-
+ .../projects/pipeline/pipeline-worker.service.ts   |  847 ++++-
+ backend/src/projects/pipeline/pipeline.queue.ts    |   16 +-
+ backend/src/projects/pipeline/pipeline.service.ts  |  272 +-
+ backend/src/projects/pipeline/pipeline.types.ts    |   20 +-
+ .../projects/project-detection-profile.entity.ts   |    7 +-
+ .../project-environment-variable.entity.ts         |   69 +-
+ .../src/projects/project-pipeline-event.entity.ts  |   17 +-
+ .../src/projects/project-pipeline-run.entity.ts    |   89 +-
+ .../projects/project-preflight-report.entity.ts    |    7 +-
+ .../projects/project-security-finding.entity.ts    |    2 +-
+ .../src/projects/project-security-scan.entity.ts   |   12 +-
+ backend/src/projects/project.entity.ts             |   44 +-
+ backend/src/projects/projects.controller.ts        |  538 +--
+ backend/src/projects/projects.module.ts            |  125 +-
+ backend/src/projects/projects.service.ts           |  703 +++-
+ .../security/dockerfile-security.service.ts        |    2 +-
+ .../projects/security/security-policy.config.ts    |   19 +-
+ .../projects/security/security-policy.service.ts   |   79 +-
+ .../src/projects/security/security-scan.service.ts |   11 +-
+ backend/src/projects/templates/devops-templates.ts |  102 +-
+ .../templates/docker-template-engine.service.ts    |   82 +-
+ .../src/projects/templates/preflight.service.ts    |  438 ++-
+ backend/src/state-management/aws-cli.service.ts    |   33 +
+ .../project-deployment-queue-item.entity.ts        |   14 +-
+ .../project-state-recovery-request.entity.ts       |    8 +-
+ .../project-state-validation-result.entity.ts      |   10 +-
+ .../project-terraform-lock.entity.ts               |   18 +-
+ .../project-terraform-state.entity.ts              |    6 +-
+ .../state-management/state-corruption.service.ts   |   28 +-
+ .../state-management/state-heartbeat.service.ts    |    2 +-
+ backend/src/state-management/state-lock.service.ts |   29 +-
+ .../state-management/state-management.config.ts    |   24 +-
+ .../state-management.controller.ts                 |   32 +-
+ .../state-management/state-management.module.ts    |   13 +-
+ .../state-management/state-management.service.ts   |   54 +-
+ .../src/state-management/state-recovery.service.ts |    8 +-
+ .../state-management/terraform-state.service.ts    |  286 +-
+ .../src/storage/project-backup-record.entity.ts    |    6 +-
+ .../storage/project-persistent-storage.entity.ts   |    8 +-
+ .../src/storage/project-storage-event.entity.ts    |    6 +-
+ .../project-storage-restore-request.entity.ts      |   10 +-
+ backend/src/storage/storage.controller.ts          |    5 +-
+ backend/src/storage/storage.module.ts              |    8 +-
+ backend/src/storage/storage.service.ts             |  107 +-
+ backend/src/users/user.entity.ts                   |   10 +-
+ backend/src/users/users.service.ts                 |   21 +
+ .../docker/node/nextjs-ssr.Dockerfile.tpl          |    1 +
+ .../docker/node/nextjs-static.Dockerfile.tpl       |    7 +-
+ .../docker/node/vite-static.Dockerfile.tpl         |    7 +-
+ backend/terraform/base-network/.terraform.lock.hcl |   21 +
+ .../base-network/.terraform/modules/modules.json   |    2 +-
+ backend/terraform/base-network/main.tf             |  133 +-
+ backend/terraform/base-network/outputs.tf          |   50 +-
+ backend/terraform/base-network/variables.tf        |  121 +
+ backend/terraform/base-network/versions.tf         |   14 +-
+ backend/terraform/modules/cloud-map/outputs.tf     |    4 +
+ backend/terraform/modules/ecs-service/main.tf      |  111 +-
+ backend/terraform/modules/ecs-service/outputs.tf   |   20 +-
+ backend/terraform/modules/ecs-service/variables.tf |   42 +-
+ backend/terraform/modules/efs/main.tf              |    9 +-
+ backend/terraform/modules/network/main.tf          |   22 +-
+ backend/terraform/modules/network/outputs.tf       |    4 +
+ backend/terraform/modules/network/variables.tf     |    9 +-
+ backend/tsconfig.json                              |   20 +-
+ docker-compose.yml                                 |   10 +-
+ docs/ARCHITECTURE.md                               |  180 -
+ docs/MANUAL_SETUP_FOR_TESTING_LAUNCH.md            |  568 ---
+ docs/SETUP_REQUIRED.md                             | 1208 -------
+ docs/frontend-architecture.md                      |  120 -
+ frontend/index.html                                |    1 +
+ frontend/package.json                              |   17 +
+ frontend/src/api/adminApi.js                       |   11 +
+ frontend/src/api/client.js                         |    9 +-
+ frontend/src/api/projectApi.js                     |  187 +-
+ frontend/src/components/admin/UserRoleSelect.jsx   |    6 +-
+ frontend/src/components/admin/UserTable.jsx        |   59 +-
+ frontend/src/components/audit/AuditLogDetails.jsx  |    2 +-
+ frontend/src/components/audit/AuditLogFilters.jsx  |   87 +-
+ frontend/src/components/audit/AuditLogsTable.jsx   |   97 +-
+ frontend/src/components/common/AppIcon.jsx         |    2 +
+ frontend/src/components/common/EmptyState.jsx      |    4 +-
+ frontend/src/components/common/ErrorState.jsx      |    6 +-
+ frontend/src/components/common/LoadingState.jsx    |    4 +-
+ frontend/src/components/common/Premium.jsx         |   44 +-
+ .../InfrastructureEventsTimeline.jsx               |   15 +-
+ .../infrastructure/ProjectDeployPanel.jsx          |   58 +-
+ frontend/src/components/layout/AppLayout.jsx       |   18 +-
+ frontend/src/components/layout/CommandPalette.jsx  |    4 +-
+ frontend/src/components/layout/Navbar.jsx          |   18 +-
+ frontend/src/components/layout/Sidebar.jsx         |   55 +-
+ .../src/components/observability/EcsLogsStream.jsx |   51 -
+ .../src/components/observability/LogFilterBar.jsx  |   30 -
+ .../components/orchestration/DeploymentUrlCard.jsx |    2 +
+ .../orchestration/EcsDeploymentStatusCard.jsx      |   16 +
+ .../orchestration/OrchestrationEventsTimeline.jsx  |   10 +-
+ .../src/components/projects/CurrentStateAction.jsx |   23 -
+ .../components/projects/DeploymentProfileCard.jsx  |    9 +-
+ .../projects/DeploymentRecoveryCenter.jsx          |   61 -
+ frontend/src/components/projects/EnvVarForm.jsx    |    7 +-
+ frontend/src/components/projects/EnvVarTable.jsx   |    4 +
+ .../components/projects/EnvironmentSummaryCard.jsx |    6 +
+ .../components/projects/PipelineEventsTimeline.jsx |   10 +-
+ .../components/projects/PipelineLiveLogPanel.jsx   |   46 -
+ .../src/components/projects/PipelineRunPanel.jsx   |    9 -
+ .../src/components/projects/PipelineRunsTable.jsx  |   64 -
+ .../src/components/projects/PreflightPanel.jsx     |    6 +-
+ .../components/projects/PreflightReportPanel.jsx   |   39 +
+ frontend/src/components/projects/ProjectForm.jsx   |    2 +-
+ .../projects/ProjectModuleStatusStrip.jsx          |    4 +-
+ .../components/projects/ProjectSettingsForm.jsx    |    2 +-
+ .../src/components/projects/StartPipelineForm.jsx  |   53 -
+ .../security/SecurityPolicyDecisionBadge.jsx       |    7 +-
+ .../security/SecurityScanSummaryCard.jsx           |   14 +-
+ .../security/VulnerabilityFindingsTable.jsx        |    2 +-
+ .../src/components/state/StateLockStatusCard.jsx   |    2 +
+ frontend/src/context/ThemeContext.jsx              |    4 +-
+ frontend/src/main.jsx                              |    2 +-
+ frontend/src/pages/AdminUsers.jsx                  |  174 +-
+ frontend/src/pages/AuditLogs.jsx                   |    5 +-
+ frontend/src/pages/CostEstimateDetails.jsx         |    4 +-
+ frontend/src/pages/Dashboard.jsx                   |   46 +-
+ frontend/src/pages/GithubConnecting.jsx            |    6 +-
+ frontend/src/pages/Landing.jsx                     |   57 +-
+ frontend/src/pages/Login.jsx                       |   90 -
+ frontend/src/pages/NewProject.jsx                  |  215 +-
+ frontend/src/pages/ProjectDetails.jsx              |   78 +-
+ frontend/src/pages/ProjectDetection.jsx            |    4 +-
+ frontend/src/pages/ProjectEnvVars.jsx              |  158 -
+ frontend/src/pages/ProjectInfrastructure.jsx       |  176 +-
+ frontend/src/pages/ProjectLogs.jsx                 |   77 +-
+ frontend/src/pages/ProjectMetrics.jsx              |  168 +-
+ frontend/src/pages/ProjectObservability.jsx        |    4 +-
+ frontend/src/pages/ProjectOrchestration.jsx        |   24 +-
+ frontend/src/pages/ProjectPipeline.jsx             |   96 +-
+ frontend/src/pages/ProjectPipelineLogs.jsx         |  110 -
+ frontend/src/pages/ProjectPreflight.jsx            |   25 +-
+ frontend/src/pages/ProjectSecurity.jsx             |  122 +-
+ frontend/src/pages/ProjectSettings.jsx             |  100 +-
+ frontend/src/pages/ProjectStateManagement.jsx      |   39 +-
+ frontend/src/pages/Projects.jsx                    |   71 +-
+ frontend/src/pages/SecurityScanDetails.jsx         |   37 +-
+ frontend/src/pages/Signup.jsx                      |  148 -
+ frontend/src/routes/AppRoutes.jsx                  |   84 +-
+ frontend/src/routes/DeveloperModeOnly.jsx          |    7 -
+ frontend/src/routes/ProtectedRoute.jsx             |    2 +-
+ frontend/src/routes/RoleProtectedRoute.jsx         |    2 +-
+ frontend/src/styles.css                            | 3661 ++------------------
+ package.json                                       |    5 +-
+ 231 files changed, 11043 insertions(+), 10356 deletions(-)
+ M .gitignore
+ D README.md
+ M backend/.env.example
+ M backend/package-lock.json
+ M backend/package.json
+ M backend/scripts/verify-automation-controls.ts
+ M backend/scripts/verify-docker-templates.ts
+ M backend/scripts/verify-security-policy.ts
+ M backend/scripts/verify-stack-detection.ts
+ M backend/src/admin/admin.controller.ts
+ M backend/src/app.module.ts
+ M backend/src/audit-log/audit-log.controller.ts
+ M backend/src/audit-log/audit-log.entity.ts
+ M backend/src/audit-log/audit-log.service.ts
+ M backend/src/audit-log/dto/audit-log-query.dto.ts
+ M backend/src/auth/auth.controller.ts
+ M backend/src/auth/auth.service.ts
+ M backend/src/common/middleware/authenticated-user.middleware.ts
+ M backend/src/data-source.ts
+ M backend/src/finops/finops-policy.service.ts
+ M backend/src/finops/finops.config.ts
+ M backend/src/finops/finops.controller.ts
+ M backend/src/finops/finops.module.ts
+ M backend/src/finops/finops.service.ts
+ M backend/src/finops/infracost.service.ts
+ M backend/src/finops/project-cost-estimate.entity.ts
+ M backend/src/finops/project-cost-resource-breakdown.entity.ts
+ M backend/src/finops/project-cost-settings.entity.ts
+ M backend/src/infrastructure/infrastructure-readiness.service.ts
+ M backend/src/infrastructure/infrastructure.config.ts
+ M backend/src/infrastructure/infrastructure.controller.ts
+ M backend/src/infrastructure/infrastructure.module.ts
+ M backend/src/infrastructure/infrastructure.service.ts
+ M backend/src/infrastructure/project-deployment-readiness-snapshot.entity.ts
+ M backend/src/infrastructure/project-infrastructure-environment.entity.ts
+ M backend/src/infrastructure/project-infrastructure-event.entity.ts
+ M backend/src/infrastructure/project-service-discovery-record.entity.ts
+ M backend/src/infrastructure/terraform-runner.service.ts
+ M backend/src/main.ts
+ M backend/src/migrations/1760000011000-StoreEncryptedGithubAccessToken.ts
+ M backend/src/observability/github-actions-metrics.service.ts
+ M backend/src/observability/log-sanitizer.service.ts
+ M backend/src/observability/observability.config.ts
+ M backend/src/observability/observability.controller.ts
+ M backend/src/observability/observability.module.ts
+ M backend/src/observability/observability.service.ts
+ M backend/src/observability/pipeline-metrics.service.ts
+ M backend/src/observability/project-log-stream-session.entity.ts
+ M backend/src/observability/project-observability-event.entity.ts
+ M backend/src/observability/project-pipeline-metric-summary.entity.ts
+ M backend/src/observability/project-runtime-metric-snapshot.entity.ts
+ M backend/src/observability/project-stage-metric.entity.ts
+ M backend/src/observability/trivy-metrics.service.ts
+ M backend/src/orchestration/alb.service.ts
+ M backend/src/orchestration/autoscaling.service.ts
+ M backend/src/orchestration/ecs.service.ts
+ M backend/src/orchestration/orchestration.config.ts
+ M backend/src/orchestration/orchestration.controller.ts
+ M backend/src/orchestration/orchestration.module.ts
+ M backend/src/orchestration/orchestration.service.ts
+ M backend/src/orchestration/project-deployment.entity.ts
+ M backend/src/orchestration/project-orchestration-event.entity.ts
+ M backend/src/orchestration/project-rollback-record.entity.ts
+ M backend/src/orchestration/project-spot-interruption-event.entity.ts
+ M backend/src/orchestration/project-stable-release.entity.ts
+ M backend/src/orchestration/rollback.service.ts
+ D backend/src/pipeline.worker.ts
+ M backend/src/projects/current-state/pipeline-stage-resolver.service.ts
+ M backend/src/projects/current-state/project-current-state.service.ts
+ M backend/src/projects/current-state/project-current-state.types.ts
+ M backend/src/projects/detection/deployment-profile.service.ts
+ M backend/src/projects/detection/repository-workspace.service.ts
+ M backend/src/projects/detection/stack-detection.service.ts
+ M backend/src/projects/detection/template-matching.service.ts
+ M backend/src/projects/dto/create-env-var.dto.ts
+ M backend/src/projects/dto/create-project.dto.ts
+ M backend/src/projects/dto/update-env-var.dto.ts
+ M backend/src/projects/dto/update-project.dto.ts
+ M backend/src/projects/pipeline/docker-build.service.ts
+ M backend/src/projects/pipeline/ecr.service.ts
+ M backend/src/projects/pipeline/github-actions.service.ts
+ M backend/src/projects/pipeline/pipeline-stage-presenter.ts
+ M backend/src/projects/pipeline/pipeline-status.ts
+ M backend/src/projects/pipeline/pipeline-worker.service.ts
+ M backend/src/projects/pipeline/pipeline.queue.ts
+ M backend/src/projects/pipeline/pipeline.service.ts
+ M backend/src/projects/pipeline/pipeline.types.ts
+ M backend/src/projects/project-detection-profile.entity.ts
+ M backend/src/projects/project-environment-variable.entity.ts
+ M backend/src/projects/project-pipeline-event.entity.ts
+ M backend/src/projects/project-pipeline-run.entity.ts
+ M backend/src/projects/project-preflight-report.entity.ts
+ M backend/src/projects/project-security-finding.entity.ts
+ M backend/src/projects/project-security-scan.entity.ts
+ M backend/src/projects/project.entity.ts
+ M backend/src/projects/projects.controller.ts
+ M backend/src/projects/projects.module.ts
+ M backend/src/projects/projects.service.ts
+ M backend/src/projects/security/dockerfile-security.service.ts
+ M backend/src/projects/security/security-policy.config.ts
+ M backend/src/projects/security/security-policy.service.ts
+ M backend/src/projects/security/security-scan.service.ts
+ M backend/src/projects/templates/devops-templates.ts
+ M backend/src/projects/templates/docker-template-engine.service.ts
+ M backend/src/projects/templates/preflight.service.ts
+ M backend/src/state-management/aws-cli.service.ts
+ M backend/src/state-management/project-deployment-queue-item.entity.ts
+ M backend/src/state-management/project-state-recovery-request.entity.ts
+ M backend/src/state-management/project-state-validation-result.entity.ts
+ M backend/src/state-management/project-terraform-lock.entity.ts
+ M backend/src/state-management/project-terraform-state.entity.ts
+ M backend/src/state-management/state-corruption.service.ts
+ M backend/src/state-management/state-heartbeat.service.ts
+ M backend/src/state-management/state-lock.service.ts
+ M backend/src/state-management/state-management.config.ts
+ M backend/src/state-management/state-management.controller.ts
+ M backend/src/state-management/state-management.module.ts
+ M backend/src/state-management/state-management.service.ts
+ M backend/src/state-management/state-recovery.service.ts
+ M backend/src/state-management/terraform-state.service.ts
+ M backend/src/storage/project-backup-record.entity.ts
+ M backend/src/storage/project-persistent-storage.entity.ts
+ M backend/src/storage/project-storage-event.entity.ts
+ M backend/src/storage/project-storage-restore-request.entity.ts
+ M backend/src/storage/storage.controller.ts
+ M backend/src/storage/storage.module.ts
+ M backend/src/storage/storage.service.ts
+ M backend/src/users/user.entity.ts
+ M backend/src/users/users.service.ts
+ M backend/templates/docker/node/nextjs-ssr.Dockerfile.tpl
+ M backend/templates/docker/node/nextjs-static.Dockerfile.tpl
+ M backend/templates/docker/node/vite-static.Dockerfile.tpl
+ M backend/terraform/base-network/.terraform.lock.hcl
+ M backend/terraform/base-network/.terraform/modules/modules.json
+ M backend/terraform/base-network/main.tf
+ M backend/terraform/base-network/outputs.tf
+ M backend/terraform/base-network/variables.tf
+ M backend/terraform/base-network/versions.tf
+ M backend/terraform/modules/cloud-map/outputs.tf
+ M backend/terraform/modules/ecs-service/main.tf
+ M backend/terraform/modules/ecs-service/outputs.tf
+ M backend/terraform/modules/ecs-service/variables.tf
+ M backend/terraform/modules/efs/main.tf
+ M backend/terraform/modules/network/main.tf
+ M backend/terraform/modules/network/outputs.tf
+ M backend/terraform/modules/network/variables.tf
+ M backend/tsconfig.json
+ M docker-compose.yml
+ D docs/ARCHITECTURE.md
+ D docs/MANUAL_SETUP_FOR_TESTING_LAUNCH.md
+ D docs/SETUP_REQUIRED.md
+ D docs/frontend-architecture.md
+ M frontend/index.html
+ M frontend/package.json
+ M frontend/src/api/adminApi.js
+ M frontend/src/api/client.js
+ M frontend/src/api/projectApi.js
+ M frontend/src/components/admin/UserRoleSelect.jsx
+ M frontend/src/components/admin/UserTable.jsx
+ M frontend/src/components/audit/AuditLogDetails.jsx
+ M frontend/src/components/audit/AuditLogFilters.jsx
+ M frontend/src/components/audit/AuditLogsTable.jsx
+ M frontend/src/components/common/AppIcon.jsx
+ M frontend/src/components/common/EmptyState.jsx
+ M frontend/src/components/common/ErrorState.jsx
+ M frontend/src/components/common/LoadingState.jsx
+ M frontend/src/components/common/Premium.jsx
+ M frontend/src/components/infrastructure/InfrastructureEventsTimeline.jsx
+ M frontend/src/components/infrastructure/ProjectDeployPanel.jsx
+ M frontend/src/components/layout/AppLayout.jsx
+ M frontend/src/components/layout/CommandPalette.jsx
+ M frontend/src/components/layout/Navbar.jsx
+ M frontend/src/components/layout/Sidebar.jsx
+ D frontend/src/components/observability/EcsLogsStream.jsx
+ D frontend/src/components/observability/LogFilterBar.jsx
+ M frontend/src/components/orchestration/DeploymentUrlCard.jsx
+ M frontend/src/components/orchestration/EcsDeploymentStatusCard.jsx
+ M frontend/src/components/orchestration/OrchestrationEventsTimeline.jsx
+ D frontend/src/components/projects/CurrentStateAction.jsx
+ M frontend/src/components/projects/DeploymentProfileCard.jsx
+ D frontend/src/components/projects/DeploymentRecoveryCenter.jsx
+ M frontend/src/components/projects/EnvVarForm.jsx
+ M frontend/src/components/projects/EnvVarTable.jsx
+ M frontend/src/components/projects/EnvironmentSummaryCard.jsx
+ M frontend/src/components/projects/PipelineEventsTimeline.jsx
+ D frontend/src/components/projects/PipelineLiveLogPanel.jsx
+ D frontend/src/components/projects/PipelineRunPanel.jsx
+ D frontend/src/components/projects/PipelineRunsTable.jsx
+ M frontend/src/components/projects/PreflightPanel.jsx
+ M frontend/src/components/projects/PreflightReportPanel.jsx
+ M frontend/src/components/projects/ProjectForm.jsx
+ M frontend/src/components/projects/ProjectModuleStatusStrip.jsx
+ M frontend/src/components/projects/ProjectSettingsForm.jsx
+ D frontend/src/components/projects/StartPipelineForm.jsx
+ M frontend/src/components/security/SecurityPolicyDecisionBadge.jsx
+ M frontend/src/components/security/SecurityScanSummaryCard.jsx
+ M frontend/src/components/security/VulnerabilityFindingsTable.jsx
+ M frontend/src/components/state/StateLockStatusCard.jsx
+ M frontend/src/context/ThemeContext.jsx
+ M frontend/src/main.jsx
+ M frontend/src/pages/AdminUsers.jsx
+ M frontend/src/pages/AuditLogs.jsx
+ M frontend/src/pages/CostEstimateDetails.jsx
+ M frontend/src/pages/Dashboard.jsx
+ M frontend/src/pages/GithubConnecting.jsx
+ M frontend/src/pages/Landing.jsx
+ D frontend/src/pages/Login.jsx
+ M frontend/src/pages/NewProject.jsx
+ M frontend/src/pages/ProjectDetails.jsx
+ M frontend/src/pages/ProjectDetection.jsx
+ D frontend/src/pages/ProjectEnvVars.jsx
+ M frontend/src/pages/ProjectInfrastructure.jsx
+ M frontend/src/pages/ProjectLogs.jsx
+ M frontend/src/pages/ProjectMetrics.jsx
+ M frontend/src/pages/ProjectObservability.jsx
+ M frontend/src/pages/ProjectOrchestration.jsx
+ M frontend/src/pages/ProjectPipeline.jsx
+ D frontend/src/pages/ProjectPipelineLogs.jsx
+ M frontend/src/pages/ProjectPreflight.jsx
+ M frontend/src/pages/ProjectSecurity.jsx
+ M frontend/src/pages/ProjectSettings.jsx
+ M frontend/src/pages/ProjectStateManagement.jsx
+ M frontend/src/pages/Projects.jsx
+ M frontend/src/pages/SecurityScanDetails.jsx
+ D frontend/src/pages/Signup.jsx
+ M frontend/src/routes/AppRoutes.jsx
+ D frontend/src/routes/DeveloperModeOnly.jsx
+ M frontend/src/routes/ProtectedRoute.jsx
+ M frontend/src/routes/RoleProtectedRoute.jsx
+ M frontend/src/styles.css
+ M package.json
+?? .idea/
+?? <empty>
+?? DEPLOYGUARD_STACK_DETECTION_LEAN_SINGLE_SOURCE.md
+?? DEPLOYGUARD_UI_PRESENTATION_REMEDIATION_PLAN.md
+?? FINAL_PRODUCT_SIMPLIFICATION_PLAN_FINAL.md
+?? backend/.deployguard/
+?? backend/docker/
+?? backend/scripts/bind-smart-retail-jwt-secret.ts
+?? backend/scripts/cancel-approved-v1-undispatched-intent.ts
+?? backend/scripts/cancel-normal-first-release-undispatched-plan.ts
+?? backend/scripts/check-first-release-one-shot-readiness.ts
+?? backend/scripts/check-later-release-one-shot-readiness.ts
+?? backend/scripts/classify-completed-schema-families.ts
+?? backend/scripts/export-postgres-schema-catalog.ts
+?? backend/scripts/export-typeorm-schema-metadata.ts
+?? backend/scripts/finalize-smart-retail-first-release-database-binding-blocker.ts
+?? backend/scripts/finalize-smart-retail-first-release-database-schema-blocker.ts
+?? backend/scripts/initialize-smart-retail-first-release-schema.ts
+?? backend/scripts/normal-v1-local-demo.ts
+?? backend/scripts/plan-smart-retail-secret-access.ts
+?? backend/scripts/plan-v1-infrastructure-canary-foundation.ts
+?? backend/scripts/prepare-first-release-one-shot.ts
+?? backend/scripts/prepare-later-release-one-shot.ts
+?? backend/scripts/prepare-smart-retail-secret-access-plan.ts
+?? backend/scripts/reconcile-approved-terminal-outbox.ts
+?? backend/scripts/reconcile-first-release-image.ts
+?? backend/scripts/reconcile-normal-infrastructure-apply-outcome.ts
+?? backend/scripts/reconcile-normal-release-outcome.ts
+?? backend/scripts/reconcile-schema-inventories.ts
+?? backend/scripts/reconcile-smart-retail-first-release-database-bindings.ts
+?? backend/scripts/reconcile-smart-retail-first-release-task-command.ts
+?? backend/scripts/reconcile-smart-retail-secret-access-apply.ts
+?? backend/scripts/reconcile-v1-canary-apply-failure.ts
+?? backend/scripts/reconcile-v1-infrastructure-canary-apply.ts
+?? backend/scripts/recover-infrastructure-apply-delivery.ts
+?? backend/scripts/recover-normal-first-release-image-handoff.ts
+?? backend/scripts/recover-normal-release-preparation.ts
+?? backend/scripts/run-final-fyp-local-demo.ts
+?? backend/scripts/run-first-release-identity-preflight.ts
+?? backend/scripts/run-first-release-one-shot.ts
+?? backend/scripts/run-later-release-one-shot.ts
+?? backend/scripts/run-normal-release-lane-canary.ts
+?? backend/scripts/run-normal-v1-release-consumer-isolated-fixture.ts
+?? backend/scripts/run-operational-production-canary-preflight.ts
+?? backend/scripts/run-safe-version14-e2e.ts
+?? backend/scripts/run-v1-infrastructure-canary-apply.ts
+?? backend/scripts/verify-ai-troubleshooting.ts
+?? backend/scripts/verify-apply-entry-point.ts
+?? backend/scripts/verify-authentication.ts
+?? backend/scripts/verify-billing-notifications-postgres.ts
+?? backend/scripts/verify-billing.ts
+?? backend/scripts/verify-central-cloud-cleanup.ts
+?? backend/scripts/verify-cleanup-command-center.ts
+?? backend/scripts/verify-cloud-cleanup.ts
+?? backend/scripts/verify-cloud-state-reconciliation.ts
+?? backend/scripts/verify-completed-schema-family-classification.ts
+?? backend/scripts/verify-configuration-lock-serialization.ts
+?? backend/scripts/verify-configuration-ownership.ts
+?? backend/scripts/verify-cross-lane-controlled-activation-postgres-redis.ts
+?? backend/scripts/verify-cross-lane-ownership-enforcement-postgres.ts
+?? backend/scripts/verify-cross-lane-ownership-enforcement.ts
+?? backend/scripts/verify-current-run-recovery.ts
+?? backend/scripts/verify-current-state-consistency.ts
+?? backend/scripts/verify-database-terraform-descriptions.ts
+?? backend/scripts/verify-database-tier.ts
+?? backend/scripts/verify-demo-configuration.ts
+?? backend/scripts/verify-deployability-preflight.ts
+?? backend/scripts/verify-deployment-recovery.ts
+?? backend/scripts/verify-deployment-requirements.ts
+?? backend/scripts/verify-detection-contract-gate.ts
+?? backend/scripts/verify-deterministic-local-infrastructure-apply-state.ts
+?? backend/scripts/verify-developer-observability-projection.ts
+?? backend/scripts/verify-disabled-v1-ecs-mutation-client.ts
+?? backend/scripts/verify-disabled-v1-ecs-read-only-evidence.ts
+?? backend/scripts/verify-disabled-v1-ecs-rollout-health.ts
+?? backend/scripts/verify-durable-outbox-dispatcher-postgres-redis.ts
+?? backend/scripts/verify-durable-outbox-dispatcher.ts
+?? backend/scripts/verify-existing-project-state-classification.ts
+?? backend/scripts/verify-final-fyp-local-demo.ts
+?? backend/scripts/verify-final-plan-integrity.ts
+?? backend/scripts/verify-final-stabilization.ts
+?? backend/scripts/verify-github-actions-current-state.ts
+?? backend/scripts/verify-github-actions-migration-iteration1.ts
+?? backend/scripts/verify-immutable-release-workflow.ts
+?? backend/scripts/verify-inactive-legacy-cancellation-shadow-insertion-postgres.ts
+?? backend/scripts/verify-inactive-legacy-cancellation-shadow-insertion.ts
+?? backend/scripts/verify-inactive-legacy-rollback-shadow-insertion-postgres.ts
+?? backend/scripts/verify-inactive-legacy-rollback-shadow-insertion.ts
+?? backend/scripts/verify-inactive-legacy-shadow-insertion.ts
+?? backend/scripts/verify-inactive-legacy-worker-shadow-insertion.ts
+?? backend/scripts/verify-inactive-legacy-worker-terminal-shadow-postgres.ts
+?? backend/scripts/verify-inactive-legacy-worker-terminal-shadow.ts
+?? backend/scripts/verify-inactive-release-lane-correlation-postgres.ts
+?? backend/scripts/verify-inactive-release-lane-correlation.ts
+?? backend/scripts/verify-inactive-release-lane-ownership-postgres.ts
+?? backend/scripts/verify-inactive-release-lane-ownership.ts
+?? backend/scripts/verify-inactive-release-lane-shadow-observer-postgres.ts
+?? backend/scripts/verify-inactive-release-lane-shadow-observer.ts
+?? backend/scripts/verify-inactive-v1-bullmq-consumer-postgres-redis.ts
+?? backend/scripts/verify-inactive-v1-bullmq-consumer.ts
+?? backend/scripts/verify-inactive-v1-ecs-release-handler.ts
+?? backend/scripts/verify-inactive-v1-ecs-release-mutation-postgres.ts
+?? backend/scripts/verify-inactive-v1-ecs-release-mutation.ts
+?? backend/scripts/verify-inactive-v1-ecs-release-outcome-postgres.ts
+?? backend/scripts/verify-inactive-v1-ecs-release-outcome.ts
+?? backend/scripts/verify-inactive-v1-ecs-release-reconciliation.ts
+?? backend/scripts/verify-inactive-v1-execution-lease-heartbeat.ts
+?? backend/scripts/verify-inactive-v1-fenced-invocation-postgres.ts
+?? backend/scripts/verify-inactive-v1-fenced-invocation.ts
+?? backend/scripts/verify-inactive-v1-first-release-bootstrap.ts
+?? backend/scripts/verify-inactive-v1-handler-side-effect-safety-postgres.ts
+?? backend/scripts/verify-inactive-v1-handler-side-effect-safety.ts
+?? backend/scripts/verify-inactive-v1-infrastructure-apply-handler.ts
+?? backend/scripts/verify-inactive-v1-infrastructure-plan-handler.ts
+?? backend/scripts/verify-inactive-v1-pre-execution-ownership-postgres.ts
+?? backend/scripts/verify-inactive-v1-pre-execution-ownership.ts
+?? backend/scripts/verify-inactive-v1-release-lane-composition.ts
+?? backend/scripts/verify-inactive-v1-shadow-insertion.ts
+?? backend/scripts/verify-inactive-v1-side-effect-reconciliation-coordinator-postgres.ts
+?? backend/scripts/verify-inactive-v1-side-effect-reconciliation-coordinator.ts
+?? backend/scripts/verify-inactive-v1-side-effect-reconciliation-postgres.ts
+?? backend/scripts/verify-inactive-v1-side-effect-reconciliation.ts
+?? backend/scripts/verify-inactive-v1-worker-runtime-postgres-redis.ts
+?? backend/scripts/verify-inactive-v1-worker-runtime.ts
+?? backend/scripts/verify-infrastructure-lifecycle.ts
+?? backend/scripts/verify-infrastructure-plan-completion-continuation-postgres.ts
+?? backend/scripts/verify-later-release-one-shot.ts
+?? backend/scripts/verify-legacy-retirement.ts
+?? backend/scripts/verify-local-launch-multi-user-postgres.ts
+?? backend/scripts/verify-local-v1-release-fixture-adapter.ts
+?? backend/scripts/verify-manifest-secret-safety.ts
+?? backend/scripts/verify-normal-deployment-command-postgres.ts
+?? backend/scripts/verify-normal-deployment-command.ts
+?? backend/scripts/verify-normal-first-release-infrastructure-apply-execution.ts
+?? backend/scripts/verify-normal-first-release-infrastructure-plan-execution.ts
+?? backend/scripts/verify-normal-first-release-infrastructure-plan-supervised-runtime-postgres-redis.ts
+?? backend/scripts/verify-normal-first-release-lane-planning.ts
+?? backend/scripts/verify-normal-first-release-pre-execution-retry.ts
+?? backend/scripts/verify-normal-managed-first-release-handler.ts
+?? backend/scripts/verify-normal-release-auto-convergence.ts
+?? backend/scripts/verify-normal-release-lane-convergence.ts
+?? backend/scripts/verify-normal-release-lane-current-state.ts
+?? backend/scripts/verify-normal-release-lane-execution.ts
+?? backend/scripts/verify-normal-release-lane-planning.ts
+?? backend/scripts/verify-normal-release-lane-status.ts
+?? backend/scripts/verify-normal-v1-infrastructure-consumer-supervision.ts
+?? backend/scripts/verify-normal-v1-local-demo.ts
+?? backend/scripts/verify-normal-v1-local-fixture-worker-postgres-redis.ts
+?? backend/scripts/verify-normal-v1-release-compose-convergence-restart.ts
+?? backend/scripts/verify-normal-v1-release-consumer-lifecycle.ts
+?? backend/scripts/verify-normal-v1-release-consumer-supervision.ts
+?? backend/scripts/verify-normal-v1-shared-activation.ts
+?? backend/scripts/verify-normal-v1-supervised-runtime-postgres-redis.ts
+?? backend/scripts/verify-notifications.ts
+?? backend/scripts/verify-operational-ownership-rollout-postgres-redis.ts
+?? backend/scripts/verify-operational-production-canary-preflight.ts
+?? backend/scripts/verify-operational-production-canary-runner.ts
+?? backend/scripts/verify-operational-production-canary-runtime.ts
+?? backend/scripts/verify-operator-admin-segregation.ts
+?? backend/scripts/verify-pipeline-job-finality-evidence-bullmq.ts
+?? backend/scripts/verify-pipeline-job-finality-evidence-postgres.ts
+?? backend/scripts/verify-pipeline-job-finality-evidence.ts
+?? backend/scripts/verify-plan-completed-intent-status-postgres.ts
+?? backend/scripts/verify-postgresql-backup-restore.ts
+?? backend/scripts/verify-pre-mutation-contract.ts
+?? backend/scripts/verify-preserve-released-terraform-lock-history.ts
+?? backend/scripts/verify-production-v1-first-release-identity-preflight.ts
+?? backend/scripts/verify-project-continuity.ts
+?? backend/scripts/verify-project-developer-current-state.ts
+?? backend/scripts/verify-project-usage.ts
+?? backend/scripts/verify-real-local-concurrency.ts
+?? backend/scripts/verify-reconcile-verified-lifecycle-integrity.ts
+?? backend/scripts/verify-s3-state-lockfile.ts
+?? backend/scripts/verify-schema-inventory-reconciliation.ts
+?? backend/scripts/verify-service-binding.ts
+?? backend/scripts/verify-stage-selective-resume.ts
+?? backend/scripts/verify-state-safety-synchronization.ts
+?? backend/scripts/verify-task-definition-rendering.ts
+?? backend/scripts/verify-terraform-approval-lifecycle.ts
+?? backend/scripts/verify-terraform-export.ts
+?? backend/scripts/verify-transactional-deployment-planner-postgres.ts
+?? backend/scripts/verify-transactional-deployment-planner.ts
+?? backend/scripts/verify-two-lane-contract-shapes.ts
+?? backend/scripts/verify-two-lane-migration-safety.ts
+?? backend/scripts/verify-two-lane-migrations-postgres.ts
+?? backend/scripts/verify-unknown-plan-policy.ts
+?? backend/scripts/verify-v1-iam-secret-access-apply.ts
+?? backend/scripts/verify-v1-infrastructure-manifest-apply.ts
+?? backend/scripts/verify-v1-infrastructure-manifest-plan-postgres.ts
+?? backend/scripts/verify-v1-infrastructure-plan-review-postgres.ts
+?? backend/scripts/verify-version14-remediation.ts
+?? backend/scripts/verify-worker-envelope-v1.ts
+?? backend/scripts/verify-workspace-release-summary.ts
+?? backend/src/admin/dto/update-user-access.dto.ts
+?? backend/src/ai-troubleshooting/
+?? backend/src/billing/
+?? backend/src/config/
+?? backend/src/health/
+?? backend/src/infrastructure-lifecycle/
+?? backend/src/infrastructure/database-service-binding.service.ts
+?? backend/src/infrastructure/deployment-contract-validation.service.ts
+?? backend/src/infrastructure/terraform-approval-state.service.ts
+?? backend/src/migrations/1759999999000-CreateLegacyCoreBootstrap.ts
+?? backend/src/migrations/1760000012000-CreatePlatformExtensionTables.ts
+?? backend/src/migrations/1760000013000-HardenPlatformExtensionEvents.ts
+?? backend/src/migrations/1760000014000-Version14LifecycleTimestampsAndFingerprints.ts
+?? backend/src/migrations/1760000015000-AddAuditLogCategory.ts
+?? backend/src/migrations/1760000017000-AddProjectDeploymentOverrides.ts
+?? backend/src/migrations/1760000018000-CreateProjectDeploymentContracts.ts
+?? backend/src/migrations/1760000019000-HardenProjectEnvironmentVariables.ts
+?? backend/src/migrations/1760000020000-EncryptLegacyProjectEnvironmentValues.ts
+?? backend/src/migrations/1760000021000-AddProjectCloudCleanupInventory.ts
+?? backend/src/migrations/1760000022000-CreateCentralCloudCleanup.ts
+?? backend/src/migrations/1760000023000-StrengthenCloudResourceRegistry.ts
+?? backend/src/migrations/1760000024000-CreateCloudInventoryScans.ts
+?? backend/src/migrations/1760000025000-AddCleanupOperationsAndTtl.ts
+?? backend/src/migrations/1760000026000-CreateProjectCloudStates.ts
+?? backend/src/migrations/1760000027000-CreateProjectDatabaseTiers.ts
+?? backend/src/migrations/1760000028000-CreateProjectStageCheckpoints.ts
+?? backend/src/migrations/1760000029000-CanonicalDeploymentRequirements.ts
+?? backend/src/migrations/1760000030000-CanonicalProjectTimeAndRecency.ts
+?? backend/src/migrations/1760000031000-CanonicalModuleEventTimes.ts
+?? backend/src/migrations/1760000032000-CreateProjectServiceBindings.ts
+?? backend/src/migrations/1760000033000-CanonicalProjectConfiguration.ts
+?? backend/src/migrations/1760000034000-CreateTwoLaneManifestsAndStateRevisions.ts
+?? backend/src/migrations/1760000035000-CreateDeploymentIntentsOutboxAndOperationLeases.ts
+?? backend/src/migrations/1760000036000-LinkLegacyExecutionToTwoLaneContracts.ts
+?? backend/src/migrations/1760000037000-CreateWorkerCapabilityRegistry.ts
+?? backend/src/migrations/1760000038000-AddOutboxDeliveryFencing.ts
+?? backend/src/migrations/1760000039000-CreateDeploymentSideEffectJournal.ts
+?? backend/src/migrations/1760000040000-CreateSideEffectReconciliationJournal.ts
+?? backend/src/migrations/1760000041000-CreateSideEffectReconciliationLeases.ts
+?? backend/src/migrations/1760000042000-CanonicalStableReleaseProjection.ts
+?? backend/src/migrations/1760000043000-CreateReleaseLaneOwnerships.ts
+?? backend/src/migrations/1760000044000-AddReleaseLaneOwnershipCorrelation.ts
+?? backend/src/migrations/1760000045000-CreateReleaseLaneShadowObservations.ts
+?? backend/src/migrations/1760000046000-CreatePipelineJobFinalities.ts
+?? backend/src/migrations/1760000047000-CreateReleaseImageProvenances.ts
+?? backend/src/migrations/1760000048000-CreateInitialReleaseDrafts.ts
+?? backend/src/migrations/1760000049000-AddPlanCompletedDeploymentIntentStatus.ts
+?? backend/src/migrations/1760000050000-NormalizeLegacyUuidIdentifierColumns.ts
+?? backend/src/migrations/1760000051000-NormalizeBootstrapColumnDefaults.ts
+?? backend/src/migrations/1760000052000-ValidateRuntimeSafetyChecks.ts
+?? backend/src/migrations/1760000053000-RequireStageCheckpointPrimaryKey.ts
+?? backend/src/migrations/1760000054000-EnforceIntentDispatchOwnershipForeignKeys.ts
+?? backend/src/migrations/1760000055000-EnforceManifestReleaseLineageForeignKeys.ts
+?? backend/src/migrations/1760000056000-EnforceReleaseProvenanceStableProjectionIntegrity.ts
+?? backend/src/migrations/1760000057000-ReconcileOperationalOwnershipForeignKeys.ts
+?? backend/src/migrations/1760000058000-ReconcileVerifiedLifecycleIntegrity.ts
+?? backend/src/migrations/1760000059000-PreserveReleasedTerraformLockHistory.ts
+?? backend/src/migrations/1760000060000-CreateGithubAppInstallations.ts
+?? backend/src/migrations/1760000061000-AllowSharedGithubAppInstallationLinks.ts
+?? backend/src/migrations/1760000062000-AddUserDisabledAt.ts
+?? backend/src/notifications/
+?? backend/src/observability/developer-observability-projection.ts
+?? backend/src/orchestration-contracts/
+?? backend/src/projects/analysis-fingerprint.ts
+?? backend/src/projects/configuration-ownership.ts
+?? backend/src/projects/current-state/current-run-state.ts
+?? backend/src/projects/current-state/existing-project-state-classifier.ts
+?? backend/src/projects/current-state/project-developer-current-state.ts
+?? backend/src/projects/current-state/workspace-release-summary.ts
+?? backend/src/projects/database-tier.service.ts
+?? backend/src/projects/deployment-contract.service.ts
+?? backend/src/projects/deployment-requirements.service.ts
+?? backend/src/projects/detection/repo-deployability-scanner.service.ts
+?? backend/src/projects/dto/bulk-env-vars.dto.ts
+?? backend/src/projects/dto/project-activity.dto.ts
+?? backend/src/projects/dto/resolve-deployment-requirements.dto.ts
+?? backend/src/projects/dto/update-database-tier.dto.ts
+?? backend/src/projects/github-actions-deployment.service.ts
+?? backend/src/projects/github-actions-oidc-trust.service.ts
+?? backend/src/projects/github-app-installation.entity.ts
+?? backend/src/projects/github-app.service.ts
+?? backend/src/projects/normal-deployment-command.service.ts
+?? backend/src/projects/normal-deployment-cost-policy.ts
+?? backend/src/projects/pipeline/github-actions-stage-presentation.ts
+?? backend/src/projects/pipeline/pipeline-activity.service.ts
+?? backend/src/projects/pipeline/pipeline-job-finality.service.ts
+?? backend/src/projects/pipeline/pipeline-stage-registry.ts
+?? backend/src/projects/pipeline/project-pipeline-job-finality.entity.ts
+?? backend/src/projects/pipeline/retired-mutation-boundary.provider.ts
+?? backend/src/projects/project-activity.service.ts
+?? backend/src/projects/project-configuration-snapshot.entity.ts
+?? backend/src/projects/project-database-tier.entity.ts
+?? backend/src/projects/project-deployment-contract.entity.ts
+?? backend/src/projects/project-deployment-requirements.entity.ts
+?? backend/src/projects/project-environment-crypto.service.ts
+?? backend/src/projects/project-recency.ts
+?? backend/src/projects/project-service-binding.entity.ts
+?? backend/src/projects/project-user-activity.entity.ts
+?? backend/src/projects/recovery/
+?? backend/src/resource-registry/
+?? backend/src/state-management/current-state-invalidation.service.ts
+?? backend/src/state-management/terraform-state-safety-snapshot.service.ts
+?? backend/src/terraform-export/
+?? backend/templates/docker/node/react-static.Dockerfile.tpl
+?? backend/terraform/base-network/.terraform/providers/registry.terraform.io/hashicorp/random/
+?? backend/terraform/base-network/tests/
+?? backend/terraform/iam-secret-access/
+?? backend/terraform/modules/database-service/
+?? backend/terraform/modules/registry/
+?? docs/DEPLOYGUARD_PRODUCT_UI_AUDIT.md
+?? docs/architecture/
+?? ecsFoundation-
+?? ecs_cluster_arn,
+?? frontend/scripts/
+?? frontend/src/api/platformApi.js
+?? frontend/src/components/common/BillingErrorBoundary.jsx
+?? frontend/src/components/common/DesignSystem.jsx
+?? frontend/src/components/common/ProjectSettingsErrorBoundary.jsx
+?? frontend/src/components/projects/CanonicalDeploymentView.jsx
+?? frontend/src/components/projects/DatabaseTierSettings.jsx
+?? frontend/src/components/projects/DestroyInfrastructurePanel.jsx
+?? frontend/src/components/projects/DeveloperDetailsAccordion.jsx
+?? frontend/src/components/projects/EnvironmentVariablesPanel.jsx
+?? frontend/src/components/projects/NormalReleaseOperationPanel.jsx
+?? frontend/src/components/projects/NotificationSettingsPanel.jsx
+?? frontend/src/components/projects/PipelineExecution.jsx
+?? frontend/src/components/projects/PipelineRecoveryPanel.jsx
+?? frontend/src/components/projects/ProjectOverviewLifecycle.jsx
+?? frontend/src/components/projects/ReleaseLaneStableSummary.jsx
+?? frontend/src/components/state/StateSourcePanel.jsx
+?? frontend/src/pages/AdminCloudCleanup.jsx
+?? frontend/src/pages/Billing.jsx
+?? frontend/src/pages/DeploymentRequirements.jsx
+?? frontend/src/pages/ProjectRecovery.jsx
+?? frontend/src/pages/ProjectTroubleshooting.jsx
+?? frontend/src/routes/ProjectEnvironmentRoute.jsx
+?? frontend/src/utils/
+?? graphify-out/
+?? scripts/
+?? serviceName,

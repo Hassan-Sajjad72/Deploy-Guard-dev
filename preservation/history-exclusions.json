@@ -1,0 +1,558 @@
+[
+  {
+    "blob": "c02e45b3b78423aea7e50475b3b24a7365e3ad95",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "Python_Apps/Streamlit/Streamlit_MongoDB/.env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Express/Express_TS_MongoDB/.env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "JavaScript_Apps/SvelteKit/SvelteKit_Node_MySQL/.env"
+  },
+  {
+    "blob": "e82c61754091501d539f8fce8adf54b1ae014334",
+    "path": "JavaScript_Apps/Vite_Vue/Vite_Vue_Fastify_MySQL/frontend/.env"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/Fastify/Fastify_TS_PostgreSQL/.env"
+  },
+  {
+    "blob": "35dd46a9af238f5a61a5fd576651b1cc34f22988",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "258ca38aab49986245ea578a58f26bcecad4216d",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "ab10b88dd49ee2487a08992089677636432182b4",
+    "path": "JavaScript_Apps/Vite_React/Vite_React_Express_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "JavaScript_Apps/Fastify/Fastify_JS_MySQL/.env"
+  },
+  {
+    "blob": "bd22ed934b2c6061f508e937a246b48596c23541",
+    "path": "JavaScript_Apps/Vite_React/Vite_React_Express_PostgreSQL/backend/.env.example"
+  },
+  {
+    "blob": "0ae67fad982923026fb9e8913b519710285c8351",
+    "path": ".env.example"
+  },
+  {
+    "blob": "e82c61754091501d539f8fce8adf54b1ae014334",
+    "path": "JavaScript_Apps/Vite_React/Vite_React_Express_PostgreSQL/frontend/.env.example"
+  },
+  {
+    "blob": "ab10b88dd49ee2487a08992089677636432182b4",
+    "path": ".env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/NextJS/NextJS_Standalone_MongoDB/.env"
+  },
+  {
+    "blob": "e86c87fb89a42b02a9ae86bf2e310ced9bcef158",
+    "path": "Python_Apps/Django/Django_ASGI_MySQL/.env.example"
+  },
+  {
+    "blob": "e82c61754091501d539f8fce8adf54b1ae014334",
+    "path": "frontend/.env.example"
+  },
+  {
+    "blob": "d886721b92d469640cab1381d78f282901a1fb8b",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "JavaScript_Apps/NextJS/NextJS_Static_Express_MySQL/.env.example"
+  },
+  {
+    "blob": "ba6b0cacbc4e946eb22f40c2ac531c83f75936e7",
+    "path": "backend/.env"
+  },
+  {
+    "blob": "897f4e9d8ff69792282db122878c7cb04a6e3da5",
+    "path": "backend/.env"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "JavaScript_Apps/NextJS/NextJS_Static_Express_MySQL/.env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Nuxt/Nuxt_Static_Fastify_MongoDB/.env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/Express/Express_JS_PostgreSQL/.env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/NestJS/NestJS_MongoDB/.env"
+  },
+  {
+    "blob": "ad765a597c4d871defbc3faa97d66be528756b07",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "Python_Apps/FastAPI/FastAPI_MySQL/.env.example"
+  },
+  {
+    "blob": "a04d04bc681cece84176e46d3f16d90018961dcd",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "bd22ed934b2c6061f508e937a246b48596c23541",
+    "path": "JavaScript_Apps/Vite_React/Vite_React_Express_PostgreSQL/backend/.env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": ".env.example"
+  },
+  {
+    "blob": "75f7fc92ca0638f50d0c5f62856de361001b287e",
+    "path": ".env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": ".env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "JavaScript_Apps/Astro/Astro_Static_Fastify_MySQL/.env.example"
+  },
+  {
+    "blob": "fda3c19704ad1ca9e231037f27b5067a94c4748f",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "a819979268fa72402c762a237b84d324aeecf3d1",
+    "path": ".env.example"
+  },
+  {
+    "blob": "b523a237079ef575bd5b551951e05fb3f74566e6",
+    "path": ".env"
+  },
+  {
+    "blob": "35d9eec953db4b03b735ecbc3ab24290523fc085",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/SvelteKit/SvelteKit_Static_Express_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "b523a237079ef575bd5b551951e05fb3f74566e6",
+    "path": "JavaScript_Apps/Vite_Vue/Vite_Vue_Fastify_MySQL/.env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/NextJS/NextJS_Standalone_MongoDB/.env.example"
+  },
+  {
+    "blob": "1ac99d8eda528f20a790da2fe6a8b3f4e52c14b9",
+    "path": "JavaScript_Apps/SvelteKit/SvelteKit_Static_Express_PostgreSQL/backend/.env.example"
+  },
+  {
+    "blob": "4222c19a56ddfa4b95c797aab9548bfdaf5072f0",
+    "path": ".env"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/Express/Express_JS_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "a0f791683c60dc3db2b33fbb47c1ee8e0fd9c48d",
+    "path": "frontend/.env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Express/Express_TS_MongoDB/.env"
+  },
+  {
+    "blob": "91877164f7134331201c86a32531d0ef3cc32fbe",
+    "path": "JavaScript_Apps/NextJS/NextJS_Static_Express_MySQL/backend/.env.example"
+  },
+  {
+    "blob": "3f6b54d9c6d1655582edeae647ce0ef23c64999a",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "bd22ed934b2c6061f508e937a246b48596c23541",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "4222c19a56ddfa4b95c797aab9548bfdaf5072f0",
+    "path": "JavaScript_Apps/Create_React_App/CRA_Express_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": ".env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/Remix/Remix_Node_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "dee1e7badf6587ad102fff5548f7c8c9a82d72c8",
+    "path": ".env.example"
+  },
+  {
+    "blob": "e86c87fb89a42b02a9ae86bf2e310ced9bcef158",
+    "path": ".env"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/Nuxt/Nuxt_SSR_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "4222c19a56ddfa4b95c797aab9548bfdaf5072f0",
+    "path": "JavaScript_Apps/Create_React_App/CRA_Express_PostgreSQL/.env"
+  },
+  {
+    "blob": "897f4e9d8ff69792282db122878c7cb04a6e3da5",
+    "path": "JavaScript_Apps/Nuxt/Nuxt_Static_Fastify_MongoDB/backend/.env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Webpack_React/Webpack_React_Fastify_MongoDB/.env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/Fastify/Fastify_TS_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "e82c61754091501d539f8fce8adf54b1ae014334",
+    "path": "JavaScript_Apps/Vite_Vue/Vite_Vue_Fastify_MySQL/frontend/.env.example"
+  },
+  {
+    "blob": "ad765a597c4d871defbc3faa97d66be528756b07",
+    "path": "JavaScript_Apps/Vite_Vue/Vite_Vue_Fastify_MySQL/backend/.env"
+  },
+  {
+    "blob": "1ac99d8eda528f20a790da2fe6a8b3f4e52c14b9",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "e82c61754091501d539f8fce8adf54b1ae014334",
+    "path": "frontend/.env"
+  },
+  {
+    "blob": "16927a38a303f490f26b89c868e40068d4119ad8",
+    "path": ".env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/NextJS/NextJS_SSR_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "a0f791683c60dc3db2b33fbb47c1ee8e0fd9c48d",
+    "path": "JavaScript_Apps/Create_React_App/CRA_Express_PostgreSQL/frontend/.env.example"
+  },
+  {
+    "blob": "cf4e91eeeb514b285d6de291d93ebc8cdffaf945",
+    "path": ".env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "Python_Apps/Flask/Flask_PostgreSQL/.env"
+  },
+  {
+    "blob": "09ef25898ecdcb7921431f4c94786ff6752f5bcc",
+    "path": ".env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/NestJS/NestJS_MongoDB/.env.example"
+  },
+  {
+    "blob": "897f4e9d8ff69792282db122878c7cb04a6e3da5",
+    "path": "JavaScript_Apps/Webpack_React/Webpack_React_Fastify_MongoDB/backend/.env"
+  },
+  {
+    "blob": "ab10b88dd49ee2487a08992089677636432182b4",
+    "path": "JavaScript_Apps/Vite_React/Vite_React_Express_PostgreSQL/.env"
+  },
+  {
+    "blob": "c31d68ee42ffa927230f6a379fe36078e5770626",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "ad765a597c4d871defbc3faa97d66be528756b07",
+    "path": "backend/.env"
+  },
+  {
+    "blob": "d5fbd8653b4e33cc0dc1c2fdf53787414cfdc23f",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "ab10b88dd49ee2487a08992089677636432182b4",
+    "path": ".env.example"
+  },
+  {
+    "blob": "1ac99d8eda528f20a790da2fe6a8b3f4e52c14b9",
+    "path": "JavaScript_Apps/SvelteKit/SvelteKit_Static_Express_PostgreSQL/backend/.env"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/Remix/Remix_Node_PostgreSQL/.env"
+  },
+  {
+    "blob": "897f4e9d8ff69792282db122878c7cb04a6e3da5",
+    "path": "JavaScript_Apps/Webpack_React/Webpack_React_Fastify_MongoDB/backend/.env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Astro/Astro_Node_MongoDB/.env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/Nuxt/Nuxt_SSR_PostgreSQL/.env"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": ".env"
+  },
+  {
+    "blob": "e86c87fb89a42b02a9ae86bf2e310ced9bcef158",
+    "path": "Python_Apps/Django/Django_ASGI_MySQL/.env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "Python_Apps/Flask/Flask_Factory_MongoDB/.env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Angular/Angular_Express_MongoDB/.env"
+  },
+  {
+    "blob": "ad765a597c4d871defbc3faa97d66be528756b07",
+    "path": "JavaScript_Apps/Vite_Vue/Vite_Vue_Fastify_MySQL/backend/.env.example"
+  },
+  {
+    "blob": "e9c257959f971d0acafdf8ee3860ee182608e088",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "JavaScript_Apps/Astro/Astro_Static_Fastify_MySQL/.env"
+  },
+  {
+    "blob": "a0f791683c60dc3db2b33fbb47c1ee8e0fd9c48d",
+    "path": "frontend/.env"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "Python_Apps/FastAPI/FastAPI_Nested_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "b45fcab9d537b481b431928b25daf47510a30cbb",
+    "path": ".env.example"
+  },
+  {
+    "blob": "91877164f7134331201c86a32531d0ef3cc32fbe",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "2b682af2a95e3a6eec39c7da1579cf14472d7abd",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "Python_Apps/FastAPI/FastAPI_MySQL/.env"
+  },
+  {
+    "blob": "bd22ed934b2c6061f508e937a246b48596c23541",
+    "path": "backend/.env"
+  },
+  {
+    "blob": "76d3bb5e45244f58adcede6be5c51d0d913ba093",
+    "path": ".env.example"
+  },
+  {
+    "blob": "54c522f5da07b4e9e67525dd8a2afd28dde2f111",
+    "path": "frontend/.env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "Python_Apps/Flask/Flask_Factory_MongoDB/.env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": ".env"
+  },
+  {
+    "blob": "ba6b0cacbc4e946eb22f40c2ac531c83f75936e7",
+    "path": "JavaScript_Apps/Create_React_App/CRA_Express_PostgreSQL/backend/.env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": ".env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "Python_Apps/Streamlit/Streamlit_MongoDB/.env.example"
+  },
+  {
+    "blob": "91877164f7134331201c86a32531d0ef3cc32fbe",
+    "path": "JavaScript_Apps/NextJS/NextJS_Static_Express_MySQL/backend/.env"
+  },
+  {
+    "blob": "76d3bb5e45244f58adcede6be5c51d0d913ba093",
+    "path": "Python_Apps/Django/Django_WSGI_PostgreSQL/.env"
+  },
+  {
+    "blob": "4222c19a56ddfa4b95c797aab9548bfdaf5072f0",
+    "path": ".env.example"
+  },
+  {
+    "blob": "ba6b0cacbc4e946eb22f40c2ac531c83f75936e7",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "ba6b0cacbc4e946eb22f40c2ac531c83f75936e7",
+    "path": "JavaScript_Apps/Create_React_App/CRA_Express_PostgreSQL/backend/.env"
+  },
+  {
+    "blob": "897f4e9d8ff69792282db122878c7cb04a6e3da5",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "91877164f7134331201c86a32531d0ef3cc32fbe",
+    "path": "backend/.env"
+  },
+  {
+    "blob": "58f44b4756734372a7457fa0a5060a0d17fe00bd",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "1ac99d8eda528f20a790da2fe6a8b3f4e52c14b9",
+    "path": "backend/.env"
+  },
+  {
+    "blob": "897f4e9d8ff69792282db122878c7cb04a6e3da5",
+    "path": "JavaScript_Apps/Angular/Angular_Express_MongoDB/backend/.env"
+  },
+  {
+    "blob": "c3218b2d3f5ea3c72bd32b1a43a1c37b69c51b88",
+    "path": ".claude"
+  },
+  {
+    "blob": "4642995ad03e6a69ce2acd345374a2c5c6159ffa",
+    "path": ".mcp.json"
+  },
+  {
+    "blob": "e86c87fb89a42b02a9ae86bf2e310ced9bcef158",
+    "path": ".env.example"
+  },
+  {
+    "blob": "e82c61754091501d539f8fce8adf54b1ae014334",
+    "path": "JavaScript_Apps/Vite_React/Vite_React_Express_PostgreSQL/frontend/.env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Astro/Astro_Node_MongoDB/.env"
+  },
+  {
+    "blob": "91877164f7134331201c86a32531d0ef3cc32fbe",
+    "path": "JavaScript_Apps/Astro/Astro_Static_Fastify_MySQL/backend/.env"
+  },
+  {
+    "blob": "897f4e9d8ff69792282db122878c7cb04a6e3da5",
+    "path": "JavaScript_Apps/Angular/Angular_Express_MongoDB/backend/.env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "Python_Apps/FastAPI/FastAPI_Nested_PostgreSQL/.env"
+  },
+  {
+    "blob": "b1dc2955bfb08e9be274326015f2842c3fb68ac9",
+    "path": ".env.example"
+  },
+  {
+    "blob": "41c6b7c3529dfe78b37648ce70c2581b7a25268c",
+    "path": "backend/terraform/base-network/.terraform"
+  },
+  {
+    "blob": "76d3bb5e45244f58adcede6be5c51d0d913ba093",
+    "path": "Python_Apps/Django/Django_WSGI_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/NextJS/NextJS_SSR_PostgreSQL/.env"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Webpack_React/Webpack_React_Fastify_MongoDB/.env"
+  },
+  {
+    "blob": "e4a980111dee0d04212a41d8d54cd309a296b3a9",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Angular/Angular_Express_MongoDB/.env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "Python_Apps/Flask/Flask_PostgreSQL/.env.example"
+  },
+  {
+    "blob": "76d3bb5e45244f58adcede6be5c51d0d913ba093",
+    "path": ".env"
+  },
+  {
+    "blob": "b523a237079ef575bd5b551951e05fb3f74566e6",
+    "path": ".env.example"
+  },
+  {
+    "blob": "91182a769270c5b5686b6ce0be3e0bf4e194ecd1",
+    "path": "JavaScript_Apps/SvelteKit/SvelteKit_Static_Express_PostgreSQL/.env"
+  },
+  {
+    "blob": "011e7eb6043b3642c7e2d5bf697ee68fa5350590",
+    "path": "backend/.env.example"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "JavaScript_Apps/Fastify/Fastify_JS_MySQL/.env.example"
+  },
+  {
+    "blob": "897f4e9d8ff69792282db122878c7cb04a6e3da5",
+    "path": "JavaScript_Apps/Nuxt/Nuxt_Static_Fastify_MongoDB/backend/.env"
+  },
+  {
+    "blob": "a0f791683c60dc3db2b33fbb47c1ee8e0fd9c48d",
+    "path": "JavaScript_Apps/Create_React_App/CRA_Express_PostgreSQL/frontend/.env"
+  },
+  {
+    "blob": "91877164f7134331201c86a32531d0ef3cc32fbe",
+    "path": "JavaScript_Apps/Astro/Astro_Static_Fastify_MySQL/backend/.env.example"
+  },
+  {
+    "blob": "b523a237079ef575bd5b551951e05fb3f74566e6",
+    "path": "JavaScript_Apps/Vite_Vue/Vite_Vue_Fastify_MySQL/.env"
+  },
+  {
+    "blob": "01034b5e891036146b4408c2436e23ea9a87fb50",
+    "path": ".env.container.example"
+  },
+  {
+    "blob": "60b6992ac3ef11a599d3f7b60fbc0bd04ee1e773",
+    "path": "JavaScript_Apps/Nuxt/Nuxt_Static_Fastify_MongoDB/.env"
+  },
+  {
+    "blob": "bb9fa98d361bd72987da92e202674ad4fee74c97",
+    "path": "JavaScript_Apps/SvelteKit/SvelteKit_Node_MySQL/.env.example"
+  }
+]

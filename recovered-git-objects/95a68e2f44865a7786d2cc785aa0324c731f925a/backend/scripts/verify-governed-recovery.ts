@@ -1,0 +1,18 @@
+import "reflect-metadata";
+import * as assert from "node:assert/strict";
+import { assertRecoveryBudget, RECOVERY_RUNBOOKS, recoveryFingerprint, recoveryOutcome, validateRepairFiles } from "../src/recovery/recovery-policy";
+assert.equal(RECOVERY_RUNBOOKS.length, 4);
+assert.equal(recoveryFingerprint({ b: 2, a: 1 }), recoveryFingerprint({ a: 1, b: 2 }));
+assert.notEqual(recoveryFingerprint({ replicas: 1 }), recoveryFingerprint({ replicas: 2 }));
+assert.equal(assertRecoveryBudget(20, 40, 1, 2), 40);
+for (const bad of [null, undefined, "20", NaN, -1]) assert.throws(() => assertRecoveryBudget(bad, 40, 1, 2));
+assert.throws(() => assertRecoveryBudget(20, 30, 1, 2));
+assert.throws(() => assertRecoveryBudget(20, 200, 1, 5));
+assert.equal(recoveryOutcome({ application: "healthy", infrastructure: true, identityMatches: false }), "unverified");
+assert.equal(recoveryOutcome({ application: "failed", infrastructure: true, identityMatches: true }), "failed");
+assert.equal(recoveryOutcome({ application: "unavailable", infrastructure: true, identityMatches: true }), "unverified");
+assert.equal(recoveryOutcome({ application: "healthy", infrastructure: true, identityMatches: true }), "resolved");
+validateRepairFiles([{ path: "src/app.js", content: "console.log('review required')" }]);
+for (const path of ["../app.js", ".github/workflows/build.yml", "src/.env.json", "package.json", "secrets/data.json", "/tmp/app.js", "src/../../app.js"]) assert.throws(() => validateRepairFiles([{ path, content: "bad" }]));
+assert.throws(() => validateRepairFiles([{ path: "app.js", content: "x" }, { path: "app.js", content: "y" }]));
+console.log("Focused recovery policy checks passed.");

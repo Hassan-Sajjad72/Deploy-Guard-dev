@@ -1,0 +1,155 @@
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { execFile } from "child_process";
+import { lstat, mkdtemp, realpath, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { isAbsolute, join, sep } from "path";
+import { promisify } from "util";
+import { resolveServicePorts } from "./service-port-resolver";
+import { BuildTargetResolverService } from "./build-target-resolver.service";
+import { DeploymentRequirementResolverService } from "./deployment-requirement-resolver.service";
+
+const execFileAsync = promisify(execFile);
+
+export class RepositorySourceError extends Error {
+  constructor(message: string, readonly safeDetail: string) {
+    super(message);
+    this.name = "RepositorySourceError";
+  }
+}
+
+export async function assertBoundedSourceCheckout(workspacePath: string, trackedPaths: string[]) {
+  if (trackedPaths.length > 5000) throw new RepositorySourceError("Repository exceeds the supported 5,000-file analysis limit.", "source file limit exceeded");
+  const root = await realpath(workspacePath);
+  let bytes = 0;
+  for (const path of trackedPaths) {
+    if (isAbsolute(path) || path.includes("\0") || path.split(/[\\/]/).includes("..")) throw new RepositorySourceError("Repository contains an unsafe tracked path.", "unsafe source path");
+    const candidate = join(root, path);
+    const resolved = await realpath(candidate).catch(() => null);
+    if (!resolved || (resolved !== root && !resolved.startsWith(`${root}${sep}`))) throw new RepositorySourceError("Repository contains a broken or escaping symlink.", "unsafe source symlink");
+    const entry = await lstat(candidate);
+    if (entry.isFile()) bytes += entry.size;
+    if (bytes > 200 * 1024 * 1024) throw new RepositorySourceError("Repository exceeds the supported 200 MiB analysis limit.", "source size limit exceeded");
+  }
+}
+
+/** Repository transport plus bounded canonical-directory validation and application-port resolution. */
+@Injectable()
+export class RepositorySourceService {
+  private readonly logger = new Logger(RepositorySourceService.name);
+  constructor(private readonly buildTargets: BuildTargetResolverService, private readonly requirements: DeploymentRequirementResolverService) {}
+
+  async checkout(input: { repositoryUrl: string; branch: string; accessToken?: string | null }) {
+    this.validateRepositoryUrl(input.repositoryUrl);
+    const workspacePath = await mkdtemp(join(tmpdir(), "deploy-guard-source-"));
+    try {
+      await execFileAsync("git", ["clone", "--depth", "1", "--branch", input.branch, input.repositoryUrl, workspacePath], {
+        timeout: 120_000, maxBuffer: 1024 * 1024, env: this.gitEnvironment(input.accessToken),
+      });
+      const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: workspacePath, timeout: 10_000 });
+      const sourceSha = stdout.trim();
+      if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new RepositorySourceError("Source checkout did not resolve an exact Git SHA.", "source SHA was unavailable");
+      const tracked = await execFileAsync("git", ["ls-files", "-z"], { cwd: workspacePath, timeout: 10_000, maxBuffer: 1024 * 1024 });
+      // shortcut: clone completes before the size check; enforce a filesystem quota for stricter transport isolation.
+      await assertBoundedSourceCheckout(workspacePath, tracked.stdout.split("\0").filter(Boolean));
+      return { workspacePath, sourceSha };
+    } catch (error) {
+      await this.cleanup(workspacePath);
+      this.logger.warn(`Source checkout failed for branch=${input.branch}`);
+      if (error instanceof RepositorySourceError) throw error;
+      throw new RepositorySourceError("Unable to checkout the selected repository branch.", "repository checkout failed");
+    }
+  }
+
+  async resolveSourceSha(input: { repositoryUrl: string; branch: string; accessToken?: string | null }) {
+    this.validateRepositoryUrl(input.repositoryUrl);
+    const { stdout } = await execFileAsync("git", ["ls-remote", "--refs", input.repositoryUrl, `refs/heads/${input.branch}`], {
+      timeout: 30_000, maxBuffer: 1024 * 1024, env: this.gitEnvironment(input.accessToken),
+    });
+    const sourceSha = stdout.trim().split(/\s+/)[0] || "";
+    if (!/^[0-9a-f]{40}$/i.test(sourceSha)) throw new RepositorySourceError("Selected branch was not found.", "branch could not be resolved");
+    return sourceSha;
+  }
+
+  async assertDirectoriesAtExactSha(input: { repositoryUrl: string; branch: string; sourceSha: string; services: Array<{ serviceId: string; serviceDirectory: string }>; accessToken?: string | null }) {
+    if (!/^[0-9a-f]{40}$/i.test(input.sourceSha)) throw new RepositorySourceError("Exact source identity is invalid.", "source SHA was invalid");
+    const checkout = await this.checkout({ repositoryUrl: input.repositoryUrl, branch: input.branch, accessToken: input.accessToken });
+    try {
+      if (checkout.sourceSha.toLowerCase() !== input.sourceSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed while preparing deployment. Retry against the new exact SHA.", "source SHA changed before directory validation");
+      const root = await realpath(checkout.workspacePath);
+      for (const service of input.services) {
+        const directory = service.serviceDirectory;
+        const candidate = directory === "." ? root : join(root, ...directory.split("/"));
+        let resolved: string;
+        try {
+          const entry = await lstat(candidate);
+          if (!entry.isDirectory() && !entry.isSymbolicLink()) throw new Error("not-directory");
+          resolved = await realpath(candidate);
+        } catch {
+          throw new RepositorySourceError(`Configured service directory '${directory}' does not exist at source ${input.sourceSha.slice(0, 12)}.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_MISSING stage=service_directory_validation`);
+        }
+        if (resolved !== root && !resolved.startsWith(`${root}/`)) throw new RepositorySourceError(`Configured service directory '${directory}' escapes the repository.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_INVALID stage=service_directory_validation`);
+      }
+    } finally {
+      await this.cleanup(checkout.workspacePath);
+    }
+  }
+
+  async resolveServicePortsAtExactSha(input: { repositoryUrl: string; branch: string; sourceSha: string; services: Array<{ serviceId: string; serviceDirectory: string }>; accessToken?: string | null }) {
+    if (!/^[0-9a-f]{40}$/i.test(input.sourceSha)) throw new RepositorySourceError("Exact source identity is invalid.", "source SHA was invalid");
+    const checkout = await this.checkout({ repositoryUrl: input.repositoryUrl, branch: input.branch, accessToken: input.accessToken });
+    try {
+      if (checkout.sourceSha.toLowerCase() !== input.sourceSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed while resolving application ports. Retry against the new exact SHA.", "source SHA changed before service port resolution");
+      const root = await realpath(checkout.workspacePath);
+      for (const service of input.services) {
+        const candidate = service.serviceDirectory === "." ? root : join(root, ...service.serviceDirectory.split("/"));
+        let resolved: string;
+        try {
+          resolved = await realpath(candidate);
+          const entry = await lstat(resolved);
+          if (!entry.isDirectory()) throw new Error("not-directory");
+        } catch {
+          throw new RepositorySourceError(`Configured service directory '${service.serviceDirectory}' does not exist at source ${input.sourceSha.slice(0, 12)}.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_MISSING stage=service_directory_validation`);
+        }
+        if (resolved !== root && !resolved.startsWith(`${root}/`)) throw new RepositorySourceError(`Configured service directory '${service.serviceDirectory}' escapes the repository.`, `DG_FAILURE serviceId=${service.serviceId} code=DG_SERVICE_DIRECTORY_INVALID stage=service_directory_validation`);
+      }
+      return await resolveServicePorts(root, input.services);
+    } finally {
+      await this.cleanup(checkout.workspacePath);
+    }
+  }
+
+  /** Resolves port evidence and a canonical build target from the same immutable checkout. */
+  async resolveBuildTargetsAtExactSha(input: { repositoryUrl: string; branch: string; sourceSha: string; services: Array<{ serviceId: string; serviceDirectory: string; buildTargetOverride?: unknown }>; accessToken?: string | null }) {
+    if (!/^[0-9a-f]{40}$/i.test(input.sourceSha)) throw new RepositorySourceError("Exact source identity is invalid.", "source SHA was invalid");
+    const checkout = await this.checkout({ repositoryUrl: input.repositoryUrl, branch: input.branch, accessToken: input.accessToken });
+    try {
+      if (checkout.sourceSha.toLowerCase() !== input.sourceSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed while preparing build targets. Retry against the new exact SHA.", "source SHA changed before build-target resolution");
+      const root = await realpath(checkout.workspacePath);
+      const targets = await Promise.all(input.services.map(async (service) => ({ serviceId: service.serviceId, target: await this.buildTargets.resolve(root, { serviceId: service.serviceId, sourceSha: input.sourceSha, serviceDirectory: service.serviceDirectory, override: service.buildTargetOverride }) })));
+      const ports = await resolveServicePorts(root, input.services);
+      return { targets, ports };
+    } finally { await this.cleanup(checkout.workspacePath); }
+  }
+
+  async resolveRequirementsAtExactSha(input: { repositoryUrl: string; branch: string; sourceSha: string; targets: Array<{ serviceId: string; target: import("./build-target").CanonicalBuildTarget }>; variables: Array<{ serviceId: string; key: string; isSecret: boolean; scope: "build" | "runtime" | "both" }>; managedDatabase: { engine: "postgres" | "mysql" | "mongodb"; attachedServiceId: string } | null; accessToken?: string | null }) {
+    const checkout = await this.checkout({ repositoryUrl: input.repositoryUrl, branch: input.branch, accessToken: input.accessToken });
+    try { if (checkout.sourceSha.toLowerCase() !== input.sourceSha.toLowerCase()) throw new RepositorySourceError("Selected branch changed while resolving deployment requirements. Retry against the new exact SHA.", "source SHA changed before requirement admission"); return this.requirements.resolve(await realpath(checkout.workspacePath), input); }
+    finally { await this.cleanup(checkout.workspacePath); }
+  }
+
+  async cleanup(workspacePath: string) { await rm(workspacePath, { recursive: true, force: true }); }
+
+  private gitEnvironment(accessToken?: string | null) {
+    const token = accessToken?.trim();
+    return token ? {
+      ...process.env,
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+    } : process.env;
+  }
+
+  private validateRepositoryUrl(repositoryUrl: string) {
+    if (!/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/?$/.test(repositoryUrl)) throw new BadRequestException("repositoryUrl must be a GitHub repository URL");
+  }
+}

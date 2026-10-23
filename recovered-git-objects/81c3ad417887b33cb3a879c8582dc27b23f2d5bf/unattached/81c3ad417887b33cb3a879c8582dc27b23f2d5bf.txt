@@ -1,0 +1,46 @@
+# DeployGuard Remaining Work
+
+Authoritative implementation queue as of 2026-08-01. Repository source, current durable/runtime state, and focused test evidence override older reports. There are no unresolved P0/P1 implementation blockers for one controlled, exact-scope AWS deployment test.
+
+## Completed deployment-readiness iterations
+
+### P0 — Canonical normal-v1 truth
+
+- **Completed: recovered first-release lineage.** Completed first releases resolve stable identity through the stable `ReleaseManifest` and its applied child `InfrastructureManifest` while preserving the original superseded manifest and immutable draft. Conflicting lineage fails closed with a sanitized code. Read-only Smart Retail evidence now reports `FIRST_RELEASE_INTENT_COMPLETED`, stable release revision 1, applied infrastructure revision 2, terminal result `live`.
+- **Completed by explicit scope decision: security is disabled/deferred.** `TRIVY_SCAN_ENABLED=false`; current-state emits `NORMAL_RELEASE_SECURITY_DEFERRED`, UI renders `Disabled · deferred`, and no scan result is fabricated. Deferred security does not turn a healthy stable release into failed. Enforced-scan behavior remains unchanged when explicitly enabled in a future productization package.
+- **Completed: first-deployment continuation.** Canonical `nextAction` now covers prepare foundation, exact plan dispatch, review/cost display, approval-gated exact apply, infrastructure reconciliation, managed first-release preparation, exact release dispatch, and observation. Refresh restores the same durable state; HTTP never starts a worker.
+- **Completed: backend-authoritative unchanged source.** A transactional planner classification of `no_op` returns typed `NORMAL_RELEASE_LANE_NO_OP` without intent, outbox, BullMQ job, or external side effect. Changed immutable evidence still enters the existing planner.
+
+### P1 — Runtime, developer path, and recovery safety
+
+- **Completed: reproducible worker configuration.** Release, infrastructure-plan, and infrastructure-apply consumers are exact-scoped to `5a294142-f12c-4ffc-ab9a-c4b096ebd659/dev`. AWS credentials are injected by Compose references, never literal values. Infracost is present only in plan. Stripe, SNS, fixtures, and Trivy remain off. `.env` is ignored and mode `600`.
+- **Completed: canonical developer actions.** Overview and Deployments use one current-state `nextAction` and the existing exact normal-v1 boundaries. Duplicate clicks are guarded synchronously; dispatcher/job identities remain deterministic.
+- **Completed: configuration-only Requirements.** Saving requirements never deploys. The service returns `NORMAL_V1_DEPLOYMENT_REQUIRES_EXPLICIT_ACTION`; UI shows only **Save requirements** and directs the user to the single Overview Deploy/Redeploy action.
+- **Completed: legacy mutation retirement.** Developer-accessible automation start, pipeline retry/cancel, stage resume, and legacy Terraform approval fail closed with `410 Gone`. Historical pipeline evidence remains read-only.
+- **Completed: operator segregation.** Developer navigation is Overview, Deployments, Environment, Logs, Metrics, and Settings. Infrastructure/state/storage/orchestration/security/cost internals are admin-routed. State recovery/force release, storage provision/restore, rollback, and scaling mutations are backend admin-only.
+- **Completed: failure guidance.** UI maps backend safe codes to concise unavailable, conflict, progressing/reconciling, or queue guidance instead of presenting raw codes as the primary message. Operator evidence remains available only in protected views.
+- **Completed: current-state consolidation.** Overview, Deployments, Dashboard, Plan/Usage, Logs, Metrics, and Settings use the canonical current-state/workspace boundaries for active/latest/stable identity; legacy run history is a separately labelled read-only archive.
+
+## Final local acceptance evidence
+
+- Managed first-release supervised PostgreSQL/Redis fixture: concurrent preparation converged to one intent/candidate/outbox and completed under one independently supervised consumer.
+- Infrastructure plan/apply supervised fixtures: exact authenticated dispatch, plan completion, approval-waiting continuation, apply completion, and uncertain-state reconciliation passed without cloud access.
+- Browser-backed later-release failure/recovery soak: one prepare request, one dispatch request, one deterministic job, one provenance, three succeeded side effects; ambiguous outcome became reconciling and resumed the same job; Overview/Deployments/Dashboard/Plan & Usage agreed on completed/stable state after refresh.
+- Restart fixture: the first process stopped with the exact ambiguous job failed; the replacement process used exact ECS identity evidence and completed the same job. A fixture defect that returned a placeholder service identity was corrected.
+- Dispatcher PostgreSQL/Redis concurrency passed on clean rerun after one expected serialization abort; no production behavior was weakened.
+- Focused status, planning, exact dispatch, current-state, ownership, legacy-retirement, frontend projection, backend type-check/build, frontend build, and `git diff --check` passed.
+- Final runtime: all three workers `ready=true`; queues `waiting=0`, `active=0`, `delayed=0`; active operation leases, cross-lane owners, reconciliation leases, and outbox claims are all zero.
+- No deployment job was published and no AWS mutation occurred during this package.
+
+## Next controlled action
+
+Run one operator-observed deployment from the Smart Retail Pro Overview using the single **Redeploy** action after the intended source/deployment-contract evidence is current. Inspect durable journals and AWS state before retrying any uncertain external mutation.
+
+## Deferred, non-blocking productization
+
+- Production Trivy installation, immutable scan evidence, and enforcement policy. Keep disabled until separately scoped.
+- Stripe billing provider and webhooks. Keep `BILLING_PROVIDER_ENABLED=false`.
+- SNS delivery provider proof. Keep `NOTIFICATION_DELIVERY_ENABLED=false`.
+- Move read-through cloud-cache refresh from current-state GET to an explicit observer/command. Current GET is proven not to create lifecycle, queue, lease, owner, or cloud mutations and is acceptable for the controlled test.
+- Node.js 22 worker/toolchain upgrade before the AWS SDK support deadline.
+- Broader live AWS failure/rollback matrix, cleanup drills, and repeated later-release soak. These are post-first-test operational hardening, not blockers for the single controlled test.

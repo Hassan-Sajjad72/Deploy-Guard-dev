@@ -1,0 +1,7 @@
+{
+  "name": "deployguard-workspace-test",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": { "build": "turbo run build" },
+  "devDependencies": { "turbo": "2.1.3" }
+}

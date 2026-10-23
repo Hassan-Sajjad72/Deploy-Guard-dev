@@ -1,0 +1,4 @@
+import { NestFactory } from "@nestjs/core";
+import { NormalV1InfrastructureApplyConsumerModule } from "./normal-v1-infrastructure-apply-consumer.module";
+import { NormalV1InfrastructureApplyConsumerRuntimeService } from "./orchestration-contracts/worker-runtime/normal-v1-infrastructure-apply-consumer-runtime.service";
+void (async () => { const app = await NestFactory.createApplicationContext(NormalV1InfrastructureApplyConsumerModule, { abortOnError: false }); const runtime = app.get(NormalV1InfrastructureApplyConsumerRuntimeService); const initial = await runtime.start(); if (!initial.ready) { await app.close(); return; } await new Promise<void>((resolve) => { const stop = () => resolve(); process.once("SIGTERM", stop); process.once("SIGINT", stop); process.on("SIGUSR1", () => runtime.observe()); }); await runtime.stop(); await app.close(); })().catch(() => { process.exitCode = 1; });

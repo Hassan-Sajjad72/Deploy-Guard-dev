@@ -1,0 +1,29 @@
+import { strict as assert } from "node:assert";
+import { readFile } from "node:fs/promises";
+import { parseEnvPaste } from "../src/utils/envPaste.js";
+
+const parsed = parseEnvPaste("# application settings\nAPI_URL=https://example.test\nTOKEN=quoted value\n\n");
+assert.deepEqual(parsed.errors, [], "comments and blank lines are accepted");
+assert.deepEqual(parsed.entries.map(({ key }) => key), ["API_URL", "TOKEN"], "only names are retained for the journey");
+assert.equal(parsed.entries[1].isSecret, true, "secret-like names are marked for encrypted persistence");
+assert.match(parseEnvPaste("API_URL=x\nAPI_URL=y").errors[0], /Line 2: API_URL is duplicated/);
+assert.match(parseEnvPaste("not an assignment").errors[0], /Line 1: use KEY=value/);
+assert.match(parseEnvPaste("AWS_ACCESS_KEY_ID=x").errors[0], /managed by the platform or repository/);
+assert.equal(parseEnvPaste("").entries.length, 0, "an empty .env block is accepted");
+
+const page = await readFile(new URL("../src/pages/NewProject.jsx", import.meta.url), "utf8");
+assert.match(page, /getGithubRepositories/);
+assert.match(page, /connectGithubAppInstallation/);
+assert.match(page, /inspectGithubRepository/);
+assert.match(page, /parseEnvPaste/);
+assert.match(page, /function readinessFrom/);
+assert.match(page, /bulkUpsertProjectEnvVars[\s\S]*runStackDetection[\s\S]*generatePreflightReport/, "secure save, analysis, then pre-flight happen before deployment is enabled");
+assert.match(page, /Review readiness/);
+assert.match(page, /No deployment has started/);
+assert.match(page, /values are not displayed/);
+assert.match(page, /deployGithubActionsDeployment\(readiness\.project\.id\)/, "one canonical Deploy action dispatches only after readiness");
+assert.match(page, /navigate\(`\/projects\/\$\{readiness\.project\.id\}`\)/, "the journey redirects to the canonical Project page");
+assert.doesNotMatch(page, /archiveProject|createProjectEnvVar|Repository URL/);
+assert.doesNotMatch(page, /\/requirements/);
+assert.doesNotMatch(page, /savedKeys\.join/);
+console.log("Single-page deployment journey parser and surface verification passed");

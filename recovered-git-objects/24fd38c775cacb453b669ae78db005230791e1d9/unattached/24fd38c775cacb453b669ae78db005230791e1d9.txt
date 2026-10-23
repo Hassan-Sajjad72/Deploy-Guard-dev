@@ -1,0 +1,858 @@
+# DeployGuard Final-Day Completion Tracker
+
+Last verified: 2026-07-31
+Scope rule: maximize demonstrable product completion without weakening default-off production controls or disturbing working local/live evidence.
+
+## 1. Document reconciliation
+
+| Source | Authority used here | Reconciled position |
+|---|---|---|
+| `Deploy Guard Updated Document Final.pdf` | Original FYP proposal and promised user-facing scope | Establishes repository analysis, security/quality checks, deployment orchestration, monitoring, rollback, reporting, and role-aware UI as the product baseline. |
+| `DeployGuard_Final_Railway_Like_Architecture_and_Recovery_Report.pdf` v3.0 (July 2026) | Latest target architecture and safety contract | Supersedes earlier orchestration detail with the two-lane, durable-intent/outbox, fenced ownership, reconciliation, stable-release, and default-off worker model. |
+| `docs/architecture/two-lane-migration/PHASE_10_NORMAL_WORKFLOW_INTEGRATION.md` | Implementation/evidence report | Records substantial isolated/local/live work, but historical claims are accepted only where current source, tests, durable state, or read-only AWS evidence corroborate them. |
+| Current repository and runtime | Deciding evidence | Source and repeatable tests decide implementation status; current local processes, PostgreSQL/Redis evidence, rendered UI, and read-only AWS inspection decide runtime status. |
+
+Reconciliation rule: a documented design is not treated as implemented; a passing mock is not treated as a local runtime; and local evidence is not treated as live AWS evidence. Historical legacy read models may remain for compatibility, but retired legacy mutation paths are not counted as an available deployment workflow.
+
+## 2. Verified baseline
+
+Evidence labels:
+
+- **implemented/unverified** — reachable source exists but no current execution evidence;
+- **mock/isolated** — deterministic substitute or isolated fixture passed;
+- **local runtime** — real local process/database/queue/UI boundary passed;
+- **live AWS** — current read-only or controlled mutation evidence from AWS;
+- **failed** — current verification failed or the path is deliberately blocked;
+- **external dependency** — requires credentials/provider/user-owned configuration.
+
+Weighted completion is acceptance-credit, not lines-of-code progress. Each capability has a fixed product weight. Current credit is conservative: implementation-only receives at most 25% of its weight, isolated/mock at most 55%, local runtime at most 80%, and live verification up to 100% where live operation is part of the requirement.
+
+| Capability | Weight | Current evidence | Credited | Key evidence and genuine gap |
+|---|---:|---|---:|---|
+| Authentication, authorization, workspace roles | 6 | mock/isolated | 3.3 | Focused authentication/authorization checks pass; no current browser session/runtime was started for this baseline. |
+| Project/repository management and source identity | 6 | implemented/unverified | 1.5 | Project, repository, detection, and immutable-source contracts exist; current configured application DB is offline. |
+| Detection, preflight, security and deployment contract | 8 | mock/isolated | 4.4 | Focused detection/security-policy tests pass; Trivy is disabled in local configuration and normal-lane security evidence is not fully demonstrated. |
+| Normal-v1 planning, dispatch and canonical current state | 14 | mock/isolated | 7.7 | Exact outbox dispatch, current-state projection, first/later-release planning and historical live releases exist; current local normal runtime is off. |
+| BullMQ worker supervision, ownership and reconciliation | 10 | mock/isolated | 5.5 | Ownership/fencing/lifecycle tests and Compose definitions exist; the repository worker rejects fixture composition and prior process proof used a custom child runtime. |
+| Image provenance, Docker/ECR and supply-chain controls | 10 | live AWS + isolated | 5.5 | Current AWS releases have immutable image/task identities; no current controlled build/push and scanning enforcement is incomplete. |
+| Terraform, remote state, FinOps and infrastructure lifecycle | 12 | live AWS + isolated | 7.0 | Applied Smart Retail infrastructure and extensive fenced plan/apply contracts exist; local cost/security gates are bypassed or off and destructive paths are not demo-proven. |
+| ECS/ALB release, verification, stable promotion and rollback | 14 | live AWS | 10.5 | Project-Tst and Smart Retail services are currently 1/1/0, ALB healthy, HTTP 200; current local durable correlation is unavailable and rollback is not freshly exercised. |
+| Storage, managed PostgreSQL and persistence | 5 | live AWS | 3.5 | Smart Retail database service is healthy with prior persistence evidence; backup/restore/portability is not freshly demonstrated. |
+| Observability, AI, notifications and audit UX | 8 | mock/isolated | 3.2 | AI and notification-focused checks pass; Prometheus and SNS are off and product observability is incomplete. |
+| Export, billing/usage and deletion lifecycle | 4 | implemented/unverified | 1.0 | Terraform export/billing tests pass, but enforcement is off and the v1 deletion handler remains incomplete. |
+| Migration integrity, build, documentation and demo operations | 3 | mock/isolated | 1.7 | Backend type-check/build and frontend build pass; schema tooling is mature but closure remains paused and no current one-command demo runtime exists. |
+| **Total** | **100** |  | **54.8** | **Evidence-based completion baseline: 55%.** |
+
+Baseline evidence distribution:
+
+- locally runtime-verified product weight: **8%** (current builds and read-only local configuration checks; no application/worker stack was running);
+- live-AWS-verified product weight: **18%** (read-only identity, ECS, ALB and HTTP evidence only);
+- the remainder is isolated, implementation-only, failed/blocked, or external-dependent evidence.
+
+Current runtime baseline:
+
+- repository Compose stack: stopped;
+- configured application PostgreSQL (`mini_paas` on configured port 5433): unavailable;
+- Redis/BullMQ: unavailable;
+- normal-v1 consumers and activation gates: stopped/default-off;
+- live AWS was inspected read-only; no mutation was authorized or performed.
+
+Major-module baseline:
+
+| Module | Status |
+|---|---|
+| Auth/RBAC | Focused isolated checks pass; runtime not started. |
+| Repository detection/preflight | Implemented and focused tests pass; scanner enforcement remains configuration-dependent. |
+| Normal first/later release planning | Implemented with exact durable intent/outbox contracts; local end-to-end demo path is not currently active. |
+| Dispatcher/BullMQ | `dispatchExact()` and deterministic job identity implemented; worker fixture proof does not currently use the repository worker composition. |
+| Ownership/fencing/reconciliation | Strong isolated coverage; needs visible current local runtime evidence. |
+| Current-state/read models | Implemented across dashboard/project/workspace; Overview remains mixed with deployment-era controls. |
+| Supervised consumers | Release Compose profile exists and is default-off; infrastructure plan/apply processes lack equivalent Compose packaging. |
+| Terraform/infrastructure | Extensive normal-v1 plan/apply work exists; clean local execution depends on external tools/configuration. |
+| ECS release lifecycle | Two healthy live services provide read-only evidence; no live mutation is planned for this iteration. |
+| UI | Broad product surface builds; developer Overview does not yet present one canonical v1 operation and still exposes technical recovery controls. |
+| Observability/notifications | Partial and mostly isolated; Prometheus/SNS disabled locally. |
+| Deletion/cleanup | Legacy writes retired; normal-v1 deletion consumer handler remains a placeholder. |
+| Billing/usage | Read-model/tests exist; enforcement and provider integration are disabled. |
+| Schema contract | Export/reconciliation tooling exists; residual business classification is deliberately paused for the product vertical slice. |
+
+## 3. Prioritized remaining-work queue
+
+Priority definitions:
+
+- **P0** — blocks a truthful developer demo or risks an unsafe/false workflow;
+- **P1** — major FYP scope needed for a convincing complete product;
+- **P2** — hardening, breadth, or closure work that should not displace the demo workflow today.
+
+| ID | Priority | Bounded iteration | Acceptance evidence |
+|---|---|---|---|
+| P0-1 | P0 — completed | Add an explicit production-safe local fixture composition to the repository-owned normal-v1 release worker and prove real PostgreSQL/Redis dispatch, consumption and durable current-state completion. | Actual worker ready log, deterministic job, one handler invocation, terminal durable state, clean shutdown, no cloud-capable client. |
+| P0-2 | P0 — completed | Wire the Overview Deploy/Redeploy action and phase display exclusively to the canonical normal-v1 prepare/dispatch/current-state contract for an eligible local fixture project. | Authenticated browser/network/DOM evidence, refresh persistence, no legacy mutation calls. |
+| P0-3 | P0 — completed | Package a repeatable local demo start/stop flow with PostgreSQL, Redis, backend, frontend and scoped worker readiness. | One documented command path, readiness/health, deterministic cleanup, defaults restored off. |
+| P0-4 | P0 — completed | Remove developer-facing Terraform approval, residue, cleanup and recovery-stage controls from Overview while retaining operator-only evidence elsewhere. | UI tests and rendered Overview evidence. |
+| P1-1 | P1 — completed | Make security/preflight gates truthful in the normal operation timeline, including scanner-unavailable/blocked behavior. | Local fixture pass/fail evidence and canonical sanitized state. |
+| P1-2 | P1 — completed | Complete product observability for operation events, service health, metrics and logs without leaking internal identities. | Current local timeline/metrics/log proof. |
+| P1-3 | P1 — completed | Complete default-off normal-v1 deletion/cleanup consumer or explicitly bound it out of the final demo. | Fenced isolated cleanup proof or documented product limitation. |
+| P1-4 | P1 — completed | Consolidate Pipeline/Dashboard/Plan views onto the same canonical operation/stable-release semantics used by Overview. | Cross-page authenticated refresh consistency. |
+| P1-5 | P1 — completed | Prove failure and recovery UX using a deterministic local failed operation and safe retry/reconciliation. | One failed operation, no duplicate mutation, sanitized resolution. |
+| P1-6 | P1 — completed | Produce final FYP demo script and evidence bundle tied to implemented requirements. | Repeatable scripted walkthrough and captured evidence. |
+| P2-1 | P2 — in progress | Finish residual TypeORM reconciliation business classification without synchronizing or touching operational data. | Final machine-readable classifications and guarded migrations only if proven. |
+| P2-2 | P2 | Add supervised Compose packaging for infrastructure plan/apply workers. | Default-off health/restart/cleanup proof. |
+| P2-3 | P2 | Finish billing enforcement/provider integration and notification delivery where credentials are available. | Controlled provider evidence or explicit dependency record. |
+| P2-4 | P2 | Backup/restore, portability and operational runbook hardening. | Disposable restore exercise and concise runbook. |
+
+Queue counts at baseline: **P0 4**, **P1 6**, **P2 4**.
+Queue counts after Iteration 1: **P0 3**, **P1 6**, **P2 4**.
+Queue counts after Iteration 2: **P0 1**, **P1 6**, **P2 4**.
+Queue counts after Iteration 3: **P0 0**, **P1 6**, **P2 4**.
+Queue counts after Iteration 4: **P0 0**, **P1 5**, **P2 4**.
+Queue counts after Iteration 5: **P0 0**, **P1 4**, **P2 4**.
+Queue counts after Iteration 6: **P0 0**, **P1 3**, **P2 4**.
+Queue counts after Iteration 7: **P0 0**, **P1 2**, **P2 4**.
+Queue counts after Iteration 8: **P0 0**, **P1 1**, **P2 4**.
+Queue counts after Iteration 9: **P0 0**, **P1 0**, **P2 4**.
+Queue counts after Iteration 10: **P0 0**, **P1 0**, **P2 4**.
+Queue counts after Iteration 11: **P0 0**, **P1 0**, **P2 4**.
+Queue counts after Iteration 12: **P0 0**, **P1 0**, **P2 4**.
+Queue counts after Iteration 13: **P0 0**, **P1 0**, **P2 4**.
+Queue counts after Iteration 14: **P0 0**, **P1 0**, **P2 4**.
+Queue counts after Iteration 15: **P0 0**, **P1 0**, **P2 4**.
+Queue counts after Iteration 16: **P0 0**, **P1 0**, **P2 4**.
+Queue counts after Iteration 17: **P0 0**, **P1 0**, **P2 4**.
+
+## 4. Iteration log
+
+### Iteration 1 — repository normal-v1 local fixture worker
+
+Status: completed
+
+Bounded objective: replace the custom proof-only child composition with an explicitly guarded local fixture adapter used by the actual repository-owned normal-v1 worker. Preserve the production composition and all default-off gates.
+
+Planned evidence:
+
+- gate/configuration fail-closed tests;
+- repository worker stays ready under exact test/project/dev gates;
+- authenticated exact dispatch publishes one BullMQ job;
+- real consumer ownership/lease/fencing path invokes the non-cloud fixture executor once;
+- terminal release/current-state evidence is durable;
+- shutdown removes worker, lease, owner, claim and isolated Redis data;
+- backend/frontend builds and `git diff --check`.
+
+Outcome:
+
+- added `LocalV1ReleaseFixtureAdapterFactory`, which cannot activate outside
+  `NODE_ENV=test`, the explicit fixture gate, composition mode `fixture`, and
+  one exact UUID/`dev` allowlist;
+- preserved the production-canary composition and admitted fixture mode only
+  through a separate runtime rule;
+- used the actual `src/normal-v1-release-consumer.worker.ts` process, not the
+  prior custom proof child;
+- authenticated prepare and two concurrent dispatch requests produced one
+  publication and deterministic job
+  `dg:v1:release:f43a1390-22ef-49d1-bceb-689aa45423cd:execute:1`;
+- operation `f43a1390-22ef-49d1-bceb-689aa45423cd` completed with one image
+  provenance, three succeeded side-effect journals, stable revision 2, zero
+  active leases/owners/claims, and canonical `releaseLane.state=completed`;
+- worker health showed ready and terminal, SIGUSR1 remained read-only, and
+  SIGTERM produced stopping/stopped before the disposable database and
+  isolated Redis keys were removed;
+- corrected one directly exposed stale legacy-retirement defect:
+  normal-dispatch disabled/blocked results now consistently return
+  `fallbackToLegacy: false`.
+
+Verification:
+
+- `test:normal-v1-local-fixture-adapter`;
+- `test:normal-v1-release-consumer-lifecycle`;
+- `test:inactive-v1-release-lane-composition`;
+- `test:normal-release-lane-execution`;
+- `test:normal-release-lane-current-state`;
+- `test:normal-v1-local-fixture-worker:integration` (twice);
+- frontend normal-release and authoritative-current-state UI checks;
+- backend type-check/build and frontend production build.
+
+Evidence classification: **local runtime** for PostgreSQL, Redis, authenticated
+HTTP, BullMQ, worker process, durable state and current-state; **mock/isolated**
+only at the external release executor; **live AWS not used**.
+
+### Iteration 2 — canonical Overview release operation
+
+Status: completed
+
+Bounded objective: make the existing Overview action drive only the normal-v1
+prepare/exact-dispatch path, project its durable lifecycle as five canonical
+phases, preserve that state across refresh, and remove legacy mutation and
+recovery controls from the developer surface.
+
+Outcome:
+
+- `ProjectCurrentStateService` now carries a sanitized latest-attempt operation
+  with Analyze, Build, Prepare, Deploy and Verify phase states derived from
+  durable intent/manifest evidence, plus a separate stable-release projection;
+- Project Overview renders that operation from its existing single
+  current-state request and shows Live only for a completed candidate while the
+  stable URL remains sourced only from stable-release evidence;
+- the Start action invokes normal prepare and exact dispatch once even when the
+  browser clicks twice; no automation, legacy deploy, Terraform approval,
+  retry, cancellation, cleanup or recovery mutation request was observed;
+- authenticated Chromium network evidence recorded exactly one prepare and one
+  dispatch request for disposable operation
+  `deedaef8-a05b-4500-999d-d4ae4157d0eb`; BullMQ consumed deterministic job
+  `dg:v1:release:deedaef8-a05b-4500-999d-d4ae4157d0eb:execute:1` once;
+- PostgreSQL reached completed/stable revision 2 with one provenance, three
+  succeeded fixture effects and no lease, owner or claim; a browser reload
+  restored all five passed phases and the Live result from current-state;
+- directly exposed fixture defects were corrected: the ready-project seed now
+  includes its canonical detection profile, CDP cleanup cannot hang, and
+  signal-terminated Vite teardown is verified by its SIGTERM outcome.
+
+Verification:
+
+- `test:normal-v1-local-fixture-worker:integration` with real PostgreSQL,
+  Redis, authenticated backend, Vite, headless Chromium, BullMQ and repository
+  worker;
+- normal release status/current-state/execution and consumer lifecycle checks;
+- frontend normal-release and current-state legacy-retirement checks;
+- backend type-check/build and frontend production build.
+
+Evidence classification: **local runtime** for the authenticated browser,
+HTTP, PostgreSQL, Redis, BullMQ, worker, DOM refresh and shutdown proof;
+**mock/isolated** only for external release execution; **live AWS not used**.
+
+### Iteration 3 — repeatable local demo lifecycle
+
+Status: completed
+
+Bounded objective: turn the proven local normal-v1 slice into one repository
+command with start, status and stop contracts, truthful readiness and complete
+cleanup without persisting any activation gate.
+
+Outcome:
+
+- added the root command `npm run demo:normal-v1-local -- <start|status|stop>`;
+- `start` starts only Compose PostgreSQL/Redis when needed, waits for both,
+  launches the authenticated disposable backend/frontend/repository worker
+  fixture, and returns only after backend/frontend reachability, worker-ready
+  observation and the completed canonical Overview result are proven;
+- the passing run created operation
+  `2aac6567-39ca-4320-94fe-6e8f5bee9405` and consumed deterministic job
+  `dg:v1:release:2aac6567-39ca-4320-94fe-6e8f5bee9405:execute:1` once;
+- repeated `status` remained ready and reported the completed five-phase Live
+  Overview evidence; a duplicate start returned
+  `NORMAL_V1_LOCAL_DEMO_ALREADY_RUNNING` without changing the active runtime;
+- `NODE_ENV=production` start returned
+  `NORMAL_V1_LOCAL_DEMO_PRODUCTION_FORBIDDEN`; the child explicitly forces the
+  live client, operational rollout and production-canary gates off;
+- `stop` sent SIGTERM, observed natural child exit, removed the fixture
+  database, Redis keys and temporary state/log files, and stopped only the
+  Compose dependencies started by the demo. Final process, port and Compose
+  inspection was empty/stopped.
+
+Verification:
+
+- actual root `start`, two `status` observations and `stop` from a fully stopped
+  Compose baseline;
+- duplicate-start and production-mode fail-closed checks;
+- `test:normal-v1-local-demo`, backend type-check and residue inspection;
+- the underlying authenticated browser/PostgreSQL/Redis/BullMQ worker proof is
+  executed by every demo start.
+
+Evidence classification: **local runtime** for Compose dependency management,
+backend/frontend reachability, authenticated browser, PostgreSQL, Redis,
+BullMQ, worker and cleanup; **mock/isolated** only for external release
+execution; **live AWS not used**.
+
+### Iteration 4 — truthful normal-v1 preflight and security gates
+
+Status: completed
+
+Bounded objective: bind the canonical normal-v1 operation timeline to durable,
+candidate-specific preflight and image-security evidence without enabling a
+production scanner or cloud executor.
+
+Outcome:
+
+- Analyze now passes only when the current preflight report fingerprint equals
+  the candidate ReleaseManifest deployment-contract hash and the report passed;
+- Build now passes only when a completed allowed/approved scan is bound to the
+  candidate's exact immutable image URI;
+- stale or failed preflight, blocked policy, missing scan and failed scanner
+  states use sanitized safe codes and cannot produce a Live terminal result;
+- the Overview renders only Preflight/Image security state alongside the five
+  canonical phases; scan IDs, findings, policy reasons and raw summaries remain
+  absent;
+- the test-only external adapter records one deterministic exact-image allowed
+  scan. Production composition and all production execution gates are
+  unchanged/default-off;
+- corrected a proof defect where the BullMQ assertion read the stale in-memory
+  Job attempt counter instead of reloading the persisted completed job.
+
+Verification:
+
+- disposable PostgreSQL/Redis/authenticated-browser/repository-worker soak:
+  operation `e8372c70-a211-4f29-bb2e-05a0479c57a1`, deterministic job
+  `dg:v1:release:e8372c70-a211-4f29-bb2e-05a0479c57a1:execute:1`, one exact
+  allowed scan, five passed phases and Live;
+- the same disposable evidence was changed to policy-blocked and scanner-failed
+  states: current-state and rendered Overview failed closed, then returned to
+  Live only after restoring exact allowed evidence;
+- focused security-policy, status, current-state, planning, local-demo and UI
+  checks; backend type-check/build, frontend build and `git diff --check`;
+- final fixture database, worker/browser/Vite processes and isolated Redis data
+  were removed. Production scanning remains deliberately unavailable until a
+  separately controlled scanner integration is enabled.
+
+Evidence classification: **local runtime** through PostgreSQL, Redis/BullMQ,
+HTTP, repository worker and authenticated browser; **isolated/non-cloud** for
+image build and security execution; **live AWS not used**.
+
+### Iteration 5 — canonical normal-v1 operation observability
+
+Status: completed
+
+Bounded objective: make the current normal-v1 operation visibly observable
+from exact durable evidence without reusing legacy pipeline telemetry or adding
+another frontend request.
+
+Outcome:
+
+- the existing current-state operation now returns one bounded observability
+  object with rollout health, derived duration, passed-phase/effect counts, at
+  most five phase events and at most six recognized side-effect activity logs;
+- all evidence is bound to the exact release intent, candidate timestamps and
+  fenced side-effect rows. Only fixed labels, safe codes, states and timestamps
+  are projected; intent/project IDs, worker IDs, lease/fence values, journal
+  IDs, fingerprints, external references and raw provider evidence are absent;
+- Overview renders service health, three concise metrics, the durable phase
+  timeline and sanitized activity log from the same current-state response;
+- the repository demo status now reports
+  `service=healthy; phases=5/5; effects=3/3; events=5; logs=3`;
+- corrected a runtime composition defect: `DeploymentSideEffect` was present in
+  migrations and the CLI DataSource but missing from the application TypeORM
+  entity list, preventing repository-backed exact-intent journal reads;
+- health normalization now accepts both canonical first-release evidence and
+  nested later-release promotion evidence while exposing neither raw shape.
+
+Verification:
+
+- root demo start/status/stop completed with operation
+  `b567d2a7-a447-4d58-be16-5268ed63748e` and deterministic job
+  `dg:v1:release:b567d2a7-a447-4d58-be16-5268ed63748e:execute:1`;
+- authenticated browser DOM showed healthy service status, 5/5 phases, 3/3
+  succeeded effects, five timeline entries and three sanitized activity logs;
+- current-state serialization checks proved forbidden internal identities were
+  absent; blocked/scanner-unavailable behavior from Iteration 4 remains intact;
+- focused status/current-state/planning/security/demo/UI checks, backend
+  type-check/build, frontend build and `git diff --check` pass;
+- stop removed the fixture database, Redis prefix, HTTP/Vite/browser/worker
+  processes and temporary files; Compose PostgreSQL/Redis were returned to the
+  stopped baseline.
+
+Evidence classification: **local runtime** for repository supervision, HTTP,
+PostgreSQL, Redis/BullMQ, current-state and browser rendering;
+**isolated/non-cloud** for external execution; **live AWS not used**.
+
+### Iteration 6 — cross-page canonical release state
+
+Status: completed
+
+Bounded objective: consolidate Pipeline, Dashboard and Plan & Usage onto the
+same sanitized normal-v1 operation and stable-release evidence already used by
+Overview, without another backend projection or per-project workspace polling.
+
+Outcome:
+
+- added one pure frontend projection over the existing `releaseLane` snapshot;
+  it derives status, active phase, progress and stable URL without introducing
+  another request or exposing a raw lifecycle identifier;
+- Pipeline now renders the same five-phase operation panel as Overview and,
+  when that operation exists, does not request or render legacy pipeline runs,
+  Terraform approval, cancellation, retry or legacy recovery controls;
+- Dashboard active/continue cards use canonical v1 status, phase and progress,
+  while a normal-v1 live link is sourced only from verified stable-release
+  evidence; legacy-only projects retain their historical fallback reads;
+- Plan & Usage renders a bounded current release snapshot from the same
+  workspace-summary response already supplying its release totals and history;
+- the local authenticated Chromium soak refreshed Overview, Pipeline,
+  Dashboard and Plan & Usage and restored completed release 2 / stable release
+  2 on all four pages. Dashboard and Plan & Usage made no per-project
+  current-state request, and Pipeline made no legacy pipeline-run request;
+- the soak exposed one proof-only defect: React Strict Mode may repeat the same
+  read-only workspace-summary effect in Vite development. The assertion now
+  permits at most that bounded identical replay while continuing to reject N+1
+  requests.
+
+Verification:
+
+- root demo start/status/stop completed with operation
+  `25b768d5-835c-493d-83dc-942958011bb6` and deterministic job
+  `dg:v1:release:25b768d5-835c-493d-83dc-942958011bb6:execute:1`;
+- demo status reported
+  `overview=pipeline=dashboard=plan-usage:release-completed/stable` alongside
+  healthy service, 5/5 phases, 3/3 effects, five events and three logs;
+- focused shared-projection, release-lane UI/current-state/status and local-demo
+  checks, backend type-check/build, frontend build and `git diff --check` pass;
+- stop removed the fixture database, isolated Redis data and all backend,
+  frontend, browser and worker processes, then restored Compose and gates off.
+
+Evidence classification: **local runtime** for authenticated cross-page HTTP,
+PostgreSQL, Redis/BullMQ, repository worker, Vite/Chromium refresh and cleanup;
+**isolated/non-cloud** for external execution; **live AWS not used**.
+
+### Iteration 7 — deterministic failure and bounded reconciliation UX
+
+Status: completed
+
+Bounded objective: prove the existing default-off convergence contract through
+one real repository worker, frozen BullMQ job, durable ambiguous failure and
+refresh-safe recovery UI without invoking a cloud client or adding a manual
+retry control.
+
+Outcome:
+
+- extended only the explicit test-process fixture adapter with an
+  `ambiguous_once` outcome. Its first Verify observation returns the existing
+  `RELEASE_EVIDENCE_AMBIGUOUS` contract; its process-local identity inspector
+  proves the exact digest, task definition, service and repository before the
+  bounded scheduler can resume anything;
+- production composition remains default-off and unchanged. Outside
+  `NODE_ENV=test`, fixture composition, one exact project and exact `dev`
+  allowlists, the adapter refuses activation and convergence continues to use
+  the existing read-only ECR/ECS evidence path;
+- authenticated Chromium created operation
+  `a2746c88-b6d9-4df7-998f-0f328f814e1d` and deterministic job
+  `dg:v1:release:a2746c88-b6d9-4df7-998f-0f328f814e1d:execute:1`. The first
+  delivery durably failed with ambiguous release evidence and one attempt;
+- current-state then reported the operation as nonterminal `reconciling`, kept
+  its terminal result empty and active count at one. A browser refresh rendered
+  “Release outcome is being reconciled safely.” with no Retry, Cancel or
+  infrastructure-approval action;
+- the supervised scheduler inspected the existing durable journals and exact
+  fixture identity, wrote one resume audit event and retried the same failed
+  BullMQ job. The outbox remained one published delivery with one publication
+  attempt, the job completed on attempt two, and the three succeeded mutation
+  journals and one provenance row were reused without duplication;
+- the refreshed Overview reached Live with Analyze, Build, Prepare, Deploy and
+  Verify passed; Pipeline, Dashboard and Plan & Usage retained the same
+  completed/stable projection;
+- the soak exposed and corrected one proof-query defect: a parameter shared by
+  text audit identity and UUID lifecycle columns now uses explicit UUID casts.
+  No runtime lifecycle semantics were weakened.
+
+Verification:
+
+- repository demo `start`, `status` and `stop` with the bounded failure soak;
+- real disposable PostgreSQL, isolated Redis/BullMQ, authenticated backend,
+  Vite, Chromium and independent `normal-v1-release-consumer` process;
+- exact assertions for job attempts `1 -> 2`, outbox publications `1`, resume
+  audit rows `1`, provenance rows `1` and succeeded journals `3`;
+- focused fixture-adapter, auto-convergence, convergence, status,
+  current-state, local-demo and frontend recovery-projection checks;
+- backend type-check/build, frontend production build and `git diff --check`;
+- stop removed the disposable database and Redis prefix, stopped only the
+  dependencies started by the demo, removed temporary files, and left no
+  backend, browser, Vite or worker process.
+
+Evidence classification: **local runtime** for PostgreSQL, Redis/BullMQ,
+authenticated HTTP, worker supervision, current-state and browser refresh;
+**isolated/non-cloud** for external execution and convergence identity;
+**live AWS not used**.
+
+### Iteration 8 — normal-v1 deletion bounded out safely
+
+Status: completed by an explicit product boundary; deletion execution itself
+remains unimplemented.
+
+Bounded objective: prevent the reserved normal-v1 deletion protocol and its
+placeholder handler from being mistaken for a working cleanup path, while
+preserving the separate administrator-operated infrastructure lifecycle.
+
+Outcome:
+
+- found that no dedicated normal-v1 deletion worker, supervisor or
+  authenticated exact-dispatch route exists, but the generic BullMQ consumer
+  still accepted a `deletion` capability and the fenced placeholder returned
+  success;
+- deletion-role consumer startup now fails with the sanitized
+  `CONSUMER_ROLE_NOT_IMPLEMENTED` code before capability heartbeat
+  registration or BullMQ Worker construction;
+- the reserved `intent.deletion.execute` placeholder now returns a retryable,
+  nonterminal outcome if invoked directly. It releases its exact lease and
+  leaves the intent `enqueued`; placeholder routing can no longer claim that
+  infrastructure was destroyed;
+- Project Settings exposes the existing resource-cleanup surface only to
+  administrators. Overview and Pipeline continue to contain no destroy,
+  cleanup, Terraform approval or recovery mutation action;
+- the repository local demo explicitly asserts that it contains no deletion
+  queue/message and package scripts expose no normal-v1 deletion worker;
+- a real Redis queue containing one frozen deletion job remained `waiting`
+  after the rejected start. PostgreSQL recorded zero deletion worker
+  capabilities and zero operation leases;
+- the focused regression exposed and corrected two fixture schema omissions
+  (`request_fingerprint`) and one genuine finalization defect: handler success
+  was able to run before uncertain side-effect evidence was checked. Success
+  now fails closed with the existing reconciliation-required outcome before an
+  intent can be completed.
+
+Verification:
+
+- `test:inactive-v1-consumer` and `test:inactive-v1-invocation`;
+- `test:normal-v1-deletion-boundary:integration` with real PostgreSQL and
+  Redis/BullMQ;
+- `test:inactive-v1-invocation:postgres` and
+  `test:inactive-v1-side-effect-safety:postgres`;
+- normal release local worker regression: operation
+  `430ce7be-1435-4c42-9f94-61f7711da34c`, deterministic job
+  `dg:v1:release:430ce7be-1435-4c42-9f94-61f7711da34c:execute:1`, one delivery,
+  completed/stable and five-phase Live UI state;
+- focused local-demo and frontend release/current-state checks, backend
+  type-check/build and frontend production build;
+- disposable PostgreSQL schemas and Redis prefixes were removed, Compose was
+  restored to its stopped baseline, and no worker/browser/Vite process
+  remained.
+
+Evidence classification: **local runtime** for the PostgreSQL/Redis deletion
+boundary and unchanged release regression; **isolated/non-cloud** for external
+release execution; **live AWS not used**. The normal-v1 deletion executor is a
+documented product limitation, not a completed feature.
+
+### Iteration 9 — final repeatable FYP demonstration bundle
+
+Status: completed.
+
+Bounded objective: package all proven P0/P1 developer-demo requirements into
+one self-checking command and preserve a sanitized, checksum-protected evidence
+bundle without expanding the product or making a cloud claim.
+
+Outcome:
+
+- `npm run demo:fyp-local` now runs the existing guarded local demo through
+  start, two refresh-safe status observations and graceful stop;
+- the run observed worker readiness code
+  `NORMAL_V1_RELEASE_CONSUMER_READY`, one authenticated prepare request, one
+  exact dispatch request, zero legacy mutations and exactly one deterministic
+  BullMQ consumption;
+- operation `117f4624-d0b5-4d2e-842d-c09229e0d55c` and job
+  `dg:v1:release:117f4624-d0b5-4d2e-842d-c09229e0d55c:execute:1` completed with
+  one publication, one provenance row, three succeeded effects and zero
+  leases, owners or claims;
+- the canonical browser evidence rendered Analyze, Build, Prepare, Deploy and
+  Verify as passed with a final Live result, and refreshes agreed across
+  Overview, Pipeline, Dashboard and Plan & Usage;
+- deterministic JSON, Markdown and SHA-256 evidence is stored under
+  `docs/architecture/two-lane-migration/evidence/fyp-local-demo/`; the verifier
+  recalculates the checksum, checks all requirement booleans and rejects
+  credential, fence, lease or cloud-identifier leakage;
+- stop restored the empty Compose baseline, removed the disposable database,
+  isolated Redis state and temporary files, left no supervised process alive,
+  and restored all runtime gates to default-off.
+
+Verification:
+
+- the complete local PostgreSQL/Redis/BullMQ/authenticated-browser run and
+  `test:final-fyp-local-demo` evidence verifier;
+- focused local fixture, current-state, status and execution checks;
+- Overview/release/current-state frontend projection checks;
+- backend type-check/build, frontend production build, evidence SHA-256 and
+  `git diff --check`.
+
+Evidence classification: **local runtime** for backend, frontend, disposable
+PostgreSQL, isolated Redis/BullMQ and worker supervision;
+**isolated/non-cloud** for the external release executor; **live AWS not
+used**. Normal-v1 deletion remains the explicit unavailable product boundary.
+
+### Iteration 10 — schema reconciliation evidence corrected
+
+Status: completed as the prerequisite evidence correction for P2-1; business
+classification remains in progress.
+
+Bounded objective: make the persisted PostgreSQL-catalog versus TypeORM
+reconciliation trustworthy before using it to decide whether any residual
+foreign key or index is obsolete or genuinely missing.
+
+Defects found and corrected:
+
+- PostgreSQL array-valued catalog fields were serialized as text and the
+  reconciliation reduced them to empty arrays, collapsing unrelated keys;
+- TypeORM foreign-key `referencedTable`, `referencedColumns`, `onUpdate` and
+  `onDelete` fields were not read, splitting equivalent relations;
+- PostgreSQL single-letter FK action/match codes were not normalized against
+  TypeORM names;
+- the catalog exporter index join also matched foreign keys referring to the
+  indexed primary/unique key, duplicating 283 raw rows;
+- primary and unique-constraint backing indexes were counted as independent
+  logical objects.
+
+Outcome and evidence:
+
+- the exporter join is now constrained to the indexed relation and
+  primary/unique/exclusion constraint types;
+- the reconciliation decodes structured PostgreSQL arrays, normalizes ordered
+  semantics, deduplicates historical polluted catalog rows, records every
+  backing-index exclusion and fails closed on incomplete keys or ambiguity;
+- all 312 metadata, 622 fresh-catalog and 583 clone-catalog input rows are
+  linked or explicitly excluded;
+- two byte-identical runs produce 402 logical rows: 272 equivalent, 30
+  fresh/clone differences, six metadata-only, 92 database-only and two
+  ambiguous;
+- the invalid `87 metadata-only / 317 database-only / 80 ambiguous` summary is
+  superseded by the generated JSON/CSV and the audit document now points to
+  these authoritative counts;
+- fixture-free tests cover composite ordered keys, FK actions, unique
+  constraint/index representation, partial predicates, included columns,
+  backing-index deduplication and ambiguity handling; backend type-check and
+  `git diff --check` pass.
+
+No database connection or schema mutation occurred. Operational `mini_paas`,
+Redis, queues, releases and AWS were not accessed. The next bounded P2-1
+iteration is business classification of the 130 non-equivalent rows using
+completed family decisions and committed query contracts; no migration is
+authorized by this evidence correction alone.
+
+### Iteration 11 — completed schema-family decisions reconciled
+
+Status: completed as the first business-classification slice of P2-1; P2-1
+remains in progress.
+
+Bounded objective: reuse the six completed object-level schema audits against
+the corrected residual inventory without re-auditing those families or
+changing schema.
+
+Outcome:
+
+- added a deterministic classifier and JSON/CSV evidence covering every one
+  of the 130 non-equivalent reconciliation rows exactly once;
+- 56 rows are now conclusively classified: 34 migration-authoritative
+  database-only foreign keys, 15 rows belonging to six equivalent named
+  predicate representations, five intentionally database-only lookup indexes
+  and two equivalent/redundant preparation access paths;
+- 61 rows outside completed families remain explicitly pending rather than
+  inheriting a guessed decision;
+- 13 rows fail closed as corrected-catalog contradictions: six fresh-only
+  lineage/manifest foreign keys and seven rows representing partial versus
+  unpredicated ownership indexes;
+- every classification records its family/evidence, source presence,
+  rationale and `requiresSchemaChange: false`; no migration was produced;
+- two runs generated byte-identical evidence, and focused tests cover shared
+  FK decisions, fresh-only contradictions, known predicate equivalence,
+  predicate conflicts and unaudited-family fallback.
+
+No PostgreSQL connection, schema mutation, Redis, queue, release or AWS action
+occurred. The next P2-1 slice is the 61 unaudited-family rows; the 13
+contradictions require a newly recreated read-only data-bearing clone before
+any schema correction could be considered.
+
+### Iteration 12 — state/storage/recovery schema family classified
+
+Status: completed as the second business-classification slice of P2-1; P2-1
+remains in progress.
+
+Bounded objective: classify the state, storage, rollback and recovery residual
+objects from historical DDL, entity metadata and committed repository query
+contracts without connecting to PostgreSQL or changing schema.
+
+Outcome:
+
+- added nine state/storage/recovery tables to the deterministic family
+  classifier and accounted for all 17 of their residual rows;
+- classified 14 fresh-only ownership foreign keys as migration-authoritative
+  but explicitly requiring a newly recreated data-bearing clone to prove
+  types, zero orphans and operational presence before any adoption;
+- failed closed on two representations of the rollback ownership index because
+  fresh evidence is partial while metadata/clone evidence are unpredicated;
+- classified project-cloud-state uniqueness as equivalent duplicate
+  enforcement rather than a missing object;
+- increased audited classifications from 56 to 71, reduced pending-family
+  rows from 61 to 44 and increased explicit catalog contradictions from 13 to
+  15; every row remains `requiresSchemaChange: false`;
+- corrected one stale project-continuity assertion so it enforces the retired
+  legacy retry contract (`GoneException`, no `startAutomation`) instead of
+  requiring the removed mutation path.
+
+Focused state-safety, current-state, continuity, deployment-recovery,
+cloud-state and rollback-shadow checks passed together with deterministic
+classification tests, backend type-check/build and `git diff --check`. This is
+**isolated/local repository evidence only**: no PostgreSQL connection, schema
+mutation, Redis, queue, release or AWS action occurred. The next P2-1 step is
+to recreate a read-only data-bearing clone to resolve the 14 presence checks
+and 15 catalog contradictions, then classify the remaining 44 rows.
+
+### Iteration 13 — operational-clone ownership reconciliation
+
+Status: completed as the clone-verification and guarded-correction slice of
+P2-1; P2-1 remains in progress with one data-retention blocker and 44 pending
+family rows.
+
+Bounded objective: recreate the operational-schema clone read-only, resolve
+the 21 missing ownership keys and eight predicate-representation rows, and add
+only corrections proven safe on disposable PostgreSQL.
+
+Outcome:
+
+- safely streamed a data-bearing clone from operational `mini_paas` and
+  reproduced 81 application tables, 57 migration records and the prior
+  455-object catalog without mutating the source;
+- corrected a fixture-only PostgreSQL client-version defect by replacing a
+  rejected PostgreSQL 17 restore with the Compose server's PostgreSQL 16
+  client after inspecting and recreating the empty clone;
+- proved all 21 FK source/target types and referenced keys match;
+- proved zero orphans for 20 keys and added guarded migration `1760000057000`
+  with bounded locking, `NOT VALID`, exact validation and idempotent replay;
+- excluded `project_terraform_locks.pipeline_run_id` because two released
+  historical lock rows reference deleted pipeline runs; no data was deleted,
+  nulled or rewritten;
+- classified the four operational unpredicated ownership indexes as
+  sufficient supersets of the partial non-null equality access paths, removing
+  eight logical-row contradictions without changing an index;
+- the classifier now reports 85 resolved audited-family rows, 44 pending rows,
+  20 authorized guarded additions, zero catalog contradictions and one exact
+  retained-history blocker.
+
+The migration applied and replayed cleanly on the data-bearing clone while all
+selected row counts/fingerprints stayed identical. A fresh database applied
+all 58 migrations and replayed with no pending work. Operational `mini_paas`
+remained read only and did not receive the new migration. Evidence is
+**isolated/local PostgreSQL only**; Redis, queues, releases and AWS were not
+used. The next P2-1 slice is classification of the remaining 44 rows; the sole
+current blocker requires a deliberate retention decision for two released
+Terraform-lock history rows.
+
+### Iteration 14 — project identity and destruction lifecycle classification
+
+Status: completed as a repository-only classification slice of P2-1; P2-1
+remains in progress with 34 unaudited-family rows and six evidence blockers.
+
+Bounded objective: classify only the remaining `projects`,
+`infrastructure_destroy_operations` and
+`infrastructure_destroy_challenges` foreign-key/index rows from persisted
+catalog evidence, historical migrations, entity metadata and committed
+lifecycle queries.
+
+Outcome:
+
+- classified all 10 selected rows without connecting to PostgreSQL or changing
+  a schema;
+- preserved the database-only `(project_id, created_at)` destroy-history index
+  and recognized the simple project index as an equivalent retained path;
+- retained three metadata/clone compatibility indexes without adding them to
+  fresh schema because no committed standalone workload requires them;
+- marked the three nullable `SET NULL` lineage keys and two partial active
+  project-identity uniqueness guards as requiring a new data-bearing clone
+  verification before any additive correction;
+- regenerated deterministic JSON/CSV classifications with 90 resolved rows,
+  34 pending-family rows, 20 prior guarded additions, zero catalog
+  contradictions and six explicit evidence blockers.
+
+Focused classifier, infrastructure lifecycle, cleanup safety and project
+continuity checks passed. Evidence is **isolated/local repository-only**;
+PostgreSQL, Redis, queues, releases and AWS were not used. The next bounded
+P2-1 slice is the eight-row AI troubleshooting history family.
+
+### Iteration 15 — AI troubleshooting history support indexes
+
+Status: completed as a repository-only classification slice of P2-1; P2-1
+remains in progress with 26 unaudited-family rows and six evidence blockers.
+
+Bounded objective: classify only the eight residual indexes on AI analysis
+sessions, messages and results using historical DDL, entity metadata and the
+committed troubleshooting history/rate-limit queries.
+
+Outcome:
+
+- preserved the three ordered database-only indexes that directly serve
+  project history, message chronology and result revision reads;
+- classified three metadata/clone single-column indexes as equivalent
+  leading-key access paths rather than missing fresh objects;
+- retained the pipeline correlation and per-user session indexes as
+  compatibility objects because no standalone pipeline lookup or measured
+  fresh workload gap authorizes another index;
+- regenerated deterministic JSON/CSV evidence with 98 resolved rows, 26
+  pending-family rows, 20 prior guarded additions, zero catalog contradictions
+  and six unchanged evidence blockers.
+
+Focused schema classifier, AI troubleshooting and authenticated access checks
+passed. Evidence is **isolated/local repository-only**; PostgreSQL, Redis,
+queues, releases and AWS were not used. The next bounded P2-1 slice is the
+seven-row notification preference/subscription/delivery family.
+
+### Iteration 16 — notification persistence support indexes
+
+Status: completed as a repository-only classification slice of P2-1; P2-1
+remains in progress with 19 unaudited-family rows and six evidence blockers.
+
+Bounded objective: classify only the seven residual indexes on notification
+preferences, subscriptions and deliveries using historical DDL, dispatcher
+deduplication and authenticated settings/history queries.
+
+Outcome:
+
+- preserved the ordered database-only project/created-at delivery-history
+  index;
+- classified five metadata/clone indexes as equivalent access paths already
+  supplied by the ordered history or preference/subscription unique contracts;
+- retained the delivery user index as compatibility because deduplication and
+  committed history reads do not prove a missing fresh user-only workload;
+- regenerated deterministic JSON/CSV evidence with 105 resolved rows, 19
+  pending-family rows, 20 prior guarded additions, zero catalog contradictions
+  and six unchanged evidence blockers.
+
+Focused schema classifier, notification honesty, authentication and billing
+entitlement checks passed. Evidence is **isolated/local repository-only**;
+PostgreSQL, Redis, queues, provider delivery, releases and AWS were not used.
+The next bounded P2-1 slice is the seven-row billing and FinOps support family.
+
+### Iteration 17 — billing and FinOps persistence support
+
+Status: completed as a bounded classification slice of P2-1; P2-1 remains in
+progress with 12 unaudited-family rows and eight evidence blockers.
+
+Bounded objective: classify only the seven residual usage, checkout, invoice
+and cost-reviewer objects using historical DDL, entitlement idempotency,
+billing summary/webhook behavior and FinOps approval retention.
+
+Outcome:
+
+- preserved the chronological database-only usage-ledger index and classified
+  the simple event/counter user indexes as equivalent composite paths;
+- retained checkout and invoice user indexes as compatibility-only because no
+  measured fresh workload gap authorizes an addition;
+- marked two fresh-only cost-estimate reviewer `SET NULL` keys as requiring a
+  new data-bearing clone type/orphan check;
+- corrected the focused verifier's stale pending-family sentinel after its old
+  billing table entered this audited family;
+- regenerated deterministic JSON/CSV evidence with 110 resolved rows, 12
+  pending-family rows, 20 prior guarded additions, zero catalog contradictions
+  and eight evidence blockers.
+
+Focused classifier and billing enforcement checks passed. The database-backed
+project-usage check initially found PostgreSQL stopped, then passed inside its
+built-in rollback transaction after a controlled PostgreSQL-only start; the
+service was returned to the original stopped state. Evidence is **isolated and
+local PostgreSQL**. Redis, queues, providers, releases and AWS were not used.
+The next bounded P2-1 slice is the seven-row project activity/configuration
+support family.
+
+## 5. Weighted completion updates
+
+| Checkpoint | Overall | Local runtime | Live AWS | Notes |
+|---|---:|---:|---:|---|
+| Baseline before Iteration 1 | 55% | 8% | 18% | Current local stack was stopped; live AWS evidence was read-only. |
+| After Iteration 1 | 61% | 29% | 18% | Normal planning/current-state and worker-supervision credit increased from a custom proof child to the real repository process. External release execution remains fixture-only. |
+| After Iteration 2 | 66% | 36% | 18% | Overview prepare/dispatch, canonical phase rendering, refresh persistence and legacy-control retirement now have repeatable authenticated browser/runtime evidence. |
+| After Iteration 3 | 70% | 43% | 18% | The complete local normal-v1 demo now has a guarded, repeatable repository start/status/stop lifecycle with deterministic cleanup. All P0 demo blockers are closed. |
+| After Iteration 4 | 72% | 48% | 18% | Exact preflight and image-policy evidence now governs the canonical operation presentation; blocked and unavailable states are locally proven without enabling a cloud-capable scanner. |
+| After Iteration 5 | 74% | 52% | 18% | Intent-bound health, metrics, events and sanitized activity logs are now visible and refresh-safe through the same canonical Overview response and repeatable local demo. |
+| After Iteration 6 | 77% | 57% | 18% | Overview, Pipeline, Dashboard and Plan & Usage now render one refresh-safe normal-v1 operation/stable-release contract through current-state or workspace-summary, with conflicting legacy requests suppressed. |
+| After Iteration 7 | 80% | 62% | 18% | A real supervised local operation now proves durable ambiguous failure, sanitized reconciling UI and bounded same-job recovery with one outbox publication and no repeated side effect. |
+| After Iteration 8 | 82% | 65% | 18% | The absent normal-v1 deletion executor is now an enforceable, administrator-separated limitation: no deletion worker can start, no placeholder can complete deletion, and the final demo cannot publish or consume that lane. |
+| After Iteration 9 | 85% | 70% | 18% | One root command now proves and preserves the complete guarded local developer demonstration, including authenticated UI handoff, exact queue delivery, durable completion, five-phase UI, cross-page refresh consistency and deterministic cleanup. |
+| After Iteration 10 | 85% | 70% | 18% | The schema residual inventory is now reproducible and complete, but no completion weight is added until its 130 non-equivalent rows receive business classification and any proven corrections are verified. |
+| After Iteration 11 | 86% | 70% | 18% | Fifty-six residual schema rows now have deterministic business classifications from completed family evidence; 61 unaudited rows and 13 catalog contradictions remain, with no schema change authorized. |
+| After Iteration 12 | 87% | 70% | 18% | The state/storage/recovery slice accounts for 17 more rows: 71 audited classifications, 44 pending-family rows and 15 fail-closed catalog contradictions remain, with no schema change authorized. |
+| After Iteration 13 | 89% | 70% | 18% | A fresh operational clone proves 20 genuinely missing, zero-orphan keys and one retained-history blocker; the guarded migration passes fresh/clone replay, all catalog contradictions are resolved and 44 family rows remain pending. |
+| After Iteration 14 | 90% | 70% | 18% | Ten project-identity/destruction rows are bounded: five indexes are safely classified and five integrity objects remain fail-closed for clone verification; 34 unaudited-family rows remain. |
+| After Iteration 15 | 91% | 70% | 18% | All eight AI troubleshooting history indexes are classified from committed workload evidence without schema mutation; 26 unaudited-family rows remain. |
+| After Iteration 16 | 92% | 70% | 18% | Seven notification persistence indexes are fully classified without schema or provider mutation; 19 unaudited-family rows remain. |
+| After Iteration 17 | 93% | 70% | 18% | Five billing/FinOps rows are safely classified and two reviewer-lineage keys remain fail-closed for clone verification; 12 unaudited-family rows remain. |
+
+Percentages change only when an iteration produces repeatable evidence. A successful local fixture worker iteration can increase normal planning/current-state and worker-supervision credit, but it cannot increase live-AWS credit.

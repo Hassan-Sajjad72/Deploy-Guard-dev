@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app
+      MYSQL_ROOT_PASSWORD: root
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 30

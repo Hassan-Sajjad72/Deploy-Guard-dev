@@ -1,0 +1,9 @@
+/home/hassan-sajjad/Deploy-Guard-dev/README.md
+/home/hassan-sajjad/Deploy-Guard-dev/docker-compose.yml
+/home/hassan-sajjad/Deploy-Guard-dev/docs/ARCHITECTURE.md
+/home/hassan-sajjad/Deploy-Guard-dev/docs/MANUAL_SETUP_FOR_TESTING_LAUNCH.md
+/home/hassan-sajjad/Deploy-Guard-dev/docs/MANUAL_SETUP_MODULES_13_17.md
+/home/hassan-sajjad/Deploy-Guard-dev/docs/SETUP_REQUIRED.md
+/home/hassan-sajjad/Deploy-Guard-dev/docs/VERSION_14_AUDIT_REMEDIATION_AND_E2E_RESULTS.md
+/home/hassan-sajjad/Deploy-Guard-dev/docs/frontend-architecture.md
+/home/hassan-sajjad/Deploy-Guard-dev/frontend/index.html

@@ -1,0 +1,1797 @@
+diff --git a/frontend/scripts/verify-billing-and-trivy-ui.mjs b/frontend/scripts/verify-billing-and-trivy-ui.mjs
+index 9871d0c..40e6f2e 100644
+--- a/frontend/scripts/verify-billing-and-trivy-ui.mjs
++++ b/frontend/scripts/verify-billing-and-trivy-ui.mjs
+@@ -14,11 +14,11 @@ assert.match(billing, /OVER_LIMIT/);
+ assert.match(billing, /Current projects/);
+ assert.match(billing, /LIVE projects/);
+ assert.match(billing, /48 hours/);
+-assert.match(billing, /Invoice history/);
+-assert.match(billing, /View Invoice/);
++assert.match(billing, /Payment history/);
++assert.match(billing, /View invoice/);
+ assert.match(billing, /Download PDF/);
+ assert.match(billing, /Returning from checkout does not activate a plan/);
+-assert.match(billing, /Manage Billing/);
++assert.match(billing, /Manage billing/);
+ assert.match(billing, /createBillingPortal/);
+ assert.doesNotMatch(billing, /get\("session_id"\)/);
+ assert.match(pipeline, /data-trivy-status/);
+diff --git a/frontend/scripts/verify-destroy-operation-presentation.mjs b/frontend/scripts/verify-destroy-operation-presentation.mjs
+index 29a7ebc..b76bd60 100644
+--- a/frontend/scripts/verify-destroy-operation-presentation.mjs
++++ b/frontend/scripts/verify-destroy-operation-presentation.mjs
+@@ -34,6 +34,7 @@ const recovery = readFileSync(join(import.meta.dirname, "../src/components/proje
+ const overview = readFileSync(join(import.meta.dirname, "../src/components/projects/ProjectOverviewLifecycle.jsx"), "utf8");
+ const infrastructure = readFileSync(join(import.meta.dirname, "../src/pages/ProjectInfrastructure.jsx"), "utf8");
+ const projects = readFileSync(join(import.meta.dirname, "../src/pages/Projects.jsx"), "utf8");
++const dashboard = readFileSync(join(import.meta.dirname, "../src/pages/Dashboard.jsx"), "utf8");
+ const admin = readFileSync(join(import.meta.dirname, "../src/pages/AdminUsers.jsx"), "utf8");
+ const adminCleanup = readFileSync(join(import.meta.dirname, "../src/pages/AdminCloudCleanup.jsx"), "utf8");
+ assert.match(pipeline, /const stages = latest\?\.workflowStages \|\| \[\]/, "destroy stage evidence remains in the technical timeline");
+@@ -51,7 +52,9 @@ assert.match(overview, /destroyPhrase !== DESTROY_CONFIRMATION_PHRASE/, "Overvie
+ assert.match(overview, /command === "destroy"[\s\S]*setDestroyOpen\(true\)/, "LIVE Overview renders its Destroy action through the guarded modal");
+ assert.match(infrastructure, />Retry Failed Destroy</, "Infrastructure links failed Destroy recovery to the canonical Pipeline");
+ assert.match(infrastructure, />View Destroy progress</, "Infrastructure links an active Destroy to canonical progress evidence");
+-assert.match(projects, /\["DESTROYED", "Destroyed"\]/, "Projects exposes the Destroyed lifecycle filter");
++assert.doesNotMatch(projects, /\["DESTROYED", "Destroyed"\]/, "Projects hides terminally destroyed projects instead of exposing a filter");
++assert.match(projects, /projectStatePresentation\(currentState\)\.state !== "DESTROYED"/);
++assert.match(dashboard, /projectStatePresentation\(currentState\)\.state !== "DESTROYED"/);
+ assert.match(admin, /\["ALL", "LIVE", "DEPLOYING", "FAILED", "DESTROYED"\]/, "Admin exposes the Destroyed lifecycle filter");
+ assert.match(adminCleanup, /createEmergencyCleanupChallenge|executeEmergencyCleanup|retryCentralProjectDestroy|requestDestroy/, "Admin cleanup uses only the pre-existing destroy and emergency cleanup APIs");
+ assert.match(adminCleanup, />Retry destroy<|>Retry Terraform destroy<|>Destroy all DeployGuard testing\/preview resources</, "Admin cleanup restores its prior Destroy controls");
+diff --git a/frontend/scripts/verify-github-home.mjs b/frontend/scripts/verify-github-home.mjs
+index 564b900..dbc69ca 100644
+--- a/frontend/scripts/verify-github-home.mjs
++++ b/frontend/scripts/verify-github-home.mjs
+@@ -26,7 +26,8 @@ assert.match(routes, /<Route element=\{<Navigate replace to="\/deploy" \/>\} pat
+ assert.match(landing, /data-home-deploy="oauth"/);
+ assert.match(landing, /data-home-deploy="authenticated"/);
+ assert.match(landing, />Continue with GitHub<\/Link>/);
+-assert.match(landing, /Connect your repo\. DeployGuard takes it from code to secure, running cloud infrastructure\./);
++assert.match(landing, /Connect a GitHub repository\. DeployGuard builds, provisions, observes, and promotes one immutable release across your AWS runtime\./);
++assert.match(landing, /className="landing-hero-system"/);
+ assert.equal((landing.match(/data-home-deploy=/g) || []).length, 2, "The two auth branches must define one primary CTA each, never render together.");
+ assert.match(landing, /<details className="landing-account-menu">/);
+ assert.match(landing, /<Link to="\/dashboard">Dashboard<\/Link>/);
+@@ -49,7 +50,8 @@ assert.doesNotMatch(githubConnecting, /to="\/login"/);
+ assert.match(githubConnecting, /: "\/deploy"/);
+ assert.match(projects, /Search projects, repositories, or branches/);
+ assert.match(projects, /stateFilter === "ALL" \|\| projectStatePresentation/);
+-assert.match(projects, /\["DESTROYED", "Destroyed"\]/);
++assert.doesNotMatch(projects, /\["DESTROYED", "Destroyed"\]/);
++assert.match(projects, /projectStatePresentation\(currentState\)\.state !== "DESTROYED"/);
+ assert.match(projects, /project-card-grid/);
+ assert.match(projects, /Latest deployment/);
+ assert.match(projects, /<span>Services<\/span>/);
+diff --git a/frontend/scripts/verify-infrastructure-presentation.mjs b/frontend/scripts/verify-infrastructure-presentation.mjs
+index fdc1bf3..397a6ab 100644
+--- a/frontend/scripts/verify-infrastructure-presentation.mjs
++++ b/frontend/scripts/verify-infrastructure-presentation.mjs
+@@ -18,15 +18,16 @@ assert.match(page, />\{exporting \? "Preparing export…" : "Export Terraform"\}
+ assert.match(page, /disabled=\{exporting\}/, "Terraform export prevents duplicate requests while an artifact is being prepared.");
+ assert.match(page, /actions=\{exportAction\}/, "The Terraform export action remains in the Infrastructure header.");
+ assert.doesNotMatch(page, /<dl[\s>]/, "Infrastructure must not use raw definition-list presentation.");
+-for (const summary of ["Application", "Services", "Targets", "Region"]) assert.match(page, new RegExp(`label="${summary}"`));
+-assert.equal((page.match(/<MetricCard/g) || []).length, 5, "Infrastructure has four runtime cards and one cost card.");
++for (const summary of ["VPC", "ECS", "ALB", "Database", "Environment", "Monthly cost"]) assert.match(page, new RegExp(`label="${summary}"`));
++assert.equal((page.match(/<MetricCard/g) || []).length, 7, "Infrastructure has six topology summary cards and one detailed cost card.");
+ assert.match(page, /Resource details/);
+ for (const heading of ["Resource", "Identifier"]) assert.match(page, new RegExp(`<th>${heading}<`));
+ assert.match(page, /<CopyValue/);
+ assert.match(page, /label="Copy full identifier"/);
+ assert.match(page, /function shortened/);
+-assert.match(page, /Source to application/);
+-for (const node of ["Source", "Build", "ECR", "ECS", "ALB", "Application"]) assert.match(page, new RegExp(node));
++assert.match(page, /Internet edge to private runtime/);
++for (const node of ["GitHub source", "Build", "Amazon ECR", "ECS \/ Fargate", "Application Load Balancer", "Route 53", "Amazon VPC", "Public subnets", "Private application subnets", "Private data layer"]) assert.match(page, new RegExp(node));
++assert.match(page, /className="topology-vpc-boundary"/);
+ for (const supporting of ["Terraform", "CloudWatch", "Infracost"]) assert.match(page, new RegExp(supporting));
+ assert.match(page, /current release has no Infracost estimate/i);
+ assert.match(page, /Pricing unavailable/);
+@@ -46,7 +47,7 @@ assert.match(page, /View Destroy progress/, "An active Destroy links to its cano
+ assert.match(page, /Release updating/, "An active non-Destroy lifecycle transition is represented as updating rather than absent.");
+ assert.match(page, /filter\(\(target\) => target !== "draining"\)/, "Draining targets from the previous task set do not make the active release look absent.");
+ assert.match(page, /evidence\?\.cloudWatch\?\.status/);
+-for (const selector of ["infrastructure-summary-grid", "infrastructure-inventory-card", "infrastructure-topology", "infrastructure-finops-card", "infrastructure-support-grid"]) assert.match(styles, new RegExp(selector));
++for (const selector of ["infrastructure-summary-grid", "infrastructure-inventory-card", "infrastructure-topology", "infrastructure-finops-card", "infrastructure-support-grid"]) assert.match(`${styles}\n${designSystem}`, new RegExp(selector));
+ assert.match(designSystem, /\.advanced-resource-details/);
+ assert.match(styles, /@media\(max-width:560px\)[\s\S]*infrastructure-summary-grid/);
+ assert.match(styles, /\.infrastructure-inventory-card \.ds-data-table\{min-width:760px\}/);
+diff --git a/frontend/scripts/verify-monitoring-presentation.mjs b/frontend/scripts/verify-monitoring-presentation.mjs
+index 2ff4096..a2f5801 100644
+--- a/frontend/scripts/verify-monitoring-presentation.mjs
++++ b/frontend/scripts/verify-monitoring-presentation.mjs
+@@ -25,13 +25,13 @@ assert.match(page, /subscribeProjectStateChanged/);
+ assert.match(page, /state\?\.stateAuthority\?\.runtime\?\.state === "present" && state\?\.stateAuthority\?\.infrastructure\?\.exists/);
+ assert.doesNotMatch(page, /<Navigate/, "Monitoring must present authoritative removal rather than hiding it through navigation");
+ assert.doesNotMatch(page, /<dl[\s>]/, "Monitoring must not use a raw definition list.");
+-assert.equal((page.match(/<MetricCard/g) || []).length, 4, "Monitoring prioritizes four current performance metrics.");
+-for (const label of ["CPU", "Memory", "Latency", "Targets"]) assert.match(page, new RegExp(`label="${label}"`));
++assert.equal((page.match(/<MetricCard/g) || []).length, 6, "Monitoring prioritizes six current operational metrics.");
++for (const label of ["Uptime", "Response time", "CPU", "Memory", "Error rate", "Request rate"]) assert.match(page, new RegExp(`label="${label}"`));
+ for (const state of ["disabled_by_configuration", "temporarily_unavailable", "no_samples_yet"]) assert.match(page, new RegExp(state));
+ assert.match(page, /Open Grafana/);
+ assert.match(page, /Health and integrations/);
+ assert.match(page, /runtimeCharts = metricDefinitions\.filter/);
+-for (const metric of ["cpu", "memory", "httpLatency", "healthyHosts", "unhealthyHosts", "runtimeAvailability"]) assert.match(page, new RegExp(`key: "${metric}"`));
++for (const metric of ["cpu", "memory", "httpLatency", "requestRate", "errorRate", "healthyHosts", "unhealthyHosts", "runtimeAvailability"]) assert.match(page, new RegExp(`key: "${metric}"`));
+ assert.match(page, /points\.length > 0/);
+ assert.match(page, /<polyline fill="none" points=\{coordinates\}/, "numeric samples use a time-series line");
+ assert.match(page, /<text x="2" y="20">\{maximum\}\{unit\}<\/text>/, "time-series charts expose observed Y-axis bounds and units");
+diff --git a/frontend/scripts/verify-overview-lifecycle.mjs b/frontend/scripts/verify-overview-lifecycle.mjs
+index 225e076..f68e809 100644
+--- a/frontend/scripts/verify-overview-lifecycle.mjs
++++ b/frontend/scripts/verify-overview-lifecycle.mjs
+@@ -9,6 +9,7 @@ const lifecycle = readFileSync(new URL("../src/components/projects/ProjectOvervi
+ const api = readFileSync(new URL("../src/api/projectApi.js", import.meta.url), "utf8");
+ const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+ const designSystem = readFileSync(new URL("../src/components/common/DesignSystem.jsx", import.meta.url), "utf8");
++const visualStyles = readFileSync(new URL("../src/design-system.css", import.meta.url), "utf8");
+ 
+ const actions = (state, canManage = true) => overviewLifecycleActions({ stateAuthority: { state }, canRetry: true, stableUrl: "https://example.test" }, canManage);
+ assert.equal(canonicalOverviewState({ stateAuthority: { state: "LIVE" }, developerState: "failed_application" }), "LIVE", "canonical state authority wins over historical state");
+@@ -149,15 +150,12 @@ assert.match(lifecycle, /No previous successful release is available/);
+ assert.match(lifecycle, /rollbackError/);
+ assert.match(lifecycle, /Repository code will not be rebuilt/);
+ assert.match(lifecycle, /<MetricCard/g);
+-assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 3, "Overview has exactly three summary cards");
+-assert.match(lifecycle, /<MetricCard detail=\{copy\.message\} label="Current state"/, "Current State retains its verified-release message");
+-assert.match(lifecycle, /<MetricCard label="Latest operation"[^>]*value=\{latest \? `Attempt \$\{latest\.attempt \|\| "—"\}`/, "Latest Operation contains the attempt only");
+-assert.match(lifecycle, /<MetricCard label="Last deployment duration" value=\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/, "Last Deployment Duration contains no secondary timestamp detail");
+-assert.doesNotMatch(lifecycle, /label="Application health"/, "Overview does not present runtime health");
+-assert.doesNotMatch(lifecycle, /applicationHealth|health\.observedAt|health\.source/, "Overview does not consume detailed runtime health data");
++assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 4, "Overview has four control-center summary cards");
++for (const label of ["Deployment status", "Live URL", "Service health", "Monthly cost"]) assert.match(lifecycle, new RegExp(`label="${label}"`));
++assert.match(lifecycle, /currentState\.stateAuthority\?\.applicationHealth\?\.status/, "Overview presents canonical service health without a new request path");
+ assert.doesNotMatch(lifecycle, /detail=\{`Commit \$\{shortCommit\(latest/, "Overview does not show a commit beneath Latest Operation");
+ assert.doesNotMatch(lifecycle, /\$\{formatDate\(latest\.startedAt\)\} to \$\{formatDate\(latest\.completedAt\)\}/, "Overview does not show a verbose deployment timestamp range");
+-assert.match(styles, /\.overview-summary-grid\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/, "Overview summary layout has exactly three desktop cards");
++assert.match(visualStyles, /\.app-shell \.overview-summary-grid[^}]*grid-template-columns: repeat\(4, minmax\(0,1fr\)\)/, "Overview summary layout has four desktop cards");
+ assert.match(styles, /\.overview-lifecycle-card \.ds-stage-rail\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/, "six deployment phases remain on the primary overview rail row");
+ assert.doesNotMatch(overview, /CanonicalDeploymentView|getProjectDetailedCurrentState/);
+ assert.match(overview, /subscribeProjectStateChanged/);
+diff --git a/frontend/scripts/verify-railpack-failure-presentation.mjs b/frontend/scripts/verify-railpack-failure-presentation.mjs
+index 4e06478..fb4e97f 100644
+--- a/frontend/scripts/verify-railpack-failure-presentation.mjs
++++ b/frontend/scripts/verify-railpack-failure-presentation.mjs
+@@ -62,7 +62,7 @@ assert.match(infrastructure, /Build Application/);
+ assert.match(pipeline, /Not created — deployment failed before runtime generation\./);
+ assert.match(pipeline, /details\.createdAt \|\| details\.startedAt \|\| details\.failedAt/);
+ assert.match(overviewComponent, /detail=\{copy\.message\}/, "Overview must use the concise canonical message, never raw evidence.");
+-assert.match(overviewComponent, /value=\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/);
++assert.match(overviewComponent, /\{duration\(latest\?\.startedAt, latest\?\.completedAt\)\}/);
+ assert.doesNotMatch(overviewComponent, /label="Application health"|Runtime was not deployed\./, "Overview leaves runtime health to Infrastructure and Monitoring.");
+ assert.match(troubleshooting, /Not created — deployment failed before runtime generation\./);
+ assert.match(troubleshooting, /operationTimestamp\(operation\)/);
+diff --git a/frontend/scripts/verify-visual-system.mjs b/frontend/scripts/verify-visual-system.mjs
+index db9e537..b0ae74d 100644
+--- a/frontend/scripts/verify-visual-system.mjs
++++ b/frontend/scripts/verify-visual-system.mjs
+@@ -23,7 +23,7 @@ assert.match(main, /dataset\.theme = "dark"/);
+ for (const component of ["Button", "Card", "MetricCard", "StatusChip", "PageHeader", "Modal", "Banner", "EmptyState", "Skeleton", "DataTable", "CopyValue", "ChartCard", "StageRail", "Tabs", "DetailsDrawer"]) assert.match(primitives, new RegExp(`export function ${component}`));
+ for (const component of ["ActionBar", "DataRow", "IssueCard", "ReadinessSummary"]) assert.match(primitives, new RegExp(`export function ${component}`));
+ assert.match(canonical, /<StageRail phases=\{phases\}/);
+-assert.match(landing, /The future doesn’t wait for infrastructure\. Neither do we\./);
++assert.match(landing, /From commit to cloud, with proof at every handoff\./);
+ assert.doesNotMatch(navbar, /toggleTheme|Switch to/);
+ assert.match(navbar, /aria-controls="authenticated-navigation"/);
+ assert.match(layout, /navigationOpen/);
+@@ -96,9 +96,10 @@ assert.match(publicFooter, /aria-label="Footer navigation"/);
+ assert.match(publicFooter, /DeployGuard © 2026/);
+ for (const credit of ["Asim Ali Fayyaz", "Yaseen Mushtaq", "Intelligement", "https:\/\/www.intelligement.com"]) assert.match(about, new RegExp(credit));
+ assert.match(publicAdminLink, /className="landing-admin-link"/);
+-for (const stage of ["Repository", "Build image", "Publish", "Provision", "Run & verify", "Verified live application"]) assert.match(architecture, new RegExp(stage.replace(/[&]/g, "&")));
+-assert.match(enterprise, /\.architecture-panel/);
+-assert.match(enterprise, /\.architecture-connector::after[\s\S]*dg-architecture-signal/);
++for (const stage of ["GitHub Repository", "DeployGuard", "GitHub Actions", "Amazon ECR", "ECS \/ Fargate", "Application Load Balancer", "Route 53", "VPC", "Terraform", "CloudWatch", "Cost visibility"]) assert.match(architecture, new RegExp(stage.replace(/[&]/g, "&")));
++assert.match(architecture, /className="architecture-scene"/);
++assert.doesNotMatch(architecture, /className="architecture-panel"/);
++assert.match(enterprise, /\.architecture-wiring path/);
+ assert.match(enterprise, /\.pipeline-stage-row\.is-running::before[\s\S]*dg-stage-scan/);
+ assert.match(enterprise, /\.monitoring-sample-chart polyline/);
+ assert.match(enterprise, /--accent: #f5b942/i, "amber remains the global interaction accent");
+diff --git a/frontend/src/components/marketing/DeployGuardArchitecture.jsx b/frontend/src/components/marketing/DeployGuardArchitecture.jsx
+index f517f3b..822b539 100644
+--- a/frontend/src/components/marketing/DeployGuardArchitecture.jsx
++++ b/frontend/src/components/marketing/DeployGuardArchitecture.jsx
+@@ -1,26 +1,42 @@
+ import AppIcon from "../common/AppIcon.jsx";
+ 
+-const stages = [
+-  { icon: "github", label: "Repository", detail: "GitHub source and commit" },
+-  { icon: "code", label: "Build image", detail: "Pinned Railpack · OCI image" },
+-  { icon: "infrastructure", label: "Publish", detail: "ECR immutable digest" },
+-  { icon: "infrastructure", label: "Provision", detail: "Terraform · AWS runtime" },
+-  { icon: "activity", label: "Run & verify", detail: "ECS · ALB · exact health evidence" },
++const delivery = [
++  { icon: "github", label: "GitHub Repository", detail: "Selected commit" },
++  { icon: "shield", label: "DeployGuard", detail: "Policy + orchestration", accent: true },
++  { icon: "pipeline", label: "GitHub Actions", detail: "Build image" },
++  { icon: "box", label: "Amazon ECR", detail: "Publish immutable image" },
++  { icon: "infrastructure", label: "ECS / Fargate", detail: "Provision runtime", healthy: true },
++  { icon: "activity", label: "Application Load Balancer", detail: "Run & verify", healthy: true },
++  { icon: "infrastructure", label: "Route 53", detail: "Public route", healthy: true },
++];
++
++const operations = [
++  { icon: "infrastructure", label: "VPC", detail: "Isolated network" },
++  { icon: "pipeline", label: "Terraform", detail: "Infrastructure state" },
++  { icon: "activity", label: "CloudWatch", detail: "Metrics + logs" },
++  { icon: "cost", label: "Cost visibility", detail: "Infracost estimate" },
+ ];
+ 
+ export default function DeployGuardArchitecture() {
+   return <section aria-labelledby="architecture-title" className="landing-architecture-section" id="architecture">
+-    <div className="landing-section-intro"><p className="eyebrow">How DeployGuard works</p><h2 id="architecture-title">From repository to running infrastructure.</h2><p>DeployGuard builds the selected source with Railpack, publishes an immutable image, and operates it on AWS.</p></div>
+-    <div className="architecture-panel">
+-      <header><div><span>DeployGuard architecture</span><small>Authoritative delivery path</small></div><strong><i aria-hidden="true" />LIVE</strong></header>
++    <div className="architecture-heading"><span>Live architecture</span><strong id="architecture-title">One immutable delivery path</strong><i><b aria-hidden="true" /> Verified</i></div>
++    <div className="architecture-scene" role="img" aria-label="GitHub repository passes through DeployGuard and GitHub Actions to ECR, ECS Fargate, an application load balancer and Route 53 inside a VPC, with CloudWatch monitoring, Terraform infrastructure and Infracost cost visibility.">
++      <svg aria-hidden="true" className="architecture-wiring" preserveAspectRatio="none" viewBox="0 0 1000 420">
++        <path d="M82 112 H918" />
++        <path d="M500 112 V310" />
++        <path d="M500 310 H190" />
++        <path d="M500 310 H810" />
++      </svg>
+       <ol aria-label="DeployGuard deployment architecture" className="architecture-flow">
+-        {stages.map((stage, index) => <li key={stage.label}>
+-          <div className="architecture-node glass-surface-secondary"><span className="architecture-node-icon"><AppIcon name={stage.icon} size={20} /></span><div><strong>{stage.label}</strong><small>{stage.detail}</small></div></div>
+-          {index < stages.length - 1 ? <span aria-hidden="true" className="architecture-connector"><AppIcon name="arrow" size={17} /></span> : null}
++        {delivery.map((stage) => <li key={stage.label}>
++          <div className={`architecture-node${stage.accent ? " is-control" : ""}${stage.healthy ? " is-healthy" : ""}`}><span className="architecture-node-icon"><AppIcon name={stage.icon} size={19} /></span><div><strong>{stage.label}</strong><small>{stage.detail}</small></div></div>
+         </li>)}
+       </ol>
+-      <div className="architecture-component-band"><span>Single-service release</span><div><strong>OCI image</strong><strong>ECS + ALB</strong><strong className="is-optional">Optional managed PostgreSQL</strong></div></div>
+-      <div className="architecture-outcome"><span aria-hidden="true"><AppIcon name="check" size={18} /></span><div><strong>Verified live application</strong><small>Immutable image, runtime identity, routing, and health evidence must agree before promotion.</small></div></div>
++      <aside aria-label="Operational visibility" className="architecture-operations">
++        <span className="architecture-operations-label">AWS operating layer</span>
++        <div>{operations.map((item) => <article key={item.label}><span><AppIcon name={item.icon} size={17} /></span><div><strong>{item.label}</strong><small>{item.detail}</small></div></article>)}</div>
++      </aside>
++      <div className="architecture-outcome"><span aria-hidden="true"><AppIcon name="check" size={18} /></span><div><strong>Release promoted</strong><small>Only after runtime and route verification</small></div></div>
+     </div>
+   </section>;
+ }
+diff --git a/frontend/src/components/projects/ProjectOverviewLifecycle.jsx b/frontend/src/components/projects/ProjectOverviewLifecycle.jsx
+index 99084f7..cb0e15d 100644
+--- a/frontend/src/components/projects/ProjectOverviewLifecycle.jsx
++++ b/frontend/src/components/projects/ProjectOverviewLifecycle.jsx
+@@ -75,6 +75,9 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
+   const progressPercentage = deploymentProgressPercentage(phases);
+   const latest = currentState.latestAttempt;
+   const failureOwnershipLabel = overviewFailureOwnershipLabel(currentState);
++  const runtimeServices = currentState.infrastructureEvidence?.runtimeIdentity?.services || [];
++  const serviceHealth = currentState.stateAuthority?.applicationHealth?.status || (state === "LIVE" ? "healthy" : "unavailable");
++  const monthlyCost = currentState.infrastructureEvidence?.cost;
+ 
+   useEffect(() => {
+     if (!acceptedOperation) return;
+@@ -208,11 +211,17 @@ export default function ProjectOverviewLifecycle({ canManage = false, currentSta
+     </Card>
+ 
+     <section aria-label="Deployment summary" className="overview-summary-grid">
+-      <MetricCard detail={copy.message} label="Current state" tone={summaryTone(state)} value={state.replaceAll("_", " ")} />
+-      <MetricCard label="Latest operation" tone={latest?.status === "failed_application" ? "danger" : "neutral"} value={latest ? `Attempt ${latest.attempt || "—"}` : "No deployment yet"} />
+-      <MetricCard label="Last deployment duration" value={duration(latest?.startedAt, latest?.completedAt)} />
++      <MetricCard detail={copy.message} label="Deployment status" tone={summaryTone(state)} value={state.replaceAll("_", " ")} />
++      <MetricCard label="Live URL" tone={currentState.stableUrl ? "success" : "neutral"} value={currentState.stableUrl ? <a href={currentState.stableUrl} rel="noreferrer" target="_blank">Open application ↗</a> : "Not available"} />
++      <MetricCard label="Service health" tone={serviceHealth === "healthy" ? "success" : "neutral"} value={serviceHealth.replaceAll("_", " ")} />
++      <MetricCard label="Monthly cost" value={monthlyCost?.source === "infracost" && Number.isFinite(monthlyCost?.monthly) ? `${monthlyCost.currency || "USD"} ${Number(monthlyCost.monthly).toFixed(2)}` : "Not estimated"} />
+     </section>
+ 
++    <Card className="overview-runtime-summary">
++      <div className="compact-section-heading"><div><p className="eyebrow">Runtime summary</p><h2>Current release</h2></div><StatusChip status={serviceHealth}>{serviceHealth.replaceAll("_", " ")}</StatusChip></div>
++      <dl><div><dt>Release</dt><dd>{shortCommit(currentState.stableRelease?.commit)}</dd></div><div><dt>Services</dt><dd>{runtimeServices.length || (state === "LIVE" ? 1 : 0)}</dd></div><div><dt>Latest operation</dt><dd>{latest ? `Attempt ${latest.attempt || "—"}` : "No deployment yet"}</dd></div><div><dt>Last duration</dt><dd>{duration(latest?.startedAt, latest?.completedAt)}</dd></div></dl>
++    </Card>
++
+     {destroyOpen ? <Modal labelledBy="overview-destroy-title" onClose={() => { if (!busy) { setDestroyOpen(false); setDestroyPhrase(""); } }}>
+       <p className="eyebrow">Permanent project deletion</p><h2 id="overview-destroy-title">Delete this project and its owned resources?</h2>
+       <p>Each recorded generation and the separate project resources will be cleaned by exact identity. Shared platform networking, cluster and load balancer remain untouched. Type <strong>{DESTROY_CONFIRMATION_PHRASE}</strong> to confirm.</p>
+diff --git a/frontend/src/design-system.css b/frontend/src/design-system.css
+index e83766b..61d6acd 100644
+--- a/frontend/src/design-system.css
++++ b/frontend/src/design-system.css
+@@ -302,7 +302,6 @@ button:disabled, .ds-button[aria-disabled="true"] { box-shadow: none; opacity: .
+ .ds-readiness-summary {
+   background: var(--surface);
+   border: 1px solid var(--border);
+-  border-inline-start: 5px solid currentColor;
+   border-radius: var(--radius);
+   box-shadow: none;
+   color: var(--ink);
+@@ -468,7 +467,7 @@ button:disabled, .ds-button[aria-disabled="true"] { box-shadow: none; opacity: .
+ .about-hero h1 { font-size: clamp(3.2rem, 7vw, 6.35rem); letter-spacing: -.065em; line-height: .91; margin: 18px 0 22px; max-width: 820px; }
+ .about-hero h1 span { color: var(--accent-dark); }
+ .about-hero h2 { color: var(--ink-soft); font-size: clamp(1.3rem, 2.6vw, 2.05rem); letter-spacing: -.035em; margin: 0; }
+-.about-hero-copy { border-left: 3px solid var(--accent); display: grid; gap: var(--space-4); padding: 4px 0 4px var(--space-5); }
++.about-hero-copy { border-block: 1px solid rgba(255,255,255,.18); display: grid; gap: var(--space-4); padding: var(--space-5) 0; }
+ .about-hero-copy p { color: var(--ink-soft); font-size: 1.05rem; line-height: 1.7; margin: 0; }
+ .about-hero-copy p:first-child { color: var(--ink); font-weight: 700; }
+ .about-hero-copy strong { color: var(--accent-dark); font-size: 1rem; }
+@@ -2457,3 +2456,1144 @@ html{color-scheme:dark}
+   .notification-overview-card .compact-section-heading{align-items:flex-start;flex-direction:column}
+   .notification-overview-card .compact-section-heading>.status-badge{align-self:flex-start;white-space:nowrap}
+ }
++
++/* Presentation stabilization: one calm operational system for authenticated screens.
++   This deliberately wins over the older glass experiments above without changing
++   component behavior, data, or public marketing surfaces. */
++.app-shell {
++  --accent: #d7aa58;
++  --accent-hover: #e2b969;
++  --accent-dark: #d7aa58;
++  --accent-soft: rgba(215, 170, 88, .14);
++  --success: #67c996;
++  --success-soft: rgba(103, 201, 150, .13);
++  --warning: #d9a84d;
++  --warning-soft: rgba(217, 168, 77, .14);
++  --danger: #e47d8f;
++  --danger-soft: rgba(228, 125, 143, .14);
++  --info: #8dbbc2;
++  --info-soft: rgba(141, 187, 194, .13);
++  --canvas: #071114;
++  --surface: #0d1a1e;
++  --surface-muted: rgba(196, 218, 218, .055);
++  --surface-strong: #102126;
++  --ink: #edf3f1;
++  --ink-soft: #c1cfcc;
++  --muted: #91a3a1;
++  --border: rgba(192, 217, 214, .15);
++  --border-strong: rgba(192, 217, 214, .28);
++  background: var(--canvas);
++}
++
++.app-shell::before,
++.app-shell .content::before,
++.app-shell .main-area::before { display: none; }
++
++.app-shell .main-area {
++  background: #091518;
++  border-color: rgba(192, 217, 214, .18);
++  box-shadow: none;
++}
++
++.app-shell .sidebar {
++  background: #0c191d;
++  border-color: rgba(192, 217, 214, .18);
++  box-shadow: none;
++}
++
++.app-shell .navbar {
++  background: #0d1a1e;
++  border-bottom-color: rgba(192, 217, 214, .14);
++  box-shadow: none;
++}
++
++.app-shell .content { padding: clamp(24px, 3vw, 38px); }
++.app-shell .workspace-page,
++.app-shell .page-stack,
++.app-shell .grid { gap: var(--space-6); }
++
++.app-shell .ds-page-header,
++.app-shell .workspace-heading {
++  gap: var(--space-4);
++}
++
++.app-shell .ds-page-header { padding-bottom: var(--space-5); }
++.app-shell .page-heading h1,
++.app-shell .workspace-heading h1 { font-size: clamp(1.9rem, 2.6vw, 2.35rem); letter-spacing: -.025em; }
++.app-shell .page-heading .muted,
++.app-shell .workspace-heading > div > p:last-child { color: var(--ink-soft); line-height: 1.55; }
++.app-shell .eyebrow,
++.app-shell .sidebar-label,
++.app-shell .metric-label {
++  color: var(--muted);
++  font-size: .76rem;
++  font-weight: 650;
++  letter-spacing: .02em;
++  text-transform: none;
++}
++
++.app-shell .panel,
++.app-shell .panel-flat,
++.app-shell .ds-card,
++.admin-shell .admin-section {
++  background: #0d1a1e;
++  border-color: var(--border);
++  border-radius: 12px;
++  box-shadow: none;
++}
++
++.app-shell .panel,
++.app-shell .panel-flat,
++.app-shell .ds-card { padding: clamp(18px, 2vw, 24px); }
++
++.app-shell .overview-lifecycle-card,
++.app-shell .pipeline-identity-card,
++.app-shell .deployment-readiness,
++.app-shell .pipeline-failure-diagnosis,
++.app-shell .troubleshooting-diagnosis {
++  background: #102126;
++  border-color: rgba(192, 217, 214, .28);
++  box-shadow: 0 12px 28px rgba(0, 8, 10, .16);
++}
++
++.app-shell .metric-card,
++.app-shell .ds-card .metric-card,
++.admin-shell .metric-card,
++.admin-shell .admin-service-card {
++  background: transparent;
++  border-color: transparent;
++  border-radius: 0;
++  box-shadow: none;
++}
++
++.app-shell .overview-summary-grid,
++.app-shell .infrastructure-summary-grid,
++.app-shell .monitoring-summary-grid {
++  gap: 0;
++  border-block: 1px solid var(--border);
++}
++
++.app-shell .overview-summary-grid .metric-card,
++.app-shell .infrastructure-summary-grid .metric-card,
++.app-shell .monitoring-summary-grid .metric-card {
++  min-width: 0;
++  padding: 15px 18px;
++}
++
++.app-shell .overview-summary-grid .metric-card + .metric-card,
++.app-shell .infrastructure-summary-grid .metric-card + .metric-card,
++.app-shell .monitoring-summary-grid .metric-card + .metric-card { border-inline-start: 1px solid var(--border); }
++.app-shell .metric-card strong { color: var(--ink); font-size: clamp(1.2rem, 1.8vw, 1.55rem); line-height: 1.25; }
++.app-shell .metric-card p { color: var(--muted); font-size: .82rem; line-height: 1.45; }
++
++.app-shell .button,
++.app-shell .ds-button-primary {
++  background: var(--accent);
++  border-color: var(--accent);
++  box-shadow: none;
++  color: #17130b;
++}
++
++.app-shell .button:hover:not(:disabled),
++.app-shell .ds-button-primary:hover:not(:disabled) { background: var(--accent-hover); box-shadow: none; }
++.app-shell .secondary-button,
++.app-shell .subtle-button,
++.app-shell .ds-button-secondary,
++.app-shell .ds-button-ghost {
++  background: transparent;
++  border-color: var(--border-strong);
++  box-shadow: none;
++  color: var(--ink-soft);
++}
++.app-shell .secondary-button:hover:not(:disabled),
++.app-shell .subtle-button:hover:not(:disabled),
++.app-shell .ds-button-secondary:hover:not(:disabled),
++.app-shell .ds-button-ghost:hover:not(:disabled) {
++  background: var(--surface-muted);
++  border-color: var(--ink-soft);
++  color: var(--ink);
++  transform: none;
++}
++
++.app-shell .nav-link { border-radius: 8px; color: var(--ink-soft); }
++.app-shell .nav-link::after { display: none; }
++.app-shell .nav-link:hover { background: rgba(255, 255, 255, .045); border-color: transparent; transform: none; }
++.app-shell .nav-link.active { background: rgba(215, 170, 88, .12); border-color: rgba(215, 170, 88, .28); box-shadow: none; }
++.app-shell .nav-link.active::before { box-shadow: none; width: 3px; }
++
++.app-shell .status-badge { box-shadow: none; }
++.app-shell .field input,
++.app-shell .field select,
++.app-shell .field textarea,
++.app-shell .ds-data-table-wrap,
++.app-shell .monitoring-log-search input {
++  background: #091518;
++  border-color: var(--border-strong);
++  box-shadow: none;
++}
++
++/* Projects: the project itself is the card; its facts are a compact row. */
++.app-shell .project-card-grid { gap: var(--space-4); }
++.app-shell .project-summary-card { background: #0e1c20; padding: 20px; }
++.app-shell .project-summary-card:hover { border-color: rgba(192, 217, 214, .28); box-shadow: none; transform: none; }
++.app-shell .project-card-facts {
++  gap: 0;
++  border-block: 1px solid var(--border);
++  grid-template-columns: repeat(3, minmax(0, 1fr));
++}
++.app-shell .project-card-facts article {
++  background: transparent !important;
++  border: 0 !important;
++  border-radius: 0 !important;
++  padding: 13px 12px !important;
++}
++.app-shell .project-card-facts article + article { border-inline-start: 1px solid var(--border) !important; }
++.app-shell .project-card-facts article:first-child { padding-inline-start: 0 !important; }
++.app-shell .project-card-facts article:last-child { padding-inline-end: 0 !important; }
++.app-shell .project-card-facts span { color: var(--muted); font-size: .72rem; font-weight: 650; letter-spacing: .02em; text-transform: none; }
++.app-shell .project-card-facts strong { font-size: .9rem; }
++
++/* Overview: one release-control surface; destructive work stays visibly secondary. */
++.app-shell .overview-lifecycle-card { gap: var(--space-4); padding: 24px; }
++.app-shell .overview-lifecycle-heading { gap: var(--space-3); }
++.app-shell .overview-lifecycle-card .ds-stage-rail { margin-block: var(--space-2); }
++.app-shell .overview-actions { border-top: 1px solid var(--border); padding-top: var(--space-4); }
++.app-shell .overview-actions .overview-action-open { background: var(--accent); border-color: var(--accent); color: #17130b; }
++.app-shell .overview-actions .overview-action-redeploy,
++.app-shell .overview-actions .overview-action-rollback { background: transparent; border-color: var(--border-strong); color: var(--ink-soft); }
++.app-shell .overview-actions .overview-action-destroy { background: transparent; border-color: transparent; color: var(--danger); margin-inline-start: auto; }
++
++/* Pipeline: current deployment, stages, then supporting security and history. */
++.app-shell .pipeline-execution { display: grid; gap: var(--space-5); }
++.app-shell .pipeline-identity-card { order: 1; padding: 22px 24px; }
++.app-shell .pipeline-timeline-card { order: 2; }
++.app-shell .pipeline-security-card { background: transparent; border-color: var(--border); box-shadow: none; order: 3; }
++.app-shell .pipeline-execution .ds-chart-card { background: transparent; border-color: var(--border); box-shadow: none; order: 4; }
++.app-shell .pipeline-recovery-panel { background: transparent; border-color: var(--border); box-shadow: none; order: 5; }
++.app-shell .pipeline-history-card { order: 6; }
++.app-shell .pipeline-section-heading { gap: var(--space-3); }
++.app-shell .pipeline-stage-row { border-radius: 0; margin: 0; padding-block: 14px; }
++.app-shell .pipeline-stage-row + .pipeline-stage-row { border-top: 1px solid var(--border); }
++.app-shell .pipeline-stage-row.is-running { background: var(--info-soft); }
++.app-shell .pipeline-stage-row.is-failed { background: var(--danger-soft); }
++.app-shell .pipeline-stage-row::before { box-shadow: none; }
++.app-shell .pipeline-stage-evidence { background: #091518; border-color: var(--border); box-shadow: none; }
++.app-shell .pipeline-duration-bar { background: rgba(255, 255, 255, .08); }
++.app-shell .pipeline-duration-bar i { background: var(--accent); }
++
++/* Infrastructure reads as a continuous path, not six unrelated mini-cards. */
++.app-shell .infrastructure-topology { gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
++.app-shell .infrastructure-topology li {
++  background: transparent;
++  border: 0;
++  border-radius: 0;
++  padding: 14px;
++}
++.app-shell .infrastructure-topology li + li { border-inline-start: 1px solid var(--border); }
++.app-shell .infrastructure-topology li:not(:last-child)::after { display: none; }
++.app-shell .infrastructure-topology li[data-status="active"] { background: rgba(103, 201, 150, .08); }
++.app-shell .infrastructure-support-grid article { background: transparent; border: 0; border-radius: 0; padding: 12px 0; }
++.app-shell .infrastructure-support-grid article + article { border-inline-start: 1px solid var(--border); padding-inline-start: var(--space-4); }
++
++/* Monitoring: status is compact; technical tools remain deliberately opaque. */
++.app-shell .monitoring-performance-grid .metric-card strong { font-size: clamp(1.05rem, 1.55vw, 1.35rem); overflow-wrap: anywhere; }
++.app-shell .monitoring-health-card { background: transparent; box-shadow: none; }
++.app-shell .monitoring-chart-grid .ds-chart-card { background: #0b181c; border-color: var(--border); }
++.app-shell .monitoring-log-viewer { background: #071216; border-color: rgba(192, 217, 214, .22); box-shadow: none; }
++.app-shell .monitoring-log-line { border-bottom-color: rgba(192, 217, 214, .1); }
++
++/* Troubleshooting follows diagnosis, recommended action, then supporting evidence. */
++.app-shell .troubleshooting-command { background: transparent; box-shadow: none; }
++.app-shell .troubleshooting-operation-grid { gap: 0; border-block: 1px solid var(--border); }
++.app-shell .troubleshooting-operation-grid article { background: transparent; border: 0; border-radius: 0; padding: 12px; }
++.app-shell .troubleshooting-operation-grid article + article { border-inline-start: 1px solid var(--border); }
++.app-shell .troubleshooting-failure-summary { border-inline-start: 0; border-top: 1px solid var(--border); padding: var(--space-4) 0 0; }
++.app-shell .troubleshooting-diagnosis section { border-top-color: var(--border); }
++
++@media (max-width: 900px) {
++  .app-shell .overview-summary-grid .metric-card:nth-child(odd),
++  .app-shell .infrastructure-summary-grid .metric-card:nth-child(odd),
++  .app-shell .monitoring-summary-grid .metric-card:nth-child(odd) { border-inline-start: 0; }
++  .app-shell .overview-summary-grid .metric-card:nth-child(n + 3),
++  .app-shell .infrastructure-summary-grid .metric-card:nth-child(n + 3),
++  .app-shell .monitoring-summary-grid .metric-card:nth-child(n + 3) { border-top: 1px solid var(--border); }
++  .app-shell .infrastructure-topology { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
++  .app-shell .infrastructure-topology li:nth-child(odd) { border-inline-start: 0; }
++  .app-shell .infrastructure-topology li:nth-child(n + 3) { border-top: 1px solid var(--border); }
++}
++
++@media (max-width: 700px) {
++  .app-shell .content { padding: 20px 16px 36px; }
++  .app-shell .project-card-facts,
++  .app-shell .troubleshooting-operation-grid { grid-template-columns: 1fr; }
++  .app-shell .project-card-facts article + article,
++  .app-shell .troubleshooting-operation-grid article + article { border-inline-start: 0 !important; border-top: 1px solid var(--border) !important; }
++  .app-shell .project-card-facts article,
++  .app-shell .project-card-facts article:first-child,
++  .app-shell .project-card-facts article:last-child { padding-inline: 0 !important; }
++  .app-shell .overview-summary-grid .metric-card,
++  .app-shell .infrastructure-summary-grid .metric-card,
++  .app-shell .monitoring-summary-grid .metric-card { border-inline-start: 0; }
++  .app-shell .overview-summary-grid .metric-card + .metric-card,
++  .app-shell .infrastructure-summary-grid .metric-card + .metric-card,
++  .app-shell .monitoring-summary-grid .metric-card + .metric-card { border-top: 1px solid var(--border); }
++  .app-shell .infrastructure-topology { grid-template-columns: 1fr; }
++  .app-shell .infrastructure-topology li + li { border-inline-start: 0; border-top: 1px solid var(--border); }
++  .app-shell .infrastructure-support-grid article + article { border-inline-start: 0; border-top: 1px solid var(--border); padding-inline-start: 0; }
++}
++
++/* test4 hybrid product system: premium public experience, light data-first workspace. */
++.landing-page-simple {
++  --landing-canvas: #061317;
++  --landing-panel: #0c2025;
++  --landing-line: rgba(168, 207, 207, .18);
++  background:
++    radial-gradient(circle at 73% 18%, rgba(34, 143, 148, .18), transparent 30rem),
++    radial-gradient(circle at 14% 28%, rgba(229, 168, 58, .09), transparent 24rem),
++    var(--landing-canvas);
++  color: #f3f8f7;
++  min-height: 100vh;
++}
++.landing-page-simple .landing-ambient { opacity: .34; }
++.landing-page-simple .landing-ambient span { background: rgba(39, 169, 174, .16); }
++.landing-page-simple .landing-ambient span:nth-child(2) { background: rgba(229, 168, 58, .1); }
++.landing-page-simple .landing-ambient span:nth-child(3) { background: rgba(37, 111, 116, .12); }
++.landing-page-simple .landing-nav {
++  backdrop-filter: blur(22px) saturate(128%);
++  background: rgba(7, 25, 29, .7);
++  border: 1px solid rgba(195, 222, 219, .16);
++  border-radius: 14px;
++  box-shadow: 0 18px 48px rgba(0, 8, 12, .24), inset 0 1px rgba(255, 255, 255, .07);
++  margin-top: 16px;
++  max-width: 1380px;
++  padding: 10px 14px 10px 18px;
++  position: relative;
++  width: calc(100% - 32px);
++}
++.landing-page-simple .landing-about-link { color: #c4d5d4; }
++.landing-page-simple .landing-about-link:hover { color: white; }
++.landing-home-main {
++  align-items: center;
++  column-gap: clamp(34px, 5vw, 84px);
++  display: grid;
++  grid-template-columns: minmax(360px, .78fr) minmax(600px, 1.22fr);
++  margin: 0 auto;
++  max-width: 1460px;
++  min-height: calc(100vh - 88px);
++  padding: clamp(38px, 6vw, 88px) clamp(24px, 5vw, 74px) 76px;
++}
++.landing-home-main .landing-simple-main { min-height: 0; padding: 0; }
++.landing-simple-hero { max-width: 650px; text-align: left; }
++.landing-simple-hero .eyebrow { color: #e5b85f; margin-bottom: 18px; }
++.landing-simple-hero h1 {
++  color: #f7fbfa;
++  font-size: clamp(3.2rem, 5.4vw, 5.6rem);
++  letter-spacing: -.04em;
++  line-height: .96;
++  margin-bottom: 26px;
++  max-width: 12ch;
++  text-wrap: balance;
++}
++.landing-simple-hero .landing-lead { color: #b8cbca; font-size: clamp(1.05rem, 1.45vw, 1.28rem); line-height: 1.65; max-width: 550px; }
++.landing-page-simple .landing-primary-cta { margin-top: 14px; min-height: 50px; padding-inline: 19px; }
++.landing-home-main .landing-architecture-section { padding: 0; }
++.landing-architecture-section .landing-section-intro { margin: 0 0 20px; max-width: 700px; text-align: left; }
++.landing-architecture-section .landing-section-intro .eyebrow { color: #7fcdd0; }
++.landing-architecture-section .landing-section-intro h2 { color: #f3f8f7; font-size: clamp(1.65rem, 2.4vw, 2.45rem); margin-bottom: 8px; }
++.landing-architecture-section .landing-section-intro > p:last-child { color: #9eb5b4; margin: 0; }
++.architecture-panel {
++  background: linear-gradient(145deg, rgba(255,255,255,.055), transparent 36%), rgba(9, 29, 34, .92);
++  border: 1px solid var(--landing-line);
++  border-radius: 18px;
++  box-shadow: 0 32px 90px rgba(0, 7, 10, .38), inset 0 1px rgba(255,255,255,.06);
++  overflow: hidden;
++  padding: 0;
++}
++.architecture-panel > header { background: rgba(255,255,255,.025); border-bottom: 1px solid var(--landing-line); padding: 15px 18px; }
++.architecture-panel > header span { color: #edf7f6; }
++.architecture-panel > header small { color: #789391; }
++.architecture-panel > header strong { color: #67d39b; letter-spacing: .08em; }
++.architecture-panel > header strong i { background: #4fc58c; box-shadow: 0 0 0 4px rgba(79,197,140,.12); }
++.architecture-canvas { padding: 22px 18px 18px; }
++.architecture-flow {
++  display: grid;
++  gap: 10px;
++  grid-template-columns: repeat(7, minmax(0, 1fr));
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++.architecture-flow li { display: block; min-width: 0; position: relative; }
++.architecture-node,
++.architecture-node:hover {
++  align-content: space-between;
++  background: #10262b;
++  border: 1px solid #28464a;
++  border-radius: 12px;
++  box-shadow: 0 12px 28px rgba(0, 8, 11, .17);
++  display: grid;
++  gap: 17px;
++  grid-template-columns: 1fr;
++  min-height: 126px;
++  padding: 13px;
++  transform: none;
++}
++.architecture-node.is-control { background: #312713; border-color: rgba(229,168,58,.68); }
++.architecture-node.is-healthy { background: #102a21; border-color: rgba(80,183,128,.45); }
++.architecture-node-icon { align-items: center; background: rgba(75,177,183,.12); border: 1px solid rgba(75,177,183,.25); border-radius: 9px; color: #72d0d3; display: inline-flex; height: 34px; justify-content: center; width: 34px; }
++.architecture-node.is-control .architecture-node-icon { background: rgba(229,168,58,.14); border-color: rgba(229,168,58,.28); color: #f0bd5d; }
++.architecture-node.is-healthy .architecture-node-icon { background: rgba(80,183,128,.12); border-color: rgba(80,183,128,.26); color: #62c995; }
++.architecture-node strong { color: #eef8f7; display: block; font-size: .78rem; line-height: 1.25; }
++.architecture-node small { color: #849e9d; display: block; font-size: .65rem; line-height: 1.35; margin-top: 4px; }
++.architecture-connector { height: 1px; left: calc(100% - 1px); overflow: visible; position: absolute; top: 62px; width: 12px; z-index: 3; }
++.architecture-connector::before { background: #3d7376; content: ""; height: 1px; inset: 0; position: absolute; }
++.architecture-connector::after { animation: dg-architecture-signal 2.4s var(--ease-move) infinite; background: #72d0d3; border-radius: 50%; box-shadow: 0 0 9px rgba(114,208,211,.7); content: ""; height: 4px; position: absolute; top: -1px; width: 4px; }
++.architecture-operations { border-top: 1px solid var(--landing-line); margin-top: 18px; padding-top: 16px; }
++.architecture-operations-label { color: #718c8a; display: block; font-size: .65rem; font-weight: 800; letter-spacing: .08em; margin-bottom: 10px; text-transform: uppercase; }
++.architecture-operations > div { display: grid; gap: 9px; grid-template-columns: repeat(3, 1fr); }
++.architecture-operations article { align-items: center; background: rgba(255,255,255,.025); border: 1px solid rgba(175,211,208,.1); border-radius: 10px; display: flex; gap: 10px; padding: 10px 11px; }
++.architecture-operations article > span { color: #71c7cb; display: inline-flex; }
++.architecture-operations article strong { color: #dce9e8; display: block; font-size: .74rem; }
++.architecture-operations article small { color: #789290; display: block; font-size: .65rem; margin-top: 2px; }
++.architecture-outcome { background: rgba(34, 130, 89, .09); border: 0; border-radius: 0; border-top: 1px solid rgba(80,183,128,.24); box-shadow: none; margin: 0; padding: 15px 18px; }
++.architecture-outcome > span { background: #23865b; color: white; }
++.architecture-outcome strong { color: #eaf8f1; }
++.architecture-outcome small { color: #8fb1a4; }
++.landing-home-main + .landing-footer,
++.landing-page-simple > .landing-footer { background: rgba(4, 16, 19, .78); border-top-color: rgba(168,207,207,.12); color: #819b99; }
++
++.app-shell {
++  --canvas: #eef3f3;
++  --surface: #ffffff;
++  --surface-muted: #f2f6f6;
++  --surface-strong: #eaf2f2;
++  --ink: #162a31;
++  --ink-soft: #405b62;
++  --muted: #6c8287;
++  --border: #dce6e7;
++  --border-strong: #c7d5d7;
++  --accent: #e5a83a;
++  --accent-hover: #efb84f;
++  --accent-dark: #9d6a14;
++  --accent-soft: #fff5df;
++  --success: #168a5b;
++  --success-soft: #e9f7f0;
++  --warning: #9e6d18;
++  --warning-soft: #fff6e4;
++  --danger: #d64e5c;
++  --danger-soft: #fff0f1;
++  --info: #167c80;
++  --info-soft: #e8f5f5;
++  --shadow-sm: 0 8px 24px rgba(26, 53, 59, .07);
++  --shadow-md: 0 20px 55px rgba(26, 53, 59, .12);
++  background: var(--canvas);
++  color: var(--ink);
++  color-scheme: light;
++  gap: 0;
++  grid-template-columns: 250px minmax(0, 1fr);
++  padding: 0;
++}
++.app-shell .sidebar {
++  background: #fff;
++  border: 0;
++  border-inline-end: 1px solid var(--border);
++  border-radius: 0;
++  box-shadow: none;
++  height: 100vh;
++  padding: 18px 13px;
++  top: 0;
++}
++.app-shell .brand-identity-copy strong,
++.app-shell h1, .app-shell h2, .app-shell h3 { color: var(--ink); }
++.app-shell .brand-identity-copy small,
++.app-shell p, .app-shell .muted { color: var(--ink-soft); }
++.app-shell .main-area { background: #f4f7f7; border: 0; border-radius: 0; min-height: 100vh; }
++.app-shell .navbar { background: rgba(255,255,255,.9); border-bottom: 1px solid var(--border); color: var(--ink); }
++.app-shell .command-trigger,
++.app-shell .shell-context { background: #fff; border-color: var(--border); color: var(--ink-soft); }
++.app-shell .content { max-width: 1480px; padding: clamp(28px, 3.5vw, 52px); }
++.app-shell .eyebrow { color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
++.app-shell .workspace-heading,
++.app-shell .ds-page-header { border-bottom: 0; padding-bottom: 0; }
++.app-shell .page-context { color: var(--muted); }
++.app-shell .panel,
++.app-shell .panel-flat,
++.app-shell .ds-card,
++.app-shell .overview-lifecycle-card,
++.app-shell .pipeline-identity-card,
++.app-shell .deployment-readiness,
++.app-shell .pipeline-failure-diagnosis,
++.app-shell .troubleshooting-diagnosis {
++  background: #fff;
++  border-color: var(--border);
++  box-shadow: var(--shadow-sm);
++  color: var(--ink);
++}
++.app-shell .button,
++.app-shell .ds-button-primary { background: var(--accent); border-color: #d89a2e; color: #2b210e; }
++.app-shell .secondary-button,
++.app-shell .subtle-button,
++.app-shell .ds-button-secondary,
++.app-shell .ds-button-ghost { background: #fff; border-color: var(--border-strong); color: var(--ink-soft); }
++.app-shell .nav-link { color: #52696f; }
++.app-shell .nav-link:hover { background: #f3f7f7; color: var(--ink); }
++.app-shell .nav-link.active { background: #edf6f5; border-color: #cbe2e1; color: #12696c; }
++.app-shell .nav-link.active::before { background: #167c80; }
++.app-shell .status-badge.tone-success,
++.app-shell .tone-success { color: #126b47; }
++.app-shell .status-badge.tone-info,
++.app-shell .tone-info { color: #126f73; }
++.app-shell .status-badge.tone-danger,
++.app-shell .tone-danger { color: #bd3342; }
++.app-shell .status-badge.tone-warning,
++.app-shell .tone-warning { color: #886018; }
++.app-shell .status-badge.tone-neutral,
++.app-shell .tone-neutral { color: #52696f; }
++.app-shell .field input,
++.app-shell .field select,
++.app-shell .field textarea,
++.app-shell .ds-data-table-wrap,
++.app-shell .monitoring-log-search input { background: #fff; border-color: var(--border-strong); color: var(--ink); }
++.app-shell .ds-data-table th { background: #f1f6f6; color: #5e7479; }
++.app-shell .ds-data-table td { color: var(--ink-soft); }
++.app-shell ::selection { background: #b9e0df; color: #0e3437; }
++.app-shell :focus-visible { outline-color: #167c80; }
++
++/* Home: overview first, action queue and deployment stream side by side. */
++.app-shell .dashboard-page { display: grid; grid-template-columns: minmax(280px, .78fr) minmax(420px, 1.22fr); max-width: 1280px; }
++.app-shell .dashboard-page > .workspace-heading,
++.app-shell .dashboard-page > .workspace-stat-strip,
++.app-shell .dashboard-page > .state,
++.app-shell .dashboard-page > [data-dashboard-empty-deployments],
++.app-shell .dashboard-page > .dashboard-recent-projects { grid-column: 1 / -1; }
++.app-shell .workspace-stat-strip {
++  background: #fff;
++  border: 1px solid var(--border);
++  border-radius: 14px;
++  box-shadow: var(--shadow-sm);
++  padding: 0;
++}
++.app-shell .workspace-stat-strip > div { padding: 19px 22px; }
++.app-shell .workspace-stat-strip > div + div { border-left-color: var(--border); }
++.app-shell .workspace-stat-strip span { color: var(--muted); letter-spacing: .04em; }
++.app-shell .workspace-stat-strip strong { color: var(--ink); font-size: 1.8rem; }
++.app-shell .dashboard-attention { background: #fffdf9; }
++.app-shell .dashboard-deployments { min-width: 0; }
++.app-shell .active-run-item { background: transparent; border: 0; border-radius: 0; padding: 13px 0; }
++.app-shell .active-run-item + .active-run-item { border-top: 1px solid var(--border); }
++.app-shell .active-run-item:hover { background: transparent; }
++.app-shell .run-status-ring { background: var(--success); border-color: var(--success-soft); }
++.app-shell .run-status-ring.is-active { background: var(--info); border-color: var(--info-soft); }
++.app-shell .calm-empty { background: var(--success-soft); border-color: #c8ead9; }
++
++/* Project overview: a control center with a verified green lifecycle. */
++.app-shell .project-overview-page { max-width: 1280px; }
++.app-shell .overview-lifecycle-card { box-shadow: var(--shadow-md); padding: 26px; }
++.app-shell .overview-state-live .deployment-progress-track span { background: var(--success); }
++.app-shell .overview-summary-grid { background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-sm); grid-template-columns: repeat(4, minmax(0,1fr)); overflow: hidden; }
++.app-shell .overview-summary-grid .metric-card { background: #fff; }
++.app-shell .overview-summary-grid .metric-card a { color: #126f73; text-decoration: underline; text-underline-offset: 3px; }
++.app-shell .overview-runtime-summary { display: grid; gap: 18px; }
++.app-shell .overview-runtime-summary dl { border-block: 1px solid var(--border); display: grid; grid-template-columns: repeat(4, 1fr); margin: 0; }
++.app-shell .overview-runtime-summary dl > div { display: grid; gap: 5px; padding: 14px 16px; }
++.app-shell .overview-runtime-summary dl > div + div { border-inline-start: 1px solid var(--border); }
++.app-shell .overview-runtime-summary dt { color: var(--muted); font-size: .7rem; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
++.app-shell .overview-runtime-summary dd { color: var(--ink); font-size: .94rem; font-weight: 750; margin: 0; overflow-wrap: anywhere; }
++
++/* Pipeline: compact execution evidence, not a dashboard card field. */
++.app-shell .project-pipeline-page { max-width: 1320px; }
++.app-shell .pipeline-execution { gap: 18px; }
++.app-shell .pipeline-identity-card { background: #132b32; border: 0; box-shadow: 0 16px 38px rgba(20,46,53,.16); color: #effafa; }
++.app-shell .pipeline-identity-card h2 { color: white; }
++.app-shell .pipeline-identity-card p,
++.app-shell .pipeline-identity-card dt { color: #a8c2c4; }
++.app-shell .pipeline-identity-card dd { color: #eef8f8; }
++.app-shell .pipeline-timeline-card { box-shadow: none; padding: 0; }
++.app-shell .pipeline-timeline-card > .pipeline-section-heading { border-bottom: 1px solid var(--border); padding: 22px 24px; }
++.app-shell .pipeline-stage-timeline { padding: 0 24px 8px; }
++.app-shell .pipeline-stage-row { display: grid; grid-template-columns: 40px minmax(190px,.8fr) minmax(250px,1fr) minmax(150px,.65fr); padding: 15px 0; position: relative; }
++.app-shell .pipeline-stage-row::after { background: var(--border); content: ""; height: 100%; left: 19px; position: absolute; top: 31px; width: 1px; z-index: 0; }
++.app-shell .pipeline-stage-row:last-child::after { display: none; }
++.app-shell .pipeline-stage-icon { background: #eef5f5; border-color: var(--border); color: var(--info); position: relative; z-index: 1; }
++.app-shell .pipeline-stage-row.is-passed .pipeline-stage-icon { background: var(--success); border-color: var(--success); color: white; }
++.app-shell .pipeline-stage-evidence { background: #f4f7f7; border: 1px solid var(--border); color: var(--ink-soft); }
++.app-shell .pipeline-duration-bar { background: #e3ecec; }
++.app-shell .pipeline-duration-bar i { background: var(--info); }
++.app-shell .pipeline-history-card { box-shadow: none; }
++
++/* Infrastructure: topology, inventory and operating systems. */
++.app-shell .infrastructure-page { max-width: 1320px; }
++.app-shell .infrastructure-summary-grid { background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-sm); grid-template-columns: repeat(6, minmax(0,1fr)); overflow: hidden; }
++.app-shell .infrastructure-topology-card { background: #eff8f7; border-color: #cbe4e2; box-shadow: none; }
++.app-shell .infrastructure-topology { background: #fff; border-color: #c8dcdd; border-radius: 12px; overflow-x: auto; }
++.app-shell .infrastructure-topology li { min-width: 135px; padding: 17px 14px; position: relative; }
++.app-shell .infrastructure-topology li + li { border-inline-start: 1px solid #d7e4e4; }
++.app-shell .infrastructure-topology li[data-status="active"] { background: var(--success-soft); }
++.app-shell .infrastructure-topology li strong { color: var(--ink); }
++.app-shell .infrastructure-topology li span { color: var(--muted); }
++.app-shell .infrastructure-support-grid { background: #f6f9f9; border-radius: 10px; padding: 4px 16px; }
++.app-shell .infrastructure-finops-card { background: #fffaf0; border-color: #ead9b9; }
++.app-shell .infrastructure-cost-bars i { background: var(--info); }
++.app-shell .infrastructure-inventory-card { box-shadow: none; }
++
++/* Monitoring: dense operational console inside the light product shell. */
++.app-shell .monitoring-page { max-width: 1360px; }
++.app-shell .monitoring-summary-grid { background: #102b32; border: 0; border-radius: 14px; box-shadow: 0 16px 38px rgba(18,46,53,.14); grid-template-columns: repeat(6,minmax(0,1fr)); overflow: hidden; }
++.app-shell .monitoring-summary-grid .metric-card { background: transparent; border-color: rgba(213,236,235,.12); padding: 18px 16px; }
++.app-shell .monitoring-summary-grid .metric-label { color: #91adaf; }
++.app-shell .monitoring-summary-grid .metric-card strong { color: #f3fbfa; font-size: 1.35rem; }
++.app-shell .monitoring-summary-grid .metric-card.tone-success strong { color: #76daa8; }
++.app-shell .monitoring-chart-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
++.app-shell .monitoring-chart-grid .ds-chart-card { background: #fff; border-color: var(--border); box-shadow: none; }
++.app-shell .monitoring-sample-chart { background: #f6f9f9; }
++.app-shell .monitoring-sample-chart line { stroke: #dce8e8; }
++.app-shell .monitoring-sample-chart text,
++.app-shell .monitoring-chart-axis { color: var(--muted); fill: var(--muted); }
++.app-shell .monitoring-sample-chart circle { fill: white; }
++.app-shell .monitoring-health-card { background: #fff; border: 1px solid var(--border); }
++.app-shell .monitoring-health-table-wrap { border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; }
++.app-shell .monitoring-health-table { border-collapse: collapse; min-width: 560px; width: 100%; }
++.app-shell .monitoring-health-table th,
++.app-shell .monitoring-health-table td { border-bottom: 1px solid var(--border); padding: 12px 15px; text-align: left; }
++.app-shell .monitoring-health-table th { background: #f2f6f6; color: var(--muted); font-size: .7rem; letter-spacing: .05em; text-transform: uppercase; }
++.app-shell .monitoring-health-table td { color: var(--ink-soft); font-size: .86rem; }
++.app-shell .monitoring-health-table td:last-child { color: var(--ink); font-weight: 700; }
++.app-shell .monitoring-health-table tr:last-child td { border-bottom: 0; }
++.app-shell .monitoring-health-table a { color: #126f73; text-decoration: underline; text-underline-offset: 3px; }
++.app-shell .monitoring-alerts-card { box-shadow: none; }
++.app-shell .monitoring-clear-state { align-items: center; background: var(--success-soft); border-radius: 10px; display: flex; gap: 12px; padding: 13px 15px; }
++.app-shell .monitoring-clear-state > span { align-items: center; background: var(--success); border-radius: 50%; color: white; display: inline-flex; height: 30px; justify-content: center; width: 30px; }
++.app-shell .monitoring-clear-state p { margin: 0; }
++.app-shell .monitoring-log-card { background: #102329; border: 0; box-shadow: 0 18px 46px rgba(14,36,42,.16); }
++.app-shell .monitoring-log-card h2,
++.app-shell .monitoring-log-card strong { color: #f3f9f8; }
++.app-shell .monitoring-log-card p { color: #9fb6b6; }
++.app-shell .monitoring-log-search input { background: #09191e; border-color: #29474d; color: #e7f2f1; }
++.app-shell .monitoring-log-viewer { background: #07161b; border-color: #28454a; color: #c8eee0; }
++
++/* Billing: plan summary, usage, pricing and payment history. */
++.app-shell .billing-page { max-width: 1180px; }
++.app-shell .billing-summary-layout { display: grid; gap: 18px; grid-template-columns: minmax(0,1.35fr) minmax(280px,.65fr); }
++.app-shell .billing-plan-card { align-items: end; background: #142d33; border: 0; color: white; grid-template-columns: minmax(0,1fr) auto; min-height: 190px; padding: 28px; }
++.app-shell .billing-plan-card h2 { color: white; font-size: clamp(2.2rem,4vw,3.6rem); }
++.app-shell .billing-plan-card p { color: #b0c5c6; }
++.app-shell .billing-plan-card p > strong { color: white; font-size: 1.45rem; }
++.app-shell .billing-plan-actions { align-items: flex-end; display: flex; flex-direction: column; gap: 12px; }
++.app-shell .billing-trial-card { background: #fff8e9; border-color: #eadbbb; box-shadow: none; }
++.app-shell .billing-trial-card > strong { color: #7a5515; }
++.app-shell .billing-usage-card { align-items: center; display: grid; grid-template-columns: minmax(220px,.55fr) minmax(0,1.45fr); }
++.app-shell .billing-usage-grid { margin: 0; }
++.app-shell .billing-usage-grid > div { background: #f3f7f7; border: 0; border-radius: 10px; padding: 16px; }
++.app-shell .billing-usage-grid strong { color: var(--ink); }
++.app-shell .billing-section-heading { align-items: end; display: flex; gap: 24px; justify-content: space-between; margin-bottom: 16px; }
++.app-shell .billing-section-heading > p { max-width: 440px; }
++.app-shell .billing-pricing-grid { display: grid; gap: 18px; grid-template-columns: repeat(2,minmax(0,1fr)); }
++.app-shell .billing-price-card { background: #fff; border: 1px solid var(--border); border-radius: 14px; display: grid; gap: 14px; padding: 25px; }
++.app-shell .billing-price-card.is-premium { background: #fff9ee; border-color: #e5c98f; }
++.app-shell .billing-price-card > span { color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; }
++.app-shell .billing-price-card > strong { color: var(--ink); font-size: 2.7rem; line-height: 1; }
++.app-shell .billing-price-card > strong small { color: var(--muted); font-size: .85rem; }
++.app-shell .billing-price-card .ds-button { justify-self: start; }
++.app-shell .billing-invoice-card { box-shadow: none; }
++.app-shell .billing-invoice-row { background: transparent; border: 0; border-radius: 0; }
++.app-shell .billing-invoice-row + .billing-invoice-row { border-top: 1px solid var(--border); }
++
++@media (max-width: 1180px) {
++  .landing-home-main { grid-template-columns: 1fr; max-width: 900px; }
++  .landing-simple-hero { max-width: 760px; }
++  .landing-simple-hero h1 { max-width: 13ch; }
++  .architecture-flow { grid-template-columns: repeat(4,minmax(0,1fr)); }
++  .architecture-flow li:nth-child(4) .architecture-connector { display: none; }
++  .app-shell .infrastructure-summary-grid,
++  .app-shell .monitoring-summary-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
++  .app-shell .infrastructure-summary-grid .metric-card:nth-child(4),
++  .app-shell .monitoring-summary-grid .metric-card:nth-child(4) { border-inline-start: 0; }
++  .app-shell .infrastructure-summary-grid .metric-card:nth-child(n+4),
++  .app-shell .monitoring-summary-grid .metric-card:nth-child(n+4) { border-top: 1px solid var(--border); }
++}
++
++@media (max-width: 900px) {
++  .app-shell { display: block; }
++  .app-shell .sidebar { border: 0; border-bottom: 1px solid var(--border); height: auto; position: static; }
++  .app-shell .dashboard-page { grid-template-columns: 1fr; }
++  .app-shell .dashboard-page > * { grid-column: 1; }
++  .app-shell .overview-summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
++  .app-shell .overview-runtime-summary dl { grid-template-columns: repeat(2,minmax(0,1fr)); }
++  .app-shell .overview-runtime-summary dl > div:nth-child(3) { border-inline-start: 0; border-top: 1px solid var(--border); }
++  .app-shell .overview-runtime-summary dl > div:nth-child(4) { border-top: 1px solid var(--border); }
++  .app-shell .pipeline-stage-row { grid-template-columns: 40px minmax(150px,.8fr) minmax(210px,1fr); }
++  .app-shell .pipeline-stage-evidence { grid-column: 2 / -1; }
++  .app-shell .billing-summary-layout,
++  .app-shell .billing-usage-card { grid-template-columns: 1fr; }
++}
++
++@media (max-width: 700px) {
++  .landing-page-simple .landing-nav { margin-top: 8px; width: calc(100% - 16px); }
++  .landing-home-main { padding: 64px 18px 48px; }
++  .landing-home-main .landing-architecture-section { margin-top: 48px; }
++  .landing-simple-hero h1 { font-size: clamp(2.65rem,13vw,4rem); }
++  .architecture-flow { grid-template-columns: 1fr; }
++  .architecture-flow li:not(:last-child)::after { color: #65c8cb; content: "↓"; display: block; height: 24px; line-height: 24px; text-align: center; }
++  .architecture-node, .architecture-node:hover { align-items: center; gap: 12px; grid-template-columns: 36px minmax(0,1fr); min-height: 0; }
++  .architecture-connector { display: none; }
++  .architecture-operations > div { grid-template-columns: 1fr; }
++  .app-shell .content { padding: 22px 16px 40px; }
++  .app-shell .workspace-stat-strip { grid-template-columns: repeat(2,minmax(0,1fr)); }
++  .app-shell .workspace-stat-strip > div:nth-child(3) { border-left: 0; border-top: 1px solid var(--border); }
++  .app-shell .workspace-stat-strip > div:nth-child(4) { border-top: 1px solid var(--border); }
++  .app-shell .overview-summary-grid,
++  .app-shell .infrastructure-summary-grid,
++  .app-shell .monitoring-summary-grid,
++  .app-shell .monitoring-chart-grid,
++  .app-shell .billing-pricing-grid { grid-template-columns: 1fr; }
++  .app-shell .overview-summary-grid .metric-card,
++  .app-shell .infrastructure-summary-grid .metric-card,
++  .app-shell .monitoring-summary-grid .metric-card { border-inline-start: 0; border-top: 1px solid var(--border); }
++  .app-shell .overview-summary-grid .metric-card:first-child,
++  .app-shell .infrastructure-summary-grid .metric-card:first-child,
++  .app-shell .monitoring-summary-grid .metric-card:first-child { border-top: 0; }
++  .app-shell .pipeline-stage-row { grid-template-columns: 36px minmax(0,1fr); }
++  .app-shell .pipeline-stage-times,
++  .app-shell .pipeline-stage-evidence { grid-column: 2; }
++  .app-shell .billing-plan-card { align-items: start; grid-template-columns: 1fr; }
++  .app-shell .billing-plan-actions { align-items: flex-start; }
++}
++
++/* test4 reference-led correction: page-specific compositions, neutral shell, restrained semantics. */
++.landing-page-simple {
++  background:
++    radial-gradient(ellipse at 72% 44%, rgba(51, 92, 138, .28), transparent 34%),
++    radial-gradient(ellipse at 28% 72%, rgba(189, 126, 35, .1), transparent 30%),
++    linear-gradient(135deg, #05080d 0%, #09111c 48%, #05090f 100%);
++}
++.landing-page-simple .landing-ambient { opacity: .2; }
++.landing-page-simple .landing-ambient span { background: rgba(61, 109, 164, .22); }
++.landing-page-simple .landing-nav {
++  background: rgba(10, 15, 23, .68);
++  border-color: rgba(223, 230, 240, .14);
++  border-radius: 18px;
++  box-shadow: 0 18px 60px rgba(0, 0, 0, .32), inset 0 1px rgba(255,255,255,.06);
++}
++.landing-home-main {
++  display: block;
++  max-width: 1500px;
++  min-height: calc(100vh - 88px);
++  padding: clamp(42px, 7vh, 88px) clamp(24px, 5vw, 76px) 72px;
++}
++.landing-hero-system {
++  align-items: center;
++  display: grid;
++  gap: clamp(32px, 4vw, 68px);
++  grid-template-columns: minmax(330px, .76fr) minmax(680px, 1.24fr);
++  min-height: 690px;
++  position: relative;
++}
++.landing-hero-system::before {
++  background-image: linear-gradient(rgba(127,153,185,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(127,153,185,.045) 1px, transparent 1px);
++  background-size: 42px 42px;
++  content: "";
++  inset: -8% -5%;
++  mask-image: radial-gradient(ellipse at 68% 48%, black 10%, transparent 68%);
++  pointer-events: none;
++  position: absolute;
++}
++.landing-simple-hero { max-width: 690px; position: relative; z-index: 2; }
++.landing-simple-hero .eyebrow { color: #e9b85a; }
++.landing-simple-hero h1 {
++  font-size: clamp(3.35rem, 5.4vw, 6rem);
++  line-height: .95;
++  max-width: 11ch;
++  text-shadow: 0 2px 22px rgba(0,0,0,.32);
++}
++.landing-simple-hero .landing-lead { color: #b8c1ce; max-width: 610px; }
++.landing-proof-note { align-items: center; color: #8995a5 !important; display: flex; font-size: .78rem; gap: 9px; margin-top: 20px; }
++.landing-proof-note > span { background: #2ead73; border-radius: 50%; box-shadow: 0 0 0 4px rgba(46,173,115,.12); height: 7px; width: 7px; }
++.landing-architecture-section { min-width: 0; position: relative; z-index: 1; }
++.architecture-heading { align-items: center; color: #7f8c9d; display: grid; gap: 3px; grid-template-columns: minmax(0,1fr) auto; margin: 0 18px 18px; }
++.architecture-heading > span { font-size: .64rem; font-weight: 800; grid-column: 1; letter-spacing: .12em; text-transform: uppercase; }
++.architecture-heading > strong { color: #eef3fa; font-size: 1.08rem; grid-column: 1; }
++.architecture-heading > i { align-items: center; color: #64ce99; display: flex; font-size: .7rem; font-style: normal; font-weight: 800; gap: 8px; grid-column: 2; grid-row: 1 / 3; letter-spacing: .08em; text-transform: uppercase; }
++.architecture-heading > i b { background: #4dc68b; border-radius: 50%; box-shadow: 0 0 0 5px rgba(77,198,139,.1); height: 7px; width: 7px; }
++.architecture-scene {
++  background: radial-gradient(circle at 52% 38%, rgba(32, 64, 99, .3), transparent 47%);
++  min-height: 490px;
++  padding: 24px 8px 8px;
++  position: relative;
++}
++.architecture-wiring { height: 100%; inset: 0; overflow: visible; position: absolute; width: 100%; }
++.architecture-wiring path { fill: none; stroke: rgba(104, 145, 189, .42); stroke-dasharray: 3 5; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
++.architecture-flow { gap: 15px; position: relative; z-index: 2; }
++.architecture-flow li { align-items: center; display: flex; }
++.architecture-node,
++.architecture-node:hover {
++  background: rgba(12, 20, 31, .84);
++  border-color: rgba(128, 151, 180, .22);
++  border-radius: 13px;
++  box-shadow: 0 16px 34px rgba(0,0,0,.22), inset 0 1px rgba(255,255,255,.035);
++  min-height: 132px;
++}
++.architecture-node.is-control { background: rgba(54, 39, 15, .88); border-color: rgba(233,184,90,.7); transform: translateY(-12px); }
++.architecture-node.is-healthy { background: rgba(9, 30, 26, .82); border-color: rgba(58,157,112,.42); }
++.architecture-node-icon { background: rgba(68,115,168,.14); border-color: rgba(93,143,198,.28); color: #7cb1ec; }
++.architecture-node strong { color: #f1f5fa; font-size: .76rem; }
++.architecture-node small { color: #8e9aaa; }
++.architecture-operations { border: 0; margin: 118px auto 0; max-width: 700px; padding: 0; position: relative; z-index: 2; }
++.architecture-operations-label { text-align: center; }
++.architecture-operations > div { grid-template-columns: repeat(4, minmax(0,1fr)); }
++.architecture-operations article { background: rgba(8,14,22,.72); border-color: rgba(116,139,167,.18); }
++.architecture-operations article > span { color: #78a9e0; }
++.architecture-operations article strong { color: #e0e7f0; }
++.architecture-outcome {
++  background: rgba(9, 31, 25, .9);
++  border: 1px solid rgba(55,158,111,.4);
++  border-radius: 12px;
++  bottom: 0;
++  box-shadow: 0 15px 34px rgba(0,0,0,.22);
++  left: 50%;
++  margin: 0;
++  max-width: 340px;
++  padding: 12px 14px;
++  position: absolute;
++  transform: translateX(-50%);
++  width: calc(100% - 32px);
++  z-index: 3;
++}
++
++/* Neutral application chrome; page identity comes from each content surface. */
++.app-shell {
++  --canvas: #f3f4f6;
++  --surface-muted: #f5f6f8;
++  --surface-strong: #eceff3;
++  --ink: #111827;
++  --ink-soft: #465264;
++  --muted: #6b7280;
++  --border: #dde1e7;
++  --border-strong: #cbd1d9;
++  --info: #2563a8;
++  --info-soft: #eaf2fb;
++  --shadow-sm: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.045);
++  --shadow-md: 0 2px 3px rgba(16,24,40,.05), 0 18px 44px rgba(16,24,40,.07);
++}
++.app-shell .sidebar { background: #fbfbfc; }
++.app-shell .main-area { background: #f4f5f7; }
++.app-shell .navbar { background: rgba(251,251,252,.92); }
++.app-shell .nav-link { color: #4b5565; }
++.app-shell .nav-link:hover { background: #f0f2f5; color: #111827; }
++.app-shell .nav-link.active { background: #e9edf3; border-color: #d6dce5; color: #18243a; }
++.app-shell .nav-link.active::before { background: #315f9a; }
++.app-shell .workspace-heading h1,
++.app-shell .ds-page-header h1 { letter-spacing: -.035em; }
++.app-shell .panel,
++.app-shell .panel-flat,
++.app-shell .ds-card { border-radius: 12px; }
++
++/* Home — operational workspace summary and queues. */
++.app-shell .dashboard-page { gap: 18px; grid-template-columns: minmax(300px,.72fr) minmax(470px,1.28fr); }
++.app-shell .dashboard-page .workspace-heading { margin-bottom: 8px; }
++.app-shell .dashboard-page .workspace-stat-strip { border-radius: 12px; box-shadow: none; }
++.app-shell .dashboard-page .workspace-stat-strip > div { padding: 17px 20px; }
++.app-shell .dashboard-page .workspace-stat-strip strong { font-size: 1.65rem; }
++.app-shell .dashboard-attention { background: #fffafa; }
++.app-shell .dashboard-attention .count-chip { background: #fff0f1; color: #b82f3c; }
++.app-shell .dashboard-deployments { background: #fff; }
++.app-shell .dashboard-page .active-run-item { gap: 12px; min-height: 62px; }
++.app-shell .dashboard-recent-projects { background: #f9fafb; box-shadow: none; }
++
++/* Projects — searchable inventory, not another KPI dashboard. */
++.app-shell .simple-projects-page { max-width: 1320px; }
++.app-shell .projects-card-section { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
++.app-shell .project-card-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
++.app-shell .project-summary-card { box-shadow: none; }
++
++/* Overview — restrained control center with semantic lifecycle only. */
++.app-shell .project-overview-page { gap: 20px; }
++.app-shell .project-overview-page .ds-page-header { border-bottom: 1px solid #dfe3e8; padding-bottom: 22px; }
++.app-shell .overview-lifecycle-card { box-shadow: var(--shadow-sm); padding: 24px; }
++.app-shell .overview-lifecycle-card .deployment-progress-track { background: #e5e8ed; }
++.app-shell .overview-lifecycle-card .deployment-progress-track span { background: #315f9a; }
++.app-shell .overview-state-live .deployment-progress-track span { background: #168a5b; }
++.app-shell .overview-summary-grid { box-shadow: none; }
++.app-shell .overview-summary-grid .metric-card { padding: 18px; }
++.app-shell .overview-runtime-summary { box-shadow: none; }
++.app-shell .project-overview-page .notification-settings-panel { box-shadow: none; }
++
++/* Pipeline — a high-contrast execution console with compact evidence rows. */
++.app-shell .project-pipeline-page { gap: 18px; }
++.app-shell .project-pipeline-page .ds-page-header { border-bottom: 1px solid #dfe3e8; padding-bottom: 20px; }
++.app-shell .pipeline-identity-card { background: #111827; box-shadow: none; }
++.app-shell .pipeline-identity-card p,
++.app-shell .pipeline-identity-card dt { color: #aeb8c8; }
++.app-shell .pipeline-timeline-card { background: #0b1220; border: 0; color: #e8edf5; }
++.app-shell .pipeline-timeline-card h2,
++.app-shell .pipeline-timeline-card h3,
++.app-shell .pipeline-timeline-card strong { color: #f8fafc; }
++.app-shell .pipeline-timeline-card p,
++.app-shell .pipeline-timeline-card span,
++.app-shell .pipeline-timeline-card small { color: #aeb8c8; }
++.app-shell .pipeline-timeline-card > .pipeline-section-heading { border-color: #273244; }
++.app-shell .pipeline-timeline-card .secondary-button,
++.app-shell .pipeline-timeline-card .ds-button-secondary { background: #172235; border-color: #3a475c; color: #eef3fa; }
++.app-shell .pipeline-stage-row { border-color: #263244; }
++.app-shell .pipeline-stage-row::after { background: #334155; }
++.app-shell .pipeline-stage-icon { background: #172235; border-color: #3a475c; color: #80aee5; }
++.app-shell .pipeline-stage-row.is-passed .pipeline-stage-icon { background: #168a5b; border-color: #31a774; color: #fff; }
++.app-shell .pipeline-stage-evidence { background: #111c2e; border-color: #30405a; color: #cbd5e1; }
++.app-shell .pipeline-stage-evidence p,
++.app-shell .pipeline-stage-evidence span { color: #cbd5e1; }
++.app-shell .pipeline-advanced { border-color: #2d394c; }
++.app-shell .pipeline-duration-chart { gap: 9px; }
++.app-shell .pipeline-history-card { box-shadow: none; }
++
++/* Infrastructure — topology first; summaries and operations support it. */
++.app-shell .infrastructure-page { gap: 18px; }
++.app-shell .infrastructure-page > .ds-page-header { order: 0; }
++.app-shell .infrastructure-topology-card { background: #0e1726; border: 0; color: #e7edf5; min-height: 530px; order: 1; padding: 24px; }
++.app-shell .infrastructure-summary-grid { box-shadow: none; order: 2; }
++.app-shell .infrastructure-page > :not(.ds-page-header):not(.infrastructure-topology-card):not(.infrastructure-summary-grid) { order: 3; }
++.app-shell .infrastructure-topology-card h2 { color: #f5f7fb; }
++.app-shell .infrastructure-topology-card .eyebrow,
++.app-shell .infrastructure-topology-card .infrastructure-source { color: #95a3b7; }
++.app-shell .infrastructure-topology {
++  background: transparent;
++  border: 0;
++  display: grid;
++  gap: 22px;
++  overflow: visible;
++}
++.topology-delivery-plane,
++.topology-edge { align-items: center; display: grid; gap: 10px; grid-template-columns: auto minmax(140px,1fr) 30px minmax(140px,1fr) 30px minmax(140px,1fr); }
++.topology-delivery-plane > span { color: #8290a5; font-size: .66rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; writing-mode: vertical-rl; }
++.topology-delivery-plane > i,
++.topology-edge > i { background: #45668e; height: 1px; position: relative; }
++.topology-delivery-plane > i::after,
++.topology-edge > i::after { border-color: transparent transparent transparent #6389b7; border-style: solid; border-width: 4px 0 4px 6px; content: ""; position: absolute; right: -1px; top: -3px; }
++.topology-runtime-plane { display: grid; gap: 18px; }
++.topology-edge { grid-template-columns: minmax(140px,1fr) 30px minmax(140px,1fr) 30px minmax(170px,1fr); margin: 0 auto; max-width: 850px; width: 100%; }
++.topology-vpc-boundary { background: rgba(35,58,88,.34); border: 1px solid #3a526f; border-radius: 14px; padding: 16px; position: relative; }
++.topology-vpc-boundary::before { background: #45668e; content: ""; height: 18px; left: 50%; position: absolute; top: -19px; width: 1px; }
++.topology-vpc-boundary > header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 14px; }
++.topology-vpc-boundary > header span { color: #8eb4e3; font-size: .68rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
++.topology-vpc-boundary > header strong { color: #dfe8f4; font-size: .8rem; }
++.topology-subnet-grid { display: grid; gap: 12px; grid-template-columns: repeat(3,minmax(0,1fr)); }
++.topology-subnet-grid > section { background: rgba(5,12,22,.5); border: 1px dashed #40546e; border-radius: 10px; padding: 12px; }
++.topology-subnet-grid > section > span { color: #8797aa; display: block; font-size: .62rem; font-weight: 800; letter-spacing: .06em; margin-bottom: 9px; text-transform: uppercase; }
++.topology-resource { background: #162235; border: 1px solid #34445a; border-radius: 9px; display: grid; gap: 7px; min-height: 96px; padding: 12px; }
++.topology-resource[data-status="active"] { border-color: #2e7057; }
++.topology-resource-kind { color: #8493a8 !important; font-size: .62rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
++.topology-resource > strong { color: #f1f5f9 !important; font-size: .83rem; }
++.topology-resource .ds-status-chip { justify-self: start; }
++.app-shell .infrastructure-summary-grid { grid-template-columns: repeat(6,minmax(0,1fr)); }
++.app-shell .infrastructure-support-grid { background: #f4f6f8; }
++.app-shell .infrastructure-finops-card { background: #fffbf2; }
++
++/* Monitoring — metrics and charts dominate; logs retain terminal treatment. */
++.app-shell .monitoring-page { gap: 16px; }
++.app-shell .monitoring-page .ds-page-header { border-bottom: 1px solid #dfe3e8; padding-bottom: 18px; }
++.app-shell .monitoring-summary-grid { background: #111827; border-radius: 10px; box-shadow: none; }
++.app-shell .monitoring-summary-grid .metric-card { min-height: 104px; }
++.app-shell .monitoring-chart-grid { gap: 14px; grid-template-columns: repeat(2,minmax(0,1fr)); }
++.app-shell .monitoring-chart-grid .ds-chart-card { min-height: 270px; }
++.app-shell .monitoring-health-card { box-shadow: none; }
++.app-shell .monitoring-alerts-card { border-color: #cbe7d9; }
++.app-shell .monitoring-log-card { background: #0b1220; box-shadow: none; }
++.app-shell .monitoring-log-card h2,
++.app-shell .monitoring-log-card strong { color: #f4f7fb; }
++.app-shell .monitoring-log-card p { color: #a7b2c3; }
++
++/* Billing — product plan summary, capacity, pricing, then invoices. */
++.app-shell .billing-page { gap: 20px; }
++.app-shell .billing-plan-card { background: linear-gradient(135deg,#111827,#1e293b); box-shadow: none; }
++.app-shell .billing-trial-card { box-shadow: inset 0 2px #d79a2f; }
++.app-shell .billing-usage-card { box-shadow: none; }
++.app-shell .billing-upgrade-section { background: #111827; border-radius: 14px; padding: 24px; }
++.app-shell .billing-upgrade-section h2 { color: #f7f9fc; }
++.app-shell .billing-upgrade-section p { color: #aeb8c8; }
++.app-shell .billing-pricing-grid { align-items: stretch; }
++.app-shell .billing-price-card { background: #f9fafb; box-shadow: none; min-height: 260px; }
++.app-shell .billing-price-card.is-premium { background: #fff8e8; border: 2px solid #dca43d; transform: translateY(-5px); }
++.app-shell .billing-invoice-card { box-shadow: none; }
++
++/* Settings, diagnostics, and administration keep their own information patterns. */
++.app-shell .project-settings-page .ds-tabs,
++.app-shell .settings-layout { background: #fff; border: 1px solid var(--border); border-radius: 10px; }
++.app-shell .troubleshooting-page .troubleshooting-diagnosis { border-color: #edc9cd; box-shadow: none; }
++.app-shell .admin-page .admin-summary-grid { background: #111827; border-radius: 12px; overflow: hidden; }
++.app-shell .admin-page .admin-summary-grid .metric-card { background: transparent; border-color: #293548; }
++.app-shell .admin-page .admin-summary-grid strong { color: #f7f9fc; }
++
++@media (max-width: 1180px) {
++  .landing-hero-system { grid-template-columns: 1fr; }
++  .landing-simple-hero { max-width: 850px; }
++  .architecture-scene { min-height: 460px; }
++  .topology-delivery-plane { grid-template-columns: auto repeat(3,minmax(120px,1fr)); }
++  .topology-delivery-plane > i { display: none; }
++}
++
++@media (max-width: 900px) {
++  .landing-hero-system { min-height: 0; }
++  .app-shell .dashboard-page { grid-template-columns: 1fr; }
++  .app-shell .project-card-grid { grid-template-columns: 1fr; }
++  .app-shell .infrastructure-topology-card { min-height: 0; }
++  .topology-subnet-grid { grid-template-columns: 1fr; }
++}
++
++@media (max-width: 700px) {
++  .landing-home-main { padding-top: 48px; }
++  .landing-simple-hero h1 { max-width: 12ch; }
++  .architecture-heading { margin-inline: 4px; }
++  .architecture-scene { padding-inline: 0; }
++  .architecture-flow { grid-template-columns: 1fr; }
++  .architecture-node.is-control { transform: none; }
++  .architecture-wiring { display: none; }
++  .architecture-operations { margin-top: 28px; }
++  .architecture-operations > div { grid-template-columns: repeat(2,minmax(0,1fr)); }
++  .architecture-outcome { margin-top: 16px; position: static; transform: none; width: 100%; }
++  .topology-delivery-plane,
++  .topology-edge { grid-template-columns: 1fr; }
++  .topology-delivery-plane > span { writing-mode: initial; }
++  .topology-delivery-plane > i,
++  .topology-edge > i { display: none; }
++  .app-shell .infrastructure-summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
++  .app-shell .monitoring-chart-grid { grid-template-columns: 1fr; }
++  .app-shell .billing-price-card.is-premium { transform: none; }
++}
++
++/* Light workspace legibility reset after the retired cinematic theme. */
++.app-shell .content h1,
++.app-shell .content h2,
++.app-shell .content h3,
++.app-shell .content h4,
++.app-shell .content strong,
++.app-shell .content label,
++.app-shell .content th,
++.app-shell .sidebar strong,
++.app-shell .navbar strong {
++  color: var(--ink);
++  text-shadow: none;
++}
++.app-shell .content p,
++.app-shell .content li,
++.app-shell .content dd,
++.app-shell .content small,
++.app-shell .content .muted {
++  color: var(--ink-soft);
++  text-shadow: none;
++}
++.app-shell .content .eyebrow,
++.app-shell .content .metric-label,
++.app-shell .sidebar-label { color: var(--muted); text-shadow: none; }
++.app-shell .sidebar a.nav-link { color: #4b5565; text-shadow: none; }
++.app-shell .sidebar a.nav-link:hover,
++.app-shell .sidebar a.nav-link.active { color: #18243a; }
++.app-shell .breadcrumbs,
++.app-shell .breadcrumbs a,
++.app-shell .breadcrumbs span { color: #687386 !important; text-shadow: none; }
++.app-shell .content a:not(.button):not(.ds-button-primary):not(.secondary-button):not(.subtle-button) { color: #155f91; text-shadow: none; }
++.app-shell .workspace-heading { background: transparent; padding: 0; }
++.app-shell .workspace-heading::before { display: none; }
++.app-shell .workspace-heading h1,
++.app-shell .workspace-heading p { color: var(--ink); text-shadow: none; }
++.app-shell .workspace-heading > div > p:last-child { color: var(--ink-soft); }
++.app-shell .active-run-item,
++.app-shell .project-summary-card,
++.app-shell .billing-invoice-row { box-shadow: none; text-shadow: none; }
++.app-shell .active-run-item strong,
++.app-shell .active-run-item small,
++.app-shell .project-summary-card strong,
++.app-shell .project-summary-card small { text-shadow: none; }
++.app-shell .field > span { color: #344054; text-shadow: none; }
++.app-shell .field input,
++.app-shell .field select,
++.app-shell .field textarea {
++  background: #fff;
++  border-color: var(--border-strong);
++  color: var(--ink);
++  text-shadow: none;
++}
++.app-shell .field input:disabled,
++.app-shell .field select:disabled,
++.app-shell .field textarea:disabled { background: #f1f3f6; color: #667085; }
++
++/* Restore intentional dark-region contrast after the light reset. */
++.app-shell .pipeline-identity-card h2,
++.app-shell .pipeline-identity-card strong,
++.app-shell .pipeline-identity-card dd,
++.app-shell .pipeline-timeline-card h2,
++.app-shell .pipeline-timeline-card h3,
++.app-shell .pipeline-timeline-card strong,
++.app-shell .infrastructure-topology-card h2,
++.app-shell .infrastructure-topology-card strong,
++.app-shell .monitoring-summary-grid strong,
++.app-shell .monitoring-log-card h2,
++.app-shell .monitoring-log-card strong,
++.app-shell .billing-plan-card h2,
++.app-shell .billing-plan-card strong,
++.app-shell .billing-upgrade-section h2 { color: #f7f9fc; }
++.app-shell .pipeline-identity-card p,
++.app-shell .pipeline-identity-card dt,
++.app-shell .pipeline-timeline-card p,
++.app-shell .pipeline-timeline-card span,
++.app-shell .pipeline-timeline-card small,
++.app-shell .monitoring-log-card p,
++.app-shell .billing-plan-card p,
++.app-shell .billing-upgrade-section p { color: #aeb8c8; }
++.app-shell .pipeline-timeline-card .eyebrow,
++.app-shell .infrastructure-topology-card .eyebrow,
++.app-shell .monitoring-log-card .eyebrow,
++.app-shell .billing-plan-card .eyebrow,
++.app-shell .billing-upgrade-section .eyebrow { color: #93a0b4; }
++.app-shell .pipeline-history-card { background: #fff; }
++.app-shell .pipeline-history-card h2,
++.app-shell .pipeline-history-card p { color: var(--ink); }
++.app-shell .infrastructure-topology-card a { color: #b8d8fa !important; }
++
++/* Settings uses a calm form surface rather than inherited dark dashboard glass. */
++.app-shell .project-settings-page .settings-section-panel {
++  background: #fff !important;
++  border: 1px solid var(--border);
++  box-shadow: none;
++  max-width: 980px;
++  padding: 26px;
++}
++.app-shell .project-settings-page .ds-tabs { background: #fff; border: 1px solid var(--border); box-shadow: none; }
++.app-shell .project-settings-page .settings-section-panel h2 { color: var(--ink); }
++
++/* Billing empty invoices stay compact and neutral. */
++.app-shell .billing-invoice-card .ds-empty-state {
++  background: #f7f8fa;
++  border-color: var(--border);
++  color: var(--ink-soft);
++  min-height: 96px;
++  padding-block: 20px;
++}
++.app-shell .billing-invoice-card .ds-empty-state strong { color: var(--ink); }
++
++.app-shell .pipeline-history-card,
++.app-shell .infrastructure-inventory-card { background: #fff !important; backdrop-filter: none; }
++.app-shell .pipeline-history-card h2,
++.app-shell .pipeline-history-card p,
++.app-shell .infrastructure-inventory-card summary,
++.app-shell .infrastructure-inventory-card strong { color: var(--ink) !important; }
++.app-shell .troubleshooting-empty-page .ds-empty-state {
++  background: #fff;
++  border-color: var(--border);
++  box-shadow: none;
++  color: var(--ink);
++  min-height: 150px;
++}
++.app-shell .troubleshooting-empty-page .ds-empty-state strong { color: var(--ink); }
++.app-shell .troubleshooting-empty-page .ds-empty-state p { color: var(--ink-soft); }
++
++.app-shell .new-project-page .deployment-journey {
++  background: #f3f5f8;
++  border: 1px solid var(--border);
++  box-shadow: none;
++}
++.app-shell .new-project-page .deployment-journey li { color: #7a8494; }
++.app-shell .new-project-page .deployment-journey li + li { border-left-color: var(--border); }
++.app-shell .new-project-page .deployment-journey strong { color: #344054; }
++.app-shell .new-project-page .deployment-journey small { color: #697386; }
++.app-shell .new-project-page .deployment-journey .is-current { background: #e9f1fb; color: #2563a8; }
++.app-shell .new-project-page .deployment-journey .is-ready,
++.app-shell .new-project-page .deployment-journey .is-complete { background: #eaf7f0; color: #168a5b; }
++.app-shell .new-project-page .deployment-journey .is-attention { background: #fff5df; color: #9e6d18; }
+diff --git a/frontend/src/pages/Billing.jsx b/frontend/src/pages/Billing.jsx
+index f6de99c..5fd385b 100644
+--- a/frontend/src/pages/Billing.jsx
++++ b/frontend/src/pages/Billing.jsx
+@@ -41,7 +41,7 @@ export default function Billing() {
+   const stripeConfigured = Boolean(summary.provider?.configured);
+   const missingStripeConfiguration = summary.provider?.missingConfiguration || [];
+   return <div className="workspace-page billing-page" data-billing-mode={summary.billing?.mode || "disabled"}>
+-    <PageHeader description="Authoritative subscription, LIVE capacity, Stripe test payments, and invoices." eyebrow="Workspace" title="Plan & Usage" />
++    <PageHeader description="Manage plan capacity, trial status, usage, and payment history." eyebrow="Workspace" title="Plan & Usage" />
+     {error ? <ErrorState message={error} onRetry={load} /> : null}
+     {!summary.billing?.enabled ? <Card><strong>Billing is disabled.</strong><p>DeployGuard preserves unrestricted project and deployment behavior.</p></Card> : null}
+     {summary.billing?.enabled && !summary.enforcement?.enabled ? <Card className="state info" role="status"><strong>FYP observation mode</strong><p>Usage and limits are visible, but quota and trial expiry do not block deployments.</p></Card> : null}
+@@ -50,13 +50,15 @@ export default function Billing() {
+     {returned ? <Card className="state info" role="status"><strong>Payment verification pending</strong><p>Returning from checkout does not activate a plan. Refresh after the verified Stripe webhook arrives.</p><Button onClick={() => void load()}>Refresh status</Button></Card> : null}
+     {overLimit ? <Card className="state danger" role="alert"><strong>OVER_LIMIT</strong><p>Existing projects remain untouched. New quota-consuming transitions are {summary.enforcement?.enabled ? "blocked until usage is compliant" : "allowed while observation mode is active"}.</p></Card> : null}
+ 
+-    <Card className="billing-plan-card"><div><p className="eyebrow">Current plan</p><h2>{title(summary.planName)}</h2><p>${summary.pricing?.monthlyUsd || 0} / month</p></div><div className="quick-actions"><StatusChip status={summary.status}>{summary.status}</StatusChip>{canUpgrade && summary.customerPortalAvailable ? <Button disabled={Boolean(busy)} onClick={() => void manageBilling()}>{busy === "portal" ? "Opening…" : "Manage Billing"}</Button> : null}</div></Card>
+-    <Card><p className="eyebrow">Capacity</p><h2>Authoritative usage</h2><div className="billing-usage-grid"><Usage label="Current projects" used={usage.currentProjects ?? 0} limit={limits.currentProjects} over={usage.overLimit?.currentProjects} /><Usage label="LIVE projects" used={usage.liveProjects ?? 0} limit={limits.liveProjects} over={usage.overLimit?.liveProjects} /></div></Card>
+-    {summary.plan === "free" ? <Card><p className="eyebrow">Free LIVE trial</p><h2>{summary.trial?.expired ? "Expired" : summary.trial?.startedAt ? "Active" : "Available"}</h2><p>Started: {dateTime(summary.trial?.startedAt)} · Ends: {dateTime(summary.trial?.endsAt)} · Remaining: {summary.trial?.remainingSeconds == null ? "48 hours after first LIVE deployment" : `${Math.ceil(summary.trial.remainingSeconds / 3600)} hours`}</p></Card> : <Card><p className="eyebrow">Billing period</p><h2>{dateTime(summary.billingPeriodEnd)}</h2><p>Current Stripe Test Mode subscription period.</p></Card>}
++    <section className="billing-summary-layout">
++      <Card className="billing-plan-card"><div><p className="eyebrow">Current plan</p><h2>{title(summary.planName)}</h2><p><strong>${summary.pricing?.monthlyUsd || 0}</strong> / month</p></div><div className="billing-plan-actions"><StatusChip status={summary.status}>{summary.status}</StatusChip>{canUpgrade && summary.customerPortalAvailable ? <Button disabled={Boolean(busy)} onClick={() => void manageBilling()}>{busy === "portal" ? "Opening…" : "Manage billing"}</Button> : null}</div></Card>
++      {summary.plan === "free" ? <Card className="billing-trial-card"><p className="eyebrow">Trial status</p><h2>{summary.trial?.expired ? "Expired" : summary.trial?.startedAt ? "Active" : "Available"}</h2><p>Started {dateTime(summary.trial?.startedAt)}<br />Ends {dateTime(summary.trial?.endsAt)}</p><strong>{summary.trial?.remainingSeconds == null ? "48 hours after first LIVE deployment" : `${Math.ceil(summary.trial.remainingSeconds / 3600)} hours remaining`}</strong></Card> : <Card className="billing-trial-card"><p className="eyebrow">Billing period</p><h2>{dateTime(summary.billingPeriodEnd)}</h2><p>Current Stripe Test Mode subscription period.</p></Card>}
++    </section>
++    <Card className="billing-usage-card"><div><p className="eyebrow">Usage summary</p><h2>Workspace capacity</h2></div><div className="billing-usage-grid"><Usage label="Current projects" used={usage.currentProjects ?? 0} limit={limits.currentProjects} over={usage.overLimit?.currentProjects} /><Usage label="LIVE projects" used={usage.liveProjects ?? 0} limit={limits.liveProjects} over={usage.overLimit?.liveProjects} /></div></Card>
+ 
+-    {canUpgrade && summary.billing?.enabled && !summary.providerSubscriptionId && stripeConfigured ? <Card><p className="eyebrow">Upgrade</p><h2>Stripe Test Mode plans</h2><div className="quick-actions">{summary.plan === "free" ? <Button disabled={Boolean(busy)} onClick={() => void upgrade("pro")}>{busy === "pro" ? "Opening…" : "Choose PRO · $399/month"}</Button> : null}{summary.plan !== "pro_plus" ? <Button disabled={Boolean(busy)} onClick={() => void upgrade("pro_plus")}>{busy === "pro_plus" ? "Opening…" : "Choose PRO PLUS · $799/month"}</Button> : null}</div></Card> : null}
++    {canUpgrade && summary.billing?.enabled && !summary.providerSubscriptionId && stripeConfigured ? <section className="billing-upgrade-section"><div className="billing-section-heading"><div><p className="eyebrow">Upgrade</p><h2>Choose more deployment capacity</h2></div><p>Stripe Test Mode only. Your plan changes after the signed webhook is verified.</p></div><div className="billing-pricing-grid">{summary.plan === "free" ? <article className="billing-price-card"><span>PRO</span><strong><small>$</small>399<small>/month</small></strong><p>For active teams running multiple cloud projects.</p><Button disabled={Boolean(busy)} onClick={() => void upgrade("pro")}>{busy === "pro" ? "Opening…" : "Choose PRO"}</Button></article> : null}{summary.plan !== "pro_plus" ? <article className="billing-price-card is-premium"><span>PRO PLUS</span><strong><small>$</small>799<small>/month</small></strong><p>Expanded capacity for larger deployment portfolios.</p><Button disabled={Boolean(busy)} onClick={() => void upgrade("pro_plus")}>{busy === "pro_plus" ? "Opening…" : "Choose PRO PLUS"}</Button></article> : null}</div></section> : null}
+ 
+-    <Card><p className="eyebrow">Invoice history</p><h2>Verified payments</h2>{summary.invoices?.length ? <div className="session-list">{summary.invoices.map((item) => <div className="subtle-button billing-invoice-row" key={item.id}><div><strong>{item.invoiceNumber}</strong><small>{title(item.plan)} · {dateTime(item.paidAt)}</small></div><span>{money(item.amountDue, item.currency)}</span><StatusChip status={item.status}>{item.status}</StatusChip><div className="quick-actions"><Button disabled={busy === item.id} onClick={() => void viewInvoice(item.id)}>View Invoice</Button><Button disabled={busy === `pdf:${item.id}`} onClick={() => void download(item)}>Download PDF</Button></div></div>)}</div> : <EmptyState message="No verified Stripe Test Mode invoices have been issued." />}</Card>
++    <Card className="billing-invoice-card"><p className="eyebrow">Payment history</p><h2>Invoices</h2>{summary.invoices?.length ? <div className="session-list">{summary.invoices.map((item) => <div className="subtle-button billing-invoice-row" key={item.id}><div><strong>{item.invoiceNumber}</strong><small>{title(item.plan)} · {dateTime(item.paidAt)}</small></div><span>{money(item.amountDue, item.currency)}</span><StatusChip status={item.status}>{item.status}</StatusChip><div className="quick-actions"><Button disabled={busy === item.id} onClick={() => void viewInvoice(item.id)}>View invoice</Button><Button disabled={busy === `pdf:${item.id}`} onClick={() => void download(item)}>Download PDF</Button></div></div>)}</div> : <EmptyState message="No invoices yet." />}</Card>
+     {invoice ? <Card><p className="eyebrow">Invoice detail</p><h2>{invoice.invoiceNumber}</h2><div className="billing-usage-grid"><Usage label="Plan" used={title(invoice.plan)} /><Usage label="Amount" used={money(invoice.amountDue, invoice.currency)} /><Usage label="Provider" used={`${title(invoice.provider)} ${title(invoice.mode)} Mode`} /><Usage label="Payment" used={invoice.status} /></div><p>Transaction: {invoice.providerTransactionId}</p><p>Period: {dateTime(invoice.billingPeriodStart)} to {dateTime(invoice.billingPeriodEnd)}</p></Card> : null}
+   </div>;
+ }
+diff --git a/frontend/src/pages/Dashboard.jsx b/frontend/src/pages/Dashboard.jsx
+index 1a78bf8..1f35c83 100644
+--- a/frontend/src/pages/Dashboard.jsx
++++ b/frontend/src/pages/Dashboard.jsx
+@@ -6,7 +6,6 @@ import ErrorState from "../components/common/ErrorState.jsx";
+ import LoadingState from "../components/common/LoadingState.jsx";
+ import { StatusBadge } from "../components/common/Premium.jsx";
+ import { useAuth } from "../hooks/useAuth.js";
+-import { normalReleaseView } from "../utils/normalReleaseView.js";
+ import { formatRelativeTime } from "../utils/time.js";
+ import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+ import { conciseProjectSummary } from "../utils/overviewLifecyclePresentation.js";
+@@ -14,18 +13,21 @@ import { conciseProjectSummary } from "../utils/overviewLifecyclePresentation.js
+ export default function Dashboard() {
+   const { role } = useAuth();
+   const [summaries, setSummaries] = useState([]);
+-  const [usage, setUsage] = useState(null);
+   const [workspace, setWorkspace] = useState({});
+   const [error, setError] = useState("");
+   const [loading, setLoading] = useState(true);
+ 
+   const load = useCallback(async () => {
+-    try { const response = await getWorkspaceSummary(); setSummaries(response.summaries || []); setUsage(response.usage || null); setWorkspace(response); setError(""); }
++    try { const response = await getWorkspaceSummary(); setSummaries(response.summaries || []); setWorkspace(response); setError(""); }
+     catch (caught) { setError(caught.message); }
+     finally { setLoading(false); }
+   }, []);
+   useEffect(() => { void load(); }, [load]);
+-  const hasActiveOperation = summaries.some(({ currentState }) => projectStatePresentation(currentState).active);
++  const visibleSummaries = useMemo(
++    () => summaries.filter(({ currentState }) => projectStatePresentation(currentState).state !== "DESTROYED"),
++    [summaries]
++  );
++  const hasActiveOperation = visibleSummaries.some(({ currentState }) => projectStatePresentation(currentState).active);
+   useEffect(() => {
+     if (!hasActiveOperation) return undefined;
+     const refresh = () => { if (document.visibilityState === "visible") void load(); };
+@@ -35,28 +37,37 @@ export default function Dashboard() {
+   }, [hasActiveOperation, load]);
+ 
+   const view = useMemo(() => {
+-    const active = summaries.filter(({ currentState }) => projectStatePresentation(currentState).active);
+-    const live = summaries.filter(({ currentState }) => !projectStatePresentation(currentState).active && projectStatePresentation(currentState).state === "LIVE" && Boolean(currentState?.stableRelease));
+-    const attention = workspace.needsAttention || [];
+-    const hasDeploymentEvidence = summaries.some(({ currentState }) => Boolean(
++    const active = visibleSummaries.filter(({ currentState }) => projectStatePresentation(currentState).active);
++    const live = visibleSummaries.filter(({ currentState }) => !projectStatePresentation(currentState).active && projectStatePresentation(currentState).state === "LIVE" && Boolean(currentState?.stableRelease));
++    const attention = (workspace.needsAttention || []).filter(({ currentState }) => projectStatePresentation(currentState).state !== "DESTROYED");
++    const recentlyViewed = (workspace.recentlyViewed || []).filter(({ currentState }) => projectStatePresentation(currentState).state !== "DESTROYED");
++    const recentDeployments = visibleSummaries
++      .filter(({ currentState }) => currentState?.latestAttempt || currentState?.stateAuthority?.latestCompletedOperation)
++      .sort((left, right) => {
++        const leftTime = left.currentState?.latestAttempt?.completedAt || left.currentState?.latestAttempt?.startedAt || left.currentState?.latestAttempt?.createdAt || 0;
++        const rightTime = right.currentState?.latestAttempt?.completedAt || right.currentState?.latestAttempt?.startedAt || right.currentState?.latestAttempt?.createdAt || 0;
++        return new Date(rightTime).getTime() - new Date(leftTime).getTime();
++      })
++      .slice(0, 5);
++    const hasDeploymentEvidence = visibleSummaries.some(({ currentState }) => Boolean(
+       projectStatePresentation(currentState).operation
+       || currentState?.latestAttempt
+       || currentState?.stableRelease
+       || currentState?.stateAuthority?.latestCompletedOperation
+     ));
+-    return { active, attention, hasDeploymentEvidence, live };
+-  }, [summaries, workspace]);
++    return { active, attention, hasDeploymentEvidence, live, recentDeployments, recentlyViewed };
++  }, [visibleSummaries, workspace]);
+ 
+   return <div className="workspace-page dashboard-page">
+     <header className="workspace-heading"><div><p className="eyebrow">Workspace</p><h1>Home</h1><p>See active deployments and projects that need attention.</p></div>{role !== "readonly" ? <Link className="button" to="/projects/new"><AppIcon name="plus" size={16} />Create project</Link> : null}</header>
+     {error ? <ErrorState message={error} /> : null}{loading ? <LoadingState message="Loading workspace…" /> : null}
+-    {!loading && !summaries.length && !error ? <section className="workspace-empty-state"><div className="empty-orbit"><AppIcon name="github" size={28} /></div><h2>Create your first project</h2><p>Connect a GitHub repository and configure the application before deployment.</p>{role !== "readonly" ? <Link className="button" to="/projects/new">Create Project</Link> : null}</section> : null}
+-    {!loading && summaries.length ? <>
+-      <section className="workspace-stat-strip workspace-stat-strip-compact" aria-label="Workspace summary"><div><span>Total projects</span><strong>{usage?.totalProjects ?? summaries.length}</strong></div><div><span>Live</span><strong>{view.live.length}</strong></div><div><span>Deploying</span><strong className={view.active.length ? "text-info" : ""}>{view.active.length}</strong></div><div><span>Needs attention</span><strong className={view.attention.length ? "text-danger" : ""}>{view.attention.length}</strong></div></section>
++    {!loading && !visibleSummaries.length && !error ? <section className="workspace-empty-state"><div className="empty-orbit"><AppIcon name="github" size={28} /></div><h2>Create your first project</h2><p>Connect a GitHub repository and configure the application before deployment.</p>{role !== "readonly" ? <Link className="button" to="/projects/new">Create Project</Link> : null}</section> : null}
++    {!loading && visibleSummaries.length ? <>
++      <section className="workspace-stat-strip workspace-stat-strip-compact" aria-label="Workspace summary"><div><span>Total projects</span><strong>{visibleSummaries.length}</strong></div><div><span>Live</span><strong>{view.live.length}</strong></div><div><span>Deploying</span><strong className={view.active.length ? "text-info" : ""}>{view.active.length}</strong></div><div><span>Needs attention</span><strong className={view.attention.length ? "text-danger" : ""}>{view.attention.length}</strong></div></section>
+       {!view.hasDeploymentEvidence ? <section className="panel-flat" data-dashboard-empty-deployments="true"><div className="calm-empty"><span className="success-check"><AppIcon name="box" size={15} /></span><div><strong>No deployment attempts yet</strong><p>These projects contain repository readiness information, but no deployment run or stable release has been recorded.</p></div></div></section> : null}
+-      <section className="panel-flat"><div className="compact-section-heading"><div><p className="eyebrow">Needs attention</p><h2>Projects requiring action</h2></div><span className="count-chip">{view.attention.length}</span></div><div className="active-run-list">{view.attention.map(({ project, currentState }) => <article className="active-run-item" key={project.id}><span className="active-run-identity"><strong>{project.name}</strong><small>{conciseProjectSummary(currentState)}</small></span><StatusBadge status={currentState?.developerState || "platform_attention"} /><Link className="text-link" to={`/projects/${project.id}`}>Open project</Link></article>)}{!view.attention.length ? <div className="compact-empty"><strong>No projects need attention.</strong></div> : null}</div></section>
+-      <section className="active-runs-card panel-flat"><div className="compact-section-heading"><div><p className="eyebrow">Deployments</p><h2>Active deployments</h2></div><span className="count-chip">{view.active.length}</span></div><div className="active-run-list">{view.active.map(({ project, currentState }) => { const release = normalReleaseView(currentState); return <article className="active-run-item" data-workspace-release={currentState.developerState} key={project.id}><span className="run-status-ring" /><span className="active-run-identity"><strong>{project.name}</strong><small>{currentState.progress?.label || "Preparing"}</small></span><StatusBadge status={currentState.developerState} /><span className="active-run-progress"><span><i style={{ width: `${release?.progress ?? 0}%` }} /></span><small>{release?.progress ?? 0}%</small></span><Link className="text-link" to={`/projects/${project.id}/pipeline`}>Open <AppIcon name="arrow" size={14} /></Link></article>; })}{!view.active.length ? <div className="compact-empty"><strong>No active deployments.</strong><span>Queued and running deployments will appear here.</span></div> : null}</div></section>
+-      {workspace.recentlyViewed?.length ? <section className="panel-flat"><div className="compact-section-heading"><div><p className="eyebrow">Recent activity</p><h2>Recently used projects</h2></div><Link className="text-link" to="/projects">View all projects</Link></div><div className="active-run-list">{workspace.recentlyViewed.slice(0, 5).map(({ project }) => <article className="active-run-item" key={project.id}><span className="active-run-identity"><strong>{project.name}</strong><small>Viewed {formatRelativeTime(project.activity?.lastViewedAt)}</small></span><Link className="text-link" to={`/projects/${project.id}`}>Open</Link></article>)}</div></section> : null}
++      <section className="panel-flat dashboard-attention"><div className="compact-section-heading"><div><p className="eyebrow">Needs attention</p><h2>Projects requiring action</h2></div><span className="count-chip">{view.attention.length}</span></div><div className="active-run-list">{view.attention.map(({ project, currentState }) => <article className="active-run-item" key={project.id}><span className="active-run-identity"><strong>{project.name}</strong><small>{conciseProjectSummary(currentState)}</small></span><StatusBadge status={currentState?.developerState || "platform_attention"} /><Link className="text-link" to={`/projects/${project.id}`}>Open project</Link></article>)}{!view.attention.length ? <div className="compact-empty"><strong>No projects need attention.</strong></div> : null}</div></section>
++      <section aria-label="Recent deployments, including Active deployments" className="active-runs-card panel-flat dashboard-deployments"><div className="compact-section-heading"><div><p className="eyebrow">Deployments</p><h2>Recent deployments</h2></div><span className="count-chip">{view.recentDeployments.length}</span></div><div className="active-run-list">{view.recentDeployments.map(({ project, currentState }) => { const attempt = currentState.latestAttempt; const timestamp = attempt?.completedAt || attempt?.startedAt || attempt?.createdAt; return <article className="active-run-item" data-workspace-release={currentState.developerState} key={project.id}><span className={`run-status-ring${projectStatePresentation(currentState).active ? " is-active" : ""}`} /><span className="active-run-identity"><strong>{project.name}</strong><small>{attempt ? `Attempt ${attempt.attempt || "—"} · ${formatRelativeTime(timestamp)}` : conciseProjectSummary(currentState)}</small></span><StatusBadge status={currentState.developerState} /><Link className="text-link" to={`/projects/${project.id}/pipeline`}>View run <AppIcon name="arrow" size={14} /></Link></article>; })}{!view.recentDeployments.length ? <div className="compact-empty"><strong>No deployment history yet.</strong><span>Completed and active runs will appear here.</span></div> : null}</div></section>
++      {view.recentlyViewed.length ? <section className="panel-flat dashboard-recent-projects"><div className="compact-section-heading"><div><p className="eyebrow">Recent activity</p><h2>Recently used projects</h2></div><Link className="text-link" to="/projects">View all projects</Link></div><div className="active-run-list">{view.recentlyViewed.slice(0, 5).map(({ project }) => <article className="active-run-item" key={project.id}><span className="active-run-identity"><strong>{project.name}</strong><small>Viewed {formatRelativeTime(project.activity?.lastViewedAt)}</small></span><Link className="text-link" to={`/projects/${project.id}`}>Open</Link></article>)}</div></section> : null}
+     </> : null}
+   </div>;
+ }
+diff --git a/frontend/src/pages/Landing.jsx b/frontend/src/pages/Landing.jsx
+index 9693199..00c8004 100644
+--- a/frontend/src/pages/Landing.jsx
++++ b/frontend/src/pages/Landing.jsx
+@@ -43,17 +43,20 @@ export default function Landing() {
+         )}
+       </header>
+       <main className="landing-home-main">
+-        <section className="landing-simple-main"><div className="landing-simple-hero">
+-          <p className="eyebrow">DeployGuard</p>
+-          <h1>The future doesn’t wait for infrastructure. Neither do we.</h1>
+-          <p className="landing-lead">Connect your repo. DeployGuard takes it from code to secure, running cloud infrastructure.</p>
+-          {isAuthenticated ? (
+-            <Link className="button landing-primary-cta" data-home-deploy="authenticated" to="/deploy">Deploy <AppIcon name="arrow" size={18} /></Link>
+-          ) : (
+-            <Link className="button landing-primary-cta" data-home-deploy="oauth" state={{ from: { pathname: "/deploy" } }} to="/auth/github"><AppIcon name="github" size={18} />Continue with GitHub</Link>
+-          )}
+-        </div></section>
+-        <DeployGuardArchitecture />
++        <section className="landing-hero-system">
++          <div className="landing-simple-hero">
++            <p className="eyebrow">Verified delivery to AWS</p>
++            <h1>From commit to cloud, with proof at every handoff.</h1>
++            <p className="landing-lead">Connect a GitHub repository. DeployGuard builds, provisions, observes, and promotes one immutable release across your AWS runtime.</p>
++            {isAuthenticated ? (
++              <Link className="button landing-primary-cta" data-home-deploy="authenticated" to="/deploy">Deploy <AppIcon name="arrow" size={18} /></Link>
++            ) : (
++              <Link className="button landing-primary-cta" data-home-deploy="oauth" state={{ from: { pathname: "/deploy" } }} to="/auth/github"><AppIcon name="github" size={18} />Continue with GitHub</Link>
++            )}
++            <p className="landing-proof-note"><span aria-hidden="true" /> Source, image, runtime, routing, health, and cost stay traceable.</p>
++          </div>
++          <DeployGuardArchitecture />
++        </section>
+       </main>
+       <PublicFooter />
+     </div>
+diff --git a/frontend/src/pages/ProjectInfrastructure.jsx b/frontend/src/pages/ProjectInfrastructure.jsx
+index 92c1cfd..078a4d0 100644
+--- a/frontend/src/pages/ProjectInfrastructure.jsx
++++ b/frontend/src/pages/ProjectInfrastructure.jsx
+@@ -53,17 +53,42 @@ function ServiceFlow({ state, evidence }) {
+   const ecsHealthy = Boolean(evidence?.ecs && evidence.ecs.runningCount >= evidence.ecs.desiredCount && evidence.ecs.pendingCount === 0);
+   const activeTargets = (evidence?.alb?.targetHealth || []).filter((item) => item !== "draining");
+   const albHealthy = activeTargets.length > 0 && activeTargets.every((item) => item === "healthy");
+-  const nodes = [
+-    { name: "Source", detail: shortened(state?.stableRelease?.commit, 18), available: Boolean(state?.stableRelease?.commit) },
+-    { name: "Build", detail: live ? "Application image built" : "Unavailable", available: live },
+-    { name: "ECR", detail: evidence?.ecr?.imageDigest ? "Immutable digest" : updating ? "Release updating" : "Unavailable", available: Boolean(evidence?.ecr?.imageDigest), updating },
+-    { name: "ECS", detail: evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : updating ? "Release updating" : "Unavailable", available: ecsHealthy, updating },
+-    { name: "ALB", detail: albHealthy ? "Targets healthy" : updating ? "Release updating" : "Unavailable", available: albHealthy, updating },
+-    { name: "Application", detail: live ? "LIVE" : "Unavailable", available: live && Boolean(evidence?.alb?.endpoint || state?.stableUrl) },
+-  ];
++  const resources = Array.isArray(evidence?.resources) ? evidence.resources : [];
++  const vpc = resources.find((resource) => /vpc/i.test(`${resource.type || ""} ${resource.name || ""}`));
++  const route = resources.find((resource) => /route\s*53|dns/i.test(`${resource.type || ""} ${resource.name || ""}`));
++  const databaseAttached = (evidence?.runtimeIdentity?.services || []).some((service) => service?.databaseAttached || service?.runtimeConfiguration?.databaseAttached);
++  const node = (name, detail, available, stateUpdating = false) => <article className="topology-resource" data-status={healthStatus(evidence?.terraformState?.status, available, stateUpdating)}>
++    <span className="topology-resource-kind">{name}</span><strong>{detail}</strong><StatusChip status={available ? "healthy" : stateUpdating ? "running" : "unavailable"}>{available ? "Healthy" : stateUpdating ? "Updating" : "Unavailable"}</StatusChip>
++  </article>;
+   return <Card className="infrastructure-topology-card">
+-    <div className="infrastructure-section-heading"><div><p className="eyebrow">Current AWS state</p><h2>Source to application</h2></div><span className="infrastructure-source">Generation {shortened(state?.generationState?.liveGenerationId, 20)}</span></div>
+-    <ol aria-label="Infrastructure service flow" className="infrastructure-topology">{nodes.map((node) => <li data-status={healthStatus(evidence?.terraformState?.status, node.available, node.updating)} key={node.name}><strong>{node.name}</strong><span>{node.detail}</span><StatusChip status={node.available ? "healthy" : node.updating ? "running" : "unavailable"}>{node.available ? "Healthy" : node.updating ? "Updating" : "Unavailable"}</StatusChip></li>)}</ol>
++    <div className="infrastructure-section-heading"><div><p className="eyebrow">Current AWS topology</p><h2>Internet edge to private runtime</h2></div><span className="infrastructure-source">Generation {shortened(state?.generationState?.liveGenerationId, 20)}</span></div>
++    <div aria-label="Infrastructure service topology" className="infrastructure-topology">
++      <section className="topology-delivery-plane" aria-label="Release delivery plane">
++        <span>Release delivery</span>
++        {node("GitHub source", shortened(state?.stableRelease?.commit, 18), Boolean(state?.stableRelease?.commit))}
++        <i aria-hidden="true" />
++        {node("Build", live ? "Application image" : "Unavailable", live)}
++        <i aria-hidden="true" />
++        {node("Amazon ECR", evidence?.ecr?.imageDigest ? "Immutable digest" : updating ? "Release updating" : "Unavailable", Boolean(evidence?.ecr?.imageDigest), updating)}
++      </section>
++      <section className="topology-runtime-plane" aria-label="AWS runtime topology">
++        <div className="topology-edge">
++          {node("Internet", state?.stableUrl ? "Public endpoint" : "Awaiting route", Boolean(state?.stableUrl), updating)}
++          <i aria-hidden="true" />
++          {node("Route 53", route?.name || (state?.stableUrl ? "Public route" : "Not configured"), Boolean(route) || Boolean(state?.stableUrl))}
++          <i aria-hidden="true" />
++          {node("Application Load Balancer", albHealthy ? "Targets healthy" : updating ? "Release updating" : "Unavailable", albHealthy, updating)}
++        </div>
++        <div className="topology-vpc-boundary">
++          <header><span>Amazon VPC</span><strong>{vpc?.id || vpc?.name || "Project network"}</strong></header>
++          <div className="topology-subnet-grid">
++            <section><span>Public subnets</span>{node("ALB listeners", albHealthy ? "Routing traffic" : "Awaiting targets", albHealthy, updating)}</section>
++            <section><span>Private application subnets</span>{node("ECS / Fargate", evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : updating ? "Release updating" : "Unavailable", ecsHealthy, updating)}</section>
++            <section><span>Private data layer</span>{node("Database / storage", databaseAttached ? "Managed service attached" : "Not configured", databaseAttached && live, updating && databaseAttached)}</section>
++          </div>
++        </div>
++      </section>
++    </div>
+     {evidence?.alb?.endpoint ? <p className="infrastructure-endpoint">Application endpoint: <a href={evidence.alb.endpoint} rel="noreferrer" target="_blank">Open verified application</a></p> : null}
+   </Card>;
+ }
+@@ -148,5 +173,9 @@ export default function ProjectInfrastructure() {
+   const drainingTargets = targetHealth.filter((target) => target === "draining").length;
+   const healthyTargets = activeTargetHealth.filter((target) => target === "healthy").length;
+   const targetsHealthy = activeTargetHealth.length > 0 && healthyTargets === activeTargetHealth.length;
+-  return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title={releaseUpdating ? "Runtime release updating" : runtimeTitle} status={infrastructure?.status || "unavailable"} description={releaseUpdating ? "The previous LIVE release remains canonical while AWS activates the candidate release." : "Current AWS state for this release."} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}<section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="Application" value={runtimePresent ? (state?.stableUrl ? <a href={state.stableUrl} rel="noreferrer" target="_blank">Open application ↗</a> : "Healthy") : label(state?.stateAuthority?.runtime?.state)} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="Services" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : releaseUpdating ? "Release updating" : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="Targets" value={activeTargetHealth.length ? `${healthyTargets}/${activeTargetHealth.length} healthy${drainingTargets ? ` · ${drainingTargets} draining` : ""}` : releaseUpdating ? "Release updating" : "Unavailable"} tone={targetsHealthy ? "success" : "neutral"} /><MetricCard label="Region" value={evidence?.region || "Unavailable"} /></section><ServiceFlow evidence={evidence} state={state} /><ServiceRuntimeList evidence={evidence} transitioning={releaseUpdating} /><SupportingServices evidence={evidence} /><Pricing cost={evidence?.cost} /><TechnicalDetails evidence={evidence} state={state} /></div>;
++  const resources = Array.isArray(evidence?.resources) ? evidence.resources : [];
++  const vpcResource = resources.find((resource) => /vpc/i.test(`${resource.type || ""} ${resource.name || ""}`));
++  const databaseResource = resources.find((resource) => /database|rds|postgres|mysql|mongo/i.test(`${resource.type || ""} ${resource.name || ""}`));
++  const cost = evidence?.cost;
++  return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title={releaseUpdating ? "Runtime release updating" : runtimeTitle} status={infrastructure?.status || "unavailable"} description={releaseUpdating ? "The previous LIVE release remains canonical while AWS activates the candidate release." : "Current AWS state for this release."} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}<section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="VPC" value={vpcResource?.id || vpcResource?.name || (runtimePresent ? "Active" : "Unavailable")} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="ECS" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : releaseUpdating ? "Release updating" : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="ALB" value={activeTargetHealth.length ? `${healthyTargets}/${activeTargetHealth.length} healthy${drainingTargets ? ` · ${drainingTargets} draining` : ""}` : releaseUpdating ? "Release updating" : "Unavailable"} tone={targetsHealthy ? "success" : "neutral"} /><MetricCard label="Database" value={databaseResource?.name || (databaseResource ? "Provisioned" : "Not configured")} tone={databaseResource ? "success" : "neutral"} /><MetricCard label="Environment" value={state?.environmentName || evidence?.environment || evidence?.region || "Unavailable"} /><MetricCard label="Monthly cost" value={cost?.source === "infracost" && Number.isFinite(cost?.monthly) ? `${cost.currency || "USD"} ${Number(cost.monthly).toFixed(2)}` : "Not estimated"} /></section><ServiceFlow evidence={evidence} state={state} /><ServiceRuntimeList evidence={evidence} transitioning={releaseUpdating} /><SupportingServices evidence={evidence} /><Pricing cost={evidence?.cost} /><TechnicalDetails evidence={evidence} state={state} /></div>;
+ }
+diff --git a/frontend/src/pages/ProjectMetrics.jsx b/frontend/src/pages/ProjectMetrics.jsx
+index c5aab7b..a58ee94 100644
+--- a/frontend/src/pages/ProjectMetrics.jsx
++++ b/frontend/src/pages/ProjectMetrics.jsx
+@@ -11,6 +11,7 @@ import {
+ } from "../components/common/DesignSystem.jsx";
+ import ErrorState from "../components/common/ErrorState.jsx";
+ import LoadingState from "../components/common/LoadingState.jsx";
++import AppIcon from "../components/common/AppIcon.jsx";
+ import { grafanaDashboardUrl } from "../utils/grafanaDashboardUrl.js";
+ import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+ import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+@@ -19,6 +20,8 @@ const metricDefinitions = [
+   { key: "cpu", title: "ECS CPU utilization", unit: "%" },
+   { key: "memory", title: "ECS memory utilization", unit: "%" },
+   { key: "httpLatency", title: "ALB response latency", unit: "s" },
++  { key: "requestRate", title: "Request rate", unit: "/s" },
++  { key: "errorRate", title: "HTTP error rate", unit: "%" },
+   { key: "healthyHosts", title: "Healthy targets", unit: "" },
+   { key: "unhealthyHosts", title: "Unhealthy targets", unit: "" },
+   { key: "runtimeAvailability", title: "Runtime availability", unit: "" },
+@@ -55,6 +58,13 @@ function latestMetric(runtime, key, unit = "") {
+   return point && Number.isFinite(Number(point.value)) ? `${point.value}${unit}` : "Unavailable";
+ }
+ 
++function availabilityMetric(runtime) {
++  const point = runtime?.runtimeAvailability?.points?.at(-1);
++  if (!point || !Number.isFinite(Number(point.value))) return "Unavailable";
++  const value = Number(point.value);
++  return `${(value <= 1 ? value * 100 : value).toFixed(1)}%`;
++}
++
+ function mergeLogEvents(current, incoming) {
+   const byId = new Map(current.map((entry) => [entry.id || `${entry.timestamp}:${entry.source}:${entry.message}`, entry]));
+   for (const entry of incoming) byId.set(entry.id || `${entry.timestamp}:${entry.source}:${entry.message}`, entry);
+@@ -191,22 +201,25 @@ export default function ProjectMetrics() {
+     {destroyOperation ? <Card><strong>{destroyOperation === "running" ? "Destroy is in progress." : "The latest Destroy failed."}</strong><p>The authoritative runtime is still present, so its ECS, ALB, logs, and metrics remain available.</p></Card> : null}
+     {services.length > 1 ? <label className="monitoring-service-selector"><span>Service</span><select aria-label="Runtime service" name="runtimeService" onChange={(event) => setSelectedServiceId(event.target.value)} value={selectedService?.serviceId || ""}>{services.map((service) => <option key={service.serviceId} value={service.serviceId}>{service.serviceName}</option>)}</select></label> : null}
+     <section aria-label="Runtime performance summary" className="monitoring-summary-grid monitoring-performance-grid">
++      <MetricCard label="Uptime" tone="success" value={availabilityMetric(runtime)} />
++      <MetricCard label="Response time" value={latestMetric(runtime, "httpLatency", "s")} />
+       <MetricCard label="CPU" value={latestMetric(runtime, "cpu", "%")} />
+       <MetricCard label="Memory" value={latestMetric(runtime, "memory", "%")} />
+-      <MetricCard label="Latency" value={latestMetric(runtime, "httpLatency", "s")} />
+-      <MetricCard label="Targets" tone={albHealth.length && albHealth.every((item) => item === "healthy") ? "success" : "neutral"} value={runtime?.healthyHosts?.points?.length ? latestMetric(runtime, "healthyHosts") : albHealth.length ? `${albHealth.filter((item) => item === "healthy").length}/${albHealth.length}` : "Unavailable"} />
++      <MetricCard label="Error rate" tone="neutral" value={latestMetric(runtime, "errorRate", "%")} />
++      <MetricCard label="Request rate" value={latestMetric(runtime, "requestRate", "/s")} />
+     </section>
+-    <Card className="monitoring-health-card"><details className="monitoring-health-details"><summary><span><span className="eyebrow">Runtime details</span><strong>Health and integrations</strong></span><StatusChip status={evidence?.freshness}>{label(evidence?.freshness)}</StatusChip></summary>
+-      <div className="monitoring-health-grid">
+-        <article><span>Runtime telemetry</span><strong>{runtime?.source === "aws_cloudwatch" ? "AWS CloudWatch" : "Unavailable"}</strong></article>
+-        <article><span>Last scrape</span><strong>{date(lastScrape)}</strong></article>
+-        <article><span>AWS observation</span><strong>{date(evidence?.lastUpdatedAt)}</strong></article>
+-        <article><span>Evidence freshness</span><strong>{label(evidence?.freshness)}</strong></article>
+-        <article><span>ALB health</span><strong>{albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"}</strong></article>
+-        <article><span>ECS task health</span><strong>{ecs ? `${ecs.runningCount} running / ${ecs.desiredCount} desired / ${ecs.pendingCount} pending` : "Unavailable"}</strong></article>
+-        <article><span>Grafana</span><strong>{grafanaConfigured ? <a href={grafanaUrl} rel="noreferrer" target="_blank">Open Grafana</a> : "Not configured"}</strong></article>
+-      </div>
++    <Card className="monitoring-health-card"><details className="monitoring-health-details" open><summary><span><span className="eyebrow">Service health</span><strong>Health and integrations</strong></span><StatusChip status={evidence?.freshness}>{label(evidence?.freshness)}</StatusChip></summary>
++      <div className="monitoring-health-table-wrap"><table className="monitoring-health-table"><thead><tr><th>Signal</th><th>Current observation</th></tr></thead><tbody>
++        <tr><td>Runtime telemetry</td><td>{runtime?.source === "aws_cloudwatch" ? "AWS CloudWatch" : "Unavailable"}</td></tr>
++        <tr><td>Last scrape</td><td>{date(lastScrape)}</td></tr>
++        <tr><td>AWS observation</td><td>{date(evidence?.lastUpdatedAt)}</td></tr>
++        <tr><td>Evidence freshness</td><td>{label(evidence?.freshness)}</td></tr>
++        <tr><td>ALB health</td><td>{albHealth.length ? albHealth.map(label).join(", ") : "Unavailable"}</td></tr>
++        <tr><td>ECS task health</td><td>{ecs ? `${ecs.runningCount} running / ${ecs.desiredCount} desired / ${ecs.pendingCount} pending` : "Unavailable"}</td></tr>
++        <tr><td>Grafana</td><td>{grafanaConfigured ? <a href={grafanaUrl} rel="noreferrer" target="_blank">Open Grafana</a> : "Not configured"}</td></tr>
++      </tbody></table></div>
+     </details></Card>
++    <Card className="monitoring-alerts-card"><div className="monitoring-section-heading"><div><p className="eyebrow">Recent alerts</p><h2>Runtime signals</h2></div><StatusChip status={albHealth.some((item) => item !== "healthy") ? "warning" : "healthy"}>{albHealth.some((item) => item !== "healthy") ? "Attention" : "Clear"}</StatusChip></div>{albHealth.some((item) => item !== "healthy") ? <p>One or more load balancer targets are not reporting healthy. Review the service health table and logs below.</p> : <div className="monitoring-clear-state"><span aria-hidden="true"><AppIcon name="check" size={16} /></span><p><strong>No active runtime alerts.</strong><br />CloudWatch and target health have no current warning to show.</p></div>}</Card>
+     <>
+       <section aria-label="Metrics time range" className="monitoring-range-controls">{["1h", "6h", "24h"].map((item) => <button aria-pressed={range === item} className={range === item ? "button" : "secondary-button"} key={item} onClick={() => setRange(item)} type="button">{item}</button>)}</section>
+       {metricsState === "disabled_by_configuration" ? <EmptyState icon="activity" message={runtime?.message || "CloudWatch metrics are disabled by configuration."} title="Metrics disabled" /> : null}
+diff --git a/frontend/src/pages/Projects.jsx b/frontend/src/pages/Projects.jsx
+index f7bc93a..dc992e9 100644
+--- a/frontend/src/pages/Projects.jsx
++++ b/frontend/src/pages/Projects.jsx
+@@ -15,7 +15,6 @@ const filters = [
+   ["DEPLOYING", "Deploying"],
+   ["LIVE", "Live"],
+   ["FAILED", "Failed"],
+-  ["DESTROYED", "Destroyed"],
+ ];
+ 
+ export default function Projects() {
+@@ -42,13 +41,18 @@ export default function Projects() {
+     };
+   }, []);
+ 
++  const visibleSummaries = useMemo(
++    () => summaries.filter(({ currentState }) => projectStatePresentation(currentState).state !== "DESTROYED"),
++    [summaries]
++  );
++
+   const projects = useMemo(
+-    () => summaries.filter(({ project, currentState }) => {
++    () => visibleSummaries.filter(({ project, currentState }) => {
+       const matchesState = stateFilter === "ALL" || projectStatePresentation(currentState).state === stateFilter;
+       const haystack = `${project.name} ${currentState?.repository || project.repositoryFullName || ""} ${currentState?.branch || project.targetBranch || ""}`.toLowerCase();
+       return matchesState && haystack.includes(search.trim().toLowerCase());
+     }),
+-    [search, stateFilter, summaries]
++    [search, stateFilter, visibleSummaries]
+   );
+ 
+   return <div className="workspace-page simple-projects-page">
+@@ -59,8 +63,8 @@ export default function Projects() {
+     {location.state?.notice ? <p className="state success" role="status">{location.state.notice}</p> : null}
+     {error ? <ErrorState message={error} /> : null}
+     {loading ? <LoadingState message="Loading projects…" /> : null}
+-    {!loading && !error && !summaries.length ? <EmptyState action={role !== "readonly" ? <Link className="button" to="/deploy">Deploy a repository</Link> : null} message="Create a project to start managing a repository." title="No projects yet" /> : null}
+-    {!loading && !error && summaries.length ? <section className="projects-card-section" aria-label="Project inventory">
++    {!loading && !error && !visibleSummaries.length ? <EmptyState action={role !== "readonly" ? <Link className="button" to="/deploy">Deploy a repository</Link> : null} message="Create a project to start managing a repository." title="No projects yet" /> : null}
++    {!loading && !error && visibleSummaries.length ? <section className="projects-card-section" aria-label="Project inventory">
+       <label className="project-search"><span className="sr-only">Search projects</span><AppIcon name="search" size={16} /><input onChange={(event) => setSearch(event.target.value)} placeholder="Search projects, repositories, or branches" type="search" value={search} /></label>
+       <div className="project-card-filters" aria-label="Project state filters">
+         {filters.map(([value, label]) => <button aria-pressed={stateFilter === value} className={stateFilter === value ? "button" : "secondary-button"} key={value} onClick={() => setStateFilter(value)} type="button">{label}</button>)}

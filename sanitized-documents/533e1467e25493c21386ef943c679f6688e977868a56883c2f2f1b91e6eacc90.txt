@@ -1,0 +1,519 @@
+Sanitized text extraction; credential examples removed before public backup.
+
+                    DeployGuard Public Repository
+                       Deployment Test Matrix
+    13 targeted applications: 5 Python + 5 JavaScript/TypeScript + 3 other languages
+
+
+
+• Purpose: a smaller, higher-value deployment matrix for the real AWS test campaign.
+• Primary coverage: FastAPI, Flask, Django, Fastify, Express, NestJS, Go/Gin, Laravel/PHP, and Spring
+Boot/Java.
+• ENV rule: only high-confidence values from inspected repository configuration are included. If the source
+evidence is weak or inconsistent, it is not included.
+• Platform rule: DeployGuard owns PORT=8080 and HOST=0.0.0.0. Proposed ENV blocks intentionally avoid
+user-owned PORT/HOST unless shown only as platform-injected comments.
+• Secrets are test-only placeholders/random values. Never reuse them for production.
+
+
+
+
+                                                   Prepared 2026-08-30
+
+
+
+
+                          DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+Test strategy
+Python set: Five applications cover FastAPI, Flask and Django, with SQLite/no-DB cases plus a managed PostgreSQL
+case.
+
+JavaScript/TypeScript set: Five applications cover Fastify, Express and NestJS, including both SQLite and managed
+PostgreSQL paths.
+
+Other-language set: Go/Gin, PHP/Laravel and Java/Spring Boot verify that the deployment path is not accidentally
+optimized only for Python/Node.
+
+ENV discipline: Paste only the proposed test ENV. Do not copy every variable from a repository template when it is
+optional or unrelated to boot.
+
+PORT discipline: Do not repair a failed app by changing DeployGuard platform port. A repository that does not obey the
+runtime contract should produce a clean failure that you record.
+
+Recommended execution order
+Run SQLite/no-database applications first, then PostgreSQL applications, then the cross-language controls. After basic
+deployment passes, reuse one successful app for redeploy -> rollback -> destroy lifecycle proof.
+
+
+
+
+                              DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+13-application index
+#            Group                     Repository                   Stack                        Database      Tier
+1            Python                    iammikek/fastAPI-101         Python / FastAPI /           SQLite        A - low friction
+                                                                    SQLAlchemy
+2            Python                    nsidnev/fastapi-realworld-   Python / FastAPI             PostgreSQL    B - managed PostgreSQL
+                                       example-app
+3            Python                    mikebz/djangovue             Python / Django + Vue        SQLite        A - low friction
+4            Python                    leonrod/cookbook             Python / Flask               SQLite file   A - low friction
+5            Python                    Tuhin-SnapD/Real-Time-       Python / Flask               None          A - low friction
+                                       Stock-Trading-Simulator
+6            JavaScript / TypeScript   DriftOS/fastify-starter      Node.js / Fastify / Prisma   PostgreSQL    B - managed PostgreSQL
+7            JavaScript / TypeScript   chaalpritam/tribe-hub        Node.js / Fastify            PostgreSQL    B - managed PostgreSQL
+8            JavaScript / TypeScript   miikkaylisiurunen/           Node.js / Express /          PostgreSQL    B - managed PostgreSQL
+                                       template-node-express        TypeScript
+9            JavaScript / TypeScript   notiz-dev/nestjs-prisma-     Node.js / NestJS / Prisma    PostgreSQL    B - managed PostgreSQL
+                                       starter
+10           JavaScript / TypeScript   unlight/nestjs-graphql-      Node.js / NestJS / Prisma    SQLite        A - low friction
+                                       prisma-realworld-            / GraphQL
+                                       example-app
+11           Other language            gothinkster/golang-gin-      Go / Gin                     SQLite        A - low friction
+                                       realworld-example-app
+12           Other language            laravel/laravel              PHP / Laravel 13             SQLite        A - low friction
+13           Other language            spring-projects/spring-      Java / Spring Boot /         Embedded H2   A - no ENV baseline
+                                       petclinic                    Maven
+
+
+
+
+                         DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+01. iammikek/fastAPI-101
+Repository: https://github.com/iammikek/fastAPI-101
+Inspected configuration source: https://github.com/iammikek/fastAPI-101/blob/main/.env.example
+Group                                     Stack                                              Database
+Python                                    Python / FastAPI / SQLAlchemy                      SQLite
+
+ENV confidence                            Test tier                                          Port evidence
+HIGH                                      A - low friction                                   No PORT in env template; README uses
+                                                                                             Uvicorn. Deployment verifies runtime binding.
+
+
+Proposed deployment-test ENV
+
+[credential example removed]
+ DATABASE_URL=sqlite:///./app.db
+ LOG_LEVEL=INFO
+ CORS_ORIGINS=*
+[credential example removed]
+ JWT_ALGORITHM=HS256
+ JWT_EXPIRE_MINUTES=60
+
+
+
+Why this entry is included: The repository explicitly documents SQLite as the default local path and states migrations run
+automatically on startup.
+
+
+
+
+                              DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+02. nsidnev/fastapi-realworld-example-app
+Repository: https://github.com/nsidnev/fastapi-realworld-example-app
+Inspected configuration source: https://github.com/nsidnev/fastapi-realworld-example-app/blob/master/.env.example
+Group                                    Stack                                              Database
+Python                                   Python / FastAPI                                   PostgreSQL
+
+ENV confidence                           Test tier                                          Port evidence
+HIGH                                     B - managed PostgreSQL                             No PORT in env template; deployment verifies
+                                                                                            runtime binding.
+
+
+Proposed deployment-test ENV
+
+[credential example removed]
+ DEBUG=False
+ DATABASE_URL=postgresql://deployguard:replace-me@127.0.0.1:5432/application
+
+
+
+Why this entry is included: Select DeployGuard managed PostgreSQL. DATABASE_URL is deliberately present so the
+platform database replacement path is exercised.
+
+
+
+
+                             DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+03. mikebz/djangovue
+Repository: https://github.com/mikebz/djangovue
+Inspected configuration source: https://github.com/mikebz/djangovue/blob/master/.env.example
+Group                                    Stack                                              Database
+Python                                   Python / Django + Vue                              SQLite
+
+ENV confidence                           Test tier                                          Port evidence
+HIGH                                     A - low friction                                   No application PORT variable in env template;
+                                                                                            deployment verifies runtime binding.
+
+
+Proposed deployment-test ENV
+
+[credential example removed]
+ DEBUG=0
+ ALLOWED_HOSTS=*
+ CSRF_TRUSTED_ORIGINS=
+ DATABASE_URL=sqlite:///db.sqlite3
+ DB_CONN_MAX_AGE=60
+ SECURE_SSL_REDIRECT=0
+ USE_X_FORWARDED_PROTO=0
+ SECURE_HSTS_SECONDS=0
+ SECURE_HSTS_INCLUDE_SUBDOMAINS=0
+ SECURE_HSTS_PRELOAD=0
+ DJANGO_VITE_DEV_MODE=0
+
+
+
+Why this entry is included: The inspected README states environment variables override .env and the database defaults
+to local SQLite.
+
+
+
+
+                             DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+04. leonrod/cookbook
+Repository: https://github.com/leonrod/cookbook
+Inspected configuration source: https://github.com/leonrod/cookbook/blob/master/.env.example
+Group                                     Stack                                              Database
+Python                                    Python / Flask                                     SQLite file
+
+ENV confidence                            Test tier                                          Port evidence
+HIGH                                      A - low friction                                   Source template uses standard PORT; omit it
+                                                                                             because DeployGuard owns PORT.
+
+
+Proposed deployment-test ENV
+
+ FLASK_ENV=production
+[credential example removed]
+ DB_PATH=nurglingdatabase.db
+ API_RESULTS_LIMIT=50
+ API_MAX_QUERY_LENGTH=500
+ LOG_LEVEL=INFO
+ LOG_FILE=logs/app.log
+ CORS_ENABLED=False
+ CORS_ORIGINS=*
+ RATELIMIT_ENABLED=True
+ RATELIMIT_DEFAULT=100 per minute
+ CACHE_TYPE=simple
+ CACHE_DEFAULT_TIMEOUT=300
+ WORKERS=1
+
+
+
+Why this entry is included: Standard PORT is present in the source template, making this useful for the fixed platform-port
+contract.
+
+
+
+
+                              DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+05. Tuhin-SnapD/Real-Time-Stock-Trading-Simulator
+Repository: https://github.com/Tuhin-SnapD/Real-Time-Stock-Trading-Simulator
+Inspected configuration source: https://github.com/Tuhin-SnapD/Real-Time-Stock-Trading-Simulator/blob/main/
+env.example
+Group                                        Stack                                             Database
+Python                                       Python / Flask                                    None
+
+ENV confidence                               Test tier                                         Port evidence
+HIGH                                         A - low friction                                  Source template uses standard PORT and
+                                                                                               HOST; both are intentionally omitted.
+
+
+Proposed deployment-test ENV
+
+ FLASK_DEBUG=False
+[credential example removed]
+ DEFAULT_SYMBOL=AAPL
+ DEFAULT_INTERVAL=1m
+ DEFAULT_PERIOD=1d
+ DEFAULT_INITIAL_CASH=50000
+ MAX_RETRIES=5
+ RETRY_DELAY=10
+ DEFAULT_SHORT_WINDOW=2
+ DEFAULT_LONG_WINDOW=5
+ MAX_PORTFOLIO_VALUES=100
+ CHART_UPDATE_INTERVAL=5000
+
+
+
+Why this entry is included: No private external API key is required in the inspected template. Market-data access is an
+application-level network test after boot.
+
+
+
+
+                                DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+06. DriftOS/fastify-starter
+Repository: https://github.com/DriftOS/fastify-starter
+Inspected configuration source: https://github.com/DriftOS/fastify-starter/blob/main/.env.example
+Group                                       Stack                                              Database
+JavaScript / TypeScript                     Node.js / Fastify / Prisma                         PostgreSQL
+
+ENV confidence                              Test tier                                          Port evidence
+HIGH                                        B - managed PostgreSQL                             Source template uses standard PORT and
+                                                                                               HOST; both are intentionally omitted.
+
+
+Proposed deployment-test ENV
+
+  NODE_ENV=production
+  LOG_LEVEL=info
+  DATABASE_URL=postgresql://deployguard:replace-me@127.0.0.1:5432/application?schema=public
+  POSTGRES_USER=deployguard
+  POSTGRES_PASSWORD=replace-me
+  POSTGRES_DB=application
+[credential example removed]
+  JWT_EXPIRES_IN=7d
+  API_PREFIX=/api
+  API_VERSION=v1
+  RATE_LIMIT_MAX=100
+  RATE_LIMIT_TIME_WINDOW=60000
+  CORS_ORIGIN=http://localhost
+  CORS_CREDENTIALS=true
+  METRICS_ENABLED=true
+  SWAGGER_ENABLED=true
+  REDIS_URL=
+  OPENAI_API_KEY=
+  STRIPE_SECRET_KEY=
+  ENABLE_CLUSTERING=false
+  ENABLE_WEBSOCKETS=false
+
+
+
+Why this entry is included: Select managed PostgreSQL. This is also a strong test that platform-owned PORT/HOST
+override the source template.
+
+
+
+
+                                DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+07. chaalpritam/tribe-hub
+Repository: https://github.com/chaalpritam/tribe-hub
+Inspected configuration source: https://github.com/chaalpritam/tribe-hub/blob/master/.env.example
+Group                                     Stack                                              Database
+JavaScript / TypeScript                   Node.js / Fastify                                  PostgreSQL
+
+ENV confidence                            Test tier                                          Port evidence
+HIGH                                      B - managed PostgreSQL                             Source template uses standard PORT; omit it
+                                                                                             because DeployGuard owns PORT.
+
+
+Proposed deployment-test ENV
+
+  HUB_ID=deployguard-smoke
+  SOLANA_RPC_URL=https://api.devnet.solana.com
+  SOLANA_WS_URL=wss://api.devnet.solana.com
+  DATABASE_URL=postgresql://deployguard:replace-me@127.0.0.1:5432/application
+  PEERS=ws://127.0.0.1:65535/gossip
+  TID_REGISTRY_PROGRAM_ID=4BSmJmRGQWKgioP9DG2bUuRS9U3V6soRauU7Nv6yGvHD
+[credential example removed]
+  SOCIAL_GRAPH_PROGRAM_ID=8kKnWvbmTjWq5uPePk79RRbQMAXCszNFzHdRwUS4N74w
+  GOSSIP_INTERVAL_MS=5000
+  MAX_SYNC_BATCH_SIZE=100
+  RECONNECT_DELAY_MS=10000
+  PING_INTERVAL_MS=30000
+  MAX_TWEET_TEXT_LENGTH=320
+  APP_KEY_CACHE_TTL_MS=60000
+  MEDIA_DIR=./data/media
+
+
+
+Why this entry is included: Select managed PostgreSQL. The unreachable peer is deliberate and should not prevent the
+HTTP service from proving its own startup path.
+
+
+
+
+                              DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+08. miikkaylisiurunen/template-node-express
+Repository: https://github.com/miikkaylisiurunen/template-node-express
+Inspected configuration source: https://github.com/miikkaylisiurunen/template-node-express/blob/main/.env.example
+Group                                    Stack                                              Database
+JavaScript / TypeScript                  Node.js / Express / TypeScript                     PostgreSQL
+
+ENV confidence                           Test tier                                          Port evidence
+HIGH                                     B - managed PostgreSQL                             Source template uses standard PORT; omit it
+                                                                                            because DeployGuard owns PORT.
+
+
+Proposed deployment-test ENV
+
+  DATABASE_URL=postgres://deployguard:replace-me@127.0.0.1:5432/application
+
+
+
+Why this entry is included: Select managed PostgreSQL. TEST_PORT and TEST_DATABASE_URL are intentionally
+omitted from the deployment ENV.
+
+
+
+
+                             DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+09. notiz-dev/nestjs-prisma-starter
+Repository: https://github.com/notiz-dev/nestjs-prisma-starter
+Inspected configuration source: https://github.com/notiz-dev/nestjs-prisma-starter/blob/main/.env.example
+Group                                     Stack                                              Database
+JavaScript / TypeScript                   Node.js / NestJS / Prisma                          PostgreSQL
+
+ENV confidence                            Test tier                                          Port evidence
+HIGH                                      B - managed PostgreSQL                             Source template uses standard PORT; omit it
+                                                                                             because DeployGuard owns PORT.
+
+
+Proposed deployment-test ENV
+
+  POSTGRES_USER=deployguard
+  POSTGRES_PASSWORD=replace-me
+  POSTGRES_DB=application
+  DB_HOST=127.0.0.1
+  DB_PORT=5432
+  DB_SCHEMA=public
+  DATABASE_URL=postgresql://deployguard:replace-me@127.0.0.1:5432/application?schema=public&sslmode=disable
+[credential example removed]
+[credential example removed]
+
+
+
+Why this entry is included: Select managed PostgreSQL. The platform should replace DB aliases and DATABASE_URL
+with the actual managed values.
+
+
+
+
+                              DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+10. unlight/nestjs-graphql-prisma-realworld-example-app
+Repository: https://github.com/unlight/nestjs-graphql-prisma-realworld-example-app
+Inspected configuration source: https://github.com/unlight/nestjs-graphql-prisma-realworld-example-app/blob/
+master/.env.example
+Group                                     Stack                                              Database
+JavaScript / TypeScript                   Node.js / NestJS / Prisma / GraphQL                SQLite
+
+ENV confidence                            Test tier                                          Port evidence
+HIGH                                      A - low friction                                   No PORT in env template; deployment verifies
+                                                                                             runtime binding.
+
+
+Proposed deployment-test ENV
+
+  DATABASE_URL=file:data.db
+[credential example removed]
+
+
+
+Why this entry is included: One of the cleanest Node/Nest test candidates because its inspected template is only two
+variables.
+
+
+
+
+                              DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+11. gothinkster/golang-gin-realworld-example-app
+Repository: https://github.com/gothinkster/golang-gin-realworld-example-app
+Inspected configuration source: https://github.com/gothinkster/golang-gin-realworld-example-app/blob/
+main/.env.example
+Group                                    Stack                                              Database
+Other language                           Go / Gin                                           SQLite
+
+ENV confidence                           Test tier                                          Port evidence
+HIGH                                     A - low friction                                   Source template uses standard PORT; omit it
+                                                                                            because DeployGuard owns PORT.
+
+
+Proposed deployment-test ENV
+
+  GIN_MODE=release
+  DB_PATH=./data/gorm.db
+
+
+
+Why this entry is included: Strong port-contract candidate because the repository itself documents a standard PORT
+variable.
+
+
+
+
+                             DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+12. laravel/laravel
+Repository: https://github.com/laravel/laravel
+Inspected configuration source: https://github.com/laravel/laravel/blob/13.x/.env.example
+Group                                     Stack                                              Database
+Other language                            PHP / Laravel 13                                   SQLite
+
+ENV confidence                            Test tier                                          Port evidence
+HIGH                                      A - low friction                                   No PORT in template; platform runtime test
+                                                                                             decides compatibility.
+
+
+Proposed deployment-test ENV
+
+  APP_NAME=DeployGuard Laravel
+  APP_ENV=production
+  APP_KEY=base64:Ql2V1PqdcOFVVvQtAqqDs+Gh8Qyr8sCx9OXWRnIV6n4=
+  APP_DEBUG=false
+  APP_URL=http://localhost
+  LOG_CHANNEL=stack
+  LOG_LEVEL=info
+  DB_CONNECTION=sqlite
+  SESSION_DRIVER=file
+  QUEUE_CONNECTION=sync
+  CACHE_STORE=file
+  FILESYSTEM_DISK=local
+  MAIL_MAILER=log
+  VITE_APP_NAME=DeployGuard Laravel
+
+
+
+Why this entry is included: Uses Laravel SQLite and file/sync drivers to avoid external services during the smoke
+deployment.
+
+
+
+
+                              DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+13. spring-projects/spring-petclinic
+Repository: https://github.com/spring-projects/spring-petclinic
+Inspected configuration source: https://github.com/spring-projects/spring-petclinic/blob/main/src/main/resources/
+application.properties
+Group                                      Stack                                              Database
+Other language                             Java / Spring Boot / Maven                         Embedded H2
+
+ENV confidence                             Test tier                                          Port evidence
+HIGH                                       A - no ENV baseline                                No custom server.port is configured; Spring Boot
+                                                                                              baseline is 8080, matching DeployGuard
+                                                                                              platform port.
+
+
+Proposed deployment-test ENV
+
+  # No application ENV is required for the baseline smoke deployment.
+  # DeployGuard still injects:
+  # PORT=8080
+  # HOST=0.0.0.0
+
+
+
+Why this entry is included: The inspected application.properties selects database=h2 and contains no external database
+credential requirement. Keep this as a clean Java control deployment.
+
+
+
+
+                               DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+Evidence to capture for each deployment
+   Exact repository + branch + source SHA selected by DeployGuard.
+   Railpack build succeeds or returns a clear build failure with logs.
+   Application runtime probe receives platform PORT=8080 and HOST=0.0.0.0.
+   Image is published only after runtime validation passes.
+   Immutable ECR digest is recorded and the exact digest is used by ECS.
+   Unknown user ENV values remain unchanged; platform-owned PORT/HOST win over user input.
+   For PostgreSQL cases, stale local DB aliases are replaced with managed runtime values and secrets are not exposed
+    in logs.
+   ECS reaches RUNNING, ALB target becomes healthy, and the public endpoint returns an application response.
+
+One full lifecycle after compatibility testing
+After several applications pass basic deploy, choose one stable low-friction app and prove: Deploy -> new commit
+Redeploy -> Rollback to previous immutable digest without rebuild -> Destroy -> verify AWS cleanup.
+
+
+
+
+                              DeployGuard - 13 Application Deployment Test Matrix | Test-only configuration
+

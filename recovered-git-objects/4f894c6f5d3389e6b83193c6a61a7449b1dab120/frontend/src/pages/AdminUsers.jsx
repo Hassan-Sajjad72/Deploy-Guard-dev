@@ -1,0 +1,94 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { getAdminOverview, getUsers, updateUserAccess, updateUserRole } from "../api/adminApi.js";
+import { getAuditLogs } from "../api/auditLogApi.js";
+import { getWorkspaceSummary } from "../api/projectApi.js";
+import AuditLogsTable from "../components/audit/AuditLogsTable.jsx";
+import AuditLogFilters from "../components/audit/AuditLogFilters.jsx";
+import EmptyState from "../components/common/EmptyState.jsx";
+import ErrorState from "../components/common/ErrorState.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
+import { BentoGrid, MetricCard, PageHeader } from "../components/common/Premium.jsx";
+import UserTable from "../components/admin/UserTable.jsx";
+import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+
+const serviceLabels = {
+  backend: "Backend",
+  database: "PostgreSQL",
+  githubOAuth: "GitHub OAuth",
+  githubApp: "GitHub App",
+  githubActions: "GitHub Actions",
+  awsOidc: "AWS OIDC",
+  terraformState: "Terraform State Storage",
+  prometheus: "Prometheus",
+  grafana: "Grafana",
+};
+
+export default function AdminUsers() {
+  const [users, setUsers] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [overview, setOverview] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [updatingUserId, setUpdatingUserId] = useState(null);
+  const [projectFilter, setProjectFilter] = useState("ALL");
+  const [auditFilters, setAuditFilters] = useState({ category: "", action: "", resourceType: "", resourceId: "", status: "", from: "", to: "", page: 1, limit: 20 });
+
+  async function load() {
+    setError(""); setLoading(true);
+    try {
+      const [userResponse, workspace, platform] = await Promise.all([
+        getUsers(), getWorkspaceSummary(), getAdminOverview(),
+      ]);
+      setUsers(userResponse?.users || []);
+      setProjects(workspace?.summaries || []);
+      setOverview(platform);
+    } catch (caught) { setError(caught.message); } finally { setLoading(false); }
+  }
+  useEffect(() => { void load(); }, []);
+  useEffect(() => { getAuditLogs(auditFilters).then((response) => setLogs(response?.logs || [])).catch((caught) => setError(caught.message)); }, [auditFilters]);
+
+  async function mutate(userId, request, message) {
+    setError(""); setSuccess(""); setUpdatingUserId(userId);
+    try {
+      const response = await request();
+      setUsers((current) => current.map((user) => user.id === userId ? { ...user, ...response.user } : user));
+      setSuccess(message);
+      const audit = await getAuditLogs(auditFilters);
+      setLogs(audit?.logs || []);
+    } catch (caught) { setError(caught.message); } finally { setUpdatingUserId(null); }
+  }
+
+  const generated = overview?.generatedAt ? new Date(overview.generatedAt).toLocaleString() : "Unavailable";
+  return <div className="grid admin-console" data-admin-console="canonical">
+    <PageHeader eyebrow="Platform administration" title="Admin" description="Platform status, users and roles, project operations, and the audit trail in one read-focused console." context={`Source: live API · Last Updated: ${generated}`} />
+    {error ? <ErrorState message={error} /> : null}
+    {success ? <div className="state success">{success}</div> : null}
+    {loading ? <LoadingState message="Loading administration console…" /> : null}
+    {!loading && overview ? <>
+      <section className="panel-flat admin-section" data-admin-section="overview"><p className="eyebrow">Admin overview</p><h2>Platform status</h2>
+        <BentoGrid>
+          <MetricCard label="Projects" value={overview.counts.projects} detail="Non-archived projects in PostgreSQL" />
+          <MetricCard label="Active operations" value={overview.counts.activeOperations} detail={`${overview.counts.destroyingOperations} destroying`} />
+          <MetricCard label="Failed operations" value={overview.counts.failedOperations} detail="Historical GitHub Actions failures" tone={overview.counts.failedOperations ? "danger" : "neutral"} />
+        </BentoGrid>
+        <div className="admin-service-grid">{Object.entries(overview.services).map(([name, service]) => <article className="admin-service-card" key={name}><span className="admin-field-label">{serviceLabels[name] || humanize(name)}</span><strong>{humanize(service.status)}</strong><span className="admin-value" title={service.source || "Live API"}>{humanize(service.source || "Live API")}</span></article>)}</div>
+      </section>
+      <section className="panel-flat admin-section" data-admin-section="users"><p className="eyebrow">Users &amp; roles</p><h2>Account access</h2>{users.length ? <UserTable onAccessChange={(id, enabled) => mutate(id, () => updateUserAccess(id, enabled), enabled ? "User enabled." : "User disabled.")} onRoleChange={(id, role) => mutate(id, () => updateUserRole(id, role), "User role updated.")} updatingUserId={updatingUserId} users={users} /> : <EmptyState message="No users found." />}</section>
+      <section className="panel-flat admin-section" data-admin-project-state-source="current-state" data-admin-section="projects"><p className="eyebrow">Projects &amp; operations</p><h2>Authoritative project states</h2>
+        <div className="button-row" aria-label="Project state filter">{["ALL", "LIVE", "FAILED", "DEPLOYING", "DESTROYED"].map((filter) => <button className={projectFilter === filter ? "primary-button" : "secondary-button"} key={filter} onClick={() => setProjectFilter(filter)} type="button">{filter === "ALL" ? "All" : filter.charAt(0) + filter.slice(1).toLowerCase()}</button>)}</div>
+        {!projects.length ? <EmptyState message="No projects are available." /> : <div className="admin-project-list">{projects.filter(({ currentState }) => projectFilter === "ALL" || projectStatePresentation(currentState).state === projectFilter).map(({ project, currentState }) => { const state = projectStatePresentation(currentState); const operationId = currentState?.latestAttempt?.operationId; return <article className="admin-project-card" data-authoritative-state={state.state} key={project.id}><div className="admin-project-summary"><strong className="admin-value" title={project.name}>{project.name}</strong><span className="admin-value">{state.headline}</span></div><dl className="admin-project-facts"><div><dt>Repository</dt><dd className="admin-value" title={project.repositoryFullName || "Repository unavailable"}>{project.repositoryFullName || "Repository unavailable"}</dd></div><div><dt>Owner account</dt><dd>Account #{project.ownerUserId}</dd></div><div><dt>Latest operation</dt><dd className="admin-value admin-technical-value" title={operationId || "No deployment operation"}>{operationId || "No deployment operation"}</dd></div></dl><div className="admin-project-actions"><strong>{humanize(state.state)}</strong><Link className="text-link" to={`/projects/${project.id}`}>View read-only state</Link></div></article>; })}</div>}
+      </section>
+      <section className="panel-flat admin-section" data-admin-section="audit"><p className="eyebrow">Audit</p><h2>Recent administrative and product activity</h2><AuditLogFilters embedded filters={auditFilters} onChange={setAuditFilters} onReset={() => setAuditFilters({ category: "", action: "", resourceType: "", resourceId: "", status: "", from: "", to: "", page: 1, limit: 20 })} />{logs.length ? <AuditLogsTable logs={logs} /> : <EmptyState message="No audit events match these filters." />}</section>
+    </> : null}
+  </div>;
+}
+
+function humanize(value) {
+  return String(value || "Unavailable")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}

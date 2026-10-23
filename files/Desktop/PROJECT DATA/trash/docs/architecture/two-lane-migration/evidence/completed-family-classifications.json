@@ -1,0 +1,2231 @@
+{
+  "summary": {
+    "inputResidualRows": 130,
+    "classifiedFromAuditedFamilies": 130,
+    "auditedFamilyContradictions": 0,
+    "unresolvedEvidenceBlockers": 0,
+    "pendingFamilyAudit": 0,
+    "schemaChangesAuthorized": 29,
+    "classifications": {
+      "migration_authoritative_database_only": 34,
+      "genuinely_missing_guarded_migration": 29,
+      "intentionally_database_only": 16,
+      "equivalent_access_path": 23,
+      "intentionally_metadata_only_compatibility": 11,
+      "equivalent_predicate_representation": 15,
+      "equivalent_duplicate_unique_enforcement": 2
+    }
+  },
+  "rows": [
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"deployment_intents\",\"sourceColumns\":[\"destroy_operation_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_destroy_operations\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "deployment_intents",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"deployment_intents\",\"sourceColumns\":[\"infrastructure_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "deployment_intents",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"deployment_intents\",\"sourceColumns\":[\"pipeline_run_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_pipeline_runs\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "deployment_intents",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"deployment_intents\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "deployment_intents",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"deployment_intents\",\"sourceColumns\":[\"release_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"release_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "deployment_intents",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"deployment_intents\",\"sourceColumns\":[\"requested_by_user_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"users\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "deployment_intents",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"deployment_intents\",\"sourceColumns\":[\"source_pipeline_run_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_pipeline_runs\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "deployment_intents",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"infrastructure_destroy_operations\",\"sourceColumns\":[\"deployment_intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "infrastructure_destroy_operations",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": true,
+      "decisionGroup": "infrastructure_destroy_operations.deployment_intent_id",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative lifecycle key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000058000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"infrastructure_destroy_operations\",\"sourceColumns\":[\"infrastructure_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "infrastructure_destroy_operations",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": true,
+      "decisionGroup": "infrastructure_destroy_operations.infrastructure_manifest_id",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative lifecycle key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000058000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"infrastructure_manifests\",\"sourceColumns\":[\"created_by_intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "infrastructure_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"infrastructure_manifests\",\"sourceColumns\":[\"created_by_user_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"users\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "infrastructure_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"infrastructure_manifests\",\"sourceColumns\":[\"parent_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "infrastructure_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"infrastructure_manifests\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "infrastructure_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"initial_release_drafts\",\"sourceColumns\":[\"infrastructure_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "initial_release_drafts",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"initial_release_drafts\",\"sourceColumns\":[\"intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "initial_release_drafts",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"orchestration_outbox\",\"sourceColumns\":[\"intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "orchestration_outbox",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_backup_records\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_backup_records",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_cost_estimates\",\"sourceColumns\":[\"approved_by_user_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"users\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_cost_estimates",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "billing_finops_support",
+      "requiresSchemaChange": true,
+      "decisionGroup": "project_cost_estimates.approved_by_user_id",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Billing and FinOps support-index and reviewer-lineage audit",
+      "rationale": "A new data-bearing clone proves integer key compatibility and zero reviewer-history orphans. Guarded additive migration 1760000058000 restores this nullable SET NULL relationship with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_cost_estimates\",\"sourceColumns\":[\"rejected_by_user_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"users\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_cost_estimates",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "billing_finops_support",
+      "requiresSchemaChange": true,
+      "decisionGroup": "project_cost_estimates.rejected_by_user_id",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Billing and FinOps support-index and reviewer-lineage audit",
+      "rationale": "A new data-bearing clone proves integer key compatibility and zero reviewer-history orphans. Guarded additive migration 1760000058000 restores this nullable SET NULL relationship with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_deployment_queue_items\",\"sourceColumns\":[\"pipeline_run_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_pipeline_runs\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_deployment_queue_items",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_deployment_queue_items\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_deployment_queue_items",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_deployments\",\"sourceColumns\":[\"release_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"release_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_deployments",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "pipeline_deployment_history",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Pipeline/deployment status-history audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_infrastructure_environments\",\"sourceColumns\":[\"applied_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_infrastructure_environments",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "infrastructure_observability",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Infrastructure and observability support-index audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_infrastructure_environments\",\"sourceColumns\":[\"desired_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_infrastructure_environments",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "infrastructure_observability",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Infrastructure and observability support-index audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_operation_leases\",\"sourceColumns\":[\"destroy_operation_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_destroy_operations\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_operation_leases",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_operation_leases\",\"sourceColumns\":[\"intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_operation_leases",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_operation_leases\",\"sourceColumns\":[\"pipeline_run_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_pipeline_runs\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_operation_leases",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_operation_leases\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_operation_leases",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_orchestration_events\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_orchestration_events",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "terraform_export_orchestration",
+      "requiresSchemaChange": true,
+      "decisionGroup": "project_orchestration_events.project_id",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Terraform export and orchestration event support-index audit",
+      "rationale": "A new data-bearing clone proves UUID compatibility and zero orphan event rows. Guarded additive migration 1760000058000 restores the historical CASCADE ownership key with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_pipeline_runs\",\"sourceColumns\":[\"cross_lane_ownership_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_release_lane_ownerships\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_pipeline_runs",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "pipeline_deployment_history",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Pipeline/deployment status-history audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_pipeline_runs\",\"sourceColumns\":[\"deployment_intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_pipeline_runs",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "pipeline_deployment_history",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Pipeline/deployment status-history audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_pipeline_runs\",\"sourceColumns\":[\"infrastructure_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_pipeline_runs",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "pipeline_deployment_history",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Pipeline/deployment status-history audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_pipeline_runs\",\"sourceColumns\":[\"release_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"release_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_pipeline_runs",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "pipeline_deployment_history",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Pipeline/deployment status-history audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_release_lane_ownerships\",\"sourceColumns\":[\"deployment_intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_release_lane_ownerships",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_release_lane_ownerships\",\"sourceColumns\":[\"operation_lease_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_operation_leases\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_release_lane_ownerships",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_release_lane_ownerships\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_release_lane_ownerships",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_rollback_records\",\"sourceColumns\":[\"cross_lane_ownership_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_release_lane_ownerships\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_rollback_records",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_stable_releases\",\"sourceColumns\":[\"deployed_by_pipeline_run_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_pipeline_runs\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_stable_releases",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "release_provenance_stable_projection",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: release provenance and stable projection",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_stable_releases\",\"sourceColumns\":[\"release_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"release_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_stable_releases",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "release_provenance_stable_projection",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: release provenance and stable projection",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_state_recovery_requests\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_state_recovery_requests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_state_revisions\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_state_revisions",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_state_validation_results\",\"sourceColumns\":[\"infrastructure_environment_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_infrastructure_environments\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_state_validation_results",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_state_validation_results\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_state_validation_results",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_storage_events\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_storage_events",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_storage_restore_requests\",\"sourceColumns\":[\"approved_by_user_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"users\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_storage_restore_requests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_storage_restore_requests\",\"sourceColumns\":[\"persistent_storage_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_persistent_storage\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_storage_restore_requests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_storage_restore_requests\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_storage_restore_requests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_storage_restore_requests\",\"sourceColumns\":[\"requested_by_user_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"users\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_storage_restore_requests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_terraform_locks\",\"sourceColumns\":[\"pipeline_run_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_pipeline_runs\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_terraform_locks",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "The explicit retention decision preserves released Terraform-lock rows, clears only orphaned pipeline references, makes the historical reference nullable and restores it as ON DELETE SET NULL. Guarded additive migration 1760000059000 validates exact types, released status, target-key identity and zero remaining orphans before atomic FK validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"project_terraform_locks\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "project_terraform_locks",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": true,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000057000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"projects\",\"sourceColumns\":[\"deletion_intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "projects",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": true,
+      "decisionGroup": "projects.deletion_intent_id",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "A newly recreated data-bearing clone confirms this migration-authoritative lifecycle key is operationally absent while source/target types match, the target key is unique and orphan count is zero. Guarded additive migration 1760000058000 restores it with bounded locking, NOT VALID and atomic validation."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_image_provenances\",\"sourceColumns\":[\"infrastructure_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_image_provenances",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "release_provenance_stable_projection",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: release provenance and stable projection",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_image_provenances\",\"sourceColumns\":[\"intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_image_provenances",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "release_provenance_stable_projection",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: release provenance and stable projection",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_manifests\",\"sourceColumns\":[\"configuration_snapshot_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_configuration_snapshots\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_manifests\",\"sourceColumns\":[\"created_by_intent_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"deployment_intents\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_manifests\",\"sourceColumns\":[\"deployment_contract_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_deployment_contracts\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_manifests\",\"sourceColumns\":[\"infrastructure_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"infrastructure_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"RESTRICT\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_manifests\",\"sourceColumns\":[\"parent_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"release_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_manifests\",\"sourceColumns\":[\"pipeline_run_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"project_pipeline_runs\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_manifests\",\"sourceColumns\":[\"previous_stable_manifest_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"release_manifests\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"SET NULL\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"foreign_key\",\"schema\":\"public\",\"table\":\"release_manifests\",\"sourceColumns\":[\"project_id\"],\"referencedSchema\":\"public\",\"referencedTable\":\"projects\",\"referencedColumns\":[\"id\"],\"updateAction\":\"NO ACTION\",\"deleteAction\":\"CASCADE\",\"matchType\":\"SIMPLE\",\"deferrable\":false,\"initiallyDeferred\":false}",
+      "table": "release_manifests",
+      "kind": "foreign_key",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": null,
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "migration_authoritative_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "Fresh and clone catalogs agree on ordered columns, target key, update/delete actions, match type and deferral; the completed audit intentionally keeps this relationship database-only for bounded DataSource compatibility."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"ai_analysis_messages\",\"keyItems\":[\"session_id\",\"created_at\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "ai_analysis_messages",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "ai_troubleshooting_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "idx_ai_messages_session",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#AI troubleshooting history support-index audit",
+      "rationale": "The historical migration defines this ordered composite index and the committed AI history service uses the same leading equality key plus timestamp or revision ordering. It is an intentional database-only workload index and does not require TypeORM metadata."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"ai_analysis_messages\",\"keyItems\":[\"session_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "ai_analysis_messages",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "ai_troubleshooting_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_1ea94bdd494dee07432099c280",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#AI troubleshooting history support-index audit",
+      "rationale": "The migration composite begins with this equality key and serves the same committed lookup while also satisfying its ordering. The clone/metadata single-column index is retained compatibility rather than a missing fresh access path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"ai_analysis_results\",\"keyItems\":[\"session_id\",\"revision\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "ai_analysis_results",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "ai_troubleshooting_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "idx_ai_results_session",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#AI troubleshooting history support-index audit",
+      "rationale": "The historical migration defines this ordered composite index and the committed AI history service uses the same leading equality key plus timestamp or revision ordering. It is an intentional database-only workload index and does not require TypeORM metadata."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"ai_analysis_results\",\"keyItems\":[\"session_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "ai_analysis_results",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "ai_troubleshooting_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_836061cffc69b212c8ea7cf459",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#AI troubleshooting history support-index audit",
+      "rationale": "The migration composite begins with this equality key and serves the same committed lookup while also satisfying its ordering. The clone/metadata single-column index is retained compatibility rather than a missing fresh access path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"ai_analysis_sessions\",\"keyItems\":[\"pipeline_run_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "ai_analysis_sessions",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "ai_troubleshooting_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_7211c9396b88899759e445380f",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#AI troubleshooting history support-index audit",
+      "rationale": "Metadata and the operational clone retain this pipeline correlation index, but committed AI session reads resolve by primary session identity or project history and do not use a standalone pipeline-run predicate. No fresh addition is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"ai_analysis_sessions\",\"keyItems\":[\"project_id\",\"updated_at\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "ai_analysis_sessions",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "ai_troubleshooting_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "idx_ai_sessions_project",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#AI troubleshooting history support-index audit",
+      "rationale": "The historical migration defines this ordered composite index and the committed AI history service uses the same leading equality key plus timestamp or revision ordering. It is an intentional database-only workload index and does not require TypeORM metadata."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"ai_analysis_sessions\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "ai_analysis_sessions",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "ai_troubleshooting_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_989d25eb63760ce18591fea3f8",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#AI troubleshooting history support-index audit",
+      "rationale": "The migration composite begins with this equality key and serves the same committed lookup while also satisfying its ordering. The clone/metadata single-column index is retained compatibility rather than a missing fresh access path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"ai_analysis_sessions\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "ai_analysis_sessions",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "ai_troubleshooting_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_5d0e4233ad8cf272b135096d39",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#AI troubleshooting history support-index audit",
+      "rationale": "Metadata and the operational clone retain this per-user access path, and the rate-limit query filters by user and recent creation time. No fresh query-plan or workload evidence proves that another index must be added, so it remains compatibility-only."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"billing_checkout_sessions\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "billing_checkout_sessions",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "billing_finops_support",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_d9a163bda9425b095aa09a85fb",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Billing and FinOps support-index and reviewer-lineage audit",
+      "rationale": "Metadata and the operational clone retain this checkout owner index, but committed checkout processing writes by provider identity and has no user-history read. No fresh addition is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"billing_invoices\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "billing_invoices",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "billing_finops_support",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_29e10ff04337ef730f2b7af58b",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Billing and FinOps support-index and reviewer-lineage audit",
+      "rationale": "Metadata and the operational clone retain this user invoice-history index. The summary query is bounded to 25 rows, and no fresh query-plan evidence proves an additive index requirement, so it remains compatibility-only."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"billing_usage_counters\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "billing_usage_counters",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "billing_finops_support",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_00611824e5cc16755e8e25c3ed",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Billing and FinOps support-index and reviewer-lineage audit",
+      "rationale": "The migration-defined unique (user_id, metric, period_start) counter contract serves both exact consumption and current-period usage queries. The metadata/clone user index is an equivalent retained path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"billing_usage_events\",\"keyItems\":[\"user_id\",\"created_at\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "billing_usage_events",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "billing_finops_support",
+      "requiresSchemaChange": false,
+      "decisionGroup": "idx_usage_events_user",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Billing and FinOps support-index and reviewer-lineage audit",
+      "rationale": "The migration-defined user/created-at index is the ordered access path for the retained immutable usage ledger. Runtime consumption uses a separate unique idempotency key, so no duplicate metadata representation is required."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"billing_usage_events\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "billing_usage_events",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "billing_finops_support",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_a7649ef202daf07465be9ccd3b",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Billing and FinOps support-index and reviewer-lineage audit",
+      "rationale": "The ordered migration index begins with user_id and supplies the same ledger lookup. The metadata/clone single-column index is retained compatibility, not a missing fresh path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"infrastructure_destroy_challenges\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "infrastructure_destroy_challenges",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_2139e7c4503ef5a7c8c0b562af",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "The operational clone and entity metadata agree on this compatibility index, but committed lifecycle queries use the primary operation/challenge identity plus project/user guards and do not prove a missing fresh workload path. It is retained operationally and is not added to fresh schema without measured need."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"infrastructure_destroy_challenges\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "infrastructure_destroy_challenges",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_c8210915d3f66654ed97c99ac0",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "The operational clone and entity metadata agree on this compatibility index, but committed lifecycle queries use the primary operation/challenge identity plus project/user guards and do not prove a missing fresh workload path. It is retained operationally and is not added to fresh schema without measured need."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"infrastructure_destroy_operations\",\"keyItems\":[\"project_id\",\"created_at\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "infrastructure_destroy_operations",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": false,
+      "decisionGroup": "idx_destroy_operations_project",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "The migration-defined ordered project/created-at index directly serves latest destroy-status and cleanup-history reads. It remains database-only because modeling it is unnecessary for bounded TypeORM compositions."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"infrastructure_destroy_operations\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "infrastructure_destroy_operations",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_2498aa384e716e58d2265ae174",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "The fresh composite project/created-at index supplies the leading project lookup and latest ordering used by the lifecycle service. The clone/metadata single-column index is retained compatibility, not a missing fresh access path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"infrastructure_destroy_operations\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "infrastructure_destroy_operations",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_6dc1fa95b9df2eac158ad21aa8",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "The operational clone and entity metadata agree on this compatibility index, but committed lifecycle queries use the primary operation/challenge identity plus project/user guards and do not prove a missing fresh workload path. It is retained operationally and is not added to fresh schema without measured need."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"notification_deliveries\",\"keyItems\":[\"project_id\",\"created_at\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "notification_deliveries",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "notification_delivery_preferences",
+      "requiresSchemaChange": false,
+      "decisionGroup": "idx_notification_deliveries_project",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Notification preference, subscription and delivery support-index audit",
+      "rationale": "The migration-defined project/created-at index directly serves the bounded recent-delivery settings read. It is an intentional ordered database access path and does not require duplicate TypeORM metadata."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"notification_deliveries\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "notification_deliveries",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "notification_delivery_preferences",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_a9c405b7139586ccc14de763f4",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Notification preference, subscription and delivery support-index audit",
+      "rationale": "The ordered project/created-at migration index supplies the project lookup and result ordering used by recent delivery history. The clone/metadata project index is retained compatibility, not a missing fresh path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"notification_deliveries\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "notification_deliveries",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "notification_delivery_preferences",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_9fcd0b72070848cc484af6bc1e",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Notification preference, subscription and delivery support-index audit",
+      "rationale": "Metadata and the operational clone retain this user index, but delivery deduplication uses its unique key and settings history also filters by project with ordered project/created-at support. No independent user-only workload or measured fresh gap authorizes another index."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"notification_preferences\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "notification_preferences",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "notification_delivery_preferences",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_bc91397a2649207fb9d4143b0d",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Notification preference, subscription and delivery support-index audit",
+      "rationale": "The migration-defined user/project uniqueness contract serves every committed preference or subscription lookup, including destination where required. The clone/metadata single-column index is retained compatibility and no duplicate fresh index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"notification_preferences\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "notification_preferences",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "notification_delivery_preferences",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_64c90edc7310c6be7c10c96f67",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Notification preference, subscription and delivery support-index audit",
+      "rationale": "The migration-defined user/project uniqueness contract serves every committed preference or subscription lookup, including destination where required. The clone/metadata single-column index is retained compatibility and no duplicate fresh index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"notification_subscriptions\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "notification_subscriptions",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "notification_delivery_preferences",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_c27b3c62c2eb4d5d1335c0b033",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Notification preference, subscription and delivery support-index audit",
+      "rationale": "The migration-defined user/project uniqueness contract serves every committed preference or subscription lookup, including destination where required. The clone/metadata single-column index is retained compatibility and no duplicate fresh index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"notification_subscriptions\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "notification_subscriptions",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "notification_delivery_preferences",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_565bddc96d2492c5bf99274575",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Notification preference, subscription and delivery support-index audit",
+      "rationale": "The migration-defined user/project uniqueness contract serves every committed preference or subscription lookup, including destination where required. The clone/metadata single-column index is retained compatibility and no duplicate fresh index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"orchestration_outbox\",\"keyItems\":[\"status\",\"available_at\"],\"unique\":false,\"predicate\":\"status IN ('pending','failed')\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "orchestration_outbox",
+      "kind": "index",
+      "generatedClassification": "metadata_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_orchestration_outbox_dispatch",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"orchestration_outbox\",\"keyItems\":[\"status\",\"available_at\"],\"unique\":false,\"predicate\":\"status::text = ANY (ARRAY['pending'::character varying, 'failed'::character varying]::text[])\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "orchestration_outbox",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_orchestration_outbox_dispatch",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"orchestration_outbox\",\"keyItems\":[\"status\",\"available_at\"],\"unique\":false,\"predicate\":\"status::text = ANY (ARRAY['pending'::character varying::text, 'failed'::character varying::text])\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "orchestration_outbox",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_orchestration_outbox_dispatch",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_configuration_snapshots\",\"keyItems\":[\"pipeline_run_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_configuration_snapshots",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "project_activity_configuration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_ef73ffbc215041567e229b1d2d",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project activity and configuration support-index audit",
+      "rationale": "The migration-defined unique pipeline_run_id index already enforces one immutable snapshot per run and serves every exact snapshot lookup. The metadata/clone non-unique index is duplicate retained compatibility, not a missing fresh path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_deployment_contracts\",\"keyItems\":[\"project_id\",\"detection_source_commit\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_deployment_contracts",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "preparation_evidence_snapshots",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_project_deployment_contracts_commit",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: preparation evidence snapshots",
+      "rationale": "The completed family audit ties this exact ordered lookup to immutable replay, event ordering or current-state workload and preserves it without forcing metadata normalization."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_detection_profiles\",\"keyItems\":[\"project_id\",\"input_fingerprint\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_detection_profiles",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "preparation_evidence_snapshots",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_detection_input_fingerprint",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: preparation evidence snapshots",
+      "rationale": "The completed family audit ties this exact ordered lookup to immutable replay, event ordering or current-state workload and preserves it without forcing metadata normalization."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_detection_profiles\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_detection_profiles",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "preparation_evidence_snapshots",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_34e94812d10dbe5bdce7eccf12",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: preparation evidence snapshots",
+      "rationale": "The completed preparation audit proves the one-project unique key already supplies this leading-key lookup; the clone/metadata index is retained compatibility, not a missing fresh access path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_environment_variables\",\"keyItems\":[\"project_id\",\"normalized_key\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_environment_variables",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "project_activity_configuration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_project_env_normalized_key",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project activity and configuration support-index audit",
+      "rationale": "The canonical configuration migration creates this exact project/normalized-key path before its managed-database ownership rewrite. Runtime configuration also resolves project rows and canonical normalized keys while secret values remain non-selectable by default. It is retained as migration-authoritative database support without metadata duplication."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_infrastructure_events\",\"keyItems\":[\"project_id\",\"pipeline_run_id\",\"occurred_at\",\"sequence_number\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_infrastructure_events",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "infrastructure_observability",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_project_infrastructure_events_canonical_order",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Infrastructure and observability support-index audit",
+      "rationale": "The completed family audit ties this exact ordered lookup to immutable replay, event ordering or current-state workload and preserves it without forcing metadata normalization."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_orchestration_events\",\"keyItems\":[\"project_id\",\"pipeline_run_id\",\"occurred_at\",\"sequence_number\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_orchestration_events",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "terraform_export_orchestration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_project_orchestration_events_canonical_order",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Terraform export and orchestration event support-index audit",
+      "rationale": "The canonical event-time migration defines this ordered project/run timeline index. AI evidence collection uses the same project and pipeline predicates with occurred-at and sequence ordering, so it remains an intentional database-only workload path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_pipeline_events\",\"keyItems\":[\"pipeline_run_id\",\"occurred_at\",\"sequence_number\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_pipeline_events",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "pipeline_deployment_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_pipeline_events_canonical_order",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Pipeline/deployment status-history audit",
+      "rationale": "The completed family audit ties this exact ordered lookup to immutable replay, event ordering or current-state workload and preserves it without forcing metadata normalization."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_pipeline_runs\",\"keyItems\":[\"cross_lane_ownership_id\"],\"unique\":false,\"predicate\":\"cross_lane_ownership_id IS NOT NULL\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_pipeline_runs",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "pipeline_deployment_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_pipeline_runs_cross_lane_ownership",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Pipeline/deployment status-history audit",
+      "rationale": "The recreated data-bearing clone confirms one operational unpredicated btree on the same ordered nullable key. It is a sufficient superset for the committed non-null equality lookup served by the fresh/metadata partial form, so neither representation is missing and no duplicate index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_pipeline_runs\",\"keyItems\":[\"cross_lane_ownership_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_pipeline_runs",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "pipeline_deployment_history",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_pipeline_runs_cross_lane_ownership",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Pipeline/deployment status-history audit",
+      "rationale": "The recreated data-bearing clone confirms one operational unpredicated btree on the same ordered nullable key. It is a sufficient superset for the committed non-null equality lookup served by the fresh/metadata partial form, so neither representation is missing and no duplicate index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_preflight_reports\",\"keyItems\":[\"project_id\",\"input_fingerprint\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_preflight_reports",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "preparation_evidence_snapshots",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_preflight_input_fingerprint",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: preparation evidence snapshots",
+      "rationale": "The completed family audit ties this exact ordered lookup to immutable replay, event ordering or current-state workload and preserves it without forcing metadata normalization."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_preflight_reports\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_preflight_reports",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "preparation_evidence_snapshots",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_f181b71587fcabe56f68aede31",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: preparation evidence snapshots",
+      "rationale": "The completed preparation audit proves the one-project unique key already supplies this leading-key lookup; the clone/metadata index is retained compatibility, not a missing fresh access path."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_release_lane_ownerships\",\"keyItems\":[\"deployment_intent_id\"],\"unique\":false,\"predicate\":\"deployment_intent_id IS NOT NULL\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_release_lane_ownerships",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_release_lane_ownership_deployment_intent",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The recreated data-bearing clone confirms one operational unpredicated btree on the same ordered nullable key. It is a sufficient superset for the committed non-null equality lookup served by the fresh/metadata partial form, so neither representation is missing and no duplicate index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_release_lane_ownerships\",\"keyItems\":[\"deployment_intent_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_release_lane_ownerships",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_release_lane_ownership_deployment_intent",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The recreated data-bearing clone confirms one operational unpredicated btree on the same ordered nullable key. It is a sufficient superset for the committed non-null equality lookup served by the fresh/metadata partial form, so neither representation is missing and no duplicate index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_release_lane_ownerships\",\"keyItems\":[\"operation_lease_id\"],\"unique\":false,\"predicate\":\"operation_lease_id IS NOT NULL\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_release_lane_ownerships",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_release_lane_ownership_operation_lease",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The recreated data-bearing clone confirms one operational unpredicated btree on the same ordered nullable key. It is a sufficient superset for the committed non-null equality lookup served by the fresh/metadata partial form, so neither representation is missing and no duplicate index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_release_lane_ownerships\",\"keyItems\":[\"operation_lease_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_release_lane_ownerships",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_release_lane_ownership_operation_lease",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The recreated data-bearing clone confirms one operational unpredicated btree on the same ordered nullable key. It is a sufficient superset for the committed non-null equality lookup served by the fresh/metadata partial form, so neither representation is missing and no duplicate index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_rollback_records\",\"keyItems\":[\"cross_lane_ownership_id\"],\"unique\":false,\"predicate\":\"cross_lane_ownership_id IS NOT NULL\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_rollback_records",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_rollback_records_cross_lane_ownership",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "The recreated data-bearing clone confirms one operational unpredicated btree on the same ordered nullable key. It is a sufficient superset for the committed non-null equality lookup served by the fresh/metadata partial form, so neither representation is missing and no duplicate index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_rollback_records\",\"keyItems\":[\"cross_lane_ownership_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_rollback_records",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_rollback_records_cross_lane_ownership",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "The recreated data-bearing clone confirms one operational unpredicated btree on the same ordered nullable key. It is a sufficient superset for the committed non-null equality lookup served by the fresh/metadata partial form, so neither representation is missing and no duplicate index is authorized."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_user_activity\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_user_activity",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "project_activity_configuration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_d74bd0ba4ab17420cc76194ba8",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project activity and configuration support-index audit",
+      "rationale": "Metadata and the operational clone retain this project index for relation and cascade compatibility. Committed activity reads load by user and exact writes use the unique (user_id, project_id) key; no project-only workload proves a missing fresh index."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_user_activity\",\"keyItems\":[\"user_id\",\"last_meaningful_activity_at\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_user_activity",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "project_activity_configuration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_project_user_activity_user_meaningful",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project activity and configuration support-index audit",
+      "rationale": "The canonical recency migration defines this user-scoped ordered path. Workspace activity loads by user and ranks the matching timestamp fields, so the leading equality key and recency order are intentional database support without duplicate TypeORM metadata."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_user_activity\",\"keyItems\":[\"user_id\",\"last_viewed_at\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_user_activity",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "project_activity_configuration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_project_user_activity_user_viewed",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project activity and configuration support-index audit",
+      "rationale": "The canonical recency migration defines this user-scoped ordered path. Workspace activity loads by user and ranks the matching timestamp fields, so the leading equality key and recency order are intentional database support without duplicate TypeORM metadata."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"project_user_activity\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_user_activity",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "project_activity_configuration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_9dbc35b2f889ce2f191b3729b0",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_access_path",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project activity and configuration support-index audit",
+      "rationale": "Both fresh recency indexes begin with user_id and serve the committed per-user activity load. The metadata/clone single-column index is a retained equivalent path rather than a missing fresh object."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"terraform_export_artifacts\",\"keyItems\":[\"expires_at\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "terraform_export_artifacts",
+      "kind": "index",
+      "generatedClassification": "database_only",
+      "family": "terraform_export_orchestration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "idx_export_artifacts_expiry",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "intentionally_database_only",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Terraform export and orchestration event support-index audit",
+      "rationale": "The migration-defined expiry index directly serves bounded deletion of expired, short-lived export archives after artifact creation. It is an intentional database-only retention path and requires no TypeORM metadata duplicate."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"terraform_export_artifacts\",\"keyItems\":[\"project_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "terraform_export_artifacts",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "terraform_export_orchestration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_175ff7ff1248f7e7742c419755",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Terraform export and orchestration event support-index audit",
+      "rationale": "Metadata and the operational clone retain this project index, but download resolves by artifact primary key plus project guard and no project-history list exists. No measured fresh workload authorizes another index."
+    },
+    {
+      "semanticId": "{\"kind\":\"index\",\"schema\":\"public\",\"table\":\"terraform_export_artifacts\",\"keyItems\":[\"user_id\"],\"unique\":false,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "terraform_export_artifacts",
+      "kind": "index",
+      "generatedClassification": "fresh_clone_difference",
+      "family": "terraform_export_orchestration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "IDX_613ee16571e92aa271d293466a",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "intentionally_metadata_only_compatibility",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Terraform export and orchestration event support-index audit",
+      "rationale": "Metadata and the operational clone retain this user index, but user authorization is checked after the artifact primary-key/project lookup and no user-history list exists. No measured fresh workload authorizes another index."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"deployment_side_effect_reconciliation_leases\",\"keyItems\":[\"side_effect_id\"],\"unique\":true,\"predicate\":\"status IN ('acquired','heartbeat_active')\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "deployment_side_effect_reconciliation_leases",
+      "kind": "unique",
+      "generatedClassification": "metadata_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_side_effect_reconciliation_lease_active",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"deployment_side_effect_reconciliation_leases\",\"keyItems\":[\"side_effect_id\"],\"unique\":true,\"predicate\":\"status::text = ANY (ARRAY['acquired'::character varying, 'heartbeat_active'::character varying]::text[])\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "deployment_side_effect_reconciliation_leases",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_side_effect_reconciliation_lease_active",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"deployment_side_effect_reconciliation_leases\",\"keyItems\":[\"side_effect_id\"],\"unique\":true,\"predicate\":\"status::text = ANY (ARRAY['acquired'::character varying::text, 'heartbeat_active'::character varying::text])\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "deployment_side_effect_reconciliation_leases",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_side_effect_reconciliation_lease_active",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"infrastructure_manifests\",\"keyItems\":[\"project_id\",\"environment_name\"],\"unique\":true,\"predicate\":\"status = 'applied'\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "infrastructure_manifests",
+      "kind": "unique",
+      "generatedClassification": "metadata_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_infrastructure_manifest_current_applied",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"infrastructure_manifests\",\"keyItems\":[\"project_id\",\"environment_name\"],\"unique\":true,\"predicate\":\"status::text = 'applied'::text\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "infrastructure_manifests",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_infrastructure_manifest_current_applied",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"project_cloud_states\",\"keyItems\":[\"project_id\"],\"unique\":true,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_cloud_states",
+      "kind": "unique",
+      "generatedClassification": "ambiguous",
+      "family": "state_storage_recovery",
+      "requiresSchemaChange": false,
+      "decisionGroup": "project_cloud_states.project_id.unique",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "equivalent_duplicate_unique_enforcement",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#State, storage, rollback and recovery residual audit",
+      "rationale": "The one-cloud-state-per-project contract is enforced in every source; metadata/clone contain redundant explicit-index and one-to-one relation representations while fresh uses one named unique constraint. No additional enforcement is missing and no duplicate may be dropped without clone mutation proof."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"project_database_tiers\",\"keyItems\":[\"project_id\"],\"unique\":true,\"predicate\":null,\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_database_tiers",
+      "kind": "unique",
+      "generatedClassification": "ambiguous",
+      "family": "project_activity_configuration",
+      "requiresSchemaChange": false,
+      "decisionGroup": "project_database_tiers.project_id.unique",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "equivalent_duplicate_unique_enforcement",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project activity and configuration support-index audit",
+      "rationale": "Every source enforces exactly one database tier per project. Fresh has one named unique constraint; the one-to-one metadata and operational clone contain redundant unique-index/relation representations. No enforcement is missing and no existing object is changed in this audit."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"project_operation_leases\",\"keyItems\":[\"project_id\",\"environment_name\",\"lane\",\"scope\"],\"unique\":true,\"predicate\":\"status IN ('acquired','heartbeat_active')\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_operation_leases",
+      "kind": "unique",
+      "generatedClassification": "metadata_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_project_operation_lease_active_scope",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"project_operation_leases\",\"keyItems\":[\"project_id\",\"environment_name\",\"lane\",\"scope\"],\"unique\":true,\"predicate\":\"status::text = ANY (ARRAY['acquired'::character varying, 'heartbeat_active'::character varying]::text[])\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_operation_leases",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_project_operation_lease_active_scope",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"project_operation_leases\",\"keyItems\":[\"project_id\",\"environment_name\",\"lane\",\"scope\"],\"unique\":true,\"predicate\":\"status::text = ANY (ARRAY['acquired'::character varying::text, 'heartbeat_active'::character varying::text])\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_operation_leases",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "intent_dispatch_ownership",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_project_operation_lease_active_scope",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": false,
+        "clone": true
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: intent dispatch and ownership",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"project_stable_releases\",\"keyItems\":[\"project_id\",\"environment_name\"],\"unique\":true,\"predicate\":\"status = 'stable'\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_stable_releases",
+      "kind": "unique",
+      "generatedClassification": "metadata_only",
+      "family": "release_provenance_stable_projection",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_project_stable_release_scope",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: release provenance and stable projection",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"project_stable_releases\",\"keyItems\":[\"project_id\",\"environment_name\"],\"unique\":true,\"predicate\":\"status::text = 'stable'::text\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "project_stable_releases",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "release_provenance_stable_projection",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_project_stable_release_scope",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: release provenance and stable projection",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"projects\",\"keyItems\":[\"owner_user_id\",\"github_repository_id\",\"target_branch\",\"environment_name\"],\"unique\":true,\"predicate\":\"github_repository_id IS NOT NULL AND archived_at IS NULL\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "projects",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": true,
+      "decisionGroup": "UQ_active_project_github_branch_environment",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "The serialized project-creation contract requires this active repository/branch/environment identity guard. A new data-bearing clone proves the exact column types and zero duplicate groups; guarded additive migration 1760000058000 restores the exact partial unique index after semantic-equivalence checks."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"projects\",\"keyItems\":[\"owner_user_id\",\"lower(repository_full_name::text)\",\"target_branch\",\"environment_name\"],\"unique\":true,\"predicate\":\"archived_at IS NULL\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "projects",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "project_identity_destruction",
+      "requiresSchemaChange": true,
+      "decisionGroup": "UQ_active_project_repository_branch_environment",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": false
+      },
+      "finalClassification": "genuinely_missing_guarded_migration",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Project identity and destruction lifecycle residual audit",
+      "rationale": "The serialized project-creation contract requires this active repository/branch/environment identity guard. A new data-bearing clone proves the exact column types and zero duplicate groups; guarded additive migration 1760000058000 restores the exact partial unique index after semantic-equivalence checks."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"release_manifests\",\"keyItems\":[\"project_id\",\"environment_name\"],\"unique\":true,\"predicate\":\"status = 'stable'\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "release_manifests",
+      "kind": "unique",
+      "generatedClassification": "metadata_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_release_manifest_current_stable",
+      "sourcePresence": {
+        "metadata": true,
+        "fresh": false,
+        "clone": false
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    },
+    {
+      "semanticId": "{\"kind\":\"unique\",\"schema\":\"public\",\"table\":\"release_manifests\",\"keyItems\":[\"project_id\",\"environment_name\"],\"unique\":true,\"predicate\":\"status::text = 'stable'::text\",\"includedColumns\":[],\"accessMethod\":\"btree\"}",
+      "table": "release_manifests",
+      "kind": "unique",
+      "generatedClassification": "database_only",
+      "family": "manifest_release_lineage",
+      "requiresSchemaChange": false,
+      "decisionGroup": "UQ_release_manifest_current_stable",
+      "sourcePresence": {
+        "metadata": false,
+        "fresh": true,
+        "clone": true
+      },
+      "finalClassification": "equivalent_predicate_representation",
+      "evidence": "TYPEORM_SCHEMA_CONTRACT_AUDIT.md#Bounded family: manifest and release lineage",
+      "rationale": "The completed family audit proves one partial predicate contract; TypeORM IN/equality syntax and PostgreSQL cast/ANY syntax are representation differences for that frozen named object."
+    }
+  ]
+}

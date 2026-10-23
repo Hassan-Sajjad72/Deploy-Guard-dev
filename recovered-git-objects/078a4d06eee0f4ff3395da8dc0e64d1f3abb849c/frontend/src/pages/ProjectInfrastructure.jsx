@@ -1,0 +1,181 @@
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { createTerraformExport, downloadTerraformExport } from "../api/platformApi.js";
+import { getProjectDetailedCurrentState } from "../api/projectApi.js";
+import { Card, ChartCard, CopyValue, DataTable, EmptyState, MetricCard, PageHeader, StatusChip } from "../components/common/DesignSystem.jsx";
+import ErrorState from "../components/common/ErrorState.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
+import { useToast } from "../hooks/useToast.js";
+import { redirectDeletedProject, subscribeProjectStateChanged } from "../utils/projectStateSync.js";
+import { projectStatePresentation } from "../utils/projectStatePresentation.js";
+
+function label(value) {
+  return value ? String(value).replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Unavailable";
+}
+
+function date(value) {
+  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Unavailable";
+}
+
+function shortened(value, max = 34) {
+  if (!value) return "Unavailable";
+  const text = String(value);
+  return text.length > max ? `${text.slice(0, max - 10)}…${text.slice(-8)}` : text;
+}
+
+function healthStatus(value, available, updating = false) {
+  return available ? "active" : updating ? "pending" : value === "destroyed" ? "historical" : "unavailable";
+}
+
+function TerraformExportAction({ projectId }) {
+  const { notify } = useToast();
+  const [exporting, setExporting] = useState(false);
+
+  async function exportTerraform() {
+    setExporting(true);
+    try {
+      const artifact = await createTerraformExport(projectId);
+      await downloadTerraformExport(projectId, artifact);
+      notify(`Terraform export downloaded as ${artifact.filename}.`, "success");
+    } catch (caught) {
+      notify(caught.message || "Terraform export failed.", "danger");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return <button aria-busy={exporting} className="secondary-button" disabled={exporting} onClick={exportTerraform} type="button">{exporting ? "Preparing export…" : "Export Terraform"}</button>;
+}
+
+function ServiceFlow({ state, evidence }) {
+  const live = state?.stateAuthority?.runtime?.state === "present";
+  const updating = Boolean(state?.stateAuthority?.activeOperation && state.stateAuthority.activeOperation.type !== "destroy");
+  const ecsHealthy = Boolean(evidence?.ecs && evidence.ecs.runningCount >= evidence.ecs.desiredCount && evidence.ecs.pendingCount === 0);
+  const activeTargets = (evidence?.alb?.targetHealth || []).filter((item) => item !== "draining");
+  const albHealthy = activeTargets.length > 0 && activeTargets.every((item) => item === "healthy");
+  const resources = Array.isArray(evidence?.resources) ? evidence.resources : [];
+  const vpc = resources.find((resource) => /vpc/i.test(`${resource.type || ""} ${resource.name || ""}`));
+  const route = resources.find((resource) => /route\s*53|dns/i.test(`${resource.type || ""} ${resource.name || ""}`));
+  const databaseAttached = (evidence?.runtimeIdentity?.services || []).some((service) => service?.databaseAttached || service?.runtimeConfiguration?.databaseAttached);
+  const node = (name, detail, available, stateUpdating = false) => <article className="topology-resource" data-status={healthStatus(evidence?.terraformState?.status, available, stateUpdating)}>
+    <span className="topology-resource-kind">{name}</span><strong>{detail}</strong><StatusChip status={available ? "healthy" : stateUpdating ? "running" : "unavailable"}>{available ? "Healthy" : stateUpdating ? "Updating" : "Unavailable"}</StatusChip>
+  </article>;
+  return <Card className="infrastructure-topology-card">
+    <div className="infrastructure-section-heading"><div><p className="eyebrow">Current AWS topology</p><h2>Internet edge to private runtime</h2></div><span className="infrastructure-source">Generation {shortened(state?.generationState?.liveGenerationId, 20)}</span></div>
+    <div aria-label="Infrastructure service topology" className="infrastructure-topology">
+      <section className="topology-delivery-plane" aria-label="Release delivery plane">
+        <span>Release delivery</span>
+        {node("GitHub source", shortened(state?.stableRelease?.commit, 18), Boolean(state?.stableRelease?.commit))}
+        <i aria-hidden="true" />
+        {node("Build", live ? "Application image" : "Unavailable", live)}
+        <i aria-hidden="true" />
+        {node("Amazon ECR", evidence?.ecr?.imageDigest ? "Immutable digest" : updating ? "Release updating" : "Unavailable", Boolean(evidence?.ecr?.imageDigest), updating)}
+      </section>
+      <section className="topology-runtime-plane" aria-label="AWS runtime topology">
+        <div className="topology-edge">
+          {node("Internet", state?.stableUrl ? "Public endpoint" : "Awaiting route", Boolean(state?.stableUrl), updating)}
+          <i aria-hidden="true" />
+          {node("Route 53", route?.name || (state?.stableUrl ? "Public route" : "Not configured"), Boolean(route) || Boolean(state?.stableUrl))}
+          <i aria-hidden="true" />
+          {node("Application Load Balancer", albHealthy ? "Targets healthy" : updating ? "Release updating" : "Unavailable", albHealthy, updating)}
+        </div>
+        <div className="topology-vpc-boundary">
+          <header><span>Amazon VPC</span><strong>{vpc?.id || vpc?.name || "Project network"}</strong></header>
+          <div className="topology-subnet-grid">
+            <section><span>Public subnets</span>{node("ALB listeners", albHealthy ? "Routing traffic" : "Awaiting targets", albHealthy, updating)}</section>
+            <section><span>Private application subnets</span>{node("ECS / Fargate", evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : updating ? "Release updating" : "Unavailable", ecsHealthy, updating)}</section>
+            <section><span>Private data layer</span>{node("Database / storage", databaseAttached ? "Managed service attached" : "Not configured", databaseAttached && live, updating && databaseAttached)}</section>
+          </div>
+        </div>
+      </section>
+    </div>
+    {evidence?.alb?.endpoint ? <p className="infrastructure-endpoint">Application endpoint: <a href={evidence.alb.endpoint} rel="noreferrer" target="_blank">Open verified application</a></p> : null}
+  </Card>;
+}
+
+function ServiceRuntimeList({ evidence, transitioning = false }) {
+  const persisted = Array.isArray(evidence?.runtimeIdentity?.services) ? evidence.runtimeIdentity.services : [];
+  const observed = new Map((evidence?.services || []).map((service) => [service.serviceId, service]));
+  if (!persisted.length) return null;
+  return <Card><div className="infrastructure-section-heading"><div><p className="eyebrow">Services</p><h2>Running applications</h2></div></div><div className="infrastructure-support-grid service-runtime-grid">{persisted.map((service) => { const current = observed.get(service.serviceId); const targets = (current?.alb?.targetHealth || []).filter((state) => state !== "draining"); const healthy = current?.ecs?.runningCount === current?.ecs?.desiredCount && targets.length > 0 && targets.every((state) => state === "healthy"); const updating = transitioning && !current; return <article key={service.serviceId}><div className="service-runtime-heading"><strong>{service.serviceName}</strong><StatusChip status={healthy ? "healthy" : updating ? "running" : current ? "unhealthy" : "unknown"}>{healthy ? "Healthy" : updating ? "Updating" : current ? "Unhealthy" : "Unknown"}</StatusChip></div><span>{service.serviceDirectory || "."}</span><p>Port {service.servicePort || "Unavailable"} · ECS {current ? `${current.ecs.runningCount}/${current.ecs.desiredCount}` : updating ? "Release updating" : "Unavailable"}</p>{service.publicUrl ? <a href={service.publicUrl} rel="noreferrer" target="_blank">Open ↗</a> : null}</article>; })}</div></Card>;
+}
+
+function SupportingServices({ evidence }) {
+  const cost = evidence?.cost;
+  const terraformAvailable = evidence?.terraformState?.status === "active";
+  const cloudWatchAvailable = evidence?.cloudWatch?.status === "active";
+  const infracostAvailable = cost?.source === "infracost" && ["estimated", "approval_required"].includes(cost?.status);
+  const services = [
+    ["Terraform", terraformAvailable ? "State active" : label(evidence?.terraformState?.status), terraformAvailable],
+    ["CloudWatch", cloudWatchAvailable ? "Log group observed" : label(evidence?.cloudWatch?.status), cloudWatchAvailable],
+    ["Infracost", infracostAvailable ? `${cost.currency || "USD"} ${Number(cost.monthly || 0).toFixed(2)}/month` : cost?.unavailableReason || "Unavailable", infracostAvailable],
+  ];
+  return <Card><div className="infrastructure-section-heading"><div><p className="eyebrow">Supporting services</p><h2>Runtime operations</h2></div></div><div className="infrastructure-support-grid">{services.map(([name, detail, available]) => <article key={name}><span>{name}</span><strong>{available ? "Available" : "Unavailable"}</strong><p>{detail}</p></article>)}</div></Card>;
+}
+
+function Pricing({ cost }) {
+  const available = cost?.source === "infracost" && ["estimated", "approval_required"].includes(cost?.status) && Number.isFinite(cost?.monthly);
+  const breakdown = Array.isArray(cost?.breakdown) ? cost.breakdown.filter((item) => Number.isFinite(item?.monthly)) : [];
+  const maximum = Math.max(...breakdown.map((item) => Number(item.monthly)), 1);
+  return <Card className="infrastructure-finops-card"><div className="infrastructure-section-heading"><div><p className="eyebrow">Cost</p><h2>Estimated monthly cost</h2></div><span className="infrastructure-source">{available ? "Infracost" : "Unavailable"}</span></div>
+    {available ? <><div className="infrastructure-cost-summary"><MetricCard detail={`Last calculated ${date(cost.estimatedAt)}`} label="Monthly estimate" value={`${cost.currency || "USD"} ${Number(cost.monthly).toFixed(2)} / month`} /></div>{breakdown.length ? <details className="infrastructure-cost-details"><summary>View cost breakdown</summary><ChartCard description="Persisted service estimates." hasData title="Service breakdown"><ol className="infrastructure-cost-bars">{breakdown.map((item) => <li key={`${item.name}-${item.monthly}`}><span>{item.service || item.name}</span><strong>{cost.currency || "USD"} {Number(item.monthly).toFixed(2)}</strong><i style={{ width: `${Math.max(2, (Number(item.monthly) / maximum) * 100)}%` }} /></li>)}</ol></ChartCard></details> : null}</> : <EmptyState icon="activity" message={cost?.unavailableReason || "The current release has no Infracost estimate."} title="Pricing unavailable" />}
+  </Card>;
+}
+
+function TechnicalDetails({ state, evidence }) {
+  const identity = evidence?.runtimeIdentity || {};
+  const rows = [
+    ["Generation", state?.generationState?.liveGenerationId], ["Source SHA", state?.stableRelease?.commit],
+    ["Image", identity.imageDigest ? `${identity.imageUri}@${identity.imageDigest}` : identity.imageUri],
+    ["ECS cluster", identity.ecsClusterArn || identity.ecsClusterName], ["ECS service", identity.ecsServiceArn || identity.ecsServiceName],
+    ["Task definition", identity.taskDefinitionArn], ["ALB", identity.albArn || identity.albName],
+    ["Target group", identity.targetGroupArn || identity.targetGroupName], ["CloudWatch log group", identity.cloudWatchLogGroupName],
+    ["Terraform state", identity.terraformStateKey || evidence?.terraformState?.key],
+  ];
+  for (const service of Array.isArray(identity.services) ? identity.services : []) {
+    rows.push([`${service.serviceName} image`, service.imageDigest ? `${service.imageUri}@${service.imageDigest}` : service.imageUri], [`${service.serviceName} ECS service`, service.ecsServiceArn], [`${service.serviceName} task definition`, service.taskDefinitionArn], [`${service.serviceName} endpoint`, service.publicUrl], [`${service.serviceName} log group`, service.cloudWatchLogGroupName]);
+  }
+  return <Card className="infrastructure-inventory-card"><details className="advanced-resource-details"><summary><span><span className="eyebrow">Advanced</span><strong>Resource details</strong></span><span>Expand</span></summary><DataTable caption="Current release resource identifiers" label="Technical infrastructure details"><thead><tr><th>Resource</th><th>Identifier</th></tr></thead><tbody>{rows.map(([name, value]) => <tr key={name}><td>{name}</td><td>{value ? <CopyValue label="Copy full identifier" value={String(value)} visibleValue={shortened(value, 58)} /> : "Unavailable"}</td></tr>)}</tbody></DataTable></details></Card>;
+}
+
+export default function ProjectInfrastructure() {
+  const { projectId } = useParams();
+  const navigate = useNavigate();
+  const [state, setState] = useState(null);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => { try { setError(""); setState(await getProjectDetailedCurrentState(projectId)); } catch (caught) { if (!redirectDeletedProject(caught, navigate)) setError(caught.message); } }, [navigate, projectId]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => subscribeProjectStateChanged(projectId, load), [load, projectId]);
+  useEffect(() => { if (!projectStatePresentation(state).active) return undefined; const timer = window.setInterval(load, 5000); return () => window.clearInterval(timer); }, [state?.stateAuthority?.activeOperation?.id, state?.stateAuthority?.activeOperation?.status, load]);
+  if (!state && !error) return <LoadingState message="Loading infrastructure state…" />;
+  const infrastructure = state?.stateAuthority?.infrastructure;
+  const evidence = state?.infrastructureEvidence;
+  const failedDestroy = state?.stateAuthority?.latestCompletedOperation?.type === "destroy"
+    && state?.stateAuthority?.latestCompletedOperation?.outcome === "failed";
+  const cleanupRequired = failedDestroy && state?.stateAuthority?.state === "BLOCKED";
+  const absent = infrastructure?.exists === false || infrastructure?.status === "not_provisioned";
+  const provisioningFailed = infrastructure?.status === "provisioning_failed";
+  const destroyRemoved = state?.stateAuthority?.activeOperation?.type === "destroy" && state?.stateAuthority?.runtime?.state === "removed";
+  const exportAction = <TerraformExportAction projectId={projectId} />;
+  if (cleanupRequired) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Destroy cleanup required" status="blocked" /><Card><p className="eyebrow">Runtime is not LIVE</p><h2>Destroy failed after runtime removal or before the previous runtime could be verified.</h2><p>{state?.stateAuthority?.reason || "DeployGuard will not treat historical release evidence as current infrastructure health."}</p><div className="infrastructure-support-grid"><article><span>ECS</span><strong>{label(evidence?.resources?.find((resource) => resource.type === "ECS Fargate")?.status)}</strong></article><article><span>Load balancer</span><strong>{label(evidence?.resources?.find((resource) => resource.type === "ALB")?.status)}</strong></article><article><span>Terraform cleanup</span><strong>{label(evidence?.terraformState?.status)}</strong></article></div><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Retry Failed Destroy</Link></Card></div>;
+  if (destroyRemoved) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Runtime removed · Destroy finalizing" status="destroying" /><Card><p className="eyebrow">Authoritative runtime observation</p><h2>ECS and ALB resources are removed.</h2><p>The Destroy operation remains active while DeployGuard verifies deletion and finalizes control-plane cleanup.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>View Destroy progress</Link></Card></div>;
+  if (absent) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Runtime infrastructure" status="not_provisioned" /><Card><p className="eyebrow">Runtime infrastructure not provisioned</p><h2>Deployment stopped during {state?.progress?.phase === "build" ? "Build Application" : "source preparation"}.</h2><p>Runtime infrastructure was not provisioned. Open Pipeline for the bounded failure evidence.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open Pipeline</Link></Card></div>;
+  if (provisioningFailed) return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title="Runtime infrastructure" status="provisioning_failed" /><Card><p className="eyebrow">Provisioning failed</p><h2>Runtime provisioning did not complete.</h2><p>Some resources may exist. Open Pipeline for bounded Terraform evidence.</p><Link className="secondary-button" to={`/projects/${projectId}/pipeline`}>Open Pipeline</Link></Card></div>;
+  const runtimePresent = state?.stateAuthority?.runtime?.state === "present";
+  const releaseUpdating = Boolean(state?.stateAuthority?.activeOperation && state.stateAuthority.activeOperation.type !== "destroy");
+  const runtimeTitle = runtimePresent ? (state?.stateAuthority?.state === "DESTROYING" ? "Runtime healthy · Destroy in progress" : failedDestroy ? "Runtime healthy · Latest Destroy failed" : "Runtime service architecture") : "Runtime infrastructure state";
+  const observedServices = Array.isArray(evidence?.services) ? evidence.services : [];
+  const runningServices = observedServices.filter((service) => service?.ecs?.runningCount === service?.ecs?.desiredCount).length;
+  const targetHealth = observedServices.length
+    ? observedServices.flatMap((service) => service?.alb?.targetHealth || [])
+    : evidence?.alb?.targetHealth || [];
+  const activeTargetHealth = targetHealth.filter((target) => target !== "draining");
+  const drainingTargets = targetHealth.filter((target) => target === "draining").length;
+  const healthyTargets = activeTargetHealth.filter((target) => target === "healthy").length;
+  const targetsHealthy = activeTargetHealth.length > 0 && healthyTargets === activeTargetHealth.length;
+  const resources = Array.isArray(evidence?.resources) ? evidence.resources : [];
+  const vpcResource = resources.find((resource) => /vpc/i.test(`${resource.type || ""} ${resource.name || ""}`));
+  const databaseResource = resources.find((resource) => /database|rds|postgres|mysql|mongo/i.test(`${resource.type || ""} ${resource.name || ""}`));
+  const cost = evidence?.cost;
+  return <div className="infrastructure-page grid"><PageHeader actions={exportAction} eyebrow="Infrastructure" title={releaseUpdating ? "Runtime release updating" : runtimeTitle} status={infrastructure?.status || "unavailable"} description={releaseUpdating ? "The previous LIVE release remains canonical while AWS activates the candidate release." : "Current AWS state for this release."} />{error ? <ErrorState message={error} onRetry={() => void load()} /> : null}<section aria-label="Infrastructure summary" className="infrastructure-summary-grid"><MetricCard label="VPC" value={vpcResource?.id || vpcResource?.name || (runtimePresent ? "Active" : "Unavailable")} tone={runtimePresent ? "success" : "neutral"} /><MetricCard label="ECS" value={observedServices.length ? `${runningServices}/${observedServices.length} running` : releaseUpdating ? "Release updating" : evidence?.ecs ? `${evidence.ecs.runningCount}/${evidence.ecs.desiredCount} running` : "Unavailable"} tone={observedServices.length && runningServices === observedServices.length ? "success" : "neutral"} /><MetricCard label="ALB" value={activeTargetHealth.length ? `${healthyTargets}/${activeTargetHealth.length} healthy${drainingTargets ? ` · ${drainingTargets} draining` : ""}` : releaseUpdating ? "Release updating" : "Unavailable"} tone={targetsHealthy ? "success" : "neutral"} /><MetricCard label="Database" value={databaseResource?.name || (databaseResource ? "Provisioned" : "Not configured")} tone={databaseResource ? "success" : "neutral"} /><MetricCard label="Environment" value={state?.environmentName || evidence?.environment || evidence?.region || "Unavailable"} /><MetricCard label="Monthly cost" value={cost?.source === "infracost" && Number.isFinite(cost?.monthly) ? `${cost.currency || "USD"} ${Number(cost.monthly).toFixed(2)}` : "Not estimated"} /></section><ServiceFlow evidence={evidence} state={state} /><ServiceRuntimeList evidence={evidence} transitioning={releaseUpdating} /><SupportingServices evidence={evidence} /><Pricing cost={evidence?.cost} /><TechnicalDetails evidence={evidence} state={state} /></div>;
+}

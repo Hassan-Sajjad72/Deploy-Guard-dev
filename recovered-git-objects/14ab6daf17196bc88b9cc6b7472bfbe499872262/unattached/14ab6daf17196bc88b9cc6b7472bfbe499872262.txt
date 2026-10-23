@@ -1,0 +1,13 @@
+import { apiRequest } from "./client.js";
+const id = encodeURIComponent;
+export const getTroubleshootingSessions = (projectId) => apiRequest(`/api/projects/${id(projectId)}/troubleshooting`);
+export const getTroubleshootingSession = (projectId, sessionId) => apiRequest(`/api/projects/${id(projectId)}/troubleshooting/${id(sessionId)}`);
+export const startTroubleshooting = (projectId, pipelineRunId) => apiRequest(`/api/projects/${id(projectId)}/troubleshooting`, { method: "POST", body: { pipelineRunId } });
+export const followUpTroubleshooting = (projectId, sessionId, message) => apiRequest(`/api/projects/${id(projectId)}/troubleshooting/${id(sessionId)}/follow-up`, { method: "POST", body: { message } });
+export const regenerateTroubleshooting = (projectId, sessionId) => apiRequest(`/api/projects/${id(projectId)}/troubleshooting/${id(sessionId)}/regenerate`, { method: "POST" });
+export const getNotificationSettings = (projectId) => apiRequest(`/api/projects/${id(projectId)}/notifications`);
+export const updateNotificationSettings = (projectId, value) => apiRequest(`/api/projects/${id(projectId)}/notifications/preferences`, { method: "PATCH", body: value });
+export const subscribeNotifications = (projectId, email) => apiRequest(`/api/projects/${id(projectId)}/notifications/subscribe`, { method: "POST", body: { email } });
+export const refreshNotificationStatus = (projectId) => apiRequest(`/api/projects/${id(projectId)}/notifications/refresh-status`, { method: "POST" });
+export const resendNotificationConfirmation = (projectId) => apiRequest(`/api/projects/${id(projectId)}/notifications/resend-confirmation`, { method: "POST" });
+export const testNotification = (projectId) => apiRequest(`/api/projects/${id(projectId)}/notifications/test`, { method: "POST" });

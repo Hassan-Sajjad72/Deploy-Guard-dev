@@ -1,0 +1,42 @@
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { getApplicationRuntimeMetrics, getProjectCurrentState } from "../api/projectApi.js";
+import EmptyState from "../components/common/EmptyState.jsx";
+import ErrorState from "../components/common/ErrorState.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
+import { PageHeader } from "../components/common/Premium.jsx";
+import AlbLatencyCard from "../components/observability/AlbLatencyCard.jsx";
+import CpuMemoryChart from "../components/observability/CpuMemoryChart.jsx";
+
+export default function ProjectMetrics() {
+  const { projectId } = useParams();
+  const [range, setRange] = useState("1h");
+  const [runtime, setRuntime] = useState(null);
+  const [stableRelease, setStableRelease] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError(""); setRuntime(null);
+    getProjectCurrentState(projectId)
+      .then(async (state) => {
+        if (!active) return;
+        setStableRelease(state.stableRelease || null);
+        if (state.stableRelease) setRuntime(await getApplicationRuntimeMetrics(projectId, { range }));
+      })
+      .catch((caught) => active && setError(caught.message))
+      .finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, [projectId, range]);
+
+  return <div className="page-stack">
+    <PageHeader eyebrow="Application" title="Metrics" description="CPU, memory, request latency, and request rate for the verified stable application." actions={<Link className="secondary-button" to={`/projects/${projectId}`}>Overview</Link>} />
+    {error ? <ErrorState message={error} /> : null}
+    <section className="panel-flat"><div className="button-row" aria-label="Metrics time range">{["1h", "6h", "24h"].map((item) => <button className={range === item ? "primary-button" : "secondary-button"} key={item} onClick={() => setRange(item)} type="button">{item}</button>)}</div></section>
+    {loading ? <LoadingState message="Loading application metrics…" /> : null}
+    {!loading && !error && !stableRelease ? <EmptyState message="Application metrics will be available after the first stable release." /> : null}
+    {!loading && runtime?.available === false ? <EmptyState message={runtime.message || "Application metrics are not available yet."} /> : null}
+    {runtime?.available ? <div className="dashboard-grid"><CpuMemoryChart runtime={runtime} /><AlbLatencyCard runtime={runtime} /></div> : null}
+  </div>;
+}

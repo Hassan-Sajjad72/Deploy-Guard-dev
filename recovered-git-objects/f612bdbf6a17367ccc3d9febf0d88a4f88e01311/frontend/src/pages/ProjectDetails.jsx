@@ -1,0 +1,84 @@
+import { useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { approveTerraformApply, cancelPipelineRun, deployApprovalErrorMessage, generatePreflightReport, getProject, getProjectCurrentState, retryPipelineRun, runStackDetection, startProjectAutomation } from "../api/projectApi.js";
+import AppIcon from "../components/common/AppIcon.jsx";
+import ErrorState from "../components/common/ErrorState.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
+import { CollapsiblePanel, StatusBadge } from "../components/common/Premium.jsx";
+import { useToast } from "../hooks/useToast.js";
+import DeploymentRecoveryCard from "../components/projects/DeploymentRecoveryCard.jsx";
+
+function statusLabel(state) {
+  if (state.lifecycleStatus === "approval_required") return "approval required";
+  if (state.currentRunState?.status === "paused") return "approval required";
+  if (state.currentRunState?.status === "running") return "deploying";
+  if (state.currentRunState?.status === "failed") return "run failed";
+  return String(state.deploymentStatus || "unknown").replaceAll("_", " ");
+}
+function date(value) { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—"; }
+function human(value) { return String(value || "unknown").replaceAll("_", " "); }
+
+export default function ProjectDetails() {
+  const { projectId } = useParams();
+  const navigate = useNavigate();
+  const { notify } = useToast();
+  const [project, setProject] = useState(null);
+  const [state, setState] = useState(null);
+  const [error, setError] = useState("");
+  const [approvalError, setApprovalError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const approvalInFlight = useRef(false);
+  async function load() { try { const [p, s] = await Promise.all([getProject(projectId), getProjectCurrentState(projectId)]); setProject(p.project); setState(s); setError(""); } catch (caught) { setError(caught.message); } }
+  useEffect(() => { load(); }, [projectId]);
+  useEffect(() => { if (!state?.isDeploymentJobActive) return undefined; const timer = window.setInterval(load, 5000); return () => window.clearInterval(timer); }, [state?.isDeploymentJobActive, projectId]);
+
+  async function executeNextAction() {
+    const action = state.nextAction; if (!action?.enabled) return;
+    const isApplyApproval = action.type === "approve_apply";
+    if (isApplyApproval && approvalInFlight.current) return;
+    if (isApplyApproval) {
+      if (!window.confirm("Terraform apply will create or update AWS resources and may incur cost. Deploy to AWS?")) return;
+      approvalInFlight.current = true;
+      setApprovalError("");
+    }
+    setBusy(true); setError("");
+    try {
+      if (action.type === "run_stack_detection") await runStackDetection(projectId);
+      else if (action.type === "generate_preflight") await generatePreflightReport(projectId);
+      else if (action.type === "start_pipeline") await startProjectAutomation(projectId);
+      else if (action.type === "approve_apply") {
+        await approveTerraformApply(projectId, state?.runId);
+      }
+      else { navigate(action.href || `/projects/${projectId}/pipeline`); return; }
+      await load(); notify(isApplyApproval ? "Terraform apply approved. Deployment is resuming." : `${action.label} completed or started.`, "success");
+    } catch (caught) {
+      if (isApplyApproval) setApprovalError(deployApprovalErrorMessage(caught));
+      else setError(caught.message);
+    } finally {
+      if (isApplyApproval) approvalInFlight.current = false;
+      setBusy(false);
+    }
+  }
+  async function retry() { setBusy(true); try { await retryPipelineRun(projectId, state.latestPipeline.id); await load(); notify("Deployment retry queued.", "success"); } catch (caught) { setError(caught.message); } finally { setBusy(false); } }
+  async function cancel() { if (!window.confirm("Cancel this deployment run?")) return; setBusy(true); try { await cancelPipelineRun(projectId, state.activePipelineRunId); await load(); } catch (caught) { setError(caught.message); } finally { setBusy(false); } }
+
+  if (!project || !state) return error ? <ErrorState message={error} /> : <LoadingState message="Loading project overview…" />;
+  const currentRecoveryIssue = state.currentRecoveryIssue || state.recoveryIssue;
+  const currentRunSupersedesHistoricalHealth = Boolean(state.currentRunState && ["running", "paused", "inactive"].includes(state.currentRunState.status));
+  const needsAttention = Boolean(currentRecoveryIssue) || ["failed", "blocked"].includes(state.overallStatus);
+  const showRecovery = Boolean(currentRecoveryIssue);
+  const progress = state.progressPercentage ?? state.progress?.percentage ?? 0;
+  const liveVerificationFailed = !currentRunSupersedesHistoricalHealth && state.infrastructureProvisioned && !state.appLiveVerified && ["unhealthy", "stale_live_record"].includes(state.deploymentStatus);
+  const visualProgress = liveVerificationFailed && progress >= 100 ? 92 : progress;
+  const stack = [state.stackDetection?.language, state.stackDetection?.framework].filter(Boolean).join(" · ") || "Not detected";
+  return <div className="workspace-page project-home-page">
+    <header className="project-page-header"><div className="project-title-lockup"><span className="project-glyph project-glyph-large"><AppIcon name="box" size={21} /></span><div><div className="project-title-row"><h1>{project.name}</h1><StatusBadge status={state.lifecycleStatus || state.currentRunState?.status || state.deploymentStatus || "unknown"}>{statusLabel(state)}</StatusBadge></div><p><AppIcon name="github" size={14} />{project.repositoryFullName}<span>·</span><AppIcon name="branch" size={14} />{project.targetBranch}</p>{project.description ? <p className="project-description">{project.description}</p> : null}</div></div></header>
+    {error ? <ErrorState message={error} /> : null}
+    {(!state.environmentModes?.trivyScanEnabled || state.environmentModes?.securityGateMode === "bypass") && state.environmentModes?.finopsMockMode ? <section className="state warning"><strong>Demo deployment mode active:</strong> security and cost gates are not blocking.</section> : null}
+    <section className="project-trust-grid" aria-label="Authoritative project status"><article><span>Current run</span><strong>{human(state.currentRunState?.status || state.latestPipelineStatus)}</strong></article><article><span>Health</span><strong>{state.previousDeploymentIssue && currentRunSupersedesHistoricalHealth ? "Pending re-evaluation" : human(state.healthStatus)}</strong></article><article><span>Resources</span><strong>{human(state.resourceStatus)}</strong></article><article><span>Next action</span><strong>{state.nextAction?.label || human(state.cloudNextAction)}</strong></article></section>
+    <div className="project-control-layout"><main className="project-control-main"><section className={`deployment-canvas panel-flat ${needsAttention ? "deployment-canvas-failed" : ""}`}><div className="deployment-canvas-header"><div><p className="eyebrow">Current run</p><div className="deployment-stage-title"><span className={state.isDeploymentJobActive ? "active-stage-beacon" : ""} /><h2>{state.currentStepLabel}</h2></div><p>{liveVerificationFailed ? "Infrastructure provisioned, but app live verification failed." : state.statusExplanation || state.userFacingStatus}</p></div><div className="deployment-progress-value"><strong>{liveVerificationFailed ? "Infra ready" : `${progress}%`}</strong><span>{statusLabel(state)}</span></div></div><div className="deployment-progress-track"><span style={{ width: `${visualProgress}%` }} /></div><dl className="deployment-run-summary"><div><dt title="Identifies one pipeline or deployment execution.">Run ID</dt><dd title={state.runId || undefined}>{state.runId || "Not started"}</dd></div><div><dt>Started</dt><dd>{date(state.latestPipeline?.startedAt)}</dd></div><div><dt>Cloud verified</dt><dd>{date(state.lastCloudVerifiedAt)}</dd></div><div><dt>Stack</dt><dd>{stack}</dd></div></dl><div className="simple-primary-actions">{!showRecovery && state.nextAction?.enabled ? <button className="button" disabled={busy} onClick={executeNextAction} type="button">{busy ? "Working…" : state.nextAction.label}</button> : null}{state.approvalRequired && !state.approvalEligible ? <button className="button" disabled type="button">Approve infrastructure changes</button> : null}{!showRecovery && state.runControls?.canRetry ? <button className="button" disabled={busy} onClick={retry} type="button">Retry deployment</button> : null}{state.isDeploymentJobActive && state.runControls?.canCancel ? <button className="danger-text-button" disabled={busy} onClick={cancel} type="button">Cancel run</button> : null}</div>{state.approvalRequired && !state.approvalEligible ? <p className="inline-action-error" role="alert">{state.runControls?.approvalBlockedMessage}</p> : null}{approvalError ? <p className="inline-action-error" role="alert">{approvalError}</p> : null}</section>
+      {showRecovery && currentRecoveryIssue ? <DeploymentRecoveryCard issue={currentRecoveryIssue} projectId={projectId} /> : null}
+      {state.previousDeploymentIssue && currentRunSupersedesHistoricalHealth ? <section className="panel-flat historical-deployment-context"><p className="eyebrow">Previous deployment</p><h2>{state.previousDeploymentIssue.title}</h2><p>{state.previousDeploymentIssue.message}</p><small>Detected path: {state.deploymentContract?.healthPath || state.previousDeploymentIssue.healthPath || "Not detected"}</small></section> : null}
+    </main><aside className="project-control-aside">{state.existingStableDeployment?.url ? <section className="project-live-card panel-flat"><div className="live-card-status"><span /><strong>Existing deployment</strong></div><h2>Previous stable URL</h2><p>{state.existingStableDeployment.url}</p><small>Run {state.existingStableDeployment.pipelineRunId?.slice(0, 8) || "unknown"} · separate from the current run</small><a className="secondary-button" href={state.existingStableDeployment.url} rel="noreferrer" target="_blank">Open existing deployment</a></section> : state.liveDeployment?.available ? <section className="project-live-card panel-flat"><div className="live-card-status"><span /><strong>Live · verified</strong></div><h2>Deployment URL</h2><p>{state.liveDeployment.hostname}</p><a className="secondary-button" href={state.liveDeployment.url} rel="noreferrer" target="_blank">Open deployment</a></section> : state.liveDeployment?.stale ? <section className="panel-flat stale-deployment-card"><p className="eyebrow">Deployment URL stale</p><h2>Open deployment disabled</h2><p>The stored URL could not be verified. Refresh cloud state or redeploy.</p><button className="secondary-button" disabled type="button">Deployment URL stale</button></section> : null}<CollapsiblePanel summary="Developer details"><dl className="developer-detail-grid">{state.liveDeployment?.historicalHostname ? <div><dt>Historical URL</dt><dd>{state.liveDeployment.historicalHostname} · stale historical URL</dd></div> : null}<div><dt>External CI</dt><dd>{state.environmentModes?.githubActionsRequired ? "Required" : "Optional"}</dd></div><div><dt>Trivy</dt><dd>{state.environmentModes?.trivyScanEnabled ? state.environmentModes?.securityGateMode === "bypass" ? "Advisory only" : "Enabled" : "Bypassed"}</dd></div><div><dt>Terraform Apply</dt><dd>{state.environmentModes?.terraformApplyEnabled ? state.environmentModes?.terraformApplyRequiresApproval ? "Approval required" : "Enabled" : "Disabled"}</dd></div><div><dt>FinOps integration</dt><dd>{state.environmentModes?.finopsMockMode ? "Mock / API disabled" : "Infracost enabled"}</dd></div><div><dt>AI assistant</dt><dd>{state.environmentModes?.aiAssistantEnabled ? "Enabled" : "Disabled"}</dd></div><div><dt>State integration</dt><dd>{state.environmentModes?.stateMockMode ? "Disabled: mock mode" : "Remote configuration"}</dd></div></dl></CollapsiblePanel></aside></div>
+  </div>;
+}

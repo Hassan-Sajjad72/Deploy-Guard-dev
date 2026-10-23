@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="WEB_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/0f7f9488-70a9-4767-881e-2ea4c9773a76/67665874-fce4-4563-a21f-8849c1e5aaa9/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/1f9df568-ef7f-4646-8197-054491445df3/095ec8ba-8190-47f2-87e7-c658d8fcd43e/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/1f9df568-ef7f-4646-8197-054491445df3/30b40317-7a00-4928-94b2-4f7308f97adc/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/1f9df568-ef7f-4646-8197-054491445df3/756368ba-526e-4414-af98-74e4f5539693/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/1f9df568-ef7f-4646-8197-054491445df3/75b161be-f5cc-43df-a271-5214a93502d2/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/1f9df568-ef7f-4646-8197-054491445df3/a9fea644-71bb-45be-ab1d-93e82397c49d/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/1f9df568-ef7f-4646-8197-054491445df3/bc598812-d7a3-447c-a015-f6b7054b969c/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/1f9df568-ef7f-4646-8197-054491445df3/eb48ce21-6200-4149-984d-8cf755281311/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/1f9df568-ef7f-4646-8197-054491445df3/f968d2d5-b8db-4c54-8ab7-e13c5808ea93/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/646799a7-3a6e-41c7-a0f0-a4b8036b5255/57944f39-ae71-4c37-8832-f309b17235d2/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/092bd6f3-1d16-456d-afff-f5c0e4473beb/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/0a6044c1-b609-48b2-b2fa-ad299f91886e/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/23e9e61e-db58-41bd-968c-1b84be17a85e/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/29abdac5-354a-4172-a21c-60420644458e/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/39d8da93-f1e5-46cf-a14f-be39e1f23203/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/65370f57-33c6-4c4e-950a-2bd480ac9617/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/7af1dec4-90b8-4145-9e04-8fdd83474628/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/81bd6006-33ee-4830-a6bd-5be963dd9795/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/87cba4a1-0f1a-4f33-96b4-1be8edcccba7/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/8879d4af-9384-4199-b38b-1d9225bcd413/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/9eec4a8a-ce73-4fcd-bbd4-0ccc643d394d/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/bb4a2769-2305-4617-bb20-d67acc4596e7/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/c5353aff-cbed-46f3-95eb-b0693fa97409/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/fa87372f-3c84-41b1-aa65-814f8b1faa48/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/846665b9-ce31-405d-a131-b84457d80932/ff656663-fd53-42e7-80c9-11c5897245b0/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/f8664324-62df-4f02-ad40-1c9fe6adf800/525de254-cb06-48d0-b005-8daa534a35fe/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.deployguard/terraform-workspaces/f8664324-62df-4f02-ad40-1c9fe6adf800/b5a1feef-208d-40e5-ab8d-144df7970519/.terraform" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/terraform/base-network/.terraform" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

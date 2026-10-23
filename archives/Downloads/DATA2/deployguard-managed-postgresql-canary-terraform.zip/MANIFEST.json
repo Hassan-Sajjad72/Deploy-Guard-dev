@@ -1,0 +1,50 @@
+{
+  "generator": "DeployGuard",
+  "executionEngine": "github_actions",
+  "generatorVersion": "local",
+  "generatedAt": "1970-01-01T00:00:00.000Z",
+  "project": {
+    "name": "DeployGuard Managed PostgreSQL Canary",
+    "repository": "Hassan-Sajjad72/deployguard-bounded-fullstack-canary",
+    "branch": "main"
+  },
+  "environment": "dev",
+  "files": [
+    {
+      "path": "main.tf",
+      "sha256": "a57d0142ff63eed47399aad6a3f6f8bf5dd4f8bd7ade731bac98c9c0d7cf955a"
+    },
+    {
+      "path": "variables.tf",
+      "sha256": "6ea279d57fbd88ebd083ea8cb899e42a2cfccc725973c9080deb938651a732ba"
+    },
+    {
+      "path": "outputs.tf",
+      "sha256": "a5359d5d158e5b1cb9375ebbc7f86f006976fa103da43e089443648c96347d40"
+    },
+    {
+      "path": "README.md",
+      "sha256": "050acf6a05f95b2e5d166d00e89c7c62fb8a5ddf94723644107252d81634ebd0"
+    },
+    {
+      "path": "MIGRATION_NOTES.md",
+      "sha256": "6c9a1b08728bb62c130ae069e6ba48e3699e9f1d6048766dd46597d6d2629ff7"
+    },
+    {
+      "path": "backend.hcl.example",
+      "sha256": "f6454907bc11633dd2173a36b47ec9ecc131f9960c93811181730542208e1f63"
+    },
+    {
+      "path": "terraform.tfvars.example",
+      "sha256": "60f7c8a3d5d15f8f66e92cccac57bce0e3795b5c4dd8f08534fbe4aa7a56dabf"
+    }
+  ],
+  "exclusions": [
+    "state",
+    "plans",
+    "tfvars values",
+    "backend credentials",
+    "provider caches",
+    "symlinks"
+  ]
+}

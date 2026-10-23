@@ -1,0 +1,36 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { canonicalOverviewState, overviewLifecycleActions } from "../src/utils/overviewLifecyclePresentation.js";
+
+const overview = readFileSync(new URL("../src/pages/ProjectDetails.jsx", import.meta.url), "utf8");
+const lifecycle = readFileSync(new URL("../src/components/projects/ProjectOverviewLifecycle.jsx", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+
+const actions = (state, canManage = true) => overviewLifecycleActions({ stateAuthority: { state }, canRetry: true, stableUrl: "https://example.test" }, canManage);
+assert.equal(canonicalOverviewState({ stateAuthority: { state: "LIVE" }, developerState: "failed_application" }), "LIVE", "canonical state authority wins over historical state");
+assert.deepEqual(actions("READY"), [{ kind: "command", command: "deploy", label: "Deploy" }]);
+assert.deepEqual(actions("DEPLOYING"), [{ kind: "link", target: "pipeline", label: "View progress" }]);
+assert.deepEqual(actions("FAILED"), [
+  { kind: "link", target: "pipeline", label: "View Pipeline" },
+  { kind: "command", command: "retry", label: "Retry Failed Deployment" },
+]);
+assert.deepEqual(actions("LIVE"), [
+  { kind: "external", href: "https://example.test", label: "Open Application" },
+  { kind: "command", command: "destroy", label: "Destroy Infrastructure" },
+]);
+assert.deepEqual(actions("DESTROYING"), [{ kind: "link", target: "pipeline", label: "View progress" }]);
+assert.deepEqual(actions("DESTROYED"), [{ kind: "command", command: "deploy", label: "Deploy Again" }]);
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "FAILED" }, canRetry: false }, true), [{ kind: "link", target: "pipeline", label: "View Pipeline" }]);
+assert.deepEqual(overviewLifecycleActions({ stateAuthority: { state: "READY" } }, false), []);
+assert.doesNotMatch(lifecycle, /getGithubActionsDeploymentHistory|Redeploy|developerAction|estimatedCost|terraform/i);
+assert.match(lifecycle, /<MetricCard/g);
+assert.equal((lifecycle.match(/<MetricCard/g) || []).length, 4, "Overview has exactly four summary cards");
+assert.doesNotMatch(overview, /CanonicalDeploymentView|getProjectDetailedCurrentState/);
+assert.match(overview, /subscribeProjectStateChanged/);
+assert.match(lifecycle, /StageRail/);
+for (const state of ["ready", "deploying", "failed", "live", "destroying", "destroyed"]) {
+  assert.match(styles, new RegExp(`overview-state-${state}`), `responsive lifecycle styling covers ${state}`);
+}
+assert.doesNotMatch(styles, /overview-state-(?:deploying|destroying)[^}]*var\(--(?:cyan|amber)\)/);
+assert.match(styles, /@media\s*\(max-width:\s*560px\)[\s\S]*overview-summary-grid/);
+console.log("Overview canonical lifecycle action and responsive presentation verification passed.");

@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="cbc35d96-3fa5-4b78-9365-f7c468d74a36" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/backend/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/backend/.env.example" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/backend/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/backend/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/scripts/verify-automation-controls.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/scripts/verify-automation-controls.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/scripts/verify-docker-templates.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/scripts/verify-docker-templates.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/scripts/verify-security-policy.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/scripts/verify-security-policy.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/scripts/verify-stack-detection.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/scripts/verify-stack-detection.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/app.module.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/app.module.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/audit-log/audit-log.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/audit-log/audit-log.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/audit-log/audit-log.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/audit-log/audit-log.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/audit-log/dto/audit-log-query.dto.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/audit-log/dto/audit-log-query.dto.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/auth/auth.controller.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/auth/auth.controller.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/data-source.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/data-source.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/finops/finops-policy.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/finops/finops-policy.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/finops/finops.config.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/finops/finops.config.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/finops/finops.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/finops/finops.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/finops/project-cost-estimate.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/finops/project-cost-estimate.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/finops/project-cost-resource-breakdown.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/finops/project-cost-resource-breakdown.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/finops/project-cost-settings.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/finops/project-cost-settings.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/infrastructure-readiness.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/infrastructure-readiness.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/infrastructure.config.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/infrastructure.config.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/infrastructure.module.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/infrastructure.module.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/infrastructure.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/infrastructure.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/project-deployment-readiness-snapshot.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/project-deployment-readiness-snapshot.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/project-infrastructure-environment.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/project-infrastructure-environment.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/project-infrastructure-event.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/project-infrastructure-event.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/project-service-discovery-record.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/project-service-discovery-record.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/infrastructure/terraform-runner.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/infrastructure/terraform-runner.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/migrations/1760000011000-StoreEncryptedGithubAccessToken.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/migrations/1760000011000-StoreEncryptedGithubAccessToken.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/log-sanitizer.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/log-sanitizer.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/observability.config.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/observability.config.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/pipeline-metrics.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/pipeline-metrics.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/project-log-stream-session.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/project-log-stream-session.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/project-observability-event.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/project-observability-event.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/project-pipeline-metric-summary.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/project-pipeline-metric-summary.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/project-runtime-metric-snapshot.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/project-runtime-metric-snapshot.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/project-stage-metric.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/project-stage-metric.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/observability/trivy-metrics.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/observability/trivy-metrics.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/alb.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/alb.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/autoscaling.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/autoscaling.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/ecs.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/ecs.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/orchestration.config.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/orchestration.config.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/orchestration.module.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/orchestration.module.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/orchestration.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/orchestration.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/project-deployment.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/project-deployment.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/project-orchestration-event.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/project-orchestration-event.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/project-rollback-record.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/project-rollback-record.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/project-spot-interruption-event.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/project-spot-interruption-event.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/project-stable-release.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/project-stable-release.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/orchestration/rollback.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/orchestration/rollback.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/pipeline.worker.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/pipeline.worker.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/current-state/pipeline-stage-resolver.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/current-state/pipeline-stage-resolver.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/current-state/project-current-state.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/current-state/project-current-state.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/current-state/project-current-state.types.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/current-state/project-current-state.types.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/detection/deployment-profile.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/detection/deployment-profile.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/detection/repository-workspace.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/detection/repository-workspace.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/detection/stack-detection.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/detection/stack-detection.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/detection/template-matching.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/detection/template-matching.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/dto/create-env-var.dto.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/dto/create-env-var.dto.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/dto/create-project.dto.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/dto/create-project.dto.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/dto/update-env-var.dto.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/dto/update-env-var.dto.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/dto/update-project.dto.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/dto/update-project.dto.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/pipeline/docker-build.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/pipeline/docker-build.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/pipeline/ecr.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/pipeline/ecr.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline-stage-presenter.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline-stage-presenter.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline-status.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline-status.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline-worker.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline-worker.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline.types.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/pipeline/pipeline.types.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/project-detection-profile.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/project-detection-profile.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/project-environment-variable.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/project-environment-variable.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/project-pipeline-event.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/project-pipeline-event.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/project-pipeline-run.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/project-pipeline-run.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/project-preflight-report.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/project-preflight-report.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/project-security-finding.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/project-security-finding.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/project-security-scan.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/project-security-scan.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/project.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/project.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/projects.controller.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/projects.controller.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/projects.module.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/projects.module.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/projects.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/projects.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/security/dockerfile-security.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/security/dockerfile-security.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/security/security-policy.config.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/security/security-policy.config.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/security/security-policy.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/security/security-policy.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/security/security-scan.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/security/security-scan.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/templates/devops-templates.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/templates/devops-templates.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/templates/docker-template-engine.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/templates/docker-template-engine.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/projects/templates/preflight.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/projects/templates/preflight.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/aws-cli.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/aws-cli.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/project-deployment-queue-item.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/project-deployment-queue-item.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/project-state-recovery-request.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/project-state-recovery-request.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/project-state-validation-result.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/project-state-validation-result.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/project-terraform-lock.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/project-terraform-lock.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/project-terraform-state.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/project-terraform-state.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/state-corruption.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/state-corruption.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/state-heartbeat.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/state-heartbeat.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/state-lock.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/state-lock.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/state-management.config.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/state-management.config.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/state-management.controller.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/state-management.controller.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/state-management.module.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/state-management.module.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/state-management.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/state-management.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/state-recovery.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/state-recovery.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/state-management/terraform-state.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/state-management/terraform-state.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/storage/project-backup-record.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/storage/project-backup-record.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/storage/project-persistent-storage.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/storage/project-persistent-storage.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/storage/project-storage-event.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/storage/project-storage-event.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/storage/project-storage-restore-request.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/storage/project-storage-restore-request.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/storage/storage.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/storage/storage.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/users/user.entity.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/users/user.entity.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/users/users.service.ts" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/users/users.service.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/templates/docker/node/nextjs-ssr.Dockerfile.tpl" beforeDir="false" afterPath="$PROJECT_DIR$/backend/templates/docker/node/nextjs-ssr.Dockerfile.tpl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/templates/docker/node/nextjs-static.Dockerfile.tpl" beforeDir="false" afterPath="$PROJECT_DIR$/backend/templates/docker/node/nextjs-static.Dockerfile.tpl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/templates/docker/node/vite-static.Dockerfile.tpl" beforeDir="false" afterPath="$PROJECT_DIR$/backend/templates/docker/node/vite-static.Dockerfile.tpl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/base-network/.terraform.lock.hcl" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/base-network/.terraform.lock.hcl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/base-network/.terraform/modules/modules.json" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/base-network/.terraform/modules/modules.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/base-network/main.tf" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/base-network/main.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/base-network/outputs.tf" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/base-network/outputs.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/base-network/variables.tf" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/base-network/variables.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/base-network/versions.tf" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/base-network/versions.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/modules/cloud-map/outputs.tf" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/modules/cloud-map/outputs.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/modules/ecs-service/main.tf" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/modules/ecs-service/main.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/modules/ecs-service/variables.tf" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/modules/ecs-service/variables.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/terraform/modules/efs/main.tf" beforeDir="false" afterPath="$PROJECT_DIR$/backend/terraform/modules/efs/main.tf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/ARCHITECTURE.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/ARCHITECTURE.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/MANUAL_SETUP_FOR_TESTING_LAUNCH.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/MANUAL_SETUP_FOR_TESTING_LAUNCH.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/SETUP_REQUIRED.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/SETUP_REQUIRED.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/index.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/api/adminApi.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/api/adminApi.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/api/authApi.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/api/authApi.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/api/client.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/api/client.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/api/projectApi.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/api/projectApi.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/audit/AuditLogFilters.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/audit/AuditLogFilters.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/audit/AuditLogsTable.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/audit/AuditLogsTable.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/common/ErrorState.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/common/ErrorState.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/infrastructure/InfrastructureEventsTimeline.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/infrastructure/InfrastructureEventsTimeline.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/layout/AppLayout.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/layout/AppLayout.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/layout/Navbar.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/layout/Navbar.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/layout/Sidebar.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/layout/Sidebar.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/orchestration/DeploymentUrlCard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/orchestration/DeploymentUrlCard.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/orchestration/EcsDeploymentStatusCard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/orchestration/EcsDeploymentStatusCard.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/orchestration/OrchestrationEventsTimeline.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/orchestration/OrchestrationEventsTimeline.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/projects/DeploymentProfileCard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/projects/DeploymentProfileCard.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/projects/EnvVarForm.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/projects/EnvVarForm.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/projects/EnvVarTable.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/projects/EnvVarTable.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/projects/EnvironmentSummaryCard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/projects/EnvironmentSummaryCard.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/projects/PipelineEventsTimeline.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/projects/PipelineEventsTimeline.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/projects/PipelineLiveLogPanel.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/projects/PipelineLiveLogPanel.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/projects/PreflightPanel.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/projects/PreflightPanel.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/projects/PreflightReportPanel.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/projects/PreflightReportPanel.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/security/SecurityPolicyDecisionBadge.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/security/SecurityPolicyDecisionBadge.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/security/SecurityScanSummaryCard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/security/SecurityScanSummaryCard.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/security/VulnerabilityFindingsTable.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/security/VulnerabilityFindingsTable.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/state/StateLockStatusCard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/state/StateLockStatusCard.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/context/AuthContext.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/context/AuthContext.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/AuditLogs.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/AuditLogs.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/Dashboard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/Dashboard.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/Landing.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/Landing.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/NewProject.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/NewProject.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectDetails.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectDetails.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectDetection.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectDetection.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectEnvVars.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectEnvVars.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectInfrastructure.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectInfrastructure.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectPipeline.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectPipeline.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectPipelineLogs.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectPipelineLogs.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectPreflight.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectPreflight.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectSecurity.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectSecurity.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectSettings.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectSettings.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ProjectStateManagement.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ProjectStateManagement.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/Projects.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/Projects.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/SecurityScanDetails.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/SecurityScanDetails.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/routes/AppRoutes.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/routes/AppRoutes.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/styles.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/styles.css" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="1084" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 2,
+  "fromUser": false
+}]]></component>
+  <component name="ProjectId" id="3GywqTWsUh0XwOwu29RvumFYvXw" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "git-widget-placeholder": "master",
+    "javascript.preferred.runtime.type.id": "node",
+    "last_opened_file_path": "/home/hassan-sajjad/Deploy-Guard-dev",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm"
+  }
+}]]></component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-4abd2a77f808-JavaScript-WS-262.8665.341" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="cbc35d96-3fa5-4b78-9365-f7c468d74a36" name="Changes" comment="" />
+      <created>1784957308487</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1784957308487</updated>
+      <workItem from="1784957311948" duration="642000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+</project>

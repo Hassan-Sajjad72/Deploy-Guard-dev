@@ -1,0 +1,406 @@
+/*
+ * DeployGuard visual system — near-black canvas, drifting colour, two surfaces.
+ *
+ *   Canvas        #0B0F17 + three blurred colour blobs (indigo, violet, cyan)
+ *   Glass         floating chrome only: sidebar, top bar, hero panels, modals,
+ *                 dropdowns, toasts. rgba(255,255,255,.12) + blur(26px)
+ *   Data surface  everything else: solid #141824, hairline border, small shadow
+ *
+ *   Depth   canvas flat · data 0 4px 16px · glass 0 20px 50px
+ *   Radius  32 hero · 20 card · 12 inner tile / input · 999 pill
+ *   Colour  one accent (indigo) for everything interactive; semantic colours
+ *           only for state (green live, amber warning, red failed, blue running)
+ *
+ * Visual only — no markup or behaviour depends on this file.
+ */
+:root {
+  /* Canvas */
+  --ds-canvas: #0b0f17;
+  --ds-blob-indigo: #4f46e2;
+  --ds-blob-violet: #7c3aed;
+  --ds-blob-cyan: #06b6d4;
+
+  /* Surfaces */
+  --ds-data: #141824;
+  --ds-data-border: rgba(255, 255, 255, .08);
+  --ds-glass: rgba(255, 255, 255, .12);
+  --ds-glass-border: rgba(255, 255, 255, .25);
+  --ds-glass-highlight: inset 0 1px 0 rgba(255, 255, 255, .4);
+  --ds-glass-filter: blur(26px) saturate(160%);
+  --ds-glass-fallback: rgba(20, 24, 36, .92);
+  --ds-tile: rgba(255, 255, 255, .045);
+  --ds-tile-hover: rgba(255, 255, 255, .08);
+  --ds-field: #0f131d;
+
+  /* Depth */
+  --ds-shadow-data: 0 4px 16px rgba(0, 0, 0, .25);
+  --ds-shadow-data-hover: 0 12px 30px rgba(0, 0, 0, .35);
+  --ds-shadow-glass: 0 20px 50px rgba(0, 0, 0, .4);
+
+  /* Radius */
+  --ds-r-hero: 32px;
+  --ds-r-glass: 28px;
+  --ds-r-card: 20px;
+  --ds-r-tile: 12px;
+  --ds-r-pill: 999px;
+
+  /* Text */
+  --ds-ink: #f5f7fb;
+  --ds-ink-2: #e2e8f0;
+  --ds-muted: #c8d0dd;
+  --ds-faint: #b0bacb;
+
+  /* Accent: indigo */
+  --ds-accent: #5b54ea;
+  --ds-accent-deep: #4338ca;
+  --ds-accent-fill: linear-gradient(135deg, #5b54ea 0%, #4338ca 100%);
+  --ds-accent-fill-hover: linear-gradient(135deg, #635cf0 0%, #4a3fd6 100%);
+  --ds-accent-ink: #b4bffd;
+  --ds-accent-soft: rgba(99, 102, 241, .16);
+  --ds-accent-line: rgba(129, 140, 248, .45);
+  --ds-focus: 0 0 0 3px rgba(129, 140, 248, .6);
+  --ds-ease: cubic-bezier(.2, .7, .2, 1);
+  --ds-pulse: 2s;
+
+  /* Semantic states */
+  --ds-success: #6ee7b7; --ds-success-dot: #34d399; --ds-success-soft: rgba(52, 211, 153, .15); --ds-success-line: rgba(52, 211, 153, .35);
+  --ds-warning: #fcd34d; --ds-warning-dot: #fbbf24; --ds-warning-soft: rgba(251, 191, 36, .15); --ds-warning-line: rgba(251, 191, 36, .38);
+  --ds-danger: #fca5a5; --ds-danger-dot: #f87171; --ds-danger-soft: rgba(248, 113, 113, .15); --ds-danger-line: rgba(248, 113, 113, .38);
+  --ds-danger-fill: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  --ds-info: #93c5fd; --ds-info-dot: #60a5fa; --ds-info-soft: rgba(96, 165, 250, .15); --ds-info-line: rgba(96, 165, 250, .38);
+
+  /* Aliases read by page stylesheets. */
+  --mf-accent: var(--ds-accent); --mf-accent-fill: var(--ds-accent-fill); --mf-accent-hover: var(--ds-accent-deep); --mf-accent-ink: var(--ds-accent-ink);
+  --mf-on-accent: #fff; --mf-accent-soft: var(--ds-accent-soft); --mf-accent-line: var(--ds-accent-line); --mf-focus: var(--ds-focus);
+  --mf-glass: var(--ds-data); --mf-glass-dense: var(--ds-data); --mf-glass-inner: var(--ds-tile); --mf-glass-inner-hover: var(--ds-tile-hover);
+  --mf-tint: 10, 13, 21; --mf-field: var(--ds-field); --mf-filter: none;
+  --mf-edge: rgba(255, 255, 255, .16); --mf-edge-soft: var(--ds-data-border); --mf-border: 1px solid var(--ds-data-border);
+  --mf-highlight: inset 0 1px 0 rgba(255, 255, 255, .05); --mf-shadow: var(--ds-shadow-data); --mf-r-card: var(--ds-r-card);
+}
+
+/* ---------- Canvas: near-black with three drifting colour fields ---------- */
+html, html[data-theme] { background: var(--ds-canvas); color-scheme: dark; }
+html body { background: transparent; color: var(--ds-ink); line-height: 1.55; min-height: 100vh; }
+html::before, html::after, html body::before {
+  border-radius: 50%; content: ""; display: block; filter: blur(110px); pointer-events: none; position: fixed; will-change: transform; z-index: -1;
+}
+html::before { animation: ds-drift-a 24s var(--ds-ease) infinite alternate; background: var(--ds-blob-indigo); height: 46vmax; left: -9vmax; opacity: .46; top: -14vmax; width: 52vmax; }
+html::after { animation: ds-drift-b 28s var(--ds-ease) infinite alternate; background: var(--ds-blob-violet); height: 38vmax; opacity: .4; right: -12vmax; top: 34vh; width: 40vmax; }
+html body::before { animation: ds-drift-c 21s var(--ds-ease) infinite alternate; background: var(--ds-blob-cyan); bottom: -18vmax; height: 30vmax; left: 30vw; opacity: .36; width: 36vmax; }
+@keyframes ds-drift-a { from { transform: translate3d(0, 0, 0) scale(1); } to { transform: translate3d(9vmax, 6vmax, 0) scale(1.08); } }
+@keyframes ds-drift-b { from { transform: translate3d(0, 0, 0) scale(1.05); } to { transform: translate3d(-8vmax, -10vmax, 0) scale(.94); } }
+@keyframes ds-drift-c { from { transform: translate3d(0, 0, 0) scale(.95); } to { transform: translate3d(12vmax, -7vmax, 0) scale(1.1); } }
+
+/* Wrappers are transparent and never filter what is behind them. */
+#root, .app-shell, .app-shell .main-area, .app-shell .content, main,
+.admin-shell, .dg-landing, .dg-about, .dg-gate, .dg-hero { background: transparent; }
+:root:root :is(#root, .app-shell, .app-shell .main-area, .app-shell .content, .admin-shell) { -webkit-backdrop-filter: none; backdrop-filter: none; background: transparent; }
+.app-shell .brand-identity-mark, .brand-identity-mark { filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .35)); }
+
+/* ---------- Tokens: one dark system on every scope ---------- */
+:root,
+.dg-dark,
+[data-ground="night"],
+.app-shell .sidebar,
+.app-shell:has(.dg-ground-dark) .main-area,
+.admin-shell:has(.dg-ground-dark),
+:root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .ds-drawer-backdrop, .destroy-modal-backdrop) {
+  --dg-canvas: transparent;
+  --dg-surface: var(--ds-data);
+  --dg-surface-2: var(--ds-tile);
+  --dg-surface-3: rgba(255, 255, 255, .07);
+  --dg-raised: var(--ds-field);
+  --dg-line: rgba(255, 255, 255, .08);
+  --dg-line-strong: rgba(255, 255, 255, .16);
+  --dg-ink: var(--ds-ink); --dg-ink-2: var(--ds-ink-2); --dg-muted: var(--ds-muted); --dg-faint: var(--ds-faint);
+  --dg-brand-ink: var(--ds-ink);
+  --dg-primary: var(--ds-accent); --dg-primary-hover: var(--ds-accent-deep); --dg-on-primary: #fff;
+  --dg-primary-soft: var(--ds-accent-soft); --dg-primary-line: var(--ds-accent-line); --dg-primary-ink: var(--ds-accent-ink);
+  --dg-lime: var(--ds-accent-ink); --dg-lime-hover: var(--ds-accent-ink); --dg-lime-deep: var(--ds-accent-ink);
+  --dg-link: var(--ds-accent-ink);
+  --dg-signal: var(--ds-accent); --dg-signal-ink: var(--ds-accent-ink); --dg-signal-soft: var(--ds-accent-soft); --dg-signal-line: var(--ds-accent-line);
+  --dg-focus: var(--ds-focus);
+  --dg-shadow: var(--ds-shadow-data);
+  --dg-shadow-md: var(--ds-shadow-data);
+  --dg-shadow-lg: var(--ds-shadow-glass);
+  --dg-success: var(--ds-success); --dg-success-dot: var(--ds-success-dot); --dg-success-soft: var(--ds-success-soft); --dg-success-line: var(--ds-success-line);
+  --dg-warning: var(--ds-warning); --dg-warning-dot: var(--ds-warning-dot); --dg-warning-soft: var(--ds-warning-soft); --dg-warning-line: var(--ds-warning-line);
+  --dg-danger: var(--ds-danger); --dg-danger-dot: var(--ds-danger-dot); --dg-danger-soft: var(--ds-danger-soft); --dg-danger-line: var(--ds-danger-line);
+  --dg-info: var(--ds-info); --dg-info-dot: var(--ds-info-dot); --dg-info-soft: var(--ds-info-soft); --dg-info-line: var(--ds-info-line);
+  --dg-aws: #f0b56a; --dg-aws-ink: #f5c992; --dg-aws-soft: rgba(240, 181, 106, .14);
+  --dg-night: var(--ds-data); --dg-night-2: var(--ds-tile); --dg-night-3: rgba(255, 255, 255, .07);
+  --dg-night-line: rgba(255, 255, 255, .08); --dg-night-line-strong: rgba(255, 255, 255, .16);
+  --dg-night-ink: var(--ds-ink); --dg-night-ink-2: var(--ds-ink-2); --dg-night-muted: var(--ds-muted);
+  --dg-console: var(--ds-field); --dg-console-2: var(--ds-tile); --dg-console-line: var(--ds-data-border); --dg-console-ink: var(--ds-ink); --dg-console-muted: var(--ds-muted);
+  --dg-glass: var(--ds-glass); --dg-glass-strong: var(--ds-glass); --dg-glass-line: var(--ds-glass-border); --dg-glass-edge: rgba(255, 255, 255, .4);
+  --dg-glass-filter: var(--ds-glass-filter); --dg-glass-shadow: var(--ds-glass-highlight), var(--ds-shadow-glass);
+  --dg-grid-light: rgba(255, 255, 255, .04);
+  --dg-radius: var(--ds-r-card); --dg-radius-sm: var(--ds-r-tile); --dg-radius-lg: var(--ds-r-hero);
+  --pg-accent: var(--ds-accent); --pg-ink: var(--ds-accent-ink); --pg-soft: var(--ds-accent-soft); --pg-line: var(--ds-accent-line); --pg-cast: transparent;
+  color-scheme: dark;
+}
+::selection { background: rgba(99, 102, 241, .45); color: #fff; }
+:focus-visible { outline: 2px solid var(--ds-accent-ink); outline-offset: 2px; }
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible { box-shadow: var(--ds-focus); outline: 2px solid transparent; }
+body :where(p, li, dd, td) { line-height: 1.55; }
+:where(code, kbd, samp, .dg-mono, .is-mono) { font-variant-numeric: tabular-nums; }
+select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='%23c8d0dd' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+select option, select optgroup { background: #1a1f2d; color: var(--ds-ink); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--ds-accent); }
+
+/* =====================================================================
+ * GLASS — floating chrome only.
+ * ===================================================================== */
+.app-shell .sidebar,
+.app-shell .navbar,
+:root:root :is(
+  .dg-home-hero, .dg-projects-head, .dg-ov-head, .dg-pl-head, .dg-np-head, .dg-trouble > .ds-page-header,
+  .dg-hero-copy, .dg-hero-visual > *, .dg-about-hero, .dg-landing-nav, .dg-gate > section, .dg-admin-login .auth-card,
+  .ds-modal, .destroy-modal, .ds-details-drawer, .landing-account-popover, .toast
+),
+.app-shell .content .ds-page-header:not(:is(.ds-card, .panel, .panel-flat, .ds-modal, .ds-details-drawer) *) {
+  -webkit-backdrop-filter: var(--ds-glass-filter); backdrop-filter: var(--ds-glass-filter);
+  background: var(--ds-glass); border: 1px solid var(--ds-glass-border); box-shadow: var(--ds-glass-highlight), var(--ds-shadow-glass); color: var(--ds-ink);
+}
+/* Glass sits over bright colour: secondary text steps up a tone to keep 4.5:1. */
+.app-shell .sidebar, .app-shell .navbar,
+:root:root :is(.dg-home-hero, .dg-projects-head, .dg-ov-head, .dg-pl-head, .dg-np-head, .ds-page-header, .dg-hero-copy, .dg-hero-visual > *, .dg-about-hero, .dg-landing-nav, .dg-gate > section, .dg-admin-login .auth-card) {
+  --dg-muted: #e3e8f0; --dg-faint: #cfd6e2; --dg-ink-2: #eef1f6; --ds-muted: #e3e8f0; --ds-faint: #cfd6e2;
+}
+/* Hero panels and major containers: 32px. */
+:root:root :is(.dg-home-hero, .dg-projects-head, .dg-ov-head, .dg-pl-head, .dg-np-head, .dg-trouble > .ds-page-header, .dg-hero-copy, .dg-hero-visual > *, .dg-about-hero, .dg-gate > section, .dg-admin-login .auth-card),
+.app-shell .content .ds-page-header:not(:is(.ds-card, .panel, .panel-flat, .ds-modal, .ds-details-drawer) *) { border-radius: var(--ds-r-hero); }
+:root:root :is(.ds-modal, .destroy-modal, .landing-account-popover, .dg-landing-nav) { border-radius: var(--ds-r-glass); }
+:root:root .ds-details-drawer { border-radius: var(--ds-r-glass) 0 0 var(--ds-r-glass); }
+:root:root .toast { border-radius: var(--ds-r-tile); }
+:root:root :is(.dg-projects-head, .dg-pl-head) { padding: 28px 32px; }
+.app-shell .content .ds-page-header:not(:is(.ds-card, .panel, .panel-flat, .ds-modal, .ds-details-drawer) *) { padding: 26px 30px; }
+:root:root .dg-hero-copy { padding: clamp(28px, 3.4vw, 44px); }
+:root:root .dg-about-hero { margin: 16px auto 0; padding-top: 120px !important; max-width: min(1240px, calc(100% - 32px)); padding: clamp(32px, 4.4vw, 56px); }
+:root:root .dg-about-hero::after, :root:root .dg-about-hero::before { content: none; }
+:root:root .dg-landing-nav { margin: 14px auto 0; padding-bottom: 12px; padding-top: 12px; width: min(1320px, calc(100% - 32px)); }
+/* About's nav lives inside the hero panel: plain content, not a second glass layer. */
+:root:root .dg-about-nav { background: none; border: 0; box-shadow: none; left: 0; padding-left: clamp(24px, 4.4vw, 56px); padding-right: clamp(24px, 4.4vw, 56px); right: 0; }
+.ds-modal-backdrop, .destroy-modal-backdrop, .ds-drawer-backdrop,
+:root:has(.dg-ground-dark) :is(.ds-modal-backdrop, .destroy-modal-backdrop, .ds-drawer-backdrop) { background: rgba(6, 8, 14, .55); }
+.toast button { color: var(--ds-muted); }
+.toast-success { border-left: 3px solid var(--ds-success-dot); }
+.toast-danger { border-left: 3px solid var(--ds-danger-dot); }
+
+/* Sidebar and top bar float above the canvas. */
+.app-shell .sidebar { border-radius: var(--ds-r-glass); height: calc(100vh - 24px); margin: 12px 0 12px 12px; top: 12px; }
+.app-shell .navbar { border-radius: var(--ds-r-glass); margin: 12px 16px 0; top: 12px; width: auto; }
+@media (max-width: 900px) {
+  .app-shell .sidebar { height: calc(100dvh - 24px); }
+  .app-shell .navbar { margin: 8px 8px 0; top: 8px; }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --ds-glass: var(--ds-glass-fallback); }
+}
+
+/* =====================================================================
+ * DATA SURFACE — everything that holds content. Solid, no blur.
+ * ===================================================================== */
+:root:root :is(
+  .ds-card, .panel, .panel-flat, .metric-card, .ds-chart-card, .empty-state, .ds-empty-state, .loading-state, .auth-card, .admin-section,
+  .dg-home-panel, .dg-home-recent, .dg-home-fleet, .dg-home-empty,
+  .dg-projects-inventory, .dg-ov-services, .project-overview-lifecycle, .infra-topology-map,
+  .dg-np-step, .dg-np-rail, .dg-np-connect, .dg-set-nav,
+  .dg-bill-hero, .dg-bill-plans, .dg-bill-notices,
+  .dg-landing-main > .dg-delivery, .dg-about-paper, .dg-about-closing,
+  .dg-admin .admin-summary-grid, .infrastructure-summary-grid,
+  .ds-data-table-wrap, .table-wrap, .dg-console, .monitoring-log-viewer, pre.dg-console
+):not(:is(
+  .ds-card, .panel, .panel-flat, .project-overview-lifecycle, .dg-home-panel, .dg-home-fleet, .infra-topology-map, .dg-projects-inventory,
+  .dg-np-step, .dg-np-rail, .dg-bill-hero, .dg-bill-plans, .dg-bill-notices, .dg-about-paper, .admin-section, .auth-card,
+  .infrastructure-summary-grid, .admin-summary-grid, .dg-ov-services,
+  .dg-home-hero, .dg-projects-head, .dg-ov-head, .dg-pl-head, .dg-np-head, .ds-page-header, .dg-hero-copy, .dg-hero-visual > *, .dg-about-hero,
+  .ds-modal, .destroy-modal, .ds-details-drawer
+) *):not(.dg-admin-login .auth-card) {
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  background: var(--ds-data); border: 1px solid var(--ds-data-border); border-radius: var(--ds-r-card); box-shadow: var(--ds-shadow-data); color: var(--ds-ink);
+}
+:root:root :is(.empty-state, .ds-empty-state) { border-style: dashed; border-color: rgba(255, 255, 255, .16); }
+:root:root :is(.dg-home-fleet, .infra-topology-map, .dg-bill-plans) { padding: 22px 26px 24px; }
+
+/* Nested inside any surface: an inner tile (12px), never a second card or glass layer. */
+:where(
+  .ds-card, .panel, .panel-flat, .project-overview-lifecycle, .dg-home-panel, .dg-home-fleet, .infra-topology-map, .dg-projects-inventory,
+  .dg-np-step, .dg-np-rail, .dg-bill-hero, .dg-bill-plans, .dg-bill-notices, .dg-about-paper, .admin-section, .auth-card,
+  .infrastructure-summary-grid, .admin-summary-grid, .dg-ov-services,
+  .dg-home-hero, .dg-projects-head, .dg-ov-head, .dg-pl-head, .dg-np-head, .ds-page-header, .dg-hero-copy, .dg-hero-visual > *, .dg-about-hero,
+  .ds-modal, .destroy-modal, .ds-details-drawer
+) :is(.ds-card, .panel, .panel-flat, .metric-card, .ds-chart-card, .empty-state, .ds-empty-state, .loading-state) {
+  background: var(--ds-tile); border: 1px solid rgba(255, 255, 255, .06); border-radius: var(--ds-r-tile); box-shadow: none;
+}
+:is(
+  .ds-card, .panel, .panel-flat, .project-overview-lifecycle, .dg-home-panel, .dg-home-fleet, .infra-topology-map, .dg-projects-inventory,
+  .dg-np-step, .dg-np-rail, .dg-bill-hero, .dg-bill-plans, .dg-bill-notices, .dg-about-paper, .admin-section, .auth-card,
+  .infrastructure-summary-grid, .admin-summary-grid, .dg-ov-services,
+  .dg-home-hero, .dg-projects-head, .dg-ov-head, .dg-pl-head, .dg-np-head, .ds-page-header, .dg-hero-copy, .dg-hero-visual > *, .dg-about-hero,
+  .dg-landing-nav, .dg-about-nav, .dg-gate > section, .dg-set-nav,
+  .ds-data-table-wrap, .table-wrap, .ds-modal, .destroy-modal, .ds-details-drawer, .app-shell .sidebar, .app-shell .navbar
+) * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+/* Tables and logs inside a card: recessed well, not another card. */
+:root:root :is(.ds-card, .panel, .panel-flat, .dg-projects-inventory, .dg-home-panel, .dg-bill-plans, .ds-modal, .ds-details-drawer) :is(.ds-data-table-wrap, .table-wrap, .dg-console, .monitoring-log-viewer, pre) {
+  background: var(--ds-field); border: 1px solid var(--ds-data-border); border-radius: var(--ds-r-tile); box-shadow: none;
+}
+:root:root .dg-bill-plan-grid { background: transparent; border: 1px solid var(--ds-data-border); border-radius: var(--ds-r-tile); box-shadow: none; }
+:root:root .dg-overview .overview-summary-grid { background: rgba(255, 255, 255, .025); box-shadow: none; }
+:root:root pre:not(.dg-console) { background: var(--ds-field); border: 1px solid var(--ds-data-border); border-radius: var(--ds-r-tile); color: var(--ds-ink-2); }
+:root:root :is(code, kbd):not(pre code) { background: rgba(255, 255, 255, .07); border-radius: 6px; color: var(--ds-ink); padding: 1px 5px; }
+
+/* Hover: interactive cards lift one depth step. No scale. */
+:root:root :is(.dg-home-tile a, .pg-node, .itw-node, a.ds-card) { transition: transform 200ms var(--ds-ease), box-shadow 200ms var(--ds-ease), border-color 200ms var(--ds-ease), background 200ms var(--ds-ease); }
+:root:root :is(.dg-home-tile a, a.ds-card):hover { box-shadow: var(--ds-shadow-data-hover); transform: translateY(-3px); }
+:root:root :is(.pg-node, .itw-node):hover { box-shadow: var(--ds-shadow-data-hover); transform: translateY(-2px); }
+:root:root .dg-home-tile a { background: var(--ds-tile); border: 1px solid rgba(255, 255, 255, .06); border-radius: var(--ds-r-tile); box-shadow: none; }
+:root:root .dg-home-tile a:hover { background: var(--ds-tile-hover); border-color: rgba(255, 255, 255, .14); }
+
+/* ---------- Tables ---------- */
+:root:root :is(.ds-data-table-wrap, .table-wrap) th { background: #1a1f2d; color: var(--ds-muted); letter-spacing: .06em; position: sticky; top: 0; z-index: 1; }
+:root:root :is(.ds-data-table-wrap, .table-wrap) tbody tr:hover td { background: rgba(99, 102, 241, .07); }
+.dg-pipeline .responsive-record-table td:nth-child(6), .dg-pipeline .responsive-record-table th:nth-child(6) { font-family: var(--dg-mono); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ---------- Inputs: data-surface fields ---------- */
+:root :is(input, select, textarea):where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])) {
+  background-color: var(--ds-field); border: 1px solid rgba(255, 255, 255, .12); border-radius: var(--ds-r-tile); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .3); color: var(--ds-ink);
+}
+:root :is(input, select, textarea)::placeholder { color: var(--ds-faint); }
+:root :is(input, select, textarea):hover:not(:disabled) { border-color: rgba(255, 255, 255, .22); }
+:root :is(input, select, textarea):focus { border-color: var(--ds-accent-ink); box-shadow: var(--ds-focus); }
+:root :is(input, select, textarea):disabled { background-color: rgba(255, 255, 255, .03); color: var(--ds-muted); }
+
+/* ---------- Buttons: pill, gradient fill, lift ---------- */
+:root :is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button) {
+  border-radius: var(--ds-r-pill); padding-left: 18px; padding-right: 18px;
+  transition: transform 200ms var(--ds-ease), box-shadow 200ms var(--ds-ease), background 200ms var(--ds-ease), border-color 200ms var(--ds-ease);
+}
+:root:root :is(.button, .ds-button-primary, .dg-cta, .dg-bill-current) {
+  background: var(--ds-accent-fill); border-color: transparent; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 6px 18px -6px rgba(79, 70, 226, .6); color: #fff;
+}
+:root:root :is(.button, .ds-button-primary, .dg-cta):hover:not(:disabled) { background: var(--ds-accent-fill-hover); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32), 0 12px 26px -8px rgba(79, 70, 226, .7); color: #fff; transform: translateY(-2px); }
+:root:root :is(.secondary-button, .ds-button-secondary, .dg-cta-secondary) { background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .16); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); color: var(--ds-ink); }
+:root:root :is(.secondary-button, .ds-button-secondary, .dg-cta-secondary):hover:not(:disabled) { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .26); transform: translateY(-2px); }
+:root:root :is(.danger-button, .ds-button-danger) { background: var(--ds-danger-fill); border-color: transparent; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 6px 18px -6px rgba(220, 38, 38, .55); color: #fff; }
+:root:root :is(.danger-button, .ds-button-danger, .danger-text-button):hover:not(:disabled) { transform: translateY(-2px); }
+:root :is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button, .dg-cta, .dg-cta-secondary):focus-visible { box-shadow: var(--ds-focus); }
+:root:root :is(.button, .secondary-button, .subtle-button, .danger-button, .danger-text-button, .ds-button):disabled { background: rgba(255, 255, 255, .06); border-color: var(--ds-data-border); box-shadow: none; color: var(--ds-muted); transform: none; }
+
+/* ---------- Status badges: pill, 15% tint, full-colour text ---------- */
+:root :is(.status-badge, .ds-status-chip) { border-radius: var(--ds-r-pill); font-family: var(--dg-font); letter-spacing: .01em; }
+:is(.status-badge, .ds-status-chip) .status-dot { animation: none; }
+:is(.status-badge, .ds-status-chip):is([data-status="live"], [data-status="running"], [data-status="deploying"], [data-status="destroying"], .tone-info) .status-dot { animation: ds-pulse var(--ds-pulse) ease-in-out infinite; }
+@keyframes ds-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent); } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 0%, transparent); } }
+.dg-ov-domain-dot, .mf-live-dot { animation: ds-pulse var(--ds-pulse) ease-in-out infinite !important; color: var(--ds-success-dot); }
+.dg-home-row-pulse { animation: ds-pulse var(--ds-pulse) ease-in-out infinite !important; color: var(--ds-info-dot); }
+
+/* ---------- Progress and budget bars: gradient, fill-in on load ---------- */
+:root:root :is(.dg-bill-meter b, .dg-home-progress i, .pipeline-duration-bar i, .deployment-progress-track span) {
+  animation: ds-fill 900ms var(--ds-ease) both; background: linear-gradient(90deg, #4338ca, #818cf8); transform-origin: left center;
+}
+:root:root .dg-billing .usage-at-limit .dg-bill-meter b { background: linear-gradient(90deg, #d97706, #fbbf24); }
+:root:root .dg-billing .usage-over-limit .dg-bill-meter b { background: linear-gradient(90deg, #b91c1c, #f87171); }
+@keyframes ds-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* ---------- Empty states: centred, icon + line + action ---------- */
+:root:root :is(.empty-state, .ds-empty-state) { align-items: center; flex-direction: column; justify-content: center; padding: 32px 24px; text-align: center; }
+
+/* ---------- Pipeline graph ---------- */
+.pg-node.is-idle { opacity: .55; }
+.pg-column:has(+ .pg-column.is-running):not(:last-child)::after {
+  animation: ds-flow 1s linear infinite; background: repeating-linear-gradient(90deg, var(--ds-accent-ink) 0 6px, transparent 6px 11px); background-size: 11px 100%; box-shadow: none;
+}
+@keyframes ds-flow { to { background-position: 11px 0; } }
+.pg-node.is-running .pg-node-icon { border-color: var(--ds-accent-soft); border-top-color: var(--ds-accent-ink); }
+.pg-node.is-running { border-color: var(--ds-accent-line); }
+
+/* ---------- Typography: uppercase only for page eyebrows and column headers ---------- */
+:root:root :is(
+  .ds-card, .panel, .panel-flat, .project-overview-lifecycle, .dg-home-panel, .dg-home-fleet, .infra-topology-map, .dg-projects-inventory,
+  .dg-np-step, .dg-np-rail, .dg-bill-hero, .dg-bill-plans, .admin-section, .dg-ov-services, .metric-card, .pg-detail, .dg-set-nav
+) :is(.eyebrow, .metric-label, [class*="-kicker"], .itw-tier, .dg-projects-label, dt, .itw-props dt),
+:root:root :is(.dg-home-kpis span, .dg-ov-meta dt, .dg-ov-domain-label, .pipeline-identity-card dt, .pg-detail dt, .dg-bill-plan h3, .billing-usage-grid span, .pipeline-advanced dt, .pipeline-attempt-details dt, .pipeline-failure-authority strong, .dg-bill-notices strong, .dg-home-gauge figcaption small),
+:root:root :is(.pg-columns, .overview-summary-grid)::before {
+  font-family: var(--dg-font); font-size: .82rem; font-weight: 560; letter-spacing: 0; text-transform: none;
+}
+/* Column headers keep the caption style. */
+:root:root :is(.dg-projects-columns, .dg-ov-roster-head, .billing-invoice-head, th) { font-family: var(--dg-mono); letter-spacing: .06em; text-transform: uppercase; }
+
+/* ---------- Sidebar ---------- */
+.app-shell .brand-identity-copy strong, .app-shell .sidebar-account strong { color: var(--ds-ink); }
+.app-shell .brand-identity-copy small, .app-shell .sidebar-label, .app-shell .sidebar-account small { color: var(--ds-muted); letter-spacing: .06em; }
+.app-shell .sidebar-section, .app-shell .sidebar-footer { border-color: rgba(255, 255, 255, .12); }
+.app-shell .sidebar .nav-link { border-radius: var(--ds-r-tile); color: var(--ds-ink-2); }
+.app-shell .sidebar .nav-link .app-icon { color: var(--ds-muted); }
+.app-shell .sidebar .nav-link:hover { background: rgba(255, 255, 255, .08); color: var(--ds-ink); }
+.app-shell .sidebar .nav-link:hover .app-icon { color: var(--ds-ink); }
+.app-shell .sidebar .nav-link.active { background: var(--ds-accent-soft); box-shadow: inset 0 0 0 1px var(--ds-accent-line); color: #fff; }
+.app-shell .sidebar .nav-link.active .app-icon { color: var(--ds-accent-ink); }
+.app-shell .sidebar .nav-link.active::before { display: none; }
+.app-shell .user-avatar { background: var(--ds-accent-fill); color: #fff; }
+.app-shell .sidebar-logout-button { background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .12); border-radius: var(--ds-r-pill); color: var(--ds-ink-2); }
+.app-shell .sidebar-logout-button:hover { background: var(--ds-danger-soft); border-color: var(--ds-danger-line); color: var(--ds-danger); }
+.app-shell .mobile-navigation-close { color: var(--ds-muted); }
+.app-shell .mobile-navigation-toggle { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .16); border-radius: var(--ds-r-pill); color: var(--ds-ink); }
+
+/* Home gauge core: neutral instead of the old lime glow. */
+.dg-home-gauge circle[fill^="url"] { fill: rgba(255, 255, 255, .03); }
+
+/* ---------- Motion: page entrance, 60ms stagger ---------- */
+@keyframes ds-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.app-shell .content :is(.workspace-page, .page-stack) > *, .dg-landing-main > * { animation: ds-rise 480ms var(--ds-ease) both; }
+.app-shell .content :is(.workspace-page, .page-stack) > :nth-child(2), .dg-landing-main > :nth-child(2) { animation-delay: 60ms; }
+.app-shell .content :is(.workspace-page, .page-stack) > :nth-child(3), .dg-landing-main > :nth-child(3) { animation-delay: 120ms; }
+.app-shell .content :is(.workspace-page, .page-stack) > :nth-child(4), .dg-landing-main > :nth-child(4) { animation-delay: 180ms; }
+.app-shell .content :is(.workspace-page, .page-stack) > :nth-child(5) { animation-delay: 240ms; }
+.app-shell .content :is(.workspace-page, .page-stack) > :nth-child(n + 6) { animation-delay: 300ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  html::before, html::after, html body::before { animation: none !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  :root:root :is(.dg-home-tile a, .pg-node, .itw-node, a.ds-card, .button, .secondary-button, .danger-button, .ds-button, .dg-cta, .dg-cta-secondary):hover { transform: none; }
+}
+:root:root .dg-about-paper { margin: 24px auto; max-width: min(1240px, calc(100% - 32px)); }
+/* ---------- Brand restore: lime is the accent, not indigo ---------- */
+:root {
+  --dg-lime: #b8f34a;
+  --dg-lime-hover: #c8f86a;
+  --dg-lime-deep: #5b8a0a;
+
+  --ds-accent: #b8f34a;
+  --ds-accent-deep: #5b8a0a;
+  --ds-accent-fill: #b8f34a;
+  --ds-accent-fill-hover: #c8f86a;
+  --ds-accent-ink: #d4fa8c;
+  --ds-accent-soft: rgba(184, 243, 74, .14);
+  --ds-accent-line: rgba(184, 243, 74, .4);
+  --ds-focus: 0 0 0 3px rgba(184, 243, 74, .5);
+}
+
+:root:root :is(.button, .ds-button-primary, .dg-cta, .dg-bill-current) {
+  background: var(--ds-accent-fill); color: #0b1220;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), 0 6px 18px -6px rgba(184, 243, 74, .35);
+}
+:root:root :is(.button, .ds-button-primary, .dg-cta):hover:not(:disabled) {
+  background: var(--ds-accent-fill-hover); color: #0b1220;
+}
+
+html::before { background: var(--ds-blob-indigo); opacity: .28; top: 6vmax; left: -12vmax; }
+html::after  { background: var(--ds-blob-violet); opacity: .22; top: 50vh; }
+html body::before { background: #22c55e; opacity: .16; }
+
+.app-shell .navbar {
+  background: rgba(10, 14, 24, .55) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(120%) !important;
+  backdrop-filter: blur(20px) saturate(120%) !important;
+}
+
+/* ---------- Lime accent follow-through ----------
+ * Lime is a light fill, so anything sitting on it uses dark ink; lime as text
+ * uses the lighter tint. Progress, selection and focus follow the accent.
+ */
+:root, .dg-dark, [data-ground="night"], .app-shell .sidebar { --dg-on-primary: #0b1220; --mf-on-accent: #0b1220; }
+.app-shell .user-avatar { color: #0b1220; }
+::selection { background: rgba(184, 243, 74, .32); color: #fff; }

@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "evidenceType": "deployguard.fyp-local-demo/v1",
+  "result": "passed",
+  "startedAt": "2026-08-01T17:18:00.941Z",
+  "completedAt": "2026-08-01T17:18:31.890Z",
+  "classification": {
+    "frontend": "local_runtime",
+    "backend": "local_runtime",
+    "postgresql": "local_runtime_disposable",
+    "redisBullMq": "local_runtime_isolated_prefix",
+    "worker": "local_runtime_supervised_process",
+    "externalReleaseExecutor": "isolated_non_cloud",
+    "liveAws": "not_used"
+  },
+  "commands": {
+    "run": "npm run demo:fyp-local",
+    "inspect": "cat docs/architecture/two-lane-migration/evidence/fyp-local-demo/latest.json"
+  },
+  "runtimeConfiguration": {
+    "billingProviderEnabled": false,
+    "notificationDeliveryEnabled": false,
+    "cloudReleaseExecutionEnabled": false
+  },
+  "runtime": {
+    "projectScope": "disposable/dev",
+    "operationId": "6469e564-c4bc-4efd-8f86-5aa25b9a8bd2",
+    "jobId": "dg:v1:release:6469e564-c4bc-4efd-8f86-5aa25b9a8bd2:execute:1",
+    "workerReadyCode": "NORMAL_V1_RELEASE_CONSUMER_READY",
+    "workerState": "terminal",
+    "queueConsumption": "exactly_once",
+    "currentState": "completed",
+    "renderedOverview": "Analyze/Build/Prepare/Deploy/Verify=passed; result=Live",
+    "operationSignals": "phases=5/5; developer-internals=absent",
+    "crossPageState": "overview=pipeline=dashboard=plan-usage:release-completed/stable",
+    "recoveryState": "not_requested",
+    "networkEvidence": "deploy-command=1; legacy-mutations=0",
+    "durableEvidence": "outbox-publications=1; provenance=1; effects=3; leases=0; owners=0; claims=0",
+    "cloudExecution": "not_reachable"
+  },
+  "requirements": {
+    "authenticatedUiHandoff": true,
+    "workerReady": true,
+    "deterministicQueueDelivery": true,
+    "durableCompletion": true,
+    "canonicalFivePhaseUi": true,
+    "refreshConsistency": true,
+    "sanitizedObservability": true,
+    "cloudExecutionExcluded": true
+  },
+  "cleanup": {
+    "complete": true,
+    "processAlive": false,
+    "temporaryStateRemoved": true,
+    "temporaryLogRemoved": true,
+    "composeBaselineBefore": [
+      "normal-v1-infrastructure-apply-consumer",
+      "normal-v1-infrastructure-plan-consumer",
+      "normal-v1-release-consumer",
+      "postgres",
+      "redis"
+    ],
+    "composeBaselineAfter": [
+      "normal-v1-infrastructure-apply-consumer",
+      "normal-v1-infrastructure-plan-consumer",
+      "normal-v1-release-consumer",
+      "postgres",
+      "redis"
+    ],
+    "composeContainersBefore": [
+      "normal-v1-infrastructure-apply-consumer",
+      "normal-v1-infrastructure-plan-consumer",
+      "normal-v1-release-consumer",
+      "postgres",
+      "redis"
+    ],
+    "composeContainersAfter": [
+      "normal-v1-infrastructure-apply-consumer",
+      "normal-v1-infrastructure-plan-consumer",
+      "normal-v1-release-consumer",
+      "postgres",
+      "redis"
+    ],
+    "composeNetworkBefore": true,
+    "composeNetworkAfter": true,
+    "defaultsRestoredOff": true
+  },
+  "limitations": [
+    "External release execution is deterministic and non-cloud.",
+    "Live AWS deployment is not claimed by this evidence.",
+    "Normal-v1 deletion execution is intentionally unavailable."
+  ]
+}

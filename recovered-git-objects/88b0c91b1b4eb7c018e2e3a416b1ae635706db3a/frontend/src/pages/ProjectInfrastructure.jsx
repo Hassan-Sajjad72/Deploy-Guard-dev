@@ -1,0 +1,54 @@
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import { getProject } from "../api/projectApi.js";
+import ErrorState from "../components/common/ErrorState.jsx";
+import LoadingState from "../components/common/LoadingState.jsx";
+import {
+  PageHeader,
+} from "../components/common/Premium.jsx";
+import ProjectDeployPanel from "../components/infrastructure/ProjectDeployPanel.jsx";
+import ProjectModuleStatusStrip from "../components/projects/ProjectModuleStatusStrip.jsx";
+import { createTerraformExport, downloadTerraformExport } from "../api/platformApi.js";
+
+export default function ProjectInfrastructure() {
+  const { projectId } = useParams();
+  const [project, setProject] = useState(null);
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [exportBusy, setExportBusy] = useState(false);
+  async function exportTerraform() { setExportBusy(true); setError(""); try { const artifact = await createTerraformExport(projectId); await downloadTerraformExport(projectId, artifact); } catch (caughtError) { setError(caughtError.message); } finally { setExportBusy(false); } }
+
+  useEffect(() => {
+    setError("");
+    setIsLoading(true);
+    getProject(projectId)
+      .then((response) => setProject(response.project))
+      .catch((caughtError) => setError(caughtError.message))
+      .finally(() => setIsLoading(false));
+  }, [projectId]);
+
+  if (isLoading) {
+    return <LoadingState message="Loading infrastructure..." />;
+  }
+
+  if (error && !project) {
+    return <ErrorState message={error} />;
+  }
+
+  return (
+    <div className="grid">
+      <PageHeader
+        eyebrow="Infrastructure Gate"
+        title="Terraform Infrastructure"
+        description="VPC, subnets, NAT, ALB, security groups, Cloud Map, Terraform plan/apply status, and deployment readiness."
+      />
+      <ProjectModuleStatusStrip moduleKey="infrastructure" projectId={projectId} />
+      {error ? <ErrorState message={error} /> : null}
+      <ProjectDeployPanel
+        canManage={Boolean(project?.canManage)}
+        projectId={projectId}
+      />
+      <section className="panel-flat settings-link-card"><div><p className="eyebrow">Portability</p><h2>Export Terraform</h2><p>Download a short-lived sanitized bundle with configuration, referenced modules, examples, and migration notes. State, plans, caches, and credentials are excluded.</p></div>{project?.canManage ? <button className="secondary-button" disabled={exportBusy} onClick={exportTerraform} type="button">{exportBusy ? "Preparing…" : "Export ZIP"}</button> : null}</section>
+    </div>
+  );
+}

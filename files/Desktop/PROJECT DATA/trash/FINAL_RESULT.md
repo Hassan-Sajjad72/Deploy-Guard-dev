@@ -1,0 +1,260 @@
+# DeployGuard Final Verified Result
+
+Date: 2026-08-02
+Scope: transformation Iterations 0–9 plus Claude remediation Iteration 1.
+
+## Verdict
+
+**NO-GO for controlled live AWS testing — both verified P0 defects are closed,
+but verified P1 architecture work remains in remediation Iteration 2.**
+
+This verdict means the normal-v1 product, authorization, durable lifecycle,
+shared-worker and developer-experience contracts are ready for controlled
+testing. It is not a live AWS deployment certification. The transformation
+program deliberately stops before live AWS mutation.
+
+The earlier local-launch GO remains valid only as historical evidence for that
+bounded non-cloud program. It must not be used as authorization for a live
+Deploy while the P1 readiness/authentication/recovery/tenancy/adapter contract
+is still open.
+
+## Claude remediation Iteration 1 result
+
+- **P0 retry mismatch closed.** A canonical active first-release plan-operation
+  predicate is now shared by preparation, the developer command and exact plan
+  dispatch. Both new `deploy` and immutable `retry` operations are accepted;
+  terminal attempts are never reactivated or republished.
+- **P0 delivery gap closed.** The API lifecycle now owns a startup/recurring
+  durable outbox drain. PostgreSQL advisory locking plus the existing row claim
+  fencing, deterministic BullMQ identity, worker capability checks, backoff,
+  stale-claim recovery and terminal policy survive API and Redis interruption.
+  Exact inline dispatch is only an optimization.
+- **Exact Express recovery completed without delivery.** Retry intent
+  `510676d2-e0df-4317-a62c-d8a20cb131e3` is `cancelled` with
+  `FIRST_RELEASE_PLAN_CANCELLED_BEFORE_DISPATCH`; its outbox is a zero-attempt,
+  unpublished dead letter with one audit record. Historical intent
+  `49109a5e-5ee2-4ed8-a50d-e59f08b4365a`, its published deterministic job,
+  failed manifest and immutable drafts remain unchanged.
+- **Operational drain proof.** Startup emitted `DURABLE_OUTBOX_DRAIN_READY` and
+  truthfully terminalized the only other pending row whose parent was already
+  completed. PostgreSQL now reports pending/failed/publishing/claimed
+  `0/0/0/0`; active leases/owners are `0/0`; both release and infrastructure
+  queues report waiting/active/delayed `0/0/0`.
+- **Evidence classification.** Isolated: real disposable PostgreSQL schema and
+  isolated Redis/BullMQ prefix. Local: exact Express recovery and API lifecycle
+  drain. Live AWS: not used; no mutation or deployment job occurred.
+
+This verdict was revalidated after a post-closure browser acceptance defect was
+found on project `7ff60e82-e166-4d3b-9ea7-78203370e59f`. The earlier evidence
+missed a real developer-action projection case: a global/project inventory read
+error was treated as positive project resource evidence, while a terminal
+`REMOTE_CANARY_PLAN_NOT_ALLOWED` attempt was collapsed to a generic malformed
+first-release state. Together they produced `platform_attention / none` for a
+supported, configured Express project whose only historical attempt had stopped
+before Terraform initialization.
+
+The correction is intentionally narrow. Inventory transport failures no longer
+constitute existing provider-state evidence by themselves; known resources,
+residue, ownership conflicts, active operations and other ambiguous evidence
+still fail closed. A new Deploy action is allowed only for the exact durable
+pre-execution signature: one failed infrastructure-plan intent and manifest,
+one historical published delivery, one failed non-reconciling plan journal, no
+saved plan/state/output/apply evidence, and an unchanged immutable draft. A
+future click creates a new deterministic retry intent/outbox and preserves the
+failed history; it does not revive or redispatch the historical delivery.
+
+A second browser acceptance pass found a frontend-only lifetime defect after
+that backend correction. The queue was reopened when the alert was reported
+again after a frontend restart because the first correction had only tested a
+JavaScript object-identity helper, not the real mounted component lifecycle.
+Runtime inspection found one source: `CanonicalDeploymentView`'s local command-
+failure hook. The parent error props were empty; route state contained only the
+React Router index; local storage contained only the theme; session storage was
+empty; there was no service worker or query cache; and the historical attempt
+did not map to an alert. The API correctly returned `applicationError=null`,
+`canRetry=false`, no attention/banner field and no existing-state
+classification.
+
+Command errors are now tied to an explicit successful canonical-fetch version
+owned by each page, rather than object identity. A newly rejected command stays
+visible for the fetch version on which it occurred. The next successful
+canonical fetch invalidates and removes that local failure even when its
+`ready / deploy` payload is semantically unchanged. Fresh mounts start without
+a command failure, while current backend-owned `applicationError` and
+`platform_attention` presentation remain intact.
+
+A subsequent real Deploy click exposed a distinct backend readiness defect. Its
+HTTP `201` body was the normal command's sanitized `platform_attention` result;
+the contract had no safe code or operation identity. PostgreSQL and Redis prove
+that it stopped at the first command branch because
+`TWO_LANE_NORMAL_AUTOMATIC_DEPLOY_ENABLED` was absent: no new intent, command
+marker, outbox or BullMQ job existed, and the historical pre-Terraform failure
+remained unchanged.
+
+The local API gate is now explicitly enabled and reports
+`NORMAL_V1_AUTOMATIC_CONTINUATION_READY`. The required pre-click audit then found
+and corrected a latent shared-mode mismatch: S3 plan admission and AWS-account
+validation still required the historical exact-project remote-canary settings.
+Shared mode now uses its existing durable authorization policy, explicit
+infrastructure-plan execution gate, `dev` restriction, general expected-account
+identity, exact immutable state key and remote-state safeguards. Canary mode is
+unchanged and remains exact-project/default-off. The normal apply verifier uses
+the same shared account identity; no cost, approval or apply safety policy was
+relaxed.
+
+## Implementation evidence
+
+- Overview and Deployments use one authenticated canonical Deploy/Redeploy
+  command and one closed developer current-state projection. They render
+  Analyze, Build, Prepare, Deploy and Verify, with separate latest-attempt and
+  verified-stable evidence. A live URL is emitted only from verified stable
+  evidence.
+- The durable normal-v1 planner preserves immutable configuration identity,
+  unchanged-source `NO_OP`, source-only `release_only`, exact deterministic
+  outbox/BullMQ identity, ownership, leases, fencing, journals and bounded
+  reconciliation. Duplicate requests reuse one operation.
+- First deployment composes the existing plan, policy, apply and release
+  boundaries. Infrastructure execution remains separately gated; ordinary
+  source redeployment never invokes infrastructure work.
+- Shared worker activation is project-unbound in `shared` mode, restricted to
+  `dev`, and revalidates actor/workspace/project/environment authorization from
+  durable intent evidence before ownership. Canary mode retains exact one-
+  project scope.
+- Existing deployments are classified and reconciled fail-closed. Ambiguous or
+  unsafe provider state becomes neutral platform attention; developer actions
+  cannot perform cleanup, recovery or internal stage execution.
+- Environment values are workspace/project/environment isolated, encrypted at
+  rest, masked in responses, and excluded from developer projections. Operator
+  diagnostics and legacy mutation routes are backend-authorized and absent from
+  ordinary navigation.
+- Developer pages expose the six contractual surfaces and none of the forbidden
+  cloud, queue, lease, outbox, recovery or raw lifecycle terminology.
+
+## Isolated verification evidence
+
+The focused acceptance set passed:
+
+- three authenticated users/workspaces with two private projects each,
+  cross-workspace `403`, encrypted secret storage and masked HTTP responses;
+- clean Express, clean Python and configuration-required detection;
+- serializable eight-way identical planning, one canonical result, independent
+  different-project progress and same-project configuration locking;
+- unchanged source `NO_OP`, changed source `release_only`, canonical Deploy
+  identity, current-state sanitization and operator authorization;
+- legacy deployment retirement without run creation or queue publication;
+- real disposable PostgreSQL/Redis advisory-lock, BullMQ duplicate identity and
+  worker-restart delivery;
+- managed first-release supervised execution through the non-cloud production-
+  shaped boundary without fabricating a provider URL;
+- isolated Compose infrastructure-plan/apply supervision, including disabled,
+  invalid, ready, SIGUSR1, graceful restart, crash restart and stopped states;
+- backend TypeScript `--noEmit` and Nest production build;
+- frontend terminology, application surfaces, operator segregation, canonical
+  Overview/Deployments, current-state UI and Vite production build.
+- exact post-closure Express acceptance: the authenticated current-state API
+  returned `developerState=ready`, `developerAction=deploy`, no missing
+  configuration, one blocked historical attempt and no stable release; both
+  Overview and Deployments rendered one Deploy button after refresh. The same
+  fixture with genuine ambiguous provider evidence remained
+  `platform_attention / none`.
+- the restarted real Vite/Nest application passed a fresh authenticated browser
+  context, Overview → Deployments → Overview navigation, cache-bypassing hard
+  refresh, tab close/reopen, a second frontend restart and reload. Every project
+  view contained exactly one Deploy button and zero current alerts; the blocked
+  earlier attempt remained in Latest attempt. The mounted component's command-
+  failure hook was `null` on each fresh/remounted view.
+- an isolated in-browser React runtime intercepted the command at `fetch`
+  before any backend request: the newly failed command rendered its sanitized
+  alert, canonical fetch version `10 → 11` removed it, and a backend-owned
+  application failure still rendered separately. Focused source regressions
+  cover fresh mount, navigation remount, hard refresh and newer-fetch
+  invalidation. The broader normal-release UI guard was also corrected to
+  enforce the retired cleanup/recovery control's absence from developer
+  Settings instead of expecting that legacy control to remain.
+- exact pre-click backend readiness at that checkpoint: the authenticated refresh was
+  `ready / deploy`; all three shared consumers are idle with `ready=true` and
+  fresh capability heartbeats; the loaded infrastructure worker accepts the
+  exact shared `dev` revision-key shape; focused command-gate, serializable
+  command identity, shared activation, pre-execution retry, planning, real-cost
+  review, current-state and authorization regressions pass. Both production
+  builds pass. No replacement operation had yet been created and no POST was replayed.
+
+The infrastructure supervision fixture itself exposed and corrected one final
+test-safety defect: it previously reused the operational Compose project and
+ports, inherited shared mode while testing canary rejection, and could stop the
+operational PostgreSQL/Redis services during cleanup. It now uses a unique
+Compose project, containers, published PostgreSQL port, volumes and network;
+pins the exact canary contract; waits for host-visible PostgreSQL readiness; and
+removes only its own resources. The corrected regression passes with no leaked
+container, database, volume, Redis key or temporary directory.
+
+The corresponding release supervision proof was revalidated rather than
+assumed. It exposed two fixture/composition defects: the operational service had
+not received the three default-off first-release gates, and the test bypassed
+its unique Compose helper while starting PostgreSQL/Redis and treated a
+comma-separated allowlist as one project. Compose now passes those gates with
+default `false`; the exact ignored local scope enables them. The fixture uses
+only its unique project/containers/ports/volumes/network, compiles the current
+entry point, parses the allowlist truthfully, and passes disabled, invalid,
+ready, graceful-restart, crash-restart and stopped checks without disturbing
+the operational consumers.
+
+## Local-runtime evidence
+
+- Real local PostgreSQL reports 7 users, 18 active projects and 2 owners with at
+  least two projects.
+- Smart Retail Pro First Release retains one release and one stable release.
+  Project-Tst Canary retains eight historical releases and one stable release.
+- The signed browser/durable demonstration completed operation
+  `6469e564-c4bc-4efd-8f86-5aa25b9a8bd2` and deterministic job
+  `dg:v1:release:6469e564-c4bc-4efd-8f86-5aa25b9a8bd2:execute:1` exactly once.
+  Analyze/Build/Prepare/Deploy/Verify reached Live and restored identical
+  latest/stable state across Overview, Deployments, Dashboard and Plan & Usage
+  after refresh. Evidence: [signed local demo](docs/architecture/two-lane-migration/evidence/fyp-local-demo/latest.md).
+- The release and infrastructure Compose consumers are running with healthy
+  liveness, `ready=true` and fresh durable capability heartbeats. The dedicated
+  isolated supervision test proves each infrastructure consumer reaches ready
+  and survives graceful and unexpected restart.
+- Release and infrastructure queues have zero waiting, active or delayed jobs.
+  PostgreSQL has zero active operation leases, cross-lane owners or outbox
+  claims. No disposable acceptance database, container, volume, Redis key or
+  temporary process remains.
+- Frontend health is `200`; unauthenticated project API access is `401`.
+- After Iteration 1, the Express scope retains two historical operations: the
+  original failed deploy with its published delivery, and the retry now
+  audibly cancelled before dispatch with a zero-attempt unpublished dead letter.
+  It has zero release manifests and zero active lease, owner or claim.
+  Infrastructure and release queues have zero waiting, active or delayed work.
+  No job was published by remediation.
+- The plan/apply containers verify Terraform `1.10.5`, Infracost `2.12.2`, the
+  expected AWS account in `us-east-1`, an encrypted/versioned state bucket with
+  full public-access blocking and an enabled native lockfile contract. The
+  release container verifies Docker client/server access and read-only AWS SDK
+  access. These are readiness checks, not deployment evidence.
+- The signed evidence checksum and `git diff --check` pass.
+
+## Live-AWS evidence
+
+No AWS mutation was performed in this transformation program. Existing Smart
+Retail and Project-Tst durable release evidence was inspected read-only only.
+The pre-click readiness correction added read-only STS/ECR and state-bucket
+identity, versioning, encryption and public-access-block checks only.
+Local fixture success is not represented as Docker, Terraform, ECR, ECS, ALB or
+live deployment success.
+
+## Deferred non-blocking scope
+
+- A controlled live AWS deployment remains a separate operator-authorized
+  validation package.
+- Stripe billing and SNS delivery are productization work outside the current
+  project scope. `BILLING_PROVIDER_ENABLED=false` and
+  `NOTIFICATION_DELIVERY_ENABLED=false` remain authoritative.
+- Optional provider/security integrations and clean provider-specific
+  operational history are not prerequisites for this local-launch verdict.
+
+## Current closure state
+
+The original nine transformation iterations remain complete. The independent
+architecture audit reopened launch readiness: remediation Iteration 1 closed
+both verified P0s, while Iteration 2 is the exact next package for the remaining
+P1 contracts. A live Deploy is not authorized yet.
