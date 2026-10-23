@@ -1,0 +1,6 @@
+tree 4d5a67d0b362b192be3d1f0b60a0f5b828ca7823
+parent 050d38369378b72641d70ecf31e3753a6742c1b7
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787424001 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787424001 +0500
+
+fix(workflow): harden local deployment certification

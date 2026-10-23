@@ -1,0 +1,197 @@
+[
+  {
+    "branch": "backup/ubuntu-20261024/container-working-tree",
+    "sha": "4923dcd709366469186768d8777451c4a591bde1",
+    "parent": "ce6dc8cdc81f5773a94f4cfb96d0089d8f14e3be",
+    "source": "/home/hassan-sajjad/Deploy-Guard-final-container-setup",
+    "applied": [
+      {
+        "path": "monitoring/grafana.Dockerfile",
+        "action": "saved"
+      }
+    ],
+    "excluded": []
+  },
+  {
+    "branch": "backup/ubuntu-20261024/release1-working-tree",
+    "sha": "e810a79e3d3685ee4c7835f6397c8ecc07184c9f",
+    "parent": "d77f1b869bef73713475a331d4d45383e527a456",
+    "source": "/home/hassan-sajjad/deployguard-release-1",
+    "applied": [
+      {
+        "path": "LOCAL_DOCKER.md",
+        "action": "saved"
+      },
+      {
+        "path": "README.md",
+        "action": "saved"
+      }
+    ],
+    "excluded": []
+  },
+  {
+    "branch": "backup/ubuntu-20261024/m0-security-working-tree",
+    "sha": "c1ee14c21b594606d76d9397fac680507b4825aa",
+    "parent": "a96d36e33cf0d70ec731e76ffc4e9f8aa1030b56",
+    "source": "/home/hassan-sajjad/deployguard-m0-clean-xeBIfY/checkout",
+    "applied": [
+      {
+        "path": "backend/package-lock.json",
+        "action": "saved"
+      },
+      {
+        "path": "frontend/package-lock.json",
+        "action": "saved"
+      },
+      {
+        "path": "scripts/verify-dependency-security.cjs",
+        "action": "saved"
+      }
+    ],
+    "excluded": []
+  },
+  {
+    "branch": "backup/ubuntu-20261024/version1-local-deletions",
+    "sha": "e716ebfa007c4ba3e37a32dbc97b66c3565c7814",
+    "parent": "7799fbd07d6c0d3988d3a6235a43254519fa0cf4",
+    "source": "/home/hassan-sajjad/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev",
+    "applied": [
+      {
+        "path": "AGENTS.md",
+        "action": "deleted"
+      },
+      {
+        "path": "DESIGN.md",
+        "action": "deleted"
+      },
+      {
+        "path": "DeployGuard_FYP2_Presentation_Data.md",
+        "action": "deleted"
+      },
+      {
+        "path": "TEAMMATE_SETUP.md",
+        "action": "deleted"
+      },
+      {
+        "path": "backend/STRIPE_TESTING.md",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/DeployGuard_Viva_Master_Notes.md",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/DeployGuard_Viva_Master_Notes_v2.html",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/DeployGuard_Viva_Master_Notes_v2.md",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/auth-sequence.png",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/auth-sequence.svg",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/aws-vpc.png",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/aws-vpc.svg",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/database-overview.png",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/database-overview.svg",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/deployment-sequence.png",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/deployment-sequence.svg",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/failure-handling.png",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/failure-handling.svg",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/module-dependencies.png",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/module-dependencies.svg",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/overall-architecture.png",
+        "action": "deleted"
+      },
+      {
+        "path": "docs/diagrams/overall-architecture.svg",
+        "action": "deleted"
+      },
+      {
+        "path": "install-vs-code-official.sh",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/github-actions-rentmate.png",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/rentmate-infrastructure.png",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/rentmate-live-app.png",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/rentmate-monitoring.png",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/rentmate-overview.png",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/rentmate-pipeline.png",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/smart-retail-live-app.png",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/smart-retail-overview.png",
+        "action": "deleted"
+      },
+      {
+        "path": "presentation_assets/test2-dashboard.png",
+        "action": "deleted"
+      }
+    ],
+    "excluded": [
+      ".claude/settings.local.json",
+      "DOC Document.docx",
+      "frontend/.modal-browser-v7Q5aN/chrome/Default/Network Persistent State",
+      "frontend/.modal-browser-v7Q5aN/chrome/Default/SCT Auditing Pending Reports",
+      "frontend/.modal-browser-v7Q5aN/chrome/Default/Storage/ext/nmmhkkegccagdldgiimedpiccmgmieda/def/.com.google.Chrome.T1Yqhh",
+      "frontend/.modal-browser-v7Q5aN/chrome/Default/TransportSecurity"
+    ]
+  }
+]

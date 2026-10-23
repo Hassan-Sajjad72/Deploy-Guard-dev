@@ -1,0 +1,6 @@
+tree bc05f94c8a993772af7d49264f5777d8b1641f66
+parent 1acd056f29eaabc607d68e6875b27c877c1bd9c9
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1788808337 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1788808337 +0500
+
+index on test1: 1acd056 fix: unify structured failure recovery contract

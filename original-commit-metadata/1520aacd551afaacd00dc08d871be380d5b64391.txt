@@ -1,0 +1,6 @@
+tree 54f1771580d179d1cc3667e51b4fae67ddfe1c40
+parent f69ee49d2052abb656053d0125e8f6282a874465
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791645302 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791645302 +0500
+
+fix(m0): diagnose evidence guards and recover terminal ownership safely

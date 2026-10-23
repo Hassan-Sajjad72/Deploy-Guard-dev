@@ -1,0 +1,6 @@
+tree 90c1550f1424c296e892f6e31fc963fe97d6632d
+parent 1d7183d4dd1e91a591ad7b0c345627daec403d65
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823222 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823222 +0500
+
+docs: document application branches and testing purpose

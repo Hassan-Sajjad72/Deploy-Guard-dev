@@ -1,0 +1,6 @@
+tree 329e3b5e8b8cd2731cc684a823b54b53af05808a
+parent 45dfd9abb68f97212cbd6e389e83ba8026d4024c
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1788016182 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1788016182 +0500
+
+index on test1: 45dfd9a fix: converge destroy lifecycle authority

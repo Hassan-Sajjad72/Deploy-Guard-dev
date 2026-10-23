@@ -1,0 +1,6 @@
+tree 8bfc55fd2d1137620d2c47f4725b8f4c9c39a942
+parent 2edbd38f0f9bef93c47b3e6c0ef354f976da5a90
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791582908 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791582908 +0500
+
+test(m0): align stale consumers with canonical UI contracts

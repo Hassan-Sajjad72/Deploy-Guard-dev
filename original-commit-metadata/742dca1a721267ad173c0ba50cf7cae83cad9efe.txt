@@ -1,0 +1,6 @@
+tree c871145d57f631648952b96a17db80d6b44a3ee0
+parent 4018a70bd82a61d27db8e2ace41f8e74b2a22141
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787438625 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787438625 +0500
+
+fix(workflow): remove image security review gate

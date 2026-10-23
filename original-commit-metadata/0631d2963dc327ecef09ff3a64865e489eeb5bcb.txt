@@ -1,0 +1,6 @@
+tree 34346db6fc1fb3deb5b9075a6fb2829137e36e55
+parent cd0927254f53f70c4a47260250284c54fa997114
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791582908 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791582908 +0500
+
+test(m0): add exact-scope read-only AWS deletion observer

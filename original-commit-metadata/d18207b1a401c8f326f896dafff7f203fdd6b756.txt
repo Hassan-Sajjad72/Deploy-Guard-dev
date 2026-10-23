@@ -1,0 +1,6 @@
+tree 6abcb8765a268c479f165668223e6a220d438fec
+parent 5003cebb57be98c2c01430aba02ed6459ae3643c
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791642078 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791642078 +0500
+
+fix(m0): retain exact workflow AWS ownership receipts

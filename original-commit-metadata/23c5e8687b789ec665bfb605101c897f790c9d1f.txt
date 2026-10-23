@@ -1,0 +1,10 @@
+tree f80a52172075f7d8cd209fe7f0325f175e2c42f9
+parent 73d89add631afd08f70ab4cd95728589016e4d38
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1788808763 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1788808763 +0500
+
+fix: harden Railpack runtime contracts
+
+Seal supported Railpack build capabilities into per-service release identity, reject execution overrides, and preserve exact workflow forwarding.
+
+Add evidence-bound native build, shared-library, runtime-version, forwarding-loss, and provider-outage diagnostics while retaining the completed managed-database and startup classification contracts.

@@ -1,0 +1,6 @@
+tree 6a7c193a36c7dc10d03d0fc641d6d8fa64f6b90c
+parent e26a01e55e0d320891f0a920e5836b135c86c8ab
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1786390329 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1786390329 +0500
+
+fix: scope rollback ownership to active generation

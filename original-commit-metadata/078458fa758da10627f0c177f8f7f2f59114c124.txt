@@ -1,0 +1,6 @@
+tree 7e35d4db6f79874a998687d944ce505281f9d101
+parent 742dca1a721267ad173c0ba50cf7cae83cad9efe
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787508897 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787508897 +0500
+
+fix(workflow): fail closed before infrastructure mutation

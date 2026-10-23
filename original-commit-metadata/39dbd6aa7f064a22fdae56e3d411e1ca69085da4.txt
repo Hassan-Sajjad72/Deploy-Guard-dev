@@ -1,0 +1,6 @@
+tree 10abf604a1d4bb672fd8f20091640c7abe740a40
+parent 10912d020eab80d7ee4c80091b9bf672a0655c1f
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1786523844 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1786523844 +0500
+
+fix: capture Terraform destroy detailed exit code

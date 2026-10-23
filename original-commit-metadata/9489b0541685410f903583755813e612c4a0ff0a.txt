@@ -1,0 +1,8 @@
+tree 8c7e3b7c3cccf155a0cde039fd62915e942cfaa5
+parent 70fad60bc8051f63baa04e55de4b7056a1bf88bd
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1788809023 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1788809023 +0500
+
+test: mark database credentials as fixtures
+
+Construct credential-bearing database URLs from explicit fixture components so redaction tooling does not mistake test-only values for deployable secrets.

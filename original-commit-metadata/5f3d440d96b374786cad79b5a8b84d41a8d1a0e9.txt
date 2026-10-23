@@ -1,0 +1,6 @@
+tree 9a6d9147d263bdc1ba063c1da356c511ce30adac
+parent 8a145feeecbaf16f433da72c3f15c66a87d39d0b
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823259 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823259 +0500
+
+feat: add Fastify JavaScript MySQL fixture

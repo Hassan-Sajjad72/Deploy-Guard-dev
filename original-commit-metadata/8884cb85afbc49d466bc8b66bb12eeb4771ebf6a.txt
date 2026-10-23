@@ -1,0 +1,25 @@
+tree 6145a4ab1d971b7dd0a21c614f1ce707491e3c83
+parent e89988eb50e6ff18ceeac55c7d0a288715601722
+author Hassan Sajjad <151175100+Hassan-Sajjad72@users.noreply.github.com> 1776925483 -0400
+committer GitHub <noreply@github.com> 1776925483 -0400
+gpgsig -----BEGIN PGP SIGNATURE-----
+ 
+ wsFcBAABCAAQBQJp6bsrCRC1aQ7uu5UhlAAA3boQAIcoUKjzAPd+19GyLE6ktWkK
+ haKnbmGEV/++wN1D69oNVk95N8vcXdURXBu10AHtXRovjr6zUgc1fU2fMWGRXFKy
+ 9zYXMIzPdPzbdJnl/18FTmBtsfOyHmyGkFX4Ge9hJXNyHn8NEy1lBH8rlp7tEhns
+ bg4kTmYf7DoP0IztBenHiIYRTN8ateuhucznNgjvmDWx5yuf9XhDsJ764L2J6Hf8
+ FRkqXwr9I8zuMQxUW3BBJoYOxCghy5jQitsn+5zW9d4BjmlwtuFhRf9woM7SK0K4
+ 69OyXpdgZAs5tNlnFMZJD8zTO1kqEFYObolZV/EBeUh/WY/F9qFpOE21vBgrZnL0
+ 0ZJWRD9trakAom1Os/5o5HB5b33P3aySJThe7DZlsTPToWROfPLsaMhUiGxIvK7x
+ r3hkk+LdkMlFdact62n7g5t9vGvzsfFuVl2P+oW4UbpdEhl5p66YXnUTkrouQswa
+ UWNPLV8kkuK+u1obTQwXVBgJ/iZwGusMAudGfcny7OuIxYV26eQ1xfadcOUzVdEL
+ wG8G708za4zudCv1lSzTDxkpvbS0sfrXFeE3R8gyi7F/gNH3WCofm+w267dTiy//
+ k7DBB6GINxkyY3RlvUc2MR28tHlbHFaLFupCJHs8RSq2qEv/s99vAU76L1NuylXY
+ FtheXqRGnSzWnWKfUtHQ
+ =Qz75
+ -----END PGP SIGNATURE-----
+ 
+
+Remove core features and project structure from README
+
+Removed detailed core features and project structure sections from the README.

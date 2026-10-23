@@ -1,0 +1,6 @@
+tree 3a54a3b80114962d4ae145af48b313a4dad5ad34
+parent 8a145feeecbaf16f433da72c3f15c66a87d39d0b
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823260 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823260 +0500
+
+feat: add Nuxt SSR PostgreSQL fixture

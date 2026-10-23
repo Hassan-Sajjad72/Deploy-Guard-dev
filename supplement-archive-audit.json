@@ -1,0 +1,16 @@
+[
+  {
+    "archive": "/home/hassan-sajjad/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip",
+    "git_dir": "/tmp/deployguard-preservation-20261024/archived-extra-0",
+    "refs": "82079bc1899275d2b24379e56ced4187d34d4e25 refs/heads/product-freeze-confirmed-fixes\n48bee78e84f7e52c50788e3660a9910a1d628bac refs/heads/test1\n71fd5ab4d915c8dfbe440654c1c9e18e1b6763f4 refs/remotes/origin/HEAD\n0747e2662d32b8ece7314af58164a4f7e1b0ea86 refs/remotes/origin/codex-immutable-release\nf937d3dd11f4ca6ff0883981e116791881333037 refs/remotes/origin/codex/certification-part3-workflow-20260824\n0def2608f708a2cfcbc93c4b816694b39b44bafa refs/remotes/origin/codex/certification-part3-workflow-20260824-final\n5bad63f58c78dc09e82c59f5975f0cea58e5b4a0 refs/remotes/origin/codex/destroy-capture-plan-exit\n93a4c93593d30e2d9ab30c6399887e7e5c0000b1 refs/remotes/origin/codex/destroy-no-change-state-refresh\n99d2c185d8e9324ddc280aeb6db889d77cd1e7cb refs/remotes/origin/codex/destroy-stale-state-extinction\n59b1446c20efd095ebce3ba1e9a23dd9991165f7 refs/remotes/origin/codex/fix-destroy-runtime-contract\nce994813eae3b0befb8989133694ea35cdfe19ab refs/remotes/origin/codex/pin-failed-candidate-cleanup-20260819\n9190a1e06d11a76d1fbf731154cf53a58b86e701 refs/remotes/origin/codex/publish-fail-closed-reliability-clean-20260823\n6bb4bd88634b3f2657934b2a336fb4a41b7d36e2 refs/remotes/origin/codex/publish-failed-candidate-cleanup-20260819\n95791eaa8013ed960bde2740b6cbc1bbfc80a2e3 refs/remotes/origin/codex/publish-local-certification-workflow-20260822\nb7ea8992a981b9fba413d1689c39965dfc853568 refs/remotes/origin/codex/publish-reliability-workflow-20260822\n19a3eb6cc73e7dd559b56ec24179d77ad7bfd932 refs/remotes/origin/codex/publish-reliability-workflow-clean-20260822\na22daadb88b56bfcd94dc047e7f286a0ca5465f2 refs/remotes/origin/codex/publish-security-continuation-20260823\n4c69fd8cc351de8bb2b3592394985e267295ad37 refs/remotes/origin/codex/publish-trivy-removal-20260823\naf84755921df12fbd5240351c6e80b93725e9787 refs/remotes/origin/container-setup\n71fd5ab4d915c8dfbe440654c1c9e18e1b6763f4 refs/remotes/origin/main\n48bee78e84f7e52c50788e3660a9910a1d628bac refs/remotes/origin/test1\n",
+    "fsck_exit": 0,
+    "fsck": ""
+  },
+  {
+    "archive": "/home/hassan-sajjad/Downloads/DATA2/VERSION-7-fixed.zip",
+    "git_dir": "/tmp/deployguard-preservation-20261024/archived-extra-1",
+    "refs": "",
+    "fsck_exit": 128,
+    "fsck": "fatal: not a git repository: '/tmp/deployguard-preservation-20261024/archived-extra-1'\n"
+  }
+]

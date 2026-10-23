@@ -1,0 +1,437 @@
+{
+  "date": "2026-10-24",
+  "timezone": "Asia/Karachi",
+  "repository": "Hassan-Sajjad72/Deploy-Guard-dev",
+  "source_backup_status": "VERIFIED",
+  "full_laptop_migration_clearance": "NOT CLEARED: restricted user homes were not auditable",
+  "restricted_locations": [
+    "/home/devops-user",
+    "/home/devopsuser",
+    "/root"
+  ],
+  "permission_blocker": "sudo-rs: interactive authentication is required",
+  "backup_branches_checked": 68,
+  "original_github_refs_unchanged": true,
+  "stable_version1": "7799fbd07d6c0d3988d3a6235a43254519fa0cf4",
+  "main": "6b31bdb93d29eb79eb6d830c19fb00a66ccd1d2a",
+  "local_only_commits_preserved": 131,
+  "sanitized_commits": 121,
+  "selected_file_paths_checked": 14560,
+  "unique_file_contents_sha256_checked": 5794,
+  "recovered_source_blobs_preserved": 2225,
+  "deletions_preserved": 32,
+  "known_credential_blobs_excluded": 1,
+  "gitleaks_version": "8.30.1",
+  "git_fsck_exit": 0,
+  "errors": [],
+  "branches": [
+    {
+      "branch": "backup/ubuntu-20261024/additional-source",
+      "sha": "8480e29f78892d0234f45e75358a7a911e9c9b29",
+      "github_sha": "8480e29f78892d0234f45e75358a7a911e9c9b29",
+      "fetched_sha": "8480e29f78892d0234f45e75358a7a911e9c9b29"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/container-working-tree",
+      "sha": "4923dcd709366469186768d8777451c4a591bde1",
+      "github_sha": "4923dcd709366469186768d8777451c4a591bde1",
+      "fetched_sha": "4923dcd709366469186768d8777451c4a591bde1"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/archived-workspace/product-freeze-confirmed-fixes",
+      "sha": "450d31760e3d3474aac91925fef7069c76be3f3e",
+      "github_sha": "450d31760e3d3474aac91925fef7069c76be3f3e",
+      "fetched_sha": "450d31760e3d3474aac91925fef7069c76be3f3e"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/early-prototype/Docker-templates",
+      "sha": "7d93d738a70428bf724d00bb120c0fe9d80ea143",
+      "github_sha": "7d93d738a70428bf724d00bb120c0fe9d80ea143",
+      "fetched_sha": "7d93d738a70428bf724d00bb120c0fe9d80ea143"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/early-prototype/main",
+      "sha": "6f5aac32e1182d0744f483dd4afe2c6f14057825",
+      "github_sha": "6f5aac32e1182d0744f483dd4afe2c6f14057825",
+      "fetched_sha": "6f5aac32e1182d0744f483dd4afe2c6f14057825"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Angular_Express_MongoDB",
+      "sha": "976655b9f3ed895b295ee9d866bc2943ba0437f7",
+      "github_sha": "976655b9f3ed895b295ee9d866bc2943ba0437f7",
+      "fetched_sha": "976655b9f3ed895b295ee9d866bc2943ba0437f7"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Astro_Node_MongoDB",
+      "sha": "497a9eefd95ea0329c2afe5059d0e56f9b636b3a",
+      "github_sha": "497a9eefd95ea0329c2afe5059d0e56f9b636b3a",
+      "fetched_sha": "497a9eefd95ea0329c2afe5059d0e56f9b636b3a"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Astro_Static_Fastify_MySQL",
+      "sha": "11c40cfc352c4c4c3a74b72cb1cd61277a19dae2",
+      "github_sha": "11c40cfc352c4c4c3a74b72cb1cd61277a19dae2",
+      "fetched_sha": "11c40cfc352c4c4c3a74b72cb1cd61277a19dae2"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/CRA_Express_PostgreSQL",
+      "sha": "bfc272a03a2a1223c73b33505bd92007a36bf0e4",
+      "github_sha": "bfc272a03a2a1223c73b33505bd92007a36bf0e4",
+      "fetched_sha": "bfc272a03a2a1223c73b33505bd92007a36bf0e4"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Django_ASGI_MySQL",
+      "sha": "bb630fe7991e644f770be629d308df5d5a5b4a20",
+      "github_sha": "bb630fe7991e644f770be629d308df5d5a5b4a20",
+      "fetched_sha": "bb630fe7991e644f770be629d308df5d5a5b4a20"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Django_WSGI_PostgreSQL",
+      "sha": "7013ef435657df66c7f161215fa73231f601fa79",
+      "github_sha": "7013ef435657df66c7f161215fa73231f601fa79",
+      "fetched_sha": "7013ef435657df66c7f161215fa73231f601fa79"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Express_JS_PostgreSQL",
+      "sha": "e3c1baf644ed9118b6da60ff8893142b257d3dc1",
+      "github_sha": "e3c1baf644ed9118b6da60ff8893142b257d3dc1",
+      "fetched_sha": "e3c1baf644ed9118b6da60ff8893142b257d3dc1"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Express_TS_MongoDB",
+      "sha": "4b8d655b1f9118e49fac266fdf5c02bf1265c24e",
+      "github_sha": "4b8d655b1f9118e49fac266fdf5c02bf1265c24e",
+      "fetched_sha": "4b8d655b1f9118e49fac266fdf5c02bf1265c24e"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/FastAPI_MySQL",
+      "sha": "b8811314bb31674a5e0c9139d713cdcb38c4867f",
+      "github_sha": "b8811314bb31674a5e0c9139d713cdcb38c4867f",
+      "fetched_sha": "b8811314bb31674a5e0c9139d713cdcb38c4867f"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/FastAPI_Nested_PostgreSQL",
+      "sha": "697c9aaa492179be362a4ca8fcf4421654c1f644",
+      "github_sha": "697c9aaa492179be362a4ca8fcf4421654c1f644",
+      "fetched_sha": "697c9aaa492179be362a4ca8fcf4421654c1f644"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Fastify_JS_MySQL",
+      "sha": "ab575ec85e5c4cc8af88957067cce5062818d058",
+      "github_sha": "ab575ec85e5c4cc8af88957067cce5062818d058",
+      "fetched_sha": "ab575ec85e5c4cc8af88957067cce5062818d058"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Fastify_TS_PostgreSQL",
+      "sha": "e9f2e6e2247bbc0d4f6791824e927ebb0d48b244",
+      "github_sha": "e9f2e6e2247bbc0d4f6791824e927ebb0d48b244",
+      "fetched_sha": "e9f2e6e2247bbc0d4f6791824e927ebb0d48b244"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Flask_Factory_MongoDB",
+      "sha": "0a4bca85834a539e23c2b84a0dd397d1b1beeea6",
+      "github_sha": "0a4bca85834a539e23c2b84a0dd397d1b1beeea6",
+      "fetched_sha": "0a4bca85834a539e23c2b84a0dd397d1b1beeea6"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Flask_PostgreSQL",
+      "sha": "d892258521b10f4b510623dc6962ed72613b8ad3",
+      "github_sha": "d892258521b10f4b510623dc6962ed72613b8ad3",
+      "fetched_sha": "d892258521b10f4b510623dc6962ed72613b8ad3"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/NestJS_MongoDB",
+      "sha": "a53a6dbca2ccb9dcb1ae2fae8b162252ffa0f26f",
+      "github_sha": "a53a6dbca2ccb9dcb1ae2fae8b162252ffa0f26f",
+      "fetched_sha": "a53a6dbca2ccb9dcb1ae2fae8b162252ffa0f26f"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/NextJS_SSR_PostgreSQL",
+      "sha": "ccb76a4bb0b8926a34b6b9bd721534c66c10027a",
+      "github_sha": "ccb76a4bb0b8926a34b6b9bd721534c66c10027a",
+      "fetched_sha": "ccb76a4bb0b8926a34b6b9bd721534c66c10027a"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/NextJS_Standalone_MongoDB",
+      "sha": "368b947b678a87a149e275bcd5987a83d1825c4c",
+      "github_sha": "368b947b678a87a149e275bcd5987a83d1825c4c",
+      "fetched_sha": "368b947b678a87a149e275bcd5987a83d1825c4c"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/NextJS_Static_Express_MySQL",
+      "sha": "62f8a00f2c58e42e351e729f1b4eb1160076a666",
+      "github_sha": "62f8a00f2c58e42e351e729f1b4eb1160076a666",
+      "fetched_sha": "62f8a00f2c58e42e351e729f1b4eb1160076a666"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Nuxt_SSR_PostgreSQL",
+      "sha": "2edfdd048d787e2ac49945255ba0879da34b0482",
+      "github_sha": "2edfdd048d787e2ac49945255ba0879da34b0482",
+      "fetched_sha": "2edfdd048d787e2ac49945255ba0879da34b0482"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Nuxt_Static_Fastify_MongoDB",
+      "sha": "67bc7f39b8d1c32bf68528ff394bb2263d88a84d",
+      "github_sha": "67bc7f39b8d1c32bf68528ff394bb2263d88a84d",
+      "fetched_sha": "67bc7f39b8d1c32bf68528ff394bb2263d88a84d"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Remix_Node_PostgreSQL",
+      "sha": "4b6ae8b1dbad3fd458544d08ca394c1a0f5ca05e",
+      "github_sha": "4b6ae8b1dbad3fd458544d08ca394c1a0f5ca05e",
+      "fetched_sha": "4b6ae8b1dbad3fd458544d08ca394c1a0f5ca05e"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Streamlit_MongoDB",
+      "sha": "bf6f17064a4b46be548267c4f041d0fe969c1208",
+      "github_sha": "bf6f17064a4b46be548267c4f041d0fe969c1208",
+      "fetched_sha": "bf6f17064a4b46be548267c4f041d0fe969c1208"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/SvelteKit_Node_MySQL",
+      "sha": "ed045f138aa5cb2b96e7c2ea64e4a698b7663aef",
+      "github_sha": "ed045f138aa5cb2b96e7c2ea64e4a698b7663aef",
+      "fetched_sha": "ed045f138aa5cb2b96e7c2ea64e4a698b7663aef"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/SvelteKit_Static_Express_PostgreSQL",
+      "sha": "c0f574a7ee6f383fcad3d6d3cc27c8449bc106df",
+      "github_sha": "c0f574a7ee6f383fcad3d6d3cc27c8449bc106df",
+      "fetched_sha": "c0f574a7ee6f383fcad3d6d3cc27c8449bc106df"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Vite_React_Express_PostgreSQL",
+      "sha": "50e52440dade96b48c51d635442a5cec273847b4",
+      "github_sha": "50e52440dade96b48c51d635442a5cec273847b4",
+      "fetched_sha": "50e52440dade96b48c51d635442a5cec273847b4"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Vite_Vue_Fastify_MySQL",
+      "sha": "5b27500d9658c25f508b67ed6c5a56467b970a14",
+      "github_sha": "5b27500d9658c25f508b67ed6c5a56467b970a14",
+      "fetched_sha": "5b27500d9658c25f508b67ed6c5a56467b970a14"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/Webpack_React_Fastify_MongoDB",
+      "sha": "8d50e3757134f87bf380bc068f52eeb0b48c2b6b",
+      "github_sha": "8d50e3757134f87bf380bc068f52eeb0b48c2b6b",
+      "fetched_sha": "8d50e3757134f87bf380bc068f52eeb0b48c2b6b"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/fixtures/main",
+      "sha": "41ae8b0c9f60e600357fa4a54bae712d0dc6725f",
+      "github_sha": "41ae8b0c9f60e600357fa4a54bae712d0dc6725f",
+      "fetched_sha": "41ae8b0c9f60e600357fa4a54bae712d0dc6725f"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/m0-checkout/codex/m0-workflow-identity-20261010",
+      "sha": "a96d36e33cf0d70ec731e76ffc4e9f8aa1030b56",
+      "github_sha": "a96d36e33cf0d70ec731e76ffc4e9f8aa1030b56",
+      "fetched_sha": "a96d36e33cf0d70ec731e76ffc4e9f8aa1030b56"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/codex/fix-generation-efs-token",
+      "sha": "9f778e131d099eff6be4e9f17f84bee6d9c333a1",
+      "github_sha": "9f778e131d099eff6be4e9f17f84bee6d9c333a1",
+      "fetched_sha": "9f778e131d099eff6be4e9f17f84bee6d9c333a1"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/codex/fix-terraform-formatting",
+      "sha": "23b202e17ac3630424b967d961c447a1ee264e45",
+      "github_sha": "23b202e17ac3630424b967d961c447a1ee264e45",
+      "fetched_sha": "23b202e17ac3630424b967d961c447a1ee264e45"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/codex/m0-workflow-identity-20261010",
+      "sha": "95257d05f6758c03acd3e41105d2717704ea84ef",
+      "github_sha": "95257d05f6758c03acd3e41105d2717704ea84ef",
+      "fetched_sha": "95257d05f6758c03acd3e41105d2717704ea84ef"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/codex/publish-final-generation-invariants",
+      "sha": "d76309ab54403608ae06c14c1a400bf00a4943ce",
+      "github_sha": "d76309ab54403608ae06c14c1a400bf00a4943ce",
+      "fetched_sha": "d76309ab54403608ae06c14c1a400bf00a4943ce"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/codex/publish-generation-lifecycle",
+      "sha": "df620aac9c43e643f36d67b9a007a07fd7a4d13e",
+      "github_sha": "df620aac9c43e643f36d67b9a007a07fd7a4d13e",
+      "fetched_sha": "df620aac9c43e643f36d67b9a007a07fd7a4d13e"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/codex/publish-managed-database-reconciliation",
+      "sha": "d150c4369389fe24c87e42e041e710d8bbe7b4b7",
+      "github_sha": "d150c4369389fe24c87e42e041e710d8bbe7b4b7",
+      "fetched_sha": "d150c4369389fe24c87e42e041e710d8bbe7b4b7"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/codex/publish-rollback-generation-guard",
+      "sha": "446a72ec3364acc3f1a128e065e0d205e911e7ab",
+      "github_sha": "446a72ec3364acc3f1a128e065e0d205e911e7ab",
+      "fetched_sha": "446a72ec3364acc3f1a128e065e0d205e911e7ab"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/codex/state-aware-deployment-recovery",
+      "sha": "521f045d438fead7d596b56f1b3a5cfe8d37f316",
+      "github_sha": "521f045d438fead7d596b56f1b3a5cfe8d37f316",
+      "fetched_sha": "521f045d438fead7d596b56f1b3a5cfe8d37f316"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/container-setup-local-preserved",
+      "sha": "2d4e900b723e5781ef782d02710bcba100b5fdb4",
+      "github_sha": "2d4e900b723e5781ef782d02710bcba100b5fdb4",
+      "fetched_sha": "2d4e900b723e5781ef782d02710bcba100b5fdb4"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/final-container-setup",
+      "sha": "ce6dc8cdc81f5773a94f4cfb96d0089d8f14e3be",
+      "github_sha": "ce6dc8cdc81f5773a94f4cfb96d0089d8f14e3be",
+      "fetched_sha": "ce6dc8cdc81f5773a94f4cfb96d0089d8f14e3be"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/master",
+      "sha": "49681d4570f5943be26e310600a4d92557b58f13",
+      "github_sha": "49681d4570f5943be26e310600a4d92557b58f13",
+      "fetched_sha": "49681d4570f5943be26e310600a4d92557b58f13"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/safety/detection-readiness-20260827",
+      "sha": "0b50984c5d79bf490e3135a6d8fa9f71f966a525",
+      "github_sha": "0b50984c5d79bf490e3135a6d8fa9f71f966a525",
+      "fetched_sha": "0b50984c5d79bf490e3135a6d8fa9f71f966a525"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/mainrepo/stash",
+      "sha": "a8ce8090c32ba5ce3801751932cd958b531ffaea",
+      "github_sha": "a8ce8090c32ba5ce3801751932cd958b531ffaea",
+      "fetched_sha": "a8ce8090c32ba5ce3801751932cd958b531ffaea"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/078458fa758d",
+      "sha": "76c3fb9bd199f911f362cbbe60733c69288c55e3",
+      "github_sha": "76c3fb9bd199f911f362cbbe60733c69288c55e3",
+      "fetched_sha": "76c3fb9bd199f911f362cbbe60733c69288c55e3"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/23c5e8687b78",
+      "sha": "ca0326a3675c1439401166ab82de6e5611663d94",
+      "github_sha": "ca0326a3675c1439401166ab82de6e5611663d94",
+      "fetched_sha": "ca0326a3675c1439401166ab82de6e5611663d94"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/29370942acec",
+      "sha": "2cdefa283cd40347c4d91f23572640246891f50b",
+      "github_sha": "2cdefa283cd40347c4d91f23572640246891f50b",
+      "fetched_sha": "2cdefa283cd40347c4d91f23572640246891f50b"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/6a22c385d4dd",
+      "sha": "46cd54bb5119a3aa93e40680ad847755e3be89fa",
+      "github_sha": "46cd54bb5119a3aa93e40680ad847755e3be89fa",
+      "fetched_sha": "46cd54bb5119a3aa93e40680ad847755e3be89fa"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/70fad60bc805",
+      "sha": "4acbfc94bc5725df6cd3ab596f797199e65c82ea",
+      "github_sha": "4acbfc94bc5725df6cd3ab596f797199e65c82ea",
+      "fetched_sha": "4acbfc94bc5725df6cd3ab596f797199e65c82ea"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/7789122b21a5",
+      "sha": "57aa3ee56a578671e5914aa4cdc23ab1775116fd",
+      "github_sha": "57aa3ee56a578671e5914aa4cdc23ab1775116fd",
+      "fetched_sha": "57aa3ee56a578671e5914aa4cdc23ab1775116fd"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/870912fbe35c",
+      "sha": "7cf3224c586792340d3ba329046555ee56dea6e1",
+      "github_sha": "7cf3224c586792340d3ba329046555ee56dea6e1",
+      "fetched_sha": "7cf3224c586792340d3ba329046555ee56dea6e1"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/9489b0541685",
+      "sha": "576f2b30373293bfd187add35a6af0836e7a2725",
+      "github_sha": "576f2b30373293bfd187add35a6af0836e7a2725",
+      "fetched_sha": "576f2b30373293bfd187add35a6af0836e7a2725"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/a37493a54094",
+      "sha": "a37493a5409418a63efa1effc459534320f3ce24",
+      "github_sha": "a37493a5409418a63efa1effc459534320f3ce24",
+      "fetched_sha": "a37493a5409418a63efa1effc459534320f3ce24"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/b7929ba1eb7f",
+      "sha": "b7929ba1eb7f66577c004f8e4c719dbdab7b4be9",
+      "github_sha": "b7929ba1eb7f66577c004f8e4c719dbdab7b4be9",
+      "fetched_sha": "b7929ba1eb7f66577c004f8e4c719dbdab7b4be9"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/c1624dc24e5f",
+      "sha": "a6b8dde1160a6e90a9610a66ac0843b68fa5f2d4",
+      "github_sha": "a6b8dde1160a6e90a9610a66ac0843b68fa5f2d4",
+      "fetched_sha": "a6b8dde1160a6e90a9610a66ac0843b68fa5f2d4"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/c35b2f9ea1b2",
+      "sha": "acbd15d3c68bedafcd148dfb00b8bdc7d594ff95",
+      "github_sha": "acbd15d3c68bedafcd148dfb00b8bdc7d594ff95",
+      "fetched_sha": "acbd15d3c68bedafcd148dfb00b8bdc7d594ff95"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/d3a104fc8cc9",
+      "sha": "70ac1ef922db6fb7274ad5a1f5a8b2afb6660aed",
+      "github_sha": "70ac1ef922db6fb7274ad5a1f5a8b2afb6660aed",
+      "fetched_sha": "70ac1ef922db6fb7274ad5a1f5a8b2afb6660aed"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/e76e16c79f22",
+      "sha": "26f1700d503eaae73479f476d159ac6bd3cf6cc3",
+      "github_sha": "26f1700d503eaae73479f476d159ac6bd3cf6cc3",
+      "fetched_sha": "26f1700d503eaae73479f476d159ac6bd3cf6cc3"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/recovered/ebbd38fcb5c0",
+      "sha": "11e6c6355f283fb5fd43f1d596d12bbe64a68141",
+      "github_sha": "11e6c6355f283fb5fd43f1d596d12bbe64a68141",
+      "fetched_sha": "11e6c6355f283fb5fd43f1d596d12bbe64a68141"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/release1/main",
+      "sha": "d77f1b869bef73713475a331d4d45383e527a456",
+      "github_sha": "d77f1b869bef73713475a331d4d45383e527a456",
+      "fetched_sha": "d77f1b869bef73713475a331d4d45383e527a456"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/history/team-runtime/main",
+      "sha": "565d9ab8ea5aed6db9a19dddb7cad800c3b346d6",
+      "github_sha": "565d9ab8ea5aed6db9a19dddb7cad800c3b346d6",
+      "fetched_sha": "565d9ab8ea5aed6db9a19dddb7cad800c3b346d6"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/m0-security-working-tree",
+      "sha": "c1ee14c21b594606d76d9397fac680507b4825aa",
+      "github_sha": "c1ee14c21b594606d76d9397fac680507b4825aa",
+      "fetched_sha": "c1ee14c21b594606d76d9397fac680507b4825aa"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/release1-working-tree",
+      "sha": "e810a79e3d3685ee4c7835f6397c8ecc07184c9f",
+      "github_sha": "e810a79e3d3685ee4c7835f6397c8ecc07184c9f",
+      "fetched_sha": "e810a79e3d3685ee4c7835f6397c8ecc07184c9f"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/source-assets",
+      "sha": "8039c0e5f4d21faf2e33dbba51ae55963c82c3c7",
+      "github_sha": "8039c0e5f4d21faf2e33dbba51ae55963c82c3c7",
+      "fetched_sha": "8039c0e5f4d21faf2e33dbba51ae55963c82c3c7"
+    },
+    {
+      "branch": "backup/ubuntu-20261024/version1-local-deletions",
+      "sha": "e716ebfa007c4ba3e37a32dbc97b66c3565c7814",
+      "github_sha": "e716ebfa007c4ba3e37a32dbc97b66c3565c7814",
+      "fetched_sha": "e716ebfa007c4ba3e37a32dbc97b66c3565c7814"
+    }
+  ]
+}

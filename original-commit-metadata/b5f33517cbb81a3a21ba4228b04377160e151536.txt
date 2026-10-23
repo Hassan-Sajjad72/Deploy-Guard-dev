@@ -1,0 +1,6 @@
+tree ccbf399d8edc595aedf900beee48ce78aa46f0d6
+parent 4ccc05fc3ad2c7ed775861813f52e95c531887cb
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1786520754 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1786520754 +0500
+
+fix: grant owned network extinction capabilities

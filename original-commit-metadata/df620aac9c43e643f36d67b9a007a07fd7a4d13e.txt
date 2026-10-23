@@ -1,0 +1,6 @@
+tree 878b6cb1da3356ef4f26f85c23413b5d9c1a9a0f
+parent b3ad12c3807ae6f87dd52fecd4c3a96c91f9cf6c
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1786389178 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1786389178 +0500
+
+feat: scope deployments to immutable generations

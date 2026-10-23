@@ -1,0 +1,8 @@
+tree 908dc60348fe5fbeb152f1848e2e2f1ca71fe0d7
+parent 23c5e8687b789ec665bfb605101c897f790c9d1f
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1788808879 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1788808879 +0500
+
+chore: pin hardened Railpack control plane
+
+Point DeployGuard runtime configuration examples at the immutable commit containing the certified workflow and runtime contract bytes.

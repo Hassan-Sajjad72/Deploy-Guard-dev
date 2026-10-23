@@ -1,0 +1,6 @@
+tree e016733d2a11e37626235dc1020f85c221b178b5
+parent 82565d318c0ce6745c65f234b6296903ab8ede42
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1786518420 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1786518420 +0500
+
+fix: make destroy persistent and failure-independent

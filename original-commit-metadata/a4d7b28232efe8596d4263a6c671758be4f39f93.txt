@@ -1,0 +1,6 @@
+tree c0a4173b12964dddd20671847ce80e5eee1a5f82
+parent 8a145feeecbaf16f433da72c3f15c66a87d39d0b
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823260 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823260 +0500
+
+feat: add Nuxt Static Fastify MongoDB fixture

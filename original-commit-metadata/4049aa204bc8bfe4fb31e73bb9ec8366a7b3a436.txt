@@ -1,0 +1,6 @@
+tree d1cde184dfd70c43a12a0dd59bb97bd60b44413a
+parent 7f748ac1afe964ed6bd7a917cab2ad1aa38dee29
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791650708 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791650708 +0500
+
+docs(s02): record single permission module certification and next scope

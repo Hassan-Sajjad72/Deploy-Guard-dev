@@ -1,0 +1,6 @@
+tree 047534734568e449e557f40034e0bacab1d589c4
+parent 524e321810c42d3f49f0af9a2bd43484a203fbcd
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791650434 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791650434 +0500
+
+feat(s02): enforce complete fail-closed AWS permission admission

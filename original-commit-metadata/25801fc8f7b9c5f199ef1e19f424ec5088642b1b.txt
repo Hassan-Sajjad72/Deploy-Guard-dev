@@ -1,0 +1,6 @@
+tree 35c9eabab7f9dcc29265474985398b0fdefbb8bd
+parent b36502fa815ccbf2bc2b95ebc1270752823f68c7
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791652317 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791652317 +0500
+
+feat(s02): register organization-scoped pending AWS account bindings

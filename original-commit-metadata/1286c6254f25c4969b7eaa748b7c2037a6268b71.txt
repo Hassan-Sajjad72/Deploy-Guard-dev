@@ -1,0 +1,6 @@
+tree 53838589b4f018694c09a7752c55ef7d94e1ea74
+parent 1520aacd551afaacd00dc08d871be380d5b64391
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791645497 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791645497 +0500
+
+test(m0): certify exact intent and ownership artifact action pins

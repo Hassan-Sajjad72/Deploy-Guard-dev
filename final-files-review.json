@@ -1,0 +1,219 @@
+[
+  {
+    "file": "archives/Deploy-Guard-final-container-setup.zip/Deploy-Guard-final-container-setup/backend/scripts/verify-external-action-pins.ts",
+    "line": 7,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "reviewed workflow/action SHA"
+  },
+  {
+    "file": "archives/Deploy-Guard-final-container-setup.zip/Deploy-Guard-final-container-setup/backend/scripts/verify-billing.ts",
+    "line": 25,
+    "rule": "stripe-access-token",
+    "approved": true,
+    "reason": "synthetic BILLING_DISABLED fixture"
+  },
+  {
+    "file": "files/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/backend/scripts/verify-billing.ts",
+    "line": 25,
+    "rule": "stripe-access-token",
+    "approved": true,
+    "reason": "synthetic BILLING_DISABLED fixture"
+  },
+  {
+    "file": "files/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/backend/scripts/verify-external-action-pins.ts",
+    "line": 7,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "reviewed workflow/action SHA"
+  },
+  {
+    "file": "files/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev/backend/src/projects/github-actions-workflow-contract.ts",
+    "line": 45,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "reviewed workflow/action SHA"
+  },
+  {
+    "file": "files/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev-test3/backend/scripts/verify-external-action-pins.ts",
+    "line": 7,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "reviewed workflow/action SHA"
+  },
+  {
+    "file": "files/Deploy-Guard-dev-final-FYP2/Deploy-Guard-dev-final-3/Deploy-Guard-dev-test3/backend/scripts/verify-billing.ts",
+    "line": 25,
+    "rule": "stripe-access-token",
+    "approved": true,
+    "reason": "synthetic BILLING_DISABLED fixture"
+  },
+  {
+    "file": "files/Deploy-Guard-final-container-setup/backend/scripts/verify-external-action-pins.ts",
+    "line": 7,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "reviewed workflow/action SHA"
+  },
+  {
+    "file": "files/Deploy-Guard-final-container-setup/backend/scripts/verify-billing.ts",
+    "line": 25,
+    "rule": "stripe-access-token",
+    "approved": true,
+    "reason": "synthetic BILLING_DISABLED fixture"
+  },
+  {
+    "file": "files/deployguard-m0-clean-xeBIfY/checkout/backend/scripts/verify-billing.ts",
+    "line": 25,
+    "rule": "stripe-access-token",
+    "approved": true,
+    "reason": "synthetic BILLING_DISABLED fixture"
+  },
+  {
+    "file": "files/deployguard-m0-clean-xeBIfY/checkout/backend/scripts/verify-external-action-pins.ts",
+    "line": 7,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "reviewed workflow/action SHA"
+  },
+  {
+    "file": "files/deployguard-release-1/backend/scripts/verify-disabled-v1-ecs-mutation-client.ts",
+    "line": 111,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "synthetic EFS verification identifier"
+  },
+  {
+    "file": "files/deployguard-release-1/backend/scripts/verify-managed-database-reconciliation.ts",
+    "line": 70,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "synthetic EFS verification identifier"
+  },
+  {
+    "file": "recovered-git-objects/0f759efcab8393f9acd464555f5b434a210da4d5/backend/MASTER-PLAN.md",
+    "line": 339,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "architecture prose"
+  },
+  {
+    "file": "recovered-git-objects/252488d7e3f62d1f9b7a5e5a24702211fd38c9d5/backend/src/projects/github-actions-workflow-contract.ts",
+    "line": 45,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "reviewed workflow/action SHA"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 64,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 66,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 69,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 73,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 75,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 79,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 82,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 84,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 85,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 86,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 87,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 91,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 94,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 102,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/138545f019f8929a0260f2d0b5d93639e19c97f5/docs/architecture/two-lane-migration/evidence/completed-family-classifications.csv",
+    "line": 112,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "classification evidence field"
+  },
+  {
+    "file": "recovered-git-objects/68fa8d235b0304f88c0f4705379c348d0fefd0e1/backend/src/projects/github-actions-workflow-contract.ts",
+    "line": 45,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "reviewed workflow/action SHA"
+  }
+]

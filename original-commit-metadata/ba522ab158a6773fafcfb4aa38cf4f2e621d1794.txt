@@ -1,0 +1,6 @@
+tree 8abae9f36cd1434dd82bfa6750afbac7b74e2501
+parent 25801fc8f7b9c5f199ef1e19f424ec5088642b1b
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791652798 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791652798 +0500
+
+feat(s02): inspect bound AWS identity with scoped temporary credentials

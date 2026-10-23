@@ -1,0 +1,6 @@
+tree 2d186fab8b048e01403ebc4111790c0c5ce876fb
+parent 0c988cabd6e8263a7429443ac70ca1e4d9a8596d
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1786480572 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1786480572 +0500
+
+fix: make destroy project extinction

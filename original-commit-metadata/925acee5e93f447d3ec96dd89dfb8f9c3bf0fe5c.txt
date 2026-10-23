@@ -1,0 +1,6 @@
+tree 6ef7291d7b2ead687150e37e7bcb19f0044669c0
+parent 8a145feeecbaf16f433da72c3f15c66a87d39d0b
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823260 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823260 +0500
+
+feat: add Vite Vue Fastify MySQL fixture

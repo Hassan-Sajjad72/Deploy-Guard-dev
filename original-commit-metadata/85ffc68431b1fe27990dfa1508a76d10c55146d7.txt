@@ -1,0 +1,6 @@
+tree 897bbba68192845765f038594338cf84142b46f4
+parent 8a145feeecbaf16f433da72c3f15c66a87d39d0b
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823260 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1787823260 +0500
+
+feat: add Django ASGI MySQL fixture

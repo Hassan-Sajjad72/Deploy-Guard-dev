@@ -1,0 +1,6 @@
+tree da3e753db54213042f0b4219f15e114110bee6b1
+parent 54ddc957ca255010b4a0afb60652669623ab22dd
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1789677910 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1789677910 +0500
+
+feat(container): add portable full-product distribution

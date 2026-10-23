@@ -1,0 +1,65 @@
+[
+  {
+    "file": "archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/Deploy-Guard-dev/backend/scripts/verify-external-action-pins.ts",
+    "line": 7,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  },
+  {
+    "file": "archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/Deploy-Guard-dev/backend/scripts/verify-managed-database-reconciliation.ts",
+    "line": 77,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  },
+  {
+    "file": "archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/Deploy-Guard-dev/backend/scripts/verify-managed-database-reconciliation.ts",
+    "line": 115,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  },
+  {
+    "file": "archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/backend/scripts/verify-external-action-pins.ts",
+    "line": 7,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  },
+  {
+    "file": "archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/backend/scripts/verify-managed-database-reconciliation.ts",
+    "line": 77,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  },
+  {
+    "file": "archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/backend/scripts/verify-managed-database-reconciliation.ts",
+    "line": 115,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  },
+  {
+    "file": "expanded-embedded/archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/uploads/BACKZ.zip.txt/scripts/verify-external-action-pins.ts",
+    "line": 7,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  },
+  {
+    "file": "expanded-embedded/archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/uploads/BACKZ.zip.txt/scripts/verify-managed-database-reconciliation.ts",
+    "line": 77,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  },
+  {
+    "file": "expanded-embedded/archives/Downloads/DATA2/workspace-01a052d5-7d52-7b95-9552-fdecc1df1951.zip/uploads/BACKZ.zip.txt/scripts/verify-managed-database-reconciliation.ts",
+    "line": 115,
+    "rule": "generic-api-key",
+    "approved": true,
+    "reason": "workflow SHA or synthetic EFS identifier in verification source"
+  }
+]

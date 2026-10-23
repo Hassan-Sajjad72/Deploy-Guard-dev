@@ -1,0 +1,6 @@
+tree 85a5920c2a55fa2ed1b4e9ce56500502ee08e1f8
+parent 1286c6254f25c4969b7eaa748b7c2037a6268b71
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791645971 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791645971 +0500
+
+docs(m0): record locally verified ownership integration and release gates

@@ -1,0 +1,6 @@
+tree 58bedbc2460a20d3f3f51c4fa2f16d333d77d326
+parent 4f47ce3ef940a8013aa0b3a2894693cf92e38f3e
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791628159 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791628159 +0500
+
+fix(m0): require canonical resource coverage before project deletion

@@ -1,0 +1,6 @@
+tree 7a5cfa108f7e0e297fbb1e1659941d2f793edc82
+parent 54cbd8788ca1f7c4b4523dae63d5e41505600e08
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1786379170 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1786379170 +0500
+
+fix: make database recovery checks deployment-state aware

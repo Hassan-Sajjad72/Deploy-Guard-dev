@@ -1,0 +1,6 @@
+tree ace8c582530811dfeae58aa1d06d4b5043d70fbc
+parent 97a1a7e7bb258f8ace634315414b96c419681cc8
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1786343631 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1786343631 +0500
+
+fix: publish workflow-call v2 contract

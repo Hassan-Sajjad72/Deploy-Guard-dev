@@ -1,0 +1,6 @@
+tree d817f909750f98f99e79f3230e688b9b86b90110
+parent 5a3ff8f8908ef5e6cd89ff1a19e8f02b5458789f
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791616627 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791616627 +0500
+
+fix(m0): journal runtime-secret ownership before dispatch

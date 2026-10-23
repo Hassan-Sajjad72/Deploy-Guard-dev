@@ -1,0 +1,6 @@
+tree 718289c8923d99cba03955919546f4e796159470
+parent 4049aa204bc8bfe4fb31e73bb9ec8366a7b3a436
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791650801 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791650801 +0500
+
+docs(s02): preserve proposed v1.1 input and record binding scope ambiguity

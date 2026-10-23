@@ -1,0 +1,6 @@
+tree 4abbf06e93cedc399a197508cc58d9d425ae7dd3
+parent ba522ab158a6773fafcfb4aa38cf4f2e621d1794
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791652985 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791652985 +0500
+
+docs(s02): adopt approved PRD v1.1 and record module verification

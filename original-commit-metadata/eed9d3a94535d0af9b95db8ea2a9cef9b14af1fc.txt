@@ -1,0 +1,6 @@
+tree ee2e88948206b75fde3bf53a156906ea2a56695a
+parent f8ddd4d487f2511d8861dd9b6e78c56f8fad0261
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791624844 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791624844 +0500
+
+fix(m0): require receipt-bound destroy proof and block legacy deletion

@@ -1,0 +1,6 @@
+tree 9a5cee4627618a9691cc251f92386dff707a4415
+parent b313f72ed7c8c46c3ac6f2c20e6df5e05aecfc99
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791618089 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791618089 +0500
+
+fix(m0): validate exact task deletion observations

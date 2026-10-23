@@ -1,0 +1,6 @@
+tree 079a786e106c9cd349ed3c3ec08f5a213547b17d
+parent f9bf437d520968866cab8016b690d98f456d229e
+author Hassan-Sajjad72 <232460@students.au.edu.pk> 1791628547 +0500
+committer Hassan-Sajjad72 <232460@students.au.edu.pk> 1791628547 +0500
+
+fix(m0): reject contradictory environment tags during ownership capture
