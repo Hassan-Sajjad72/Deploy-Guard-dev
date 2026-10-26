@@ -91,7 +91,7 @@ export class FailureDiagnosticService {
     if (terminalCode === MANAGED_DATABASE_RECONCILIATION_FAILURE && managedDatabase) {
       return this.managedDatabaseDiagnosis(managedDatabase);
     }
-    const authoritative = failureContractFor(terminalCode);
+    const authoritative = failureContractFor(classifyFailureCode(terminalCode, stage, evidence).failureCode);
     const evidenceClassifiable = !authoritative || ["DG_APPLICATION_RUNTIME_FAILED", "DG_APPLICATION_STARTUP_FAILED", "DG_RAILPACK_BUILD_FAILED", "DG_DOCKER_FALLBACK_BUILD_FAILED", "DG_ECS_STABILITY_FAILED", "DG_FAILURE_UNVERIFIED"].includes(terminalCode);
     if (authoritative && !evidenceClassifiable) return { ...authoritative, confidence: "DETERMINISTIC" };
     const managedUrlEvidence = evidence.match(/DG_MANAGED_DATABASE_URL_EVIDENCE[^\n]*\bsealedScheme=([a-z][a-z0-9+._-]*)\s+suppliedScheme=([a-z][a-z0-9+._-]*)/i);

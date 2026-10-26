@@ -87,6 +87,35 @@ const runtimeSecretFailure = diagnose("AWS Secrets Manager runtime configuration
   failureOwner: "EXTERNAL_PROVIDER",
   externalProvider: "aws",
 });
+
+const probeRegistryEvidence = "Error response from daemon: toomanyrequests: Data limit exceeded\nDG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=application_runtime message=transport_probe_image_unavailable";
+const historicalProbeFailure = diagnose(probeRegistryEvidence, {
+  failureStage: "application_runtime",
+  terminalFailureCode: "DG_RAILPACK_PREREQUISITE_FAILED",
+});
+assert.equal(historicalProbeFailure.rootCauseCode, "DG_CONTAINER_REGISTRY_UNAVAILABLE");
+assert.equal(historicalProbeFailure.externalProvider, "other");
+assert.match(historicalProbeFailure.summary, /registry/i);
+assert.doesNotMatch(historicalProbeFailure.summary, /Railpack/);
+assert.deepEqual(classifyStructuredFailure("application_runtime", probeRegistryEvidence), {
+  failureOwner: "EXTERNAL_PROVIDER", externalProvider: "other", failureCode: "DG_CONTAINER_REGISTRY_UNAVAILABLE", failureServiceId: null,
+});
+assert.equal(classifyStructuredFailure("prepare_build", "DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=prepare_build message=version_mismatch").externalProvider, "railpack",
+  "Railpack installation failures must retain their original provider boundary");
+const originalProbeRecord = {
+  id: "22222222-2222-4222-8222-222222222222", failureCode: "DG_RAILPACK_PREREQUISITE_FAILED",
+  failureOwner: "EXTERNAL_PROVIDER" as const, externalProvider: "railpack" as const, failedAt: now,
+  metadata: { failedStage: "application_runtime", safeLog: probeRegistryEvidence, failureDiagnostic: historicalProbeFailure },
+};
+const originalProbeSnapshot = JSON.stringify(originalProbeRecord);
+assert.equal(currentFailureDiagnostic(originalProbeRecord)?.rootCauseCode, "DG_CONTAINER_REGISTRY_UNAVAILABLE");
+assert.equal(JSON.stringify(originalProbeRecord), originalProbeSnapshot, "read-time correction must preserve historical audit records");
+const registryFailure = diagnose("DG_FAILURE code=DG_CONTAINER_REGISTRY_UNAVAILABLE stage=application_runtime message=transport_probe_image_unavailable", {
+  failureStage: "application_runtime", terminalFailureCode: "DG_CONTAINER_REGISTRY_UNAVAILABLE",
+});
+assert.equal(registryFailure.rootCauseCode, "DG_CONTAINER_REGISTRY_UNAVAILABLE");
+assert.equal(registryFailure.externalProvider, "other");
+assert.equal(registryFailure.retryDecision, "SAFE_NOW");
 assert.equal(runtimeSecretFailure.rootCauseCode, "DG_RUNTIME_SECRET_MATERIALIZATION_FAILED");
 assert.equal(runtimeSecretFailure.failureOwner, "EXTERNAL_PROVIDER");
 assert.equal(runtimeSecretFailure.externalProvider, "aws");

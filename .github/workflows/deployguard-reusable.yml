@@ -152,7 +152,26 @@ jobs:
         run: |
           set -euo pipefail
           containers=(); networks=(); runtime_names=()
-          docker image inspect "$TRANSPORT_PROBE_IMAGE" >/dev/null 2>&1 || docker pull "$TRANSPORT_PROBE_IMAGE" >/dev/null || { echo 'DG_FAILURE code=DG_RAILPACK_PREREQUISITE_FAILED stage=application_runtime message=transport_probe_image_unavailable' >&2; exit 1; }
+          transport_probe_candidates=("$TRANSPORT_PROBE_IMAGE" "docker.io/library/${TRANSPORT_PROBE_IMAGE#public.ecr.aws/docker/library/}")
+          probe_image_ready=false
+          for candidate in "${transport_probe_candidates[@]}"; do
+            if docker image inspect "$candidate" >/dev/null 2>&1; then
+              TRANSPORT_PROBE_IMAGE="$candidate"; probe_image_ready=true; break
+            fi
+          done
+          if [ "$probe_image_ready" != true ]; then
+            for attempt in 1 2; do
+              for candidate in "${transport_probe_candidates[@]}"; do
+                if timeout --signal=TERM --kill-after=5 30 docker pull "$candidate" >/dev/null; then
+                  TRANSPORT_PROBE_IMAGE="$candidate"; probe_image_ready=true; break
+                fi
+                echo "Transport probe registry pull failed: image=$candidate attempt=$attempt" >&2
+              done
+              [ "$probe_image_ready" != true ] || break
+              [ "$attempt" -eq 2 ] || sleep 3
+            done
+          fi
+          [ "$probe_image_ready" = true ] || { echo 'DG_FAILURE code=DG_CONTAINER_REGISTRY_UNAVAILABLE stage=application_runtime message=transport_probe_image_unavailable' >&2; exit 1; }
           cleanup_probes() {
             for key in "${runtime_names[@]:-}"; do unset "$key"; done
             for container in "${containers[@]:-}"; do docker rm --force "$container" >/dev/null 2>&1 || true; done

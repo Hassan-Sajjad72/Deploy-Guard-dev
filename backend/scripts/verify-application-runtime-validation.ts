@@ -44,14 +44,23 @@ function executable(path: string, source: string) {
   chmodSync(path, 0o755);
 }
 
-function executeProbe(mode: "success" | "flask_template_not_found" | "port_conflict" | "loopback_only" | "timeout" | "exited" | "run_failure" | "workflow_failure") {
+function executeProbe(mode: "success" | "flask_template_not_found" | "port_conflict" | "loopback_only" | "timeout" | "exited" | "run_failure" | "workflow_failure" | "registry_mirror" | "registry_unavailable") {
   const directory = mkdtempSync(join(tmpdir(), "deployguard-runtime-validation-"));
   const trace = join(directory, "trace");
   executable(join(directory, "docker"), `#!/usr/bin/env bash
 set -euo pipefail
 printf 'docker %s\\n' "$*" >> "$TRACE_FILE"
 case "$1" in
-  image) printf 'sha256:%064d\n' 0 ;;
+  image)
+    if [[ "$*" == *busybox* && "$PROBE_MODE" == registry_* ]]; then exit 1; fi
+    printf 'sha256:%064d\n' 0
+    ;;
+  pull)
+    if [ "$PROBE_MODE" = registry_unavailable ] || [[ "$PROBE_MODE" == registry_mirror && "$2" == public.ecr.aws/* ]]; then
+      echo 'Error response from daemon: toomanyrequests: Data limit exceeded' >&2
+      exit 1
+    fi
+    ;;
   network) ;;
   run)
     if [[ "$*" == *" nc -z -w 1 "* ]]; then
@@ -80,7 +89,9 @@ esac
 printf 'tcp %s\\n' "$*" >> "$TRACE_FILE"
 if [ "$1" = --signal=TERM ]; then
   [ "$PROBE_MODE" != timeout ] && [ "$PROBE_MODE" != loopback_only ] || exit 124
-  shift 2
+  shift
+  if [[ "$1" == --kill-after=* ]]; then shift; fi
+  shift
   exec "$@"
 fi
 [ "$PROBE_MODE" = success ] || [ "$PROBE_MODE" = flask_template_not_found ] || [ "$PROBE_MODE" = port_conflict ] || [ "$PROBE_MODE" = workflow_failure ]
@@ -182,6 +193,19 @@ void (async () => {
   const success = executeProbe("success");
   assert.equal(success.status, 0);
   assert.equal(success.downstream, "ECR\nTerraform\n", "successful TCP validation continues to downstream stages");
+  assert.doesNotMatch(success.trace, /docker pull /, "a cached probe image avoids registry traffic");
+  const mirrored = executeProbe("registry_mirror");
+  assert.equal(mirrored.status, 0, "an ECR Public download limit must fall back to the identical Docker Hub digest");
+  assert.equal(mirrored.downstream, "ECR\nTerraform\n");
+  assert.match(mirrored.trace, /docker pull docker\.io\/library\/busybox:1\.36\.1@sha256:a{64}/);
+  assert.match(mirrored.trace, /docker run .*docker\.io\/library\/busybox:1\.36\.1@sha256:a{64} nc -z/,
+    "the network probe must use the successfully acquired immutable mirror image");
+  const registryUnavailable = executeProbe("registry_unavailable");
+  assert.notEqual(registryUnavailable.status, 0);
+  assert.equal(registryUnavailable.downstream, "", "registry exhaustion must block publishing and Terraform");
+  assert.equal((registryUnavailable.trace.match(/^docker pull /gm) || []).length, 4, "both registries receive two bounded attempts");
+  assert.match(registryUnavailable.stderr, /DG_FAILURE code=DG_CONTAINER_REGISTRY_UNAVAILABLE stage=application_runtime message=transport_probe_image_unavailable/);
+  assert.doesNotMatch(registryUnavailable.stderr, /code=DG_RAILPACK_PREREQUISITE_FAILED/);
   assert.match(success.trace, /docker image inspect --format \{\{\.Id\}\} registry\.example\/app:exact-sha/);
   assert.match(success.trace, /docker run .*--env PORT --env HOST --env REQUIRED_RUNTIME_VALUE --env PORT=3000 --env HOST=0\.0\.0\.0 sha256:0{64}/, "the canonical service port and HOST override inherited values on the exact validated image");
   assert.match(success.trace, /docker rm --force deployguard-runtime-probe-22222222-2222-4222-8222-222222222222-11111111/);

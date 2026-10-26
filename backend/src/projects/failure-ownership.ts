@@ -33,6 +33,13 @@ export function classifyStructuredFailure(stage: string, safeEvidence: string): 
 /** Resolves a persisted authoritative terminal code without mutating its audit snapshot. */
 export function classifyFailureCode(code: string, stage: string, safeEvidence: string, serviceId: string | null = null): StructuredFailure {
   if (GITHUB_OIDC_STS_DENIAL.test(safeEvidence)) return { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "aws", failureCode: "DG_GITHUB_OIDC_TRUST_FAILED", failureServiceId: serviceId };
+  // Older workflows mislabeled a registry pull failure as a Railpack prerequisite.
+  // Reclassify only the proven transport-probe registry failure at read time.
+  if (code === "DG_RAILPACK_PREREQUISITE_FAILED" && stage === "application_runtime"
+    && /message=transport_probe_image_unavailable\b/.test(safeEvidence)
+    && /toomanyrequests|data limit exceeded|pull rate limit|failed to resolve reference|error response from daemon.*(?:denied|unavailable)/i.test(safeEvidence)) {
+    return { failureOwner: "EXTERNAL_PROVIDER", externalProvider: "other", failureCode: "DG_CONTAINER_REGISTRY_UNAVAILABLE", failureServiceId: serviceId };
+  }
   if (code === "DG_ECS_STABILITY_FAILED") return { ...classifyEcsDiagnosticsOwnership(ecsDiagnosticsFromEvidence(safeEvidence)), failureCode: code, failureServiceId: serviceId };
   const contract = failureContractFor(code);
   if (contract) return { failureOwner: contract.owner, externalProvider: contract.provider, failureCode: code, failureServiceId: serviceId };
